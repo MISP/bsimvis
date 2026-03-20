@@ -1,0 +1,10 @@
+redis
+pyghidra
+
+flask
+flask-cors
+
+bokeh
+
+black
+tqdm

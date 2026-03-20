@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BSim Vis Dashboard</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            /* Sidebar should touch edges */
+            display: flex;
+            flex-direction: row;
+            /* Horizontal sidebar and main */
+            height: 100vh;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+
+        /* Sidebar */
+        nav {
+            width: 220px;
+            background: #000;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 20px 0;
+        }
+
+        nav h2 {
+            padding: 0 20px;
+            color: var(--accent);
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        nav a {
+            padding: 12px 20px;
+            color: var(--text);
+            text-decoration: none;
+            border-left: 3px solid transparent;
+            font-size: 0.9rem;
+        }
+
+        nav a:hover,
+        nav a.active {
+            background: var(--card-bg);
+            border-left-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Main */
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 30px;
+            overflow: hidden;
+        }
+
+        .header {
+            margin-bottom: 20px;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Table Styling */
+        .table-container {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.85rem;
+        }
+
+        thead {
+            position: sticky;
+            top: 0;
+            background: #000;
+            z-index: 10;
+        }
+
+        th {
+            padding: 12px 15px;
+            color: var(--accent);
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 1px;
+            border-bottom: 2px solid var(--border);
+        }
+
+        td {
+            padding: 10px 15px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+
+        tr:hover {
+            background-color: var(--hover);
+        }
+
+        tr:nth-child(even) {
+            background-color: #1a1a1a;
+        }
+
+        /* Utility */
+        .mono {
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            color: var(--success);
+        }
+
+        .dim {
+            color: var(--subtle);
+            font-size: 0.8rem;
+        }
+
+        .badge {
+            background: var(--border);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            white-space: nowrap;
+        }
+
+        .tag-card {
+            background: rgba(102, 217, 239, 0.1);
+            color: var(--accent);
+            border: 1px solid rgba(102, 217, 239, 0.3);
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            margin: 2px;
+        }
+
+        /* Code Preview Tooltip */
+        #code-preview-tooltip {
+            position: fixed;
+            display: none;
+            z-index: 10000;
+            background: #272822;
+            /* Monokai Background */
+            border: 1px solid #3e3d32;
+            pointer-events: auto;
+            z-index: 9999;
+            background: #121212;
+            color: #fff;
+            border: 1px solid #66d9ef;
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 0.8em;
+            line-height: 1.2;
+            max-width: 380px;
+            box-shadow: 0 4px 15px black;
+            display: none;
+            overflow-y: auto;
+            max-height: 480px;
+        }
+
+        #token-tooltip {
+            position: fixed;
+            pointer-events: none;
+            z-index: 10001;
+            background: #121212;
+            color: #fff;
+            border: 1px solid #a6e22e;
+            border-radius: 4px;
+            padding: 10px;
+            font-size: 0.8em;
+            line-height: 1.2;
+            max-width: 320px;
+            box-shadow: 0 4px 10px black;
+            display: none;
+        }
+
+        .preview-header {
+            color: #75715e;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 4px;
+        }
+
+        .preview-line {
+            white-space: pre;
+            display: flex;
+        }
+
+        .preview-ln {
+            color: #75715e;
+            width: 30px;
+            text-align: right;
+            padding-right: 10px;
+            user-select: none;
+        }
+
+        .filter-bar {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+        }
+
+        .filter-bar input {
+            background: #000;
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px;
+            border-radius: 4px;
+            width: 300px;
+        }
+
+        .btn-action {
+            color: var(--accent);
+            cursor: pointer;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .btn-action:hover {
+            text-decoration: underline;
+        }
+
+        #loader {
+            padding: 20px;
+            text-align: center;
+            color: var(--accent);
+        }
+
+        .load-more-container {
+            padding: 20px;
+            text-align: center;
+        }
+
+        /* Diff, Code, & Feature Panels */
+        #diff-panel,
+        #code-panel,
+        #feature-panel,
+        #global-feature-panel {
+            display: none;
+            /* Managed by JS */
+            position: fixed;
+            bottom: 0;
+            left: 220px;
+            right: 0;
+            height: 60vh;
+            background: #0d0f14;
+            border-top: 3px solid var(--accent);
+            z-index: 9999;
+            flex-direction: column;
+            box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
+        }
+
+        #diff-panel-header,
+        #code-panel-header,
+        #feature-panel-header,
+        #global-feature-panel-header {
+            background: var(--border);
+            padding: 8px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #diff-frame {
+            width: 100%;
+            flex: 1;
+            border: none;
+            background: #0d0f14;
+        }
+
+        .diff-queue-badge,
+        .code-view-badge {
+            background: var(--accent);
+            color: #000;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            margin-right: 10px;
+        }
+
+        .resize-handle {
+            height: 4px;
+            width: 100%;
+            cursor: ns-resize;
+            background: transparent;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10001;
+        }
+
+        .resize-handle:hover {
+            background: var(--accent);
+            opacity: 0.5;
+        }
+
+        .panel-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .btn-panel {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #aaa;
+            cursor: pointer;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+
+        .btn-panel:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: #fff;
+            border-color: var(--accent);
+        }
+    </style>
+
+<body>
+    <nav>
+        <h2>BSim Vis</h2>
+        <a href="#collections" id="nav-collections">Collections</a>
+
+        <div style="padding: 20px 20px 5px 20px; border-top: 1px solid var(--border); margin-top: 15px;">
+            <div class="dim" style="font-size: 0.6rem; text-transform: uppercase;">Current Collection</div>
+            <div id="side-collection-name"
+                style="color: var(--success); font-weight: bold; font-size: 0.8rem; margin-top:5px; word-break: break-all;">
+                None</div>
+        </div>
+
+        <a href="#batches" id="nav-batches">Batches</a>
+        <a href="#files" id="nav-files" style="color:var(--text)">Files</a>
+        <a href="#functions" id="nav-functions" style="color:var(--text)">Functions</a>
+        <a href="#features-global" id="nav-features-global" style="color:var(--text)">Global Features</a>
+    </nav>
+
+    <main>
+        <div class="header">
+            <div class="header-top">
+                <h1 id="view-title" style="margin:0">Dashboard</h1>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+                    <button onclick="refreshData()"
+                        style="background:none; border:1px solid var(--accent); color:var(--accent); cursor:pointer; padding:5px 12px; border-radius:4px;">Refresh</button>
+                </div>
+            </div>
+            <p id="view-subtitle" style="margin: 5px 0 0 0; font-size: 0.9rem;"></p>
+            <div id="search-area"></div>
+        </div>
+
+        <div class="table-container">
+            <table id="data-table">
+                <thead id="table-head"></thead>
+                <tbody id="table-body"></tbody>
+            </table>
+            <div id="loader">Loading...</div>
+            <div id="pagination-container" class="load-more-container"></div>
+        </div>
+    </main>
+
+    <script>
+        let currentOffset = 0;
+        const PAGE_SIZE = 20;
+        let isEndOfResults = false;
+        let lastHashPath = '';
+
+        const routes = {
+            '#collections': {
+                title: 'Collections',
+                api: '/api/collection/search',
+                headers: ['Name', 'Files', 'Functions', 'Last Updated', 'Actions'],
+                renderer: renderCollections
+            },
+            '#batches': {
+                title: 'Batches',
+                api: '/api/batch/search',
+                headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Actions'],
+                renderer: renderBatches
+            },
+            '#files': {
+                title: 'Files',
+                api: '/api/file/search',
+                headers: ['Filename', 'MD5 / Arch', 'Entry Date', 'Actions'],
+                renderer: renderFiles
+            },
+            '#functions': {
+                title: 'Functions',
+                api: '/api/function/search',
+                headers: ['Function', 'Entry Addr', 'Tags', 'File Name', 'MD5', 'Decompiler', 'Thunk', 'Ret Type', 'CC', 'Features', 'Date', 'Actions'],
+                renderer: renderFunctions
+            },
+            '#features-global': {
+                title: 'Global Feature Index',
+                api: '/api/feature/search',
+                headers: ['Feature Hash', 'Type / Op', 'PCode Context', 'C Code Context', 'Total TF', 'Funcs', 'Actions'],
+                renderer: renderGlobalFeatures
+            }
+        };
+
+        async function refreshData(append = false) {
+            const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+            const full_hash = hashPath + (queryString ? '?' + queryString : '');
+            const route = routes[hashPath];
+            if (!route) return;
+
+            if (full_hash !== lastHashPath || !append) {
+                currentOffset = 0;
+                isEndOfResults = false;
+                document.getElementById('table-body').innerHTML = '';
+                document.getElementById('loader').style.display = 'block';
+
+            }
+            lastHashPath = full_hash;
+
+            const params = new URLSearchParams(queryString);
+            if (hashPath === '#files' || hashPath === '#functions' || hashPath === '#features-global') {
+                params.set('offset', currentOffset);
+                params.set('limit', PAGE_SIZE);
+            }
+
+            let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
+            updateUI(hashPath, params, route);
+
+            try {
+                const response = await fetch(apiUrl);
+                const data = await response.json();
+
+                // Extract the list of items based on the API response structure
+                const items = data.files || data.functions || data.features || (Array.isArray(data) ? data : []);
+                const total = data.total || data.total_estimated || (Array.isArray(data) ? data.length : items.length || 0);
+
+                const tbody = document.getElementById('table-body');
+                if (items.length === 0 && !append) {
+                    tbody.innerHTML = '<tr><td colspan="100" style="text-align:center; padding:40px;">No data found</td></tr>';
+                } else {
+                    tbody.insertAdjacentHTML('beforeend', route.renderer(items));
+                }
+
+                currentOffset += (items.length || 0);
+                isEndOfResults = currentOffset >= total;
+                renderPagination(hashPath);
+            } catch (err) {
+                console.error(err);
+            } finally {
+                document.getElementById('loader').style.display = 'none';
+            }
+        }
+
+        function updateUI(path, params, route) {
+            const col = params.get('collection') || 'main';
+
+            // Sidebar
+            document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+            const navLink = document.getElementById('nav-' + path.substring(1));
+            if (navLink) navLink.classList.add('active');
+
+            // Titles
+            document.getElementById('view-title').innerText = route.title;
+            document.getElementById('view-subtitle').innerHTML = col ?
+                `<span class="badge">Collection: ${col}</span>` : '';
+
+            // Side Collections Info
+            document.getElementById('side-collection-name').innerText = col;
+            document.getElementById('nav-batches').href = `#batches?collection=${col}`;
+            document.getElementById('nav-files').href = `#files?collection=${col}`;
+            document.getElementById('nav-functions').href = `#functions?collection=${col}`;
+            document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
+
+            // Table Head
+            const thead = document.getElementById('table-head');
+            thead.innerHTML = `<tr>${route.headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+
+            // Search Bar for Files
+            const searchArea = document.getElementById('search-area');
+            if (path === '#files' && !document.getElementById('file-search')) {
+                searchArea.innerHTML = `<div class="filter-bar">
+                    <input type="text" id="file-search" placeholder="Filter by filename..." onkeyup="if(event.key==='Enter') applySearch()">
+                    <button onclick="applySearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                </div>`;
+            } else if (path === '#functions') {
+                if (!document.getElementById('func-filters')) {
+                    const p = new URLSearchParams(params);
+                    searchArea.innerHTML = `<div id="func-filters" class="filter-bar" style="flex-wrap: wrap;">
+                        <input type="text" id="flt-function_name" placeholder="Function Name" value="${p.get('function_name') || ''}">
+                        <input type="text" id="flt-tag" placeholder="Tag" value="${p.get('tag') || ''}">
+                        <input type="text" id="flt-file_name" placeholder="File Name" value="${p.get('file_name') || ''}">
+                        <input type="text" id="flt-file_md5" placeholder="File MD5" value="${p.get('file_md5') || ''}">
+                        <input type="text" id="flt-decompiler_id" placeholder="Decompiler ID" value="${p.get('decompiler_id') || ''}">
+                        <input type="text" id="flt-is_thunk" placeholder="Is Thunk" value="${p.get('is_thunk') || ''}">
+                        <input type="text" id="flt-return_type" placeholder="Return Type" value="${p.get('return_type') || ''}">
+                        <input type="text" id="flt-calling_convention" placeholder="Calling Conv" value="${p.get('calling_convention') || ''}">
+                        <input type="text" id="flt-entrypoint_address" placeholder="Entry Address" value="${p.get('entrypoint_address') || ''}">
+                        <button onclick="applyFuncSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                    </div>`;
+                }
+            } else if (path === '#features-global' && !document.getElementById('feature-search')) {
+                const p = new URLSearchParams(params);
+                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <input type="text" id="feature-search" placeholder="Search by hash $(prefix)..." value="${p.get('hash') || ''}" onkeyup="if(event.key==='Enter') applySearch()">
+                        <button onclick="applySearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="sort-tf" ${p.get('sort') === 'tf' ? 'checked' : ''} onchange="applySearch()">
+                        <label for="sort-tf" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Sort by Total TF</label>
+                    </div>
+                </div>`;
+            } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
+                searchArea.innerHTML = '';
+            }
+
+
+            if (col) {
+                let subtitle = `<span class="badge">Collection: ${col}</span>`;
+                // Add a back link to collections if we are deep in the tree
+                subtitle += ` <a href="#collections" style="color:var(--subtle); margin-left:10px; font-size:0.7rem; text-decoration:none;">[Back to Collections]</a>`;
+                document.getElementById('view-subtitle').innerHTML = subtitle;
+            }
+        }
+
+        function applySearch() {
+            const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+            const params = new URLSearchParams(queryString);
+
+            if (hashPath === '#files') {
+                const val = document.getElementById('file-search').value;
+                if (val) params.set('file_name', val);
+                else params.delete('file_name');
+            } else if (hashPath === '#features-global') {
+                const val = document.getElementById('feature-search').value;
+                if (val) params.set('hash', val);
+                else params.delete('hash');
+
+                const sortTf = document.getElementById('sort-tf').checked;
+                if (sortTf) params.set('sort', 'tf');
+                else params.delete('sort');
+            }
+
+            // Reset the offset globally before the hash changes
+            currentOffset = 0;
+            isEndOfResults = false;
+
+            // Change the hash - this triggers the 'hashchange' listener
+            window.location.hash = `${hashPath}?${params.toString()}`;
+        }
+
+        function applyFuncSearch() {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const fields = ['function_name', 'tag', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
+            fields.forEach(f => {
+                const val = document.getElementById('flt-' + f).value;
+                if (val) params.set(f, val);
+                else params.delete(f);
+            });
+            currentOffset = 0;
+            isEndOfResults = false;
+            window.location.hash = `#functions?${params.toString()}`;
+        }
+
+        function renderPagination(path) {
+            const container = document.getElementById('pagination-container');
+            container.innerHTML = ((path === '#files' || path === '#functions' || path === '#features-global') && !isEndOfResults) ?
+                `<button class="btn-primary" onclick="refreshData(true)">Load More Results</button>` : '';
+        }
+
+        // --- Renderers (Return Table Rows) ---
+
+        function renderCollections(data) {
+            if (!data.length) return '<tr><td colspan="5" style="text-align:center">No collections found.</td></tr>';
+
+            return data.map(col => `
+        <tr>
+            <td><b style="color:var(--accent)">${col.name}</b></td>
+            <td class="mono">${col['total-files']}</td>
+            <td class="mono">${col['total-functions']}</td>
+            <td class="dim">${formatDate(col['last-updated'])}</td>
+            <td>
+                <div style="display: flex; gap: 15px;">
+                    <a class="btn-action" href="#batches?collection=${col.name}">
+                        Browse Batches
+                    </a>
+                    <span style="color:var(--border)">|</span>
+                    <a class="btn-action" href="#files?collection=${col.name}" style="color:var(--success)">
+                        View All Files →
+                    </a>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+        }
+
+        function renderBatches(data) {
+            return data.map(b => {
+                const col = b.collection || 'unknown';
+                return `
+                <tr>
+                    <td><b>${b.name || 'Unnamed'}</b></td>
+                    <td class="mono dim" style="font-size:0.7rem">${b['batch-uuid']}</td>
+                    <td class="mono">${b['total-files']}</td>
+                    <td class="mono">${b['total-functions']}</td>
+                    <td class="dim">${formatDate(b['last-updated'] || b['created-at'])}</td>
+                    <td><a class="btn-action" href="#files?collection=${col}&batch_uuid=${b['batch-uuid']}">View Files</a></td>
+                </tr>
+            `}).join('');
+        }
+
+        function renderFiles(data) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const col = params.get('collection') || 'main';
+            return data.map(f => `
+                <tr>
+                    <td><b style="color:var(--accent)">${f['file-name']}</b></td>
+                    <td>
+                        <div class="mono" style="font-size:0.7rem">${f['file-md5']}</div>
+                        <div class="dim">${f['language-id']}</div>
+                    </td>
+                    <td class="dim">${formatDate(f['entry-date'])}</td>
+                    <td><a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file-md5']}">Functions →</a></td>
+                </tr>
+            `).join('');
+        }
+
+        function renderFunctions(data) {
+            return data.map(f => {
+                const meta = f['function-metadata'] || f;
+                const name = meta['function-name'] || 'Unknown';
+                const entry = meta['entrypoint-address'] || '';
+                const tags = (meta['tags'] || []).map(t => `<span class="tag-card">${t}</span>`).join('');
+                const fileName = meta['file-name'] || '';
+                const file_md5 = meta['file-md5'] || '';
+                const decompiler = meta['decompiler-id'] || '';
+                const isThunk = meta['is-thunk'] ? 'Yes' : 'No';
+                const retType = meta['return-type'] || 'void';
+                const cc = meta['calling-convention'] || 'unknown';
+
+                // BSim features
+                const featCount = meta['bsim-features-count'] || 0;
+                const uniqueCount = meta['bsim-unique-features-count'] || 0;
+
+                // Safe quote escaping for onclick
+                const safeName = (name || '').replace(/'/g, "\\'");
+                const safeCol = (meta.collection || 'main').replace(/'/g, "\\'");
+
+                return `
+                <tr>
+                    <td>
+                <b style="color:var(--accent); cursor:pointer;" 
+                   onmouseenter="showCodePreview('${safeCol}', '${file_md5}', '${entry}', event)" 
+                   onmouseleave="hideCodePreview(event)">
+                   ${name}
+                </b>
+            </td>   
+                    <td class="mono" style="font-size:0.75rem">${entry}</td>
+                    <td>${tags}</td>
+                    <td class="dim" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${fileName}">${fileName}</td>
+                    <td class="mono" style="font-size:0.7rem;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${file_md5}">${file_md5}</td>
+                    <td class="dim" style="font-size:0.7rem;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${decompiler}">${decompiler}</td>
+                    <td class="dim">${isThunk}</td>
+                    <td class="dim">${retType}</td>
+                    <td class="dim">${cc}</td>
+                    <td>
+                        <span class="badge">F: ${featCount}</span><br>
+                        <span class="badge" style="margin-top:2px;display:inline-block">U: ${uniqueCount}</span>
+                    </td>
+                    <td class="dim">${formatDate(meta['entry-date'] || meta['file-date'])}</td>
+                    <td>
+                        <div style="display: flex; gap: 5px; flex-direction: column;">
+                            <button class="btn-action" style="background:none;border:none;padding:0;font-size:0.8rem;text-align:left;color:var(--accent);" 
+                                onclick="showFeaturePanel('${safeCol}', '${file_md5}', '${entry}')">Features</button>
+                            <button class="btn-action" style="background:none;border:none;padding:0;font-size:0.8rem;text-align:left;" 
+                                onclick="showFunctionCode('${safeCol}', '${file_md5}', '${entry}', '${safeName}')">Code</button>
+                            <button class="btn-action" style="background:none;border:none;padding:0;font-size:0.8rem;text-align:left;" 
+                                onclick="addToDiff('${safeCol}', '${file_md5}', '${entry}', '${safeName}')">Add to Diff</button>
+                        </div>
+                    </td>
+                </tr>
+            `}).join('');
+        }
+
+        function renderGlobalFeatures(items) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const col = params.get('collection') || 'main';
+            if (!items.length) return '<tr><td colspan="6" style="text-align:center">No features found.</td></tr>';
+
+            return items.map(f => {
+                const ctx = f.context || {};
+
+                // PCode Rendering in Card
+                let pcodeHtml = `
+                    <div class="code-card">
+                        <div class="code-card-line">
+                            <div class="code-card-text pcode-text">${ctx.pcode_full || 'N/A'}</div>
+                        </div>
+                    </div>`;
+
+                // C Code Tokens Rendering in Card
+                let cCodeHtml = '<span class="dim">N/A</span>';
+                if (ctx.c_code) {
+                    const funcId = `${col}:function:${ctx.md5}:${ctx.addr}`;
+                    const funcName = (ctx.name || ctx.addr);
+                    const targetLinesStr = (ctx.line_idxs || []).map(l => l + 1).join(',');
+                    const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';
+
+                    const displayLine = (ctx.line_idxs && ctx.line_idxs.length > 0) ? ctx.line_idxs[0] + 1 : 1;
+                    cCodeHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
+                             onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}')">
+                        <div class="code-card-line">
+                            <div class="code-card-ln">${displayLine}</div>
+                            <div class="code-card-text">`;
+                    ctx.c_code.forEach(t => {
+                        const colorMap = {
+                            'variable': 'tok-variable', 'func_call': 'tok-func_call', 'type': 'tok-type',
+                            'keyword': 'tok-keyword', 'comment': 'tok-comment', 'string': 'tok-string', 'number': 'tok-number'
+                        };
+                        const cls = colorMap[t.type] || 'tok-default';
+                        // Add metadata for the context menu
+                        cCodeHtml += `<span class="${cls} feature-highlight" 
+                            data-hashes="${f.hash}" 
+                            data-type="${ctx.type || ''}" 
+                            data-op="${ctx.op || ''}" 
+                            data-tf="${Math.round(f.tf_score || 0)}"
+                            onmouseenter="showTokenTooltip(event)"
+                            onmouseleave="hideTokenTooltip()"
+                            onmousemove="moveCodePreview(event)">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                    });
+                    cCodeHtml += `</div></div></div>`;
+                }
+
+                return `
+                <tr>
+                    <td><code class="mono" style="color:var(--accent)">${f.hash}</code></td>
+                    <td>
+                        <div class="dim" style="font-size:0.65rem; font-weight:bold; color:var(--accent);">${ctx.type}</div>
+                        <span class="badge" style="margin-top:2px; font-size:0.65rem;">${ctx.op}</span>
+                    </td>
+                    <td style="max-width:300px;">${pcodeHtml}</td>
+                    <td style="max-width:350px;">${cCodeHtml}</td>
+                    <td class="mono" style="color:var(--accent)">${f.tf_score !== undefined ? Math.round(f.tf_score) : '<span class="dim">-</span>'}</td>
+                    <td class="mono">${f.frequency}</td>
+                    <td>
+                        <button class="btn-action" style="background:none; border:none; padding:0; font-size:0.8rem; text-align:left; color:var(--accent);" 
+                            onclick="showGlobalFeaturePanel('${f.hash}', '${col}')">Analyze →</button>
+                    </td>
+                </tr>
+            `}).join('');
+        }
+
+        function formatDate(iso) {
+            return (iso && iso !== 'N/A') ? new Date(iso).toLocaleString() : '---';
+        }
+
+        function normalizeFuncId(id) {
+            if (!id || typeof id !== 'string') return id;
+            if (id.includes(':function:')) return id;
+
+            // Pattern for raw BSim ID: collection:#md5::funcName:@addr
+            const parts = id.split(':');
+            if (parts.length >= 4) {
+                const addrPart = parts.pop();
+                const funcPart = parts.pop();
+                const emptyPart = parts.pop();
+                const md5Part = parts.pop();
+                const colPart = parts.join(':');
+
+                if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
+                    const cleanAddr = addrPart.substring(1);
+                    const cleanMd5 = md5Part.substring(1);
+                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
+                }
+            }
+            return id;
+        }
+
+        // --- Diff Logic ---
+        let diffSelection = [];
+
+        function addToDiff(a1, a2, a3, a4) {
+            let id = '', name = '';
+
+            // Normalize a1 if it's potentially a raw ID string
+            const normalizedA1 = normalizeFuncId(a1);
+
+            // Case 1: Called from feature/index.html or external views with full ID
+            if (typeof normalizedA1 === 'string' && normalizedA1.includes(':function:')) {
+                id = normalizedA1;
+                // Try to infer name from ID or use a placeholder if not provided
+                name = a2 && typeof a2 === 'string' ? a2 : normalizedA1.split(':').pop();
+            }
+            // Case 3: Called from dashboard context menus: addToDiff(collection, md5, addr, name)
+            else {
+                id = `${a1}:function:${a2}:${a3}`;
+                name = a4 || a3;
+            }
+
+            const existing = diffSelection.findIndex(item => item.id === id);
+            if (existing !== -1) {
+                diffSelection.splice(existing, 1);
+            } else {
+                diffSelection.push({ id, name });
+            }
+
+            if (diffSelection.length > 2) {
+                diffSelection.shift();
+            }
+
+            updateDiffQueueUI();
+            saveDiffQueue();
+
+            if (diffSelection.length === 2) {
+                showDiffPanel();
+            }
+        }
+
+        function saveDiffQueue() {
+            localStorage.setItem('bsim_diff_queue', JSON.stringify(diffSelection));
+        }
+
+        function loadDiffQueue() {
+            try {
+                const stored = localStorage.getItem('bsim_diff_queue');
+                if (stored) {
+                    diffSelection = JSON.parse(stored);
+                    updateDiffQueueUI();
+                }
+            } catch (e) { console.error("Failed to load diff queue", e); }
+        }
+
+        function updateDiffQueueUI() {
+            const status = document.getElementById('diff-queue-status');
+            if (diffSelection.length === 0) {
+                status.innerText = '';
+            } else if (diffSelection.length === 1) {
+                status.innerHTML = `
+                    <span class="badge" style="background:var(--accent); color:#000; display:flex; align-items:center; gap:8px;">
+                        1/2 Selected: ${diffSelection[0].name}
+                        <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;">&times;</button>
+                    </span>`;
+            } else {
+                status.innerHTML = `
+                    <span class="badge" style="background:var(--success); color:#000; display:flex; align-items:center; gap:8px;">
+                        2/2 Ready: ${diffSelection[0].name} vs ${diffSelection[1].name}
+                        <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;">&times;</button>
+                    </span>`;
+            }
+        }
+
+        function clearDiffSelection() {
+            diffSelection = [];
+            updateDiffQueueUI();
+            saveDiffQueue();
+            hideDiffPanel();
+        }
+
+        function updateDiffIframe() {
+            const p = document.getElementById('diff-panel');
+            const f = document.getElementById('diff-frame');
+            const title = document.getElementById('diff-title');
+
+            if (p && diffSelection.length === 2) {
+                if (title) title.innerText = `${diffSelection[0].name} ↔ ${diffSelection[1].name}`;
+                if (f) f.src = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
+            }
+        }
+
+        function showDiffPanel() {
+            if (diffSelection.length < 2) return;
+            hideCodePanel();
+            hideFeaturePanel();
+            if (typeof hideGlobalFeaturePanel === 'function') hideGlobalFeaturePanel();
+            const p = document.getElementById('diff-panel');
+            if (p) {
+                p.style.display = 'flex';
+                updateDiffIframe();
+
+                // Reset queue after opening, ready for next pair
+                diffSelection = [];
+                updateDiffQueueUI();
+                saveDiffQueue();
+            }
+        }
+
+        function hideDiffPanel() {
+            const p = document.getElementById('diff-panel');
+            if (p) p.style.display = 'none';
+        }
+
+        function showFunctionCode(collection, md5, addr, name) {
+            const id = `${collection}:function:${md5}:${addr}`;
+            showFunctionCodeById(id, name);
+        }
+
+        function showFunctionCodeById(id, name, lineHash = '') {
+            hideDiffPanel();
+            hideFeaturePanel();
+            hideGlobalFeaturePanel();
+            const p = document.getElementById('code-panel');
+            const f = document.getElementById('code-frame');
+            const title = document.getElementById('code-title');
+
+            if (p) p.style.display = 'flex';
+            if (title) title.innerText = `Code: ${name}`;
+            if (f) f.src = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
+        }
+
+        function hideCodePanel() {
+            const p = document.getElementById('code-panel');
+            if (p) p.style.display = 'none';
+        }
+
+        // --- Feature Panel Logic ---
+        function showFeaturePanel(collection, md5, addr) {
+            hideDiffPanel();
+            hideCodePanel();
+            const id = `${collection}:function:${md5}:${addr}`;
+            const p = document.getElementById('feature-panel');
+            const f = document.getElementById('feature-frame');
+            const title = document.getElementById('feature-title');
+
+            if (p) p.style.display = 'flex';
+            if (title) title.innerText = `Features: ${addr}`;
+            if (f) f.src = `/function/features/index.html?id=${encodeURIComponent(id)}`;
+        }
+
+        function hideFeaturePanel() {
+            const p = document.getElementById('feature-panel');
+            if (p) p.style.display = 'none';
+        }
+
+        // --- Global Feature Panel Logic ---
+        function showGlobalFeaturePanel(hash, collection) {
+            hideDiffPanel();
+            hideCodePanel();
+            hideFeaturePanel();
+            const p = document.getElementById('global-feature-panel');
+            const f = document.getElementById('global-feature-frame');
+            const title = document.getElementById('global-feature-title');
+
+            if (p) p.style.display = 'flex';
+            if (title) title.innerText = `Feature Analysis: ${hash.substring(0, 12)}...`;
+            if (f) f.src = `/feature/index.html?hash=${encodeURIComponent(hash)}&collection=${encodeURIComponent(collection)}`;
+        }
+
+        function hideGlobalFeaturePanel() {
+            const p = document.getElementById('global-feature-panel');
+            if (p) p.style.display = 'none';
+        }
+
+        function launchExternal(type) {
+            let url = '';
+            if (type === 'diff') {
+                const f = document.getElementById('diff-frame');
+                // Use iframe src if set (since queue is cleared after opening)
+                if (f && f.src && f.src.includes('id1=')) {
+                    url = f.src;
+                } else if (diffSelection.length === 2) {
+                    url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
+                }
+            } else if (type === 'code') {
+                url = document.getElementById('code-frame').src;
+            } else if (type === 'features') {
+                url = document.getElementById('feature-frame').src;
+            } else if (type === 'global-feature') {
+                url = document.getElementById('global-feature-frame').src;
+            }
+
+            if (url) {
+                window.open(url, '_blank');
+                if (type === 'diff') hideDiffPanel();
+                else if (type === 'code') hideCodePanel();
+                else if (type === 'features') hideFeaturePanel();
+                else if (type === 'global-feature') hideGlobalFeaturePanel();
+            }
+        }
+
+        // Resizing Logic
+        let isResizing = false;
+        let currentPanel = null;
+
+        function initResize(panelId) {
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+            const handle = panel.querySelector('.resize-handle');
+            if (!handle) return;
+
+            handle.addEventListener('mousedown', e => {
+                isResizing = true;
+                currentPanel = panel;
+                document.body.style.cursor = 'ns-resize';
+                document.body.style.userSelect = 'none';
+            });
+        }
+
+        window.addEventListener('mousemove', e => {
+            if (!isResizing || !currentPanel) return;
+            const newHeight = window.innerHeight - e.clientY;
+            if (newHeight > 100 && newHeight < window.innerHeight * 0.9) {
+                currentPanel.style.height = newHeight + 'px';
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isResizing = false;
+            currentPanel = null;
+            document.body.style.cursor = 'default';
+            document.body.style.userSelect = 'auto';
+        });
+
+        window.addEventListener('hashchange', refreshData);
+        window.addEventListener('load', () => {
+            if (!window.location.hash) window.location.hash = '#collections';
+            refreshData();
+            loadDiffQueue();
+        });
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'bsim_diff_queue') {
+                loadDiffQueue();
+                if (diffSelection.length === 2) {
+                    // Optionally auto-show diff if 2 selected in another tab?
+                    // For now, just update UI.
+                }
+            }
+        });
+    </script>
+
+    <!-- Diff Panel (Moved to root for correct stacking) -->
+    <div id="diff-panel">
+        <div class="resize-handle"></div>
+        <div id="diff-panel-header">
+            <div style="display:flex; align-items:center;">
+                <span class="diff-queue-badge">DIFF MODE</span>
+                <span id="diff-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Compare
+                    Functions</span>
+            </div>
+            <div class="panel-actions">
+                <button class="btn-panel" onclick="launchExternal('diff')">Open in New Window ↗</button>
+                <button class="btn-panel" onclick="hideDiffPanel()"
+                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Diff</button>
+            </div>
+        </div>
+        <iframe id="diff-frame"></iframe>
+    </div>
+
+    <!-- Code Panel -->
+    <div id="code-panel">
+        <div class="resize-handle"></div>
+        <div id="code-panel-header">
+            <div style="display:flex; align-items:center;">
+                <span class="code-view-badge"
+                    style="background:var(--accent); color:#000; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px;">CODE
+                    VIEW</span>
+                <span id="code-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Function
+                    View</span>
+            </div>
+            <div class="panel-actions">
+                <button class="btn-panel" onclick="launchExternal('code')">Open in New Window ↗</button>
+                <button class="btn-panel" onclick="hideCodePanel()"
+                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close View</button>
+            </div>
+        </div>
+        <iframe id="code-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
+    </div>
+
+    <!-- Feature Panel -->
+    <div id="feature-panel">
+        <div class="resize-handle"></div>
+        <div id="feature-panel-header">
+            <div style="display:flex; align-items:center;">
+                <span
+                    style="background:#a6e22e; color:#000; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px; font-weight:bold;">FEATURES</span>
+                <span id="feature-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Function
+                    Feature Audit</span>
+            </div>
+            <div class="panel-actions">
+                <button class="btn-panel" onclick="launchExternal('features')">Open in New Window ↗</button>
+                <button class="btn-panel" onclick="hideFeaturePanel()"
+                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Panel</button>
+            </div>
+        </div>
+        <iframe id="feature-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
+    </div>
+
+    <!-- Global Feature Panel -->
+    <div id="global-feature-panel">
+        <div class="resize-handle"></div>
+        <div id="global-feature-panel-header">
+            <div style="display:flex; align-items:center;">
+                <span
+                    style="background:var(--accent); color:#000; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px; font-weight:bold;">FEATURE
+                    ANALYSIS</span>
+                <span id="global-feature-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Feature
+                    Search</span>
+            </div>
+            <div class="panel-actions">
+                <button class="btn-panel" onclick="launchExternal('global-feature')">Open in New Window ↗</button>
+                <button class="btn-panel" onclick="hideGlobalFeaturePanel()"
+                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Panel</button>
+            </div>
+        </div>
+        <iframe id="global-feature-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
+    </div>
+
+    <div id="code-preview-tooltip"></div>
+    <div id="token-tooltip"></div>
+
+    <script>
+        // --- Code Preview Logic ---
+        const previewCache = new Map();
+        let previewTimer = null;
+        let tooltip = null;
+        window.previewTips = {};
+        window.previewCollection = '';
+
+        function showTokenContextMenu(e) {
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+            e.preventDefault();
+
+            const hashesStr = token.dataset.hashes;
+            if (!hashesStr) return;
+            const hashes = hashesStr.trim().split(/\s+/);
+            const idx = token.dataset.idx;
+
+            // Rich data from preview tips if available
+            const richData = (idx !== undefined && window.previewTips) ? window.previewTips[idx] : null;
+            const collection = window.previewCollection || 'main';
+
+            let menu = document.getElementById('token-context-menu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'token-context-menu';
+                menu.className = 'context-menu';
+                document.body.appendChild(menu);
+            }
+
+            let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
+            if (richData && richData[2]) {
+                richData[2].forEach(f => {
+                    const hash = f[0], op = f[1], type = f[3], tf = f[7] || 0, color = f[8] || 'var(--accent)';
+                    html += `<div class="context-menu-item" data-hash="${hash}" data-col="${collection}">
+                        <div class="context-menu-icon" style="color:${color}">🔍</div>
+                        <div style="flex:1">
+                            <div style="font-family:monospace; font-weight:bold; color:${color}">${hash}</div>
+                            <div style="font-size:0.7rem; color:var(--subtle); margin-top:2px;">${type} | Op: ${op} | <b style="color:var(--success)">TF: ${tf}</b></div>
+                        </div>
+                    </div>`;
+                });
+            } else {
+                // Fallback for simple highlights (like global feature cards)
+                // Use metadata from datasets if available
+                const metaType = token.dataset.type || 'Feature';
+                const metaOp = token.dataset.op || 'Op';
+                const metaTf = token.dataset.tf || '0';
+
+                hashes.forEach(h => {
+                    html += `<div class="context-menu-item" data-hash="${h}" data-col="${collection}">
+                        <div class="context-menu-icon" style="color:var(--accent)">🔍</div>
+                        <div style="flex:1">
+                            <div style="font-family:monospace; font-weight:bold; color:var(--accent)">${h}</div>
+                            <div style="font-size:0.7rem; color:var(--subtle); margin-top:2px;">${metaType} | Op: ${metaOp} | <b style="color:var(--success)">TF: ${metaTf}</b></div>
+                        </div>
+                    </div>`;
+                });
+            }
+
+            menu.innerHTML = html;
+            menu.style.display = 'block';
+            let x = e.clientX, y = e.clientY;
+            if (x + 350 > window.innerWidth) x -= 350;
+            const itemCount = richData ? richData[2].length : hashes.length;
+            if (y + (itemCount * 52 + 50) > window.innerHeight) y -= (itemCount * 52 + 50);
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+
+            const onMenuClick = (me) => {
+                const item = me.target.closest('.context-menu-item');
+                if (item) {
+                    const h = item.dataset.hash;
+                    const c = item.dataset.col;
+                    const url = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
+
+                    if (me.ctrlKey || me.metaKey) {
+                        window.open(url, '_blank');
+                    } else {
+                        showGlobalFeaturePanel(h, c);
+                    }
+                }
+                closeMenu();
+            };
+            const closeMenu = () => {
+                menu.style.display = 'none';
+                menu.removeEventListener('click', onMenuClick);
+                document.removeEventListener('mousedown', closeGlobal);
+            };
+            const closeGlobal = (me) => { if (!menu.contains(me.target)) closeMenu(); };
+            setTimeout(() => {
+                menu.addEventListener('click', onMenuClick);
+                document.addEventListener('mousedown', closeGlobal);
+            }, 10);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            tooltip = document.getElementById('code-preview-tooltip');
+        });
+
+        function showTokenTooltip(e) {
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+
+            const tooltipEl = document.getElementById('token-tooltip');
+            const idx = token.dataset.idx;
+            const hashesStr = token.dataset.hashes || '';
+            const hashes = hashesStr.trim().split(/\s+/);
+
+            let html = '';
+            // Case 1: Rich data from preview tips (Function Previews)
+            if (idx !== undefined && window.previewTips && window.previewTips[idx]) {
+                const data = window.previewTips[idx];
+                html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+                data[2].forEach(f => {
+                    const color = f[8] || 'var(--accent)';
+                    html += `<div style="margin-bottom:8px;">
+                        <div style="font-family:monospace; color:${color}; font-weight:bold;">${f[0]}</div>
+                        <div style="font-size:0.7rem; color:var(--subtle);">${f[3]} | Op: ${f[1]} | <b style="color:var(--success)">TF: ${f[7] || 0}</b></div>
+                    </div>`;
+                });
+            } else {
+                // Case 2: Simple metadata (Global Feature Index Cards)
+                const type = token.dataset.type || 'Feature';
+                const op = token.dataset.op || 'Op';
+                const tf = token.dataset.tf || '0';
+
+                html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${hashes.length})</div>`;
+                hashes.forEach(h => {
+                    html += `<div style="margin-bottom:8px;">
+                        <div style="font-family:monospace; color:var(--accent); font-weight:bold;">${h}</div>
+                        <div style="font-size:0.7rem; color:var(--subtle);">${type} | Op: ${op} | <b style="color:var(--success)">TF: ${tf}</b></div>
+                    </div>`;
+                });
+            }
+
+            tooltipEl.innerHTML = html;
+            tooltipEl.style.display = 'block';
+            tooltipEl.style.left = (e.clientX + 15) + 'px';
+            tooltipEl.style.top = (e.clientY + 15) + "px";
+
+            const rect = tooltipEl.getBoundingClientRect();
+            if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
+            if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
+        }
+
+        function hideTokenTooltip() {
+            const el = document.getElementById('token-tooltip');
+            if (el) el.style.display = 'none';
+        }
+
+        function moveCodePreview(e) {
+            const offset = 15; // px away from cursor
+
+            [tooltip, document.getElementById('token-tooltip')].forEach(el => {
+                if (el && el.style.display === 'block') {
+                    let x = e.clientX + offset;
+                    let y = e.clientY + offset;
+
+                    // Collision detection with window edges
+                    const rect = el.getBoundingClientRect();
+                    if (x + rect.width > window.innerWidth) {
+                        x = e.clientX - rect.width - offset;
+                    }
+                    if (y + rect.height > window.innerHeight) {
+                        y = e.clientY - rect.height - offset;
+                    }
+
+                    el.style.left = x + 'px';
+                    el.style.top = y + 'px';
+                }
+            });
+        }
+
+        function hideCodePreview(e) {
+            if (previewTimer) clearTimeout(previewTimer);
+            if (e && e.relatedTarget && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
+            if (tooltip) tooltip.style.display = 'none';
+        }
+
+        async function showCodePreview(collection, md5, addr, e) {
+            const id = `${collection}:function:${md5}:${addr}`;
+            moveCodePreview(e);
+
+            if (previewTimer) clearTimeout(previewTimer);
+            previewTimer = setTimeout(async () => {
+                if (!tooltip) return;
+                tooltip.style.display = 'block';
+                tooltip.innerHTML = '<div class="preview-header">Loading Preview...</div>';
+
+                if (!tooltip.dataset.hasLeave) {
+                    tooltip.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+                    tooltip.dataset.hasLeave = "true";
+                }
+
+                if (previewCache.has(id)) {
+                    const cached = previewCache.get(id);
+                    window.previewTips = cached.tips;
+                    window.previewCollection = collection;
+                    renderPreview(cached);
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`/api/function/code?id=${encodeURIComponent(id)}`);
+                    if (!res.ok) throw new Error("Preview failed");
+                    const data = await res.json();
+                    window.previewTips = data.tips;
+                    window.previewCollection = collection;
+                    previewCache.set(id, data);
+                    renderPreview(data);
+                } catch (err) {
+                    tooltip.innerHTML = `<div class="preview-header" style="color:#ff5555">Error loading preview</div>`;
+                }
+            }, 150);
+        }
+
+        function renderPreview(data) {
+            if (!tooltip) return;
+            const rows = data.rows.slice(0, 18);
+            let html = '<div class="preview-header">Quick Code Preview</div>';
+
+            rows.forEach(row => {
+                let lineHtml = '';
+                row.tokens.forEach(t => {
+                    const colorMap = {
+                        'variable': '#f92672', 'func_call': '#66d9ef', 'type': '#ae81ff',
+                        'op': '#f8f8f2', 'field': '#66d9ef', 'syntax': '#f8f8f2',
+                        'text': '#f8f8f2', 'keyword': '#f92672', 'comment': '#75715e',
+                        'string': '#e6db74', 'number': '#ae81ff'
+                    };
+                    const color = colorMap[t.type] || '#f8f8f2';
+                    const featClass = t.has_features ? 'feature-highlight' : '';
+                    const hashes = (t.hash_list || []).join(' ');
+                    lineHtml += `<span class="${featClass}" style="color:${color}" data-idx="${t.global_idx}" data-hashes="${hashes}"
+                        onmouseenter="showTokenTooltip(event)" onmouseleave="hideTokenTooltip()" onmousemove="moveCodePreview(event)">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                });
+                html += `<div class="preview-line"><span class="preview-ln">${row.line_idx}</span>${lineHtml}</div>`;
+            });
+            if (data.rows.length > 18) html += '<div class="preview-header" style="border:none; margin-top:5px;">...</div>';
+            tooltip.innerHTML = html;
+        }
+
+        document.addEventListener('contextmenu', e => {
+            if (e.target.closest('.feature-highlight')) {
+                showTokenContextMenu(e);
+            }
+        });
+
+        initResize('diff-panel');
+        initResize('code-panel');
+        initResize('feature-panel');
+        initResize('global-feature-panel');
+    </script>
+</body>
+
+</html>

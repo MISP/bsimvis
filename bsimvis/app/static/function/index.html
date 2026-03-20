@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Function Code View</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        body {
+            background-color: #121212;
+            color: #f8f8f2;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #meta-container {
+            display: flex;
+            width: 100%;
+            padding: 10px 20px;
+            box-sizing: border-box;
+            background: #121212;
+            flex-shrink: 0;
+        }
+
+        .func-meta-card {
+            flex: 1;
+            min-height: auto;
+            margin-bottom: 0;
+        }
+
+        #code-scroll {
+            flex: 1;
+            position: relative;
+            overflow-y: auto;
+            background: #272822;
+        }
+
+        #v-height {
+            position: absolute;
+            width: 1px;
+            top: 0;
+            left: 0;
+            z-index: -1;
+        }
+
+        #v-content {
+            position: sticky;
+            top: 0;
+            width: 100%;
+        }
+
+        #bsim-tooltip {
+            border-color: #f92672;
+        }
+
+        .code-line.target-highlight {
+            background: rgba(166, 226, 46, 0.15) !important;
+            box-shadow: inset 4px 0 0 var(--success);
+        }
+
+        /* Standalone Diff Bar */
+        .standalone-diff-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #111;
+            border-top: 2px solid var(--accent);
+            padding: 10px 20px;
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.6);
+            z-index: 1000;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(100%);
+            }
+
+            to {
+                transform: translateY(0);
+            }
+        }
+
+        .diff-status-text {
+            color: var(--accent);
+            font-size: 0.85rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-compare {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-compare:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-diff-action {
+            background: rgba(102, 217, 239, 0.1);
+            color: #66d9ef;
+            border: 1px solid rgba(102, 217, 239, 0.3);
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn-diff-action:hover {
+            background: rgba(102, 217, 239, 0.2);
+            border-color: #66d9ef;
+        }
+
+        body {
+            padding-bottom: 60px;
+        }
+
+        /* Space for bar */
+    </style>
+</head>
+
+<body>
+    <div id="meta-container">
+        <!-- Dynically populated to match formatMetaCard in diff view -->
+    </div>
+
+    <div id="loader">Fetching View...</div>
+
+    <div id="code-scroll" style="display: none;">
+        <div id="v-height"></div>
+        <div id="v-content" class="c-code-container"></div>
+    </div>
+
+    <div id="bsim-tooltip"></div>
+
+    <div id="standalone-diff-bar" class="standalone-diff-bar">
+        <div id="standalone-diff-status" class="diff-status-text"></div>
+        <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions →</button>
+    </div>
+
+    <script>
+        const API_URL = "/api/function/code";
+        let funcRows = [];
+        let funcTips = {};
+        const rowH = 24;
+        const OVERSCAN = 20;
+
+        function normalizeFuncId(id) {
+            if (!id || typeof id !== 'string') return id;
+            if (id.includes(':function:')) return id;
+
+            // Pattern for raw BSim ID: collection:#md5::funcName:@addr
+            const parts = id.split(':');
+            if (parts.length >= 4) {
+                const addrPart = parts.pop();
+                const funcPart = parts.pop();
+                const emptyPart = parts.pop();
+                const md5Part = parts.pop();
+                const colPart = parts.join(':');
+
+                if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
+                    const cleanAddr = addrPart.substring(1);
+                    const cleanMd5 = md5Part.substring(1);
+                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
+                }
+            }
+            return id;
+        }
+
+        let scrollEl, vHeightEl, vContentEl, tooltipEl;
+        window.lockedHashes = new Set();
+        let fullMeta = {};
+        let id = '';
+
+        function navigateToFeatures(id, e) {
+            const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
+            if (e && (e.ctrlKey || e.metaKey)) {
+                window.open(url, '_blank');
+                return;
+            }
+            if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
+                const parts = id.split(':');
+                window.parent.showFeaturePanel(parts[0], parts[2], parts[3]);
+            } else {
+                window.location.href = url;
+            }
+        }
+
+        function showTokenContextMenu(e) {
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+            e.preventDefault();
+
+            const idx = token.getAttribute('data-idx');
+            const data = funcTips[idx];
+            if (!data || !data[2]) return;
+
+            let menu = document.getElementById('token-context-menu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'token-context-menu';
+                menu.className = 'context-menu';
+                document.body.appendChild(menu);
+            }
+
+            const collection = id.split(':')[0] || 'main';
+
+            let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
+            data[2].forEach(f => {
+                const hash = f[0], op = f[1], type = f[3], tf = f[7] || 0, color = f[8] || 'var(--accent)';
+                html += `<div class="context-menu-item" data-hash="${hash}" data-col="${collection}">
+                    <div class="context-menu-icon" style="color:${color}">🔍</div>
+                    <div style="flex:1">
+                        <div style="font-family:monospace; font-weight:bold; color:${color}">${hash}</div>
+                        <div style="font-size:0.7rem; color:var(--subtle); margin-top:2px;">
+                            ${type} | Op: ${op} | <b style="color:var(--success)">TF: ${tf}</b>
+                        </div>
+                    </div>
+                </div>`;
+            });
+
+            menu.innerHTML = html;
+            menu.style.display = 'block';
+            let x = e.clientX, y = e.clientY;
+            if (x + 350 > window.innerWidth) x -= 350;
+            if (y + (data[2].length * 52 + 40) > window.innerHeight) y -= (data[2].length * 52 + 40);
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+
+            const onMenuClick = (me) => {
+                const item = me.target.closest('.context-menu-item');
+                if (item) {
+                    const h = item.dataset.hash;
+                    const c = item.dataset.col;
+                    const url = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
+
+                    if (me.ctrlKey || me.metaKey) {
+                        window.open(url, '_blank');
+                    } else if (window.parent && window.parent !== window && typeof window.parent.showGlobalFeaturePanel === 'function') {
+                        window.parent.showGlobalFeaturePanel(h, c);
+                    } else {
+                        window.location.href = url;
+                    }
+                }
+                closeMenu();
+            };
+
+            const closeMenu = () => {
+                menu.style.display = 'none';
+                menu.removeEventListener('click', onMenuClick);
+                document.removeEventListener('mousedown', closeGlobal);
+            };
+
+            const closeGlobal = (me) => {
+                if (!menu.contains(me.target)) closeMenu();
+            };
+
+            setTimeout(() => {
+                menu.addEventListener('click', onMenuClick);
+                document.addEventListener('mousedown', closeGlobal);
+            }, 10);
+        }
+
+        async function init() {
+            scrollEl = document.getElementById('code-scroll');
+            vHeightEl = document.getElementById('v-height');
+            vContentEl = document.getElementById('v-content');
+            tooltipEl = document.getElementById('bsim-tooltip');
+
+            const params = new URLSearchParams(window.location.search);
+            id = params.get('id');
+            if (!id) {
+                document.getElementById('loader').innerText = "ID is missing";
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}?id=${encodeURIComponent(id)}`);
+                if (!res.ok) throw new Error("Backend error");
+                const data = await res.json();
+
+                funcRows = data.rows;
+                funcTips = data.tips;
+                fullMeta = data.meta;
+
+                id = data.meta["collection"] + ":function:" + data.meta["file-md5"] + ":" + data.meta["entrypoint-address"];
+                window.currentFuncId = normalizeFuncId(id);
+                window.currentFuncName = data.meta['function-name'] || 'unknown';
+
+                renderMeta(data.meta);
+
+                document.getElementById('loader').style.display = 'none';
+                scrollEl.style.display = 'block';
+
+                vHeightEl.style.height = (funcRows.length * rowH) + 'px';
+
+                scrollEl.addEventListener('scroll', onScroll);
+                scrollEl.addEventListener('pointerover', e => handleHoverMove(e, true));
+                scrollEl.addEventListener('pointerout', e => handleHoverMove(e, false));
+                scrollEl.addEventListener('contextmenu', showTokenContextMenu);
+                scrollEl.addEventListener('pointermove', e => {
+                    if (tooltipEl.style.display === "block") {
+                        tooltipEl.style.left = (e.clientX + 15) + "px";
+                        tooltipEl.style.top = (e.clientY + 15) + "px";
+                    }
+                });
+                scrollEl.addEventListener('click', e => {
+                    const token = findToken(e);
+                    if (token) toggleLock(token.getAttribute('data-hashes'), token);
+                });
+
+                scrollToLine();
+                onScroll();
+
+                window.addEventListener('hashchange', scrollToLine);
+            } catch (err) {
+                document.getElementById('loader').innerText = "View Error: " + err.message;
+            }
+        }
+
+        function renderMeta(m) {
+            const container = document.getElementById('meta-container');
+            const label = m['function-name'] || 'unknown_func';
+            const returnType = m['return-type'] || 'N/A';
+            const addr = m['entrypoint-address'] || 'N/A';
+            const fileName = m['file-name'] || 'N/A';
+            const lang = m['language-id'] || 'N/A';
+
+            const tags = (m['tags'] || []);
+            const tagsHtml = tags.length > 0 ? tags.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
+
+            const skipKeys = ['function-name', 'return-type', 'entrypoint-address', 'file-name', 'language-id', 'full-id', 'tags'];
+            let moreHtml = '';
+            Object.keys(m).sort().forEach(k => {
+                if (!skipKeys.includes(k)) {
+                    let val = m[k];
+                    if (Array.isArray(val)) {
+                        val = val.map(t => `<span class="tag-card">${t}</span>`).join('');
+                    } else if (typeof val === 'object' && val !== null) {
+                        val = JSON.stringify(val);
+                    }
+                    moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value">${val}</span></div>`;
+                }
+            });
+
+            container.innerHTML = `
+                <div class="func-meta-card">
+                    <span class="meta-title">
+                        <div style="display:flex; align-items:center; gap:10px">
+                            
+                            <span class="meta-return-type">${returnType}</span>${label} 
+                            <button class="meta-more-btn" style="background:rgba(166,226,46,0.15); color:var(--success); border-color:rgba(166,226,46,0.3); padding:4px 10px;" 
+                                onclick="navigateToFeatures('${id}', event)">Features 🔍</button>
+                            <button id="add-diff-btn" class="btn-diff-action" onclick="addToDiff(window.currentFuncId, this, window.currentFuncName)">
+                                <span>+</span> Add to Diff
+                            </button>
+                        </div>
+                    </span>
+                    <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
+                    <div class="meta-row"><span class="meta-label">File</span><span class="meta-value">${fileName}</span></div>
+                    <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
+                    <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml}</span></div>
+                    
+                    <div class="meta-more-container" id="meta-more-inline">
+                        ${moreHtml}
+                    </div>
+                </div>
+            `;
+        }
+
+        window.toggleMetaDetail = function () {
+            const el = document.getElementById(`meta-more-inline`);
+            if (el) el.classList.toggle('expanded');
+        };
+
+        function scrollToLine() {
+            const hash = window.location.hash;
+            if (hash && hash.startsWith('#L')) {
+                const lineParts = hash.substring(2).split(',');
+                window.targetLineSet = new Set(lineParts.map(l => parseInt(l)));
+
+                // Use a small timeout to ensure clientHeight is accurate if opening in a panel
+                setTimeout(() => {
+                    const firstLine = parseInt(lineParts[0]);
+                    const idx = funcRows.findIndex(r => r.line_idx === firstLine);
+                    if (idx !== -1) {
+                        const st = Math.max(0, (idx * rowH) - (scrollEl.clientHeight / 3));
+                        scrollEl.scrollTop = st;
+                        onScroll();
+                    }
+                }, 50);
+            }
+        }
+
+        function onScroll() {
+            const st = scrollEl.scrollTop;
+            const vh = scrollEl.clientHeight;
+            const start = Math.max(0, Math.floor(st / rowH) - OVERSCAN);
+            const end = Math.min(funcRows.length, Math.ceil((st + vh) / rowH) + OVERSCAN);
+            renderRows(start, end);
+
+            const offset = (start * rowH) - st;
+            vContentEl.style.transform = `translateY(${offset}px)`;
+        }
+
+        function renderRows(start, end) {
+            let html = '';
+            for (let i = start; i < end; i++) {
+                const row = funcRows[i];
+                const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
+                let content = '';
+                for (const t of row.tokens) {
+                    const hashes = t.hash_list.join(' ');
+                    const featClasses = t.hash_list.map(h => `feat-${h}`).join(' ');
+
+                    content += `<span class="token token-${t.type} ${t.diff_class} ${t.has_features ? 'feature-highlight' : ''} ${featClasses}" ` +
+                        `data-idx="${t.global_idx}" data-hashes="${hashes}">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                }
+                html += `<div class="code-line ${isTarget ? 'target-highlight' : ''}">
+                    <div class="gutter"><div class="line-num">${row.line_idx}</div></div>
+                    <div class="line-content">${content}</div>
+                </div>`;
+            }
+            vContentEl.innerHTML = html;
+            applyLocks();
+        }
+
+        function findToken(e) {
+            const path = e.composedPath ? e.composedPath() : [];
+            for (const el of path) {
+                if (el instanceof Element && el.classList.contains('token')) return el;
+            }
+            return null;
+        }
+
+        function handleHoverMove(e, state) {
+            const token = findToken(e);
+            if (!token) return;
+
+            const hashes = token.getAttribute('data-hashes');
+            if (hashes) setHighlight(hashes, state, token);
+
+            if (state) {
+                const idx = token.getAttribute('data-idx');
+                const data = funcTips[idx];
+                if (data) {
+                    let h = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<hr>`;
+                    for (const f of data[2]) {
+                        h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
+                    }
+                    tooltipEl.innerHTML = h;
+                    tooltipEl.style.display = 'block';
+                    tooltipEl.style.left = (e.clientX + 15) + "px";
+                    tooltipEl.style.top = (e.clientY + 15) + "px";
+                }
+            } else {
+                tooltipEl.style.display = 'none';
+            }
+        }
+
+        function setHighlight(hashString, state, target) {
+            if (!hashString) return;
+            const hashes = hashString.trim().split(/\s+/);
+            hashes.forEach(h => {
+                if (!state && window.lockedHashes.has(h)) return;
+                document.querySelectorAll('.feat-' + h).forEach(el => {
+                    el.classList.toggle('bsim-group-active-unique', state);
+                });
+            });
+        }
+
+        function toggleLock(hashString, target) {
+            if (!hashString) return;
+            const hashes = hashString.trim().split(/\s+/);
+            const isAlreadyLocked = hashes.some(h => window.lockedHashes.has(h));
+
+            document.querySelectorAll('.feature-locked, .bsim-group-active-unique').forEach(el => {
+                el.classList.remove('feature-locked', 'bsim-group-active-unique');
+            });
+            window.lockedHashes.clear();
+
+            if (!isAlreadyLocked) {
+                hashes.forEach(h => {
+                    window.lockedHashes.add(h);
+                    document.querySelectorAll('.feat-' + h).forEach(el => {
+                        el.classList.add('feature-locked', 'bsim-group-active-unique');
+                    });
+                });
+            }
+        }
+
+        function applyLocks() {
+            window.lockedHashes.forEach(h => {
+                vContentEl.querySelectorAll('.feat-' + h).forEach(el => {
+                    el.classList.add('feature-locked', 'bsim-group-active-unique');
+                });
+            });
+        }
+
+        // fetchData(); // This call is not needed here as init() already handles data loading.
+
+        function addToDiff(funcId, btn, name) {
+            if (window.parent && window.parent !== window && typeof window.parent.addToDiff === 'function') {
+                window.parent.addToDiff(funcId, name);
+                btn.innerHTML = '<span>✓</span> Added to Queue';
+                btn.style.color = '#a6e22e';
+                btn.style.borderColor = 'rgba(166,226,46,0.3)';
+                btn.style.background = 'rgba(166,226,46,0.1)';
+                btn.disabled = true;
+            } else {
+                // Standalone mode: sync via localStorage
+                try {
+                    let queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                    const existing = queue.findIndex(item => item.id === funcId);
+                    if (existing !== -1) {
+                        queue.splice(existing, 1);
+                        btn.innerHTML = '<span>+</span> Add to Diff';
+                        btn.style.color = ''; btn.style.borderColor = ''; btn.style.background = '';
+                    } else {
+                        queue.push({ id: funcId, name: name });
+                        if (queue.length > 2) queue.shift();
+                        btn.innerHTML = '<span>✓</span> Queued (Tab Sync)';
+                        btn.style.color = '#a6e22e';
+                        btn.style.borderColor = 'rgba(166,226,46,0.3)';
+                        btn.style.background = 'rgba(166,226,46,0.1)';
+                    }
+                    localStorage.setItem('bsim_diff_queue', JSON.stringify(queue));
+                    updateDiffQueueUI();
+                } catch (e) {
+                    console.error("Standalone diff queue error", e);
+                }
+            }
+        }
+
+        function loadDiffQueue() {
+            if (window.parent && window.parent !== window) return;
+            const bar = document.getElementById('standalone-diff-bar');
+            bar.style.display = 'flex';
+            updateDiffQueueUI();
+        }
+
+        function updateDiffQueueUI() {
+            if (window.parent && window.parent !== window) return;
+            const status = document.getElementById('standalone-diff-status');
+            const btn = document.getElementById('standalone-diff-btn');
+
+            try {
+                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                if (queue.length === 0) {
+                    status.innerHTML = '<span class="dim">Diff Queue is empty. Select functions to compare.</span>';
+                    btn.style.display = 'none';
+                } else if (queue.length === 1) {
+                    status.innerHTML = `<span>1/2 Ready: <b>${queue[0].name}</b></span>`;
+                    btn.style.display = 'none';
+                } else {
+                    status.innerHTML = `<span style="color:var(--success)">2/2 Ready: <b>${queue[0].name}</b> vs <b>${queue[1].name}</b></span>`;
+                    btn.style.display = 'block';
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        function openStandaloneDiff() {
+            try {
+                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                if (queue.length < 2) return;
+                window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
+
+                // Clear queue after opening in new tab
+                localStorage.setItem('bsim_diff_queue', '[]');
+                updateDiffQueueUI();
+            } catch (e) { console.error(e); }
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'bsim_diff_queue') updateDiffQueueUI();
+        });
+
+        init();
+        loadDiffQueue();
+    </script>
+</body>
+
+</html>

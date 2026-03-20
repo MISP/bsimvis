@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Function Features Browser</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 15px;
+            font-family: 'Inter', sans-serif;
+            overflow-y: auto;
+            height: auto;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 10px;
+        }
+
+        .header h1 {
+            color: var(--accent);
+            margin: 0;
+            font-size: 1.2rem;
+        }
+
+        .feature-table-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        th {
+            background: #000;
+            color: var(--accent);
+            text-transform: uppercase;
+            font-size: 0.65rem;
+            letter-spacing: 0.5px;
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 2px solid var(--border);
+        }
+
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--card-bg);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .btn-diff-action {
+            background: rgba(102, 217, 239, 0.1);
+            color: #66d9ef;
+            border: 1px solid rgba(102, 217, 239, 0.3);
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn-diff-action:hover {
+            background: rgba(102, 217, 239, 0.2);
+            border-color: #66d9ef;
+            transform: translateY(-1px);
+        }
+
+        .btn-diff-action:disabled {
+            opacity: 0.6;
+            cursor: default;
+            transform: none;
+        }
+
+        /* Standalone Diff Bar */
+        .standalone-diff-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #111;
+            border-top: 2px solid var(--accent);
+            padding: 10px 20px;
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.6);
+            z-index: 1000;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(100%); }
+            to { transform: translateY(0); }
+        }
+
+        .diff-status-text {
+            color: var(--accent);
+            font-size: 0.85rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-compare {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-compare:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+        
+        body { padding-bottom: 60px; } /* Space for bar */
+
+        tr:hover {
+            background: var(--hover);
+        }
+
+        .hash-badge {
+            font-family: 'Consolas', monospace;
+            color: #ae81ff;
+            background: rgba(174, 129, 255, 0.1);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 0.75rem;
+        }
+
+        .hash-badge:hover {
+            background: rgba(174, 129, 255, 0.3);
+            border: 1px solid #ae81ff;
+            color: #fff;
+        }
+
+        .type-badge {
+            color: var(--accent);
+            font-weight: bold;
+            font-size: 0.7rem;
+        }
+
+        .pcode-badge {
+            background: #f92672;
+            color: #000;
+            font-weight: bold;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            font-family: monospace;
+        }
+
+        .pcode-cell {
+            color: var(--subtle);
+            font-family: 'Consolas', monospace;
+            font-size: 0.7rem;
+            max-width: 250px;
+            word-break: break-all;
+        }
+
+        .code-cell {
+            background: #272822;
+            /* Monokai Code */
+            padding: 5px !important;
+            border-radius: 4px;
+        }
+
+        .token-variable {
+            color: #f92672;
+        }
+
+        .token-func_call {
+            color: #66d9ef;
+        }
+
+        .token-type {
+            color: #ae81ff;
+        }
+
+        .token-keyword {
+            color: #f92672;
+        }
+
+        .token-comment {
+            color: #75715e;
+        }
+
+        .token-string {
+            color: #e6db74;
+        }
+
+        .token-number {
+            color: #ae81ff;
+        }
+
+        .loader {
+            text-align: center;
+            padding: 30px;
+            font-size: 1rem;
+            color: var(--accent);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+        <div>
+            <h1>Features for Function: <span id="func-id" style="color:var(--accent)">...</span></h1>
+            <div id="feature-count" class="dim">0 features</div>
+        </div>
+        <button id="add-diff-btn" class="btn-diff-action" onclick="addToDiff(window.featureId, this, window.featureName)">
+            <span>+</span> Add to Diff Queue
+        </button>
+    </div>
+
+    <div id="standalone-diff-bar" class="standalone-diff-bar">
+        <div id="standalone-diff-status" class="diff-status-text"></div>
+        <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions →</button>
+    </div>
+
+        <div class="feature-table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 150px;">Hash</th>
+                        <th style="width: 80px;">Type</th>
+                        <th style="width: 80px;">PCode Op</th>
+                        <th style="width: 200px;">PCode Context</th>
+                        <th style="width: 80px;">TF</th>
+                        <th>Source Context</th>
+                    </tr>
+                </thead>
+                <tbody id="features-body">
+                    <tr>
+                        <td colspan="6" class="loader">Loading features...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+        <div id="bsim-tooltip"></div>
+
+        <script>
+        function normalizeFuncId(id) {
+            if (!id || typeof id !== 'string') return id;
+            if (id.includes(':function:')) return id;
+            
+            // Pattern for raw BSim ID: collection:#md5::funcName:@addr
+            const parts = id.split(':');
+            if (parts.length >= 4) {
+                const addrPart = parts.pop();
+                const funcPart = parts.pop();
+                const emptyPart = parts.pop();
+                const md5Part = parts.pop();
+                const colPart = parts.join(':');
+                
+                if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
+                    const cleanAddr = addrPart.substring(1);
+                    const cleanMd5 = md5Part.substring(1);
+                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
+                }
+            }
+            return id;
+        }
+
+        const API_URL = "/api/function/features";
+        const params = new URLSearchParams(window.location.search);
+        const id = normalizeFuncId(params.get('id'));
+        window.featureId = id;
+        const tooltipEl = document.getElementById('bsim-tooltip');
+        window.globalTips = {};
+
+        if (id) {
+            document.getElementById('func-id').innerText = id;
+            loadFeatures();
+        }
+
+        async function loadFeatures() {
+            try {
+                const res = await fetch(`/api/function/features?id=${encodeURIComponent(id)}`);
+                const data = await res.json();
+                window.globalTips = data.tips || {};
+                
+                // Determine function name for diff display
+                let name = id.split(':').pop();
+                if (data.features && data.features.length > 0) {
+                    // Try to get name from the first feature's context if available, 
+                    // though usually the ID parts are more reliable.
+                }
+                window.featureName = name;
+
+                renderFeatures(data.features || []);
+                document.getElementById('feature-count').innerText = `${data.features ? data.features.length : 0} features`;
+            } catch (err) {
+                document.getElementById('features-body').innerHTML = `<tr><td colspan="6" style="color:var(--accent); padding:20px;">Error: ${err.message}</td></tr>`;
+            }
+        }
+
+        function handleHoverMove(e, show) {
+            if (!show) {
+                tooltipEl.style.display = 'none';
+                return;
+            }
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+
+            const idx = token.dataset.idx;
+            const data = window.globalTips[idx];
+            if (!data) return;
+
+            let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+            
+            data[2].forEach(f => {
+                const color = f[8] || 'var(--accent)';
+                html += `<div style="margin-bottom:8px;">
+                    <div style="font-family:monospace; color:${color}; font-weight:bold;">${f[0]}</div>
+                    <div style="font-size:0.7rem; color:var(--subtle);">${f[3]} | Op: ${f[1]} | <b style="color:var(--success)">TF: ${f[7] || 0}</b></div>
+                </div>`;
+            });
+
+            tooltipEl.innerHTML = html;
+            tooltipEl.style.display = 'block';
+            tooltipEl.style.left = (e.clientX + 15) + "px";
+            tooltipEl.style.top = (e.clientY + 15) + "px";
+            
+            const rect = tooltipEl.getBoundingClientRect();
+            if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
+            if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
+        }
+
+        document.addEventListener('mousemove', e => {
+            if (tooltipEl.style.display === 'block') {
+                const x = e.clientX + 15;
+                const y = e.clientY + 15;
+                tooltipEl.style.left = x + "px";
+                tooltipEl.style.top = y + "px";
+                
+                const rect = tooltipEl.getBoundingClientRect();
+                if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
+                if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
+            }
+        });
+
+        function renderFeatures(features) {
+            const body = document.getElementById('features-body');
+            body.innerHTML = '';
+            window.featureMeta = {};
+
+            if (features.length === 0) {
+                body.innerHTML = '<tr><td colspan="6" class="dim" style="padding:20px;">No features found.</td></tr>';
+                return;
+            }
+
+            features.forEach(f => {
+                window.featureMeta[f.hash] = {
+                    type: f.type || 'N/A',
+                    op: f['pcode-op'] || 'feat',
+                    tf: f.tf || 0
+                };
+                const tr = document.createElement('tr');
+
+                // Code Context
+                let codeHtml = '<div class="dim">---</div>';
+                if (f.context_lines && f.context_lines.length > 0) {
+                    codeHtml = '';
+                    f.context_lines.forEach(row => {
+                        let rowHtml = `<div class="code-line" style="height:auto; line-height:1.3; font-size:0.75rem;">
+                            <div class="gutter" style="min-width:30px; background:transparent; border:none; opacity:0.3;"><div class="line-num" style="width:20px; font-size:0.65rem; text-align:right;">${row.line_idx}</div></div>
+                            <div class="line-content" style="padding-left:8px;">`;
+
+                        row.tokens.forEach(t => {
+                            const colorMap = {
+                                'variable': '#f92672', 'func_call': '#66d9ef', 'type': '#ae81ff',
+                                'keyword': '#f92672', 'comment': '#75715e', 'string': '#e6db74', 'number': '#ae81ff'
+                            };
+                            const color = colorMap[t.type] || '#f8f8f2';
+                            const hasFeatures = t.hash_list && t.hash_list.length > 0;
+                            const highlightClass = hasFeatures ? 'feature-highlight' : '';
+                            const hashes = (t.hash_list || []).join(' ');
+
+                            rowHtml += `<span class="token ${highlightClass}" style="color:${color}" 
+                                data-hashes="${hashes}" data-idx="${t.global_idx}"
+                                onmouseenter="handleHoverMove(event, true)" onmouseleave="handleHoverMove(event, false)">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                        });
+
+                        rowHtml += `</div></div>`;
+                        codeHtml += rowHtml;
+                    });
+                }
+                const currentCollection = params.get('collection') || id.split(':')[0];
+                tr.innerHTML = `
+                    <td>
+                        <a href="/feature/index.html?collection=${encodeURIComponent(currentCollection)}&hash=${encodeURIComponent(f.hash)}" 
+                        style="text-decoration: none;">
+                            <span class="hash-badge" style="cursor: pointer;">${f.hash}</span>
+                        </a>
+                    </td>
+                    <td><span class="type-badge" style="color:var(--accent); font-weight:bold; font-size:0.75rem;">${f.type || 'N/A'}</span></td>
+                    <td><span class="pcode-badge">${f['pcode-op'] || 'feat'}</span></td>
+                    <td class="pcode-cell">${f['pcode-op-full'] || 'N/A'}</td>
+                    <td class="dim" style="font-size:0.75rem;">${f.tf || 'N/A'}</td>
+                    <td class="code-cell">${codeHtml}</td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        function showTokenContextMenu(e) {
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+            e.preventDefault();
+
+            const idx = token.dataset.idx;
+            const data = window.globalTips[idx];
+            if (!data || !data[2]) return;
+
+            const collection = id.split(':')[0] || 'main';
+
+            let menu = document.getElementById('token-context-menu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'token-context-menu';
+                menu.className = 'context-menu';
+                document.body.appendChild(menu);
+            }
+
+            let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
+            data[2].forEach(f => {
+                const hash = f[0], op = f[1], type = f[3], tf = f[7] || 0, color = f[8] || 'var(--accent)';
+                html += `<div class="context-menu-item" data-hash="${hash}" data-col="${collection}">
+                    <div class="context-menu-icon" style="color:${color}">🔍</div>
+                    <div style="flex:1">
+                        <div style="font-family:monospace; font-weight:bold; color:${color}">${hash}</div>
+                        <div style="font-size:0.75rem; color:var(--subtle); margin-top:2px;">${type} | Op: ${op} | <b style="color:var(--success)">TF: ${tf}</b></div>
+                    </div>
+                </div>`;
+            });
+
+            menu.innerHTML = html;
+            menu.style.display = 'block';
+            let x = e.clientX, y = e.clientY;
+            if (x + 350 > window.innerWidth) x -= 350;
+            if (y + (data[2].length * 52 + 50) > window.innerHeight) y -= (data[2].length * 52 + 50);
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+
+            const onMenuClick = (me) => {
+                const item = me.target.closest('.context-menu-item');
+                if (item) {
+                     const h = item.dataset.hash;
+                     const c = item.dataset.col;
+                     if (window.parent && window.parent !== window && typeof window.parent.showGlobalFeaturePanel === 'function') {
+                        window.parent.showGlobalFeaturePanel(h, c);
+                     } else {
+                        window.location.href = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
+                     }
+                }
+                closeMenu();
+            };
+            const closeMenu = () => {
+                menu.style.display = 'none';
+                menu.removeEventListener('click', onMenuClick);
+                document.removeEventListener('mousedown', closeGlobal);
+            };
+            const closeGlobal = (me) => { if (!menu.contains(me.target)) closeMenu(); };
+            setTimeout(() => {
+                menu.addEventListener('click', onMenuClick);
+                document.addEventListener('mousedown', closeGlobal);
+            }, 10);
+        }
+
+        function addToDiff(funcId, btn, name) {
+            const normalizedId = normalizeFuncId(funcId);
+            if (window.parent && window.parent !== window && typeof window.parent.addToDiff === 'function') {
+                window.parent.addToDiff(normalizedId, name);
+                btn.innerHTML = '<span>✓</span> Added to Queue';
+                btn.style.color = '#a6e22e';
+                btn.style.borderColor = 'rgba(166,226,46,0.3)';
+                btn.style.background = 'rgba(166,226,46,0.1)';
+                btn.disabled = true;
+            } else {
+                // Standalone mode: sync via localStorage
+                try {
+                    let queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                    const existing = queue.findIndex(item => item.id === normalizedId);
+                    if (existing !== -1) {
+                        queue.splice(existing, 1);
+                        btn.innerHTML = '<span>+</span> Add to Diff Queue';
+                        btn.style.color = ''; btn.style.borderColor = ''; btn.style.background = '';
+                    } else {
+                        queue.push({ id: normalizedId, name: name });
+                        if (queue.length > 2) queue.shift();
+                        btn.innerHTML = '<span>✓</span> Queued (Tab Sync)';
+                        btn.style.color = '#a6e22e';
+                        btn.style.borderColor = 'rgba(166,226,46,0.3)';
+                        btn.style.background = 'rgba(166,226,46,0.1)';
+                    }
+                    localStorage.setItem('bsim_diff_queue', JSON.stringify(queue));
+                    updateDiffQueueUI();
+                } catch (e) {
+                    console.error("Standalone diff queue error", e);
+                }
+            }
+        }
+
+        function loadDiffQueue() {
+            if (window.parent && window.parent !== window) return;
+            const bar = document.getElementById('standalone-diff-bar');
+            bar.style.display = 'flex';
+            updateDiffQueueUI();
+        }
+
+        function updateDiffQueueUI() {
+            if (window.parent && window.parent !== window) return;
+            const status = document.getElementById('standalone-diff-status');
+            const btn = document.getElementById('standalone-diff-btn');
+            
+            try {
+                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                if (queue.length === 0) {
+                    status.innerHTML = '<span class="dim">Diff Queue is empty. Select functions to compare.</span>';
+                    btn.style.display = 'none';
+                } else if (queue.length === 1) {
+                    status.innerHTML = `<span>1/2 Ready: <b>${queue[0].name}</b></span>`;
+                    btn.style.display = 'none';
+                } else {
+                    status.innerHTML = `<span style="color:var(--success)">2/2 Ready: <b>${queue[0].name}</b> vs <b>${queue[1].name}</b></span>`;
+                    btn.style.display = 'block';
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        function openStandaloneDiff() {
+            try {
+                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                if (queue.length < 2) return;
+                window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
+                
+                // Clear queue after opening in new tab
+                localStorage.setItem('bsim_diff_queue', '[]');
+                updateDiffQueueUI();
+            } catch (e) { console.error(e); }
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'bsim_diff_queue') updateDiffQueueUI();
+        });
+
+        document.addEventListener('contextmenu', e => {
+            if (e.target.closest('.feature-highlight')) {
+                showTokenContextMenu(e);
+            }
+        });
+
+        loadDiffQueue();
+    </script>
+</body>
+
+</html>

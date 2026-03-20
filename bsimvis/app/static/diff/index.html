@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BSim Aligned Diff</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+
+    <div id="meta-container">
+        <!-- Injected via JS -->
+    </div>
+
+    <div id="loader">Fetching Diff Data...</div>
+
+    <div id="bsim-scroll" style="display: none;">
+        <div id="bsim-vheight" style="position:absolute; width:1px; top:0; left:0; z-index:-1;"></div>
+        <div id="bsim-sticky">
+            <div class="diff-pane">
+                <div id="bsim-left-content" class="bsim-vcontent c-code-container"></div>
+            </div>
+            <div class="diff-pane">
+                <div id="bsim-right-content" class="bsim-vcontent c-code-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="bsim-tooltip"></div>
+
+    <script>
+        const API_URL = "http://localhost:8000/api/diff";
+
+
+        window.lockedHashes = new Set();
+        let tooltipEl = null;
+
+        // Data Globals
+        window.bsimRows = [];
+        window.tokenTipsL = {};
+        window.tokenTipsR = {};
+
+        function ensureTooltip() {
+            if (!tooltipEl) tooltipEl = document.getElementById("bsim-tooltip");
+            return tooltipEl;
+        }
+
+        function showTooltip(html, x, y) {
+            const el = ensureTooltip();
+            if (!el) return;
+            el.innerHTML = html;
+            el.style.display = "block";
+            el.style.left = (x + 12) + "px";
+            el.style.top = (y + 12) + "px";
+        }
+
+        function hideTooltip() {
+            const el = ensureTooltip();
+            if (el) el.style.display = "none";
+        }
+
+        function moveTooltip(x, y) {
+            const el = ensureTooltip();
+            if (!el || el.style.display === "none") return;
+            el.style.left = (x + 12) + "px";
+            el.style.top = (y + 12) + "px";
+        }
+
+        function getHashesForToken(token) {
+            if (!token) return "";
+            const side = token.dataset.side;
+            const idx = token.dataset.idx;
+            if (!side || !idx) return "";
+            const data = side === 'l' ? window.tokenTipsL?.[idx] : window.tokenTipsR?.[idx];
+            if (data && data[2]) {
+                return data[2].map(f => f[0]).join(' ');
+            }
+            return "";
+        }
+
+        function getHtmlForTooltip(token) {
+            if (!token) return "";
+            const side = token.dataset.side;
+            const idx = token.dataset.idx;
+            if (!side || !idx) return "";
+            const data = side === 'l' ? window.tokenTipsL?.[idx] : window.tokenTipsR?.[idx];
+            if (data) {
+                let html = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<br><b>Idx:</b> ${idx}`;
+                for (const f of data[2]) {
+                    html += `<hr><b style='color:${f[8]}'>${f[0]}</b><br>Op: ${f[1]}<br>OpFull: ${f[2]}<br>Type: ${f[3]}<br>Seq: ${f[4]}<br>Addr: ${f[5]}<br>Line idx: ${f[6]}<br><b>TF:</b> ${f[7]}`;
+                }
+                return html;
+            }
+            return "";
+        }
+
+        const findInPath = (event, selector) => {
+            const path = event.composedPath ? event.composedPath() : [];
+            for (const el of path) {
+                if (el instanceof Element && el.matches(selector)) {
+                    return el;
+                }
+            }
+            return null;
+        };
+
+        window.clearAllLocks = function () {
+            document.querySelectorAll('.feature-locked, .bsim-group-active-match, .bsim-group-active-unique').forEach(el => {
+                el.classList.remove('feature-locked', 'bsim-group-active-match', 'bsim-group-active-unique');
+            });
+            window.lockedHashes.clear();
+        };
+
+        window.toggleLock = function (hashString, target) {
+            if (!hashString || !target) return;
+            const hashes = hashString.trim().split(/\s+/);
+            const isAlreadyLocked = hashes.some(h => window.lockedHashes.has(h));
+            window.clearAllLocks();
+            if (!isAlreadyLocked) {
+                hashes.forEach(h => {
+                    window.lockedHashes.add(h);
+                    document.querySelectorAll('.feat-' + h).forEach(el => {
+                        el.classList.add('feature-locked');
+                        const activeClass = el.classList.contains('diff-match') ? 'bsim-group-active-match' : 'bsim-group-active-unique';
+                        el.classList.add(activeClass);
+                    });
+                });
+            }
+        };
+
+        function showTokenContextMenu(e) {
+            const token = findInPath(e, '.feature-highlight');
+            if (!token) return;
+            e.preventDefault();
+
+            const side = token.dataset.side;
+            const idx = token.dataset.idx;
+            const data = side === 'l' ? window.tokenTipsL?.[idx] : window.tokenTipsR?.[idx];
+            if (!data || !data[2]) return;
+
+            let menu = document.getElementById('token-context-menu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'token-context-menu';
+                menu.className = 'context-menu';
+                document.body.appendChild(menu);
+            }
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const id1 = urlParams.get('id1') || '';
+            const collection = id1.split(':')[0] || 'main';
+
+            let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
+            data[2].forEach(f => {
+                const hash = f[0];
+                const op = f[1];
+                const type = f[3];
+                const tf = f[7] || 0;
+                const color = f[8] || 'var(--accent)';
+                
+                html += `<div class="context-menu-item" data-hash="${hash}" data-col="${collection}">
+                    <div class="context-menu-icon" style="color:${color}">🔍</div>
+                    <div style="flex:1">
+                        <div style="font-family:monospace; font-weight:bold; color:${color}">${hash}</div>
+                        <div style="font-size:0.7rem; color:var(--subtle); margin-top:2px;">
+                            ${type} | Op: ${op} | <b style="color:var(--success)">TF: ${tf}</b>
+                        </div>
+                    </div>
+                </div>`;
+            });
+
+            menu.innerHTML = html;
+            menu.style.display = 'block';
+            let x = e.clientX, y = e.clientY;
+            if (x + 350 > window.innerWidth) x -= 350;
+            if (y + (data[2].length * 52 + 40) > window.innerHeight) y -= (data[2].length * 52 + 40);
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+
+            const onMenuClick = (me) => {
+                const item = me.target.closest('.context-menu-item');
+                if (item) {
+                    const h = item.dataset.hash;
+                    const c = item.dataset.col;
+                    const url = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
+
+                    if (me.ctrlKey || me.metaKey) {
+                        window.open(url, '_blank');
+                    } else if (window.parent && window.parent !== window && typeof window.parent.showGlobalFeaturePanel === 'function') {
+                        window.parent.showGlobalFeaturePanel(h, c);
+                    } else {
+                        window.location.href = url;
+                    }
+                }
+                closeMenu();
+            };
+
+            const closeMenu = () => {
+                menu.style.display = 'none';
+                menu.removeEventListener('click', onMenuClick);
+                document.removeEventListener('mousedown', closeGlobal);
+            };
+
+            const closeGlobal = (me) => {
+                if (!menu.contains(me.target)) closeMenu();
+            };
+
+            setTimeout(() => {
+                menu.addEventListener('click', onMenuClick);
+                document.addEventListener('mousedown', closeGlobal);
+            }, 10);
+        }
+
+        window.setHighlight = function (hashString, state, target) {
+            if (!hashString || !target) return;
+            const hashes = hashString.trim().split(/\s+/);
+            hashes.forEach(h => {
+                if (!state && window.lockedHashes.has(h)) return;
+                document.querySelectorAll('.feat-' + h).forEach(el => {
+                    const activeClass = el.classList.contains('diff-match') ? 'bsim-group-active-match' : 'bsim-group-active-unique';
+                    el.classList.toggle(activeClass, state);
+                });
+            });
+        };
+
+        window.setChunkHighlight = function (chunkId, state, target) {
+            if (chunkId === undefined || !target) return;
+            document.querySelectorAll('.chunk-' + chunkId).forEach(el => {
+                el.classList.toggle('chunk-hover-active', state);
+            });
+        };
+
+        const handleHover = (event, state) => {
+            const token = findInPath(event, '.feature-highlight');
+            const tooltipTarget = findInPath(event, '[data-side]');
+
+            if (token) {
+                const hashes = getHashesForToken(token);
+                if (hashes) window.setHighlight(hashes, state, token);
+            }
+
+            if (tooltipTarget) {
+                if (state) {
+                    const html = getHtmlForTooltip(tooltipTarget);
+                    if (html) showTooltip(html, event.clientX, event.clientY);
+                } else {
+                    hideTooltip();
+                }
+            }
+
+            const chunk = findInPath(event, '[data-chunk-id]');
+            if (chunk && chunk.dataset.chunkId !== undefined) {
+                window.setChunkHighlight(chunk.dataset.chunkId, state, chunk);
+            }
+        };
+
+        // --- Virtual Scroll Engine ---
+        const OVERSCAN = 20;
+        const DEFAULT_ROW_H = 24;
+        const SPACER = '<div class="code-spacer"></div>';
+
+        let rowH = DEFAULT_ROW_H;
+        let scrollEl, vHeightEl, leftContent, rightContent;
+        let lastStart = -1, lastEnd = -1;
+
+        function applyLocks(container) {
+            if (!window.lockedHashes || !window.lockedHashes.size) return;
+            window.lockedHashes.forEach(h => {
+                container.querySelectorAll('.feat-' + h).forEach(el => {
+                    el.classList.add('feature-locked');
+                    el.classList.add(el.classList.contains('diff-match') ? 'bsim-group-active-match' : 'bsim-group-active-unique');
+                });
+            });
+        }
+
+        function renderSideHtml(sideData) {
+            if (!sideData) return SPACER;
+
+            const { chunk_class, chunk_id, line_idx, tooltip_text, tokens } = sideData;
+            const data_attrs = `data-chunk-id="${chunk_id}"`;
+
+            let content = '';
+            for (const token of tokens) {
+                const feat_classes = token.hash_list.map(h => `feat-${h}`).join(' ');
+                const t_text = token.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                content += `<span class="token token-${token.type} ` +
+                    `${token.has_features ? "feature-highlight" : ""} ` +
+                    `${token.diff_class} ${feat_classes}" ` +
+                    `data-side="${token.side}" data-idx="${token.global_idx}">` +
+                    `${t_text}</span>`;
+            }
+
+            return `<div class="code-line ${chunk_class}" ${data_attrs}>` +
+                `<div class="gutter"><div class="line-num" title="${tooltip_text}">${line_idx}</div></div>` +
+                `<div class="line-content">${content}</div></div>`;
+        }
+
+        function renderRows(start, end) {
+            if (start === lastStart && end === lastEnd) return;
+            lastStart = start; lastEnd = end;
+
+            const rows = window.bsimRows || [];
+            let lHtml = '', rHtml = '';
+
+            for (let i = start; i < end; i++) {
+                const row = rows[i];
+                lHtml += (row && row.l) ? renderSideHtml(row.l) : SPACER;
+                rHtml += (row && row.r) ? renderSideHtml(row.r) : SPACER;
+            }
+
+            leftContent.innerHTML = lHtml;
+            rightContent.innerHTML = rHtml;
+            applyLocks(leftContent);
+            applyLocks(rightContent);
+        }
+
+        function onScroll() {
+            const rows = window.bsimRows || [];
+            const st = scrollEl.scrollTop;
+            const vh = scrollEl.clientHeight;
+            const start = Math.max(0, Math.floor(st / rowH) - OVERSCAN);
+            const end = Math.min(rows.length, Math.ceil((st + vh) / rowH) + OVERSCAN);
+            renderRows(start, end);
+
+            const offset = (start * rowH) - st;
+            leftContent.style.transform = `translateY(${offset}px)`;
+            rightContent.style.transform = `translateY(${offset}px)`;
+        }
+
+        function initVirtualScroll() {
+            scrollEl = document.getElementById('bsim-scroll');
+            vHeightEl = document.getElementById('bsim-vheight');
+            leftContent = document.getElementById('bsim-left-content');
+            rightContent = document.getElementById('bsim-right-content');
+
+            // Reset scroll position and heights
+            scrollEl.scrollTop = 0;
+            lastStart = -1;
+            lastEnd = -1;
+
+            const rows = window.bsimRows || [];
+            vHeightEl.style.height = (rows.length * rowH) + 'px';
+
+            // Ensure listeners are bound exactly once
+            if (!scrollEl.dataset.listenersAttached) {
+                scrollEl.addEventListener('scroll', onScroll, { passive: true });
+                scrollEl.addEventListener('pointerover', e => handleHover(e, true), true);
+                scrollEl.addEventListener('pointerout', e => handleHover(e, false), true);
+                scrollEl.addEventListener('contextmenu', showTokenContextMenu, true);
+                scrollEl.addEventListener('click', function (event) {
+                    const target = event.composedPath ? event.composedPath()[0] : event.target;
+                    const tokenTarget = target?.closest?.('.feature-highlight');
+                    if (tokenTarget) {
+                        const hashes = getHashesForToken(tokenTarget);
+                        if (hashes) window.toggleLock(hashes, tokenTarget);
+                    } else {
+                        window.clearAllLocks();
+                    }
+                }, true);
+                scrollEl.addEventListener('pointermove', e => moveTooltip(e.clientX, e.clientY));
+                scrollEl.dataset.listenersAttached = "true";
+            }
+
+            onScroll();
+
+            requestAnimationFrame(() => {
+                const sample = leftContent.querySelector('.code-line, .code-spacer');
+                if (sample) {
+                    const measuredH = sample.getBoundingClientRect().height;
+                    if (measuredH > 0 && Math.abs(measuredH - rowH) > 1) {
+                        rowH = measuredH;
+                        vHeightEl.style.height = (rows.length * rowH) + 'px';
+                    }
+                }
+                lastStart = -1; lastEnd = -1;
+                onScroll();
+            });
+        }
+
+        // --- Application Logic ---
+        function formatMetaCard(m, fullId, isLeft) {
+            if (!m) return "";
+            const label = m['function-name'] || 'unknown_func';
+            const returnType = m['return-type'] || 'N/A';
+            const addr = fullId ? fullId.split(':').pop() : 'N/A';
+            const fileName = m['file-name'] || 'N/A';
+            const lang = m['language-id'] || 'N/A';
+
+            const swapIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>`;
+            const swapBtnHtml = isLeft ? `<button class="swap-btn" id="swap-btn" title="Swap Sides">${swapIcon}</button>` : '';
+
+            // Extract tags for default display
+            const tags = (m['tags'] || []);
+            const tagsHtml = tags.length > 0 ? tags.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
+
+            // Generate "More Info" rows for all other keys (excluding what we show by default)
+            const skipKeys = ['function-name', 'return-type', 'entrypoint-address', 'file-name', 'language-id', 'full-id', 'tags'];
+            let moreHtml = '';
+            Object.keys(m).sort().forEach(k => {
+                if (!skipKeys.includes(k)) {
+                    let val = m[k];
+                    if (Array.isArray(val)) {
+                        val = val.map(t => `<span class="tag-card">${t}</span>`).join('');
+                    } else if (typeof val === 'object' && val !== null) {
+                        val = JSON.stringify(val);
+                    }
+                    moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value">${val}</span></div>`;
+                }
+            });
+
+            return `
+            <div class="func-meta-card" data-side="${isLeft ? 'l' : 'r'}">
+                <span class="meta-title">
+                    <div style="display:flex; align-items:center; gap:8px">
+                        <span><span class="meta-return-type">${returnType}</span> ${label}</span>
+                        <button class="meta-more-btn" onclick="toggleBothDetail()">Details</button>
+                        <a href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" class="meta-more-btn" style="text-decoration:none; display:inline-flex; align-items:center;">Code ↗</a>
+                    </div>
+                    ${swapBtnHtml}
+                </span>
+                <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
+                <div class="meta-row"><span class="meta-label">File</span><span class="meta-value">${fileName}</span></div>
+                <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
+                <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml}</span></div>
+                
+                <div class="meta-more-container" id="meta-more-${isLeft ? 'l' : 'r'}">
+                    ${moreHtml}
+                </div>
+            </div>
+        `;
+        }
+
+        async function fetchData() {
+            const urlParams = new URLSearchParams(window.location.search);
+            let id1 = urlParams.get('id1');
+            let id2 = urlParams.get('id2');
+
+            if (!id1 || !id2) {
+                // Default demo IDs for easier testing
+                id1 = "test:function:62425251d256c09cdd3c3121701a5c73:00411e6c";
+                id2 = "test:function:cf7ecde5dde926e0245f6ffdca9ddd47:00411bac";
+                urlParams.set('id1', id1);
+                urlParams.set('id2', id2);
+                window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
+            }
+
+            const loader = document.getElementById('loader');
+            const scrollContainer = document.getElementById('bsim-scroll');
+            const metaContainer = document.getElementById('meta-container');
+
+            loader.style.display = 'block';
+            scrollContainer.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_URL}?id1=${id1}&id2=${id2}`);
+                if (!response.ok) throw new Error("API Network error");
+                const data = await response.json();
+
+                metaContainer.innerHTML = formatMetaCard(data.meta1, id1, true) + formatMetaCard(data.meta2, id2, false);
+
+                window.bsimRows = data.rows;
+                window.tokenTipsL = data.left_tips || {};
+                window.tokenTipsR = data.right_tips || {};
+
+                scrollContainer.style.display = 'flex';
+                initVirtualScroll();
+            } catch (e) {
+                console.error(e);
+                metaContainer.innerHTML = `<div style="color:red; padding:20px;">Failed to fetch diff data format from API. Ensure server is running.</div>`;
+            } finally {
+                loader.style.display = 'none';
+            }
+        }
+
+        window.toggleBothDetail = function () {
+            const l = document.getElementById('meta-more-l');
+            const r = document.getElementById('meta-more-r');
+            const target = (l && l.classList.contains('expanded')) ? false : true;
+            if (l) l.classList.toggle('expanded', target);
+            if (r) r.classList.toggle('expanded', target);
+        };
+
+        document.getElementById('meta-container').addEventListener('click', (e) => {
+            if (e.target.closest('#swap-btn')) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const id1 = urlParams.get('id1');
+                const id2 = urlParams.get('id2');
+                if (id1 && id2) {
+                    urlParams.set('id1', id2);
+                    urlParams.set('id2', id1);
+                    window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
+                    fetchData();
+                }
+            }
+        });
+
+        // Start App
+        fetchData();
+
+    </script>
+</body>
+
+</html>

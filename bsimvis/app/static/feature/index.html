@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Global Feature Browser</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        :root {
+            --bg: #121212;
+            --card-bg: #1e1e1e;
+            --text: #f8f8f2;
+            --accent: #66d9ef;
+            --subtle: #75715e;
+            --border: #3e3d32;
+            --hover: #2d2d2d;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 20px;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .header {
+            margin-bottom: 30px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+
+        .header h1 {
+            color: var(--accent);
+            margin: 0;
+            font-size: 1.4rem;
+        }
+
+        .feature-table-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            /* overflow: hidden; Removed to allow scrolling in panels if needed */
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        th {
+            background: #000;
+            color: var(--accent);
+            padding: 12px;
+            text-align: left;
+            border-bottom: 2px solid var(--border);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 15px 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        tr:hover {
+            background: var(--hover);
+        }
+
+        .hash-badge {
+            font-family: monospace;
+            color: #ae81ff;
+            background: rgba(174, 129, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid rgba(174, 129, 255, 0.2);
+        }
+
+        .op-badge {
+            background: #f92672;
+            color: #000;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.7rem;
+            font-family: monospace;
+        }
+
+        .code-block {
+            background: #272822;
+            padding: 10px;
+            border-radius: 6px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.8rem;
+            border: 1px solid #3e3d32;
+        }
+
+        .line-row {
+            display: flex;
+            margin-bottom: 2px;
+            align-items: flex-start;
+        }
+
+        .line-num {
+            width: 35px;
+            color: var(--subtle);
+            text-align: right;
+            padding-right: 15px;
+            opacity: 0.5;
+            font-size: 0.7rem;
+        }
+
+        .feature-highlight {
+            border-bottom: 2px solid rgba(166, 226, 46, 0.4);
+        }
+
+        .feature-primary {
+            border-bottom: 2px solid #a6e22e;
+            background: rgba(166, 226, 46, 0.15);
+            border-radius: 2px;
+        }
+
+        .feature-secondary {
+            border-bottom: 2px solid #f92672;
+            background: rgba(249, 38, 114, 0.1);
+            border-radius: 2px;
+        }
+
+        .bsim-group-active-unique {
+            background: rgba(166, 226, 46, 0.25) !important;
+            border-bottom: 2px solid #a6e22e !important;
+            border-radius: 2px;
+        }
+
+        .loader {
+            text-align: center;
+            padding: 50px;
+            color: var(--accent);
+            font-weight: bold;
+        }
+
+        .origin-id {
+            font-size: 0.65rem;
+            color: var(--subtle);
+            word-break: break-all;
+            max-width: 250px;
+            display: block;
+            margin-top: 5px;
+        }
+
+        /* Panel optimization */
+        body.in-panel {
+            padding: 10px;
+        }
+
+        body.in-panel .header {
+            display: none;
+        }
+
+        .btn-diff-action {
+            background: rgba(102, 217, 239, 0.1);
+            color: #66d9ef;
+            border: 1px solid rgba(102, 217, 239, 0.3);
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            margin-top: 10px;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .btn-diff-action:hover {
+            background: rgba(102, 217, 239, 0.2);
+            border-color: #66d9ef;
+            transform: translateY(-1px);
+        }
+
+        .btn-diff-action:disabled {
+            opacity: 0.6;
+            cursor: default;
+            transform: none;
+        }
+
+        /* Standalone Diff Bar */
+        .standalone-diff-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #111;
+            border-top: 2px solid var(--accent);
+            padding: 10px 20px;
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.6);
+            z-index: 1000;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(100%);
+            }
+
+            to {
+                transform: translateY(0);
+            }
+        }
+
+        .diff-status-text {
+            color: var(--accent);
+            font-size: 0.85rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-compare {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-compare:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+
+        body {
+            padding-bottom: 60px;
+        }
+
+        /* Space for bar */
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1 id="title-text">Global Feature Analysis</h1>
+        <div id="meta-info" style="margin-top: 8px;"></div>
+    </div>
+
+    <div class="feature-table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 250px;">Function Origin</th>
+                    <th style="width: 120px;">Type & Op</th>
+                    <th style="width: 250px;">Pcode Context</th>
+                    <th style="width: 60px;">TF</th>
+                    <th>Source Context (Highlighted)</th>
+                </tr>
+            </thead>
+            <tbody id="features-body">
+                <tr>
+                    <td colspan="3" class="loader">Querying Redis & Mapping Source Context...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div id="load-more-container" style="text-align: center; margin-top: 20px; padding-bottom: 40px; display: none;">
+        <button id="load-more-btn" onclick="fetchPage()" style="
+            background: var(--card-bg);
+            color: var(--accent);
+            border: 1px solid var(--border);
+            padding: 10px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            transition: all 0.2s;
+        ">Load More Occurrences (<span id="count-remaining">0</span> remaining)</button>
+    </div>
+
+    <div id="bsim-tooltip"></div>
+
+    <div id="standalone-diff-bar" class="standalone-diff-bar">
+        <div id="standalone-diff-status" class="diff-status-text"></div>
+        <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions →</button>
+    </div>
+
+    <script>
+        function normalizeFuncId(id) {
+            if (!id || typeof id !== 'string') return id;
+            if (id.includes(':function:')) return id;
+
+            // Pattern for raw BSim ID: collection:#md5::funcName:@addr
+            const parts = id.split(':');
+            if (parts.length >= 4) {
+                const addrPart = parts.pop(); // "@004bef80"
+                const funcPart = parts.pop(); // "name"
+                const emptyPart = parts.pop(); // ""
+                const md5Part = parts.pop(); // "#md5"
+                const colPart = parts.join(':');
+
+                if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
+                    const cleanAddr = addrPart.substring(1);
+                    const cleanMd5 = md5Part.substring(1);
+                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
+                }
+            }
+            return id;
+        }
+
+        if (window.parent !== window) {
+            document.body.classList.add('in-panel');
+        }
+        const CONTEXT_WINDOW = 2;
+        const PAGE_SIZE = 20;
+        const params = new URLSearchParams(window.location.search);
+        const featureHash = params.get('hash');
+        const collection = params.get('collection');
+
+        let currentOffset = 0;
+        let totalOccurrences = 0;
+
+        const sourceCache = new Map();
+        const tooltipEl = document.getElementById('bsim-tooltip');
+
+        async function fetchSource(funcId) {
+            if (sourceCache.has(funcId)) return sourceCache.get(funcId);
+            try {
+                const res = await fetch(`/api/function/code?id=${encodeURIComponent(funcId)}`);
+                const data = await res.json();
+                sourceCache.set(funcId, data);
+                return data;
+            } catch (e) {
+                console.error("Failed to fetch source for", funcId, e);
+                return null;
+            }
+        }
+
+        function handleHoverMove(e, show) {
+            if (!show) {
+                tooltipEl.style.display = 'none';
+                return;
+            }
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+
+            const idx = token.dataset.idx;
+            const funcId = token.dataset.funcId;
+            const cached = sourceCache.get(funcId);
+            if (!cached || !cached.tips || !cached.tips[idx]) return;
+
+            const data = cached.tips[idx];
+            let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+
+            data[2].forEach(f => {
+                const color = f[8] || 'var(--accent)';
+                html += `<div style="margin-bottom:8px;">
+                    <div style="font-family:monospace; color:${color}; font-weight:bold;">${f[0]}</div>
+                    <div style="font-size:0.7rem; color:var(--subtle);">${f[3]} | Op: ${f[1]} | <b style="color:var(--success)">TF: ${f[7] || 0}</b></div>
+                </div>`;
+            });
+
+            tooltipEl.innerHTML = html;
+            tooltipEl.style.display = 'block';
+            tooltipEl.style.left = (e.clientX + 15) + "px";
+            tooltipEl.style.top = (e.clientY + 15) + "px";
+
+            // Adjust if off-screen
+            const rect = tooltipEl.getBoundingClientRect();
+            if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
+            if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
+        }
+
+        document.addEventListener('mousemove', e => {
+            if (tooltipEl.style.display === 'block') {
+                const x = e.clientX + 15;
+                const y = e.clientY + 15;
+                tooltipEl.style.left = x + "px";
+                tooltipEl.style.top = y + "px";
+
+                const rect = tooltipEl.getBoundingClientRect();
+                if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
+                if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
+            }
+        });
+
+        async function fetchPage() {
+            // ... (rest of the existing fetchPage function)
+            if (!featureHash || !collection) {
+                document.getElementById('features-body').innerHTML = '<tr><td colspan="3" class="loader">Error: Hash and Collection are required.</td></tr>';
+                return;
+            }
+
+            const body = document.getElementById('features-body');
+            const loadMoreBtn = document.getElementById('load-more-btn');
+            const loadMoreContainer = document.getElementById('load-more-container');
+
+            if (loadMoreBtn) {
+                loadMoreBtn.disabled = true;
+                loadMoreBtn.innerText = 'Loading...';
+            }
+
+            try {
+                const res = await fetch(`/api/feature/details/${featureHash}?collection=${collection}&offset=${currentOffset}&limit=${PAGE_SIZE}`);
+                const data = await res.json();
+
+                totalOccurrences = data.total_occurrences || 0;
+                const occurrences = data.occurrences || [];
+
+                if (currentOffset === 0) {
+                    body.innerHTML = '';
+                    document.getElementById('title-text').innerHTML = `Feature occurences: <span class="hash-badge">${featureHash}</span>`;
+                    document.getElementById('meta-info').innerHTML = `<span class="dim">Collection:</span> ${collection} | <span class="dim">Total Instances:</span> ${totalOccurrences}`;
+                }
+
+                // Iterate through every representation of this feature in this page
+                for (const occ of occurrences) {
+                    let funcId = normalizeFuncId(occ['function-id']);
+                    const sourceData = await fetchSource(funcId);
+                    const tr = document.createElement('tr');
+
+                    // 1. Origin Column (Name + Addr + MD5)
+                    const parts = funcId.split(':');
+                    const addr = parts.pop();
+                    const md5 = parts[2]; // Use parts[2] for md5 following normalization
+                    const funcName = (sourceData && sourceData.meta) ? sourceData.meta['function-name'] : addr;
+
+                    const originHtml = `
+                        <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${funcName}</div>
+                        <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
+                        <div class="dim" style="font-size:0.7rem;">Binary: ${md5}</div>
+                        <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${occ['line-idx'].map(l => l + 1).join(', ')}</span></div>
+                        <code class="origin-id" style="font-size:0.6rem; margin-top:8px; display:block;">${funcId}</code>
+                        <button class="btn-diff-action" onclick="addToDiff('${funcId}', this, '${funcName.replace(/'/g, "\\'")}')">
+                            <span>+</span> Queue for Diff
+                        </button>
+                    `;
+
+                    // 2. Meta Column
+                    const metaHtml = `
+                        <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${occ.type}</div>
+                        <span class="op-badge" title="${occ['pcode-op-full'] || ''}">${occ['pcode-op']}</span>
+                    `;
+
+                    const targetLinesStr = (occ['line-idx'] || []).map(l => l + 1).join(',');
+                    const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';
+
+                    // 3. Pcode Context Column
+                    const pcodeHtml = `
+                        <div class="code-card" style="box-shadow: none;">
+                            <div class="code-card-line">
+                                <div class="code-card-text pcode-text">${occ['pcode-op-full'] || '<span class="dim">N/A</span>'}</div>
+                            </div>
+                        </div>
+                    `;
+
+                    // 4. TF Column
+                    const tfHtml = `
+                        <div class="mono" style="font-size: 0.75rem; color: var(--accent); text-align: center;">${occ.tf || '---'}</div>
+                    `;
+
+                    let contextHtml = '<div class="dim">Source code mapping unavailable</div>';
+                    if (sourceData && sourceData.rows) {
+                        contextHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
+                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}'); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
+
+                        const contextLineSet = new Set();
+                        occ['line-idx'].forEach(l => {
+                            const normalizedIdx = l + 1;
+                            for (let i = -CONTEXT_WINDOW; i <= CONTEXT_WINDOW; i++) {
+                                contextLineSet.add(normalizedIdx + i);
+                            }
+                        });
+
+                        const sortedLines = Array.from(contextLineSet).filter(l => l >= 1 && l <= sourceData.rows.length).sort((a, b) => a - b);
+                        let lastLineIdx = -1;
+
+                        sortedLines.forEach(lineIdx => {
+                            const lineObj = sourceData.rows.find(l => l.line_idx === lineIdx);
+                            if (lineObj) {
+                                if (lastLineIdx !== -1 && lineIdx > lastLineIdx + 1) {
+                                    contextHtml += `<div class="code-card-line" style="opacity: 0.2; justify-content: center; padding: 4px 0;"><span style="font-size: 0.6rem; letter-spacing: 3px;">...</span></div>`;
+                                }
+                                lastLineIdx = lineIdx;
+                                const isFeatureLine = occ['line-idx'].includes(lineIdx - 1);
+                                const rowStyle = isFeatureLine ? '' : 'opacity: 0.5;';
+                                contextHtml += `
+                                     <div class="code-card-line" style="${rowStyle}">
+                                         <span class="code-card-ln">${lineObj.line_idx}</span>
+                                         <span class="code-card-text">${renderTokens(lineObj.tokens, funcId)}</span>
+                                     </div>`;
+                            }
+                        });
+                        contextHtml += '</div>';
+                    }
+
+                    tr.innerHTML = `<td>${originHtml}</td><td>${metaHtml}</td><td>${pcodeHtml}</td><td>${tfHtml}</td><td>${contextHtml}</td>`;
+                    body.appendChild(tr);
+                }
+
+                currentOffset += occurrences.length;
+
+                if (totalOccurrences === 0 && currentOffset === 0) {
+                    body.innerHTML = '<tr><td colspan="3" class="loader">No instances found in this collection.</td></tr>';
+                    loadMoreContainer.style.display = 'none';
+                } else if (currentOffset < totalOccurrences) {
+                    loadMoreContainer.style.display = 'block';
+                    loadMoreBtn.disabled = false;
+                    loadMoreBtn.innerHTML = `Load More Occurrences (<span id="count-remaining">${totalOccurrences - currentOffset}</span> remaining)`;
+                } else {
+                    loadMoreContainer.style.display = 'none';
+                }
+
+            } catch (err) {
+                console.error(err);
+                if (currentOffset === 0) {
+                    body.innerHTML = `<tr><td colspan="3" class="loader" style="color:#f92672">Error: ${err.message}</td></tr>`;
+                }
+            }
+        }
+
+        function renderTokens(tokens, funcId) {
+            const colorMap = {
+                'variable': 'tok-variable', 'func_call': 'tok-func_call', 'type': 'tok-type',
+                'keyword': 'tok-keyword', 'comment': 'tok-comment', 'string': 'tok-string', 'number': 'tok-number'
+            };
+
+            return tokens.map((t, idx) => {
+                const cls = colorMap[t.type] || 'tok-default';
+                const isPrimary = t.hash_list && t.hash_list.includes(featureHash);
+                const hasOthers = t.hash_list && t.hash_list.some(h => h !== featureHash);
+
+                const highlightClass = isPrimary ? 'feature-primary feature-highlight' : (hasOthers ? 'feature-secondary feature-highlight' : '');
+                const hashes = (t.hash_list || []).join(' ');
+
+                return `<span class="token ${highlightClass} ${cls}" 
+                    data-hashes="${hashes}" data-idx="${t.global_idx}" data-func-id="${funcId}"
+                    onmouseenter="handleHoverMove(event, true); setGlobalHighlight(true)" onmouseleave="handleHoverMove(event, false); setGlobalHighlight(false)">${escapeHtml(t.text)}</span>`;
+            }).join('');
+        }
+
+        function showTokenContextMenu(e) {
+            const token = e.target.closest('.feature-highlight');
+            if (!token) return;
+            e.preventDefault();
+
+            const hashesStr = token.dataset.hashes;
+            if (!hashesStr) return;
+            const hashes = hashesStr.trim().split(/\s+/);
+            const idx = token.dataset.idx;
+            const funcId = token.dataset.funcId;
+
+            // Try to find rich data from cached sourceData
+            const cached = sourceCache.get(funcId);
+            const richData = (cached && cached.tips) ? cached.tips[idx] : null;
+
+            let menu = document.getElementById('token-context-menu');
+            if (!menu) {
+                menu = document.createElement('div');
+                menu.id = 'token-context-menu';
+                menu.className = 'context-menu';
+                document.body.appendChild(menu);
+            }
+
+            let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
+            if (richData && richData[2]) {
+                richData[2].forEach(f => {
+                    const hash = f[0], op = f[1], type = f[3], tf = f[7] || 0, color = f[8] || 'var(--accent)';
+                    html += `<div class="context-menu-item" data-hash="${hash}" data-col="${collection}">
+                        <div class="context-menu-icon" style="color:${color}">🔍</div>
+                        <div style="flex:1">
+                            <div style="font-family:monospace; font-weight:bold; color:${color}">${hash}</div>
+                            <div style="font-size:0.7rem; color:var(--subtle); margin-top:2px;">${type} | Op: ${op} | <b style="color:var(--success)">TF: ${tf}</b></div>
+                        </div>
+                    </div>`;
+                });
+            } else {
+                hashes.forEach(h => {
+                    html += `<div class="context-menu-item" data-hash="${h}" data-col="${collection}">
+                        <div class="context-menu-icon" style="color:var(--accent)">🔍</div>
+                        <div style="flex:1">
+                            <div style="font-family:monospace; font-weight:bold; color:var(--accent)">${h}</div>
+                            <div style="font-size:0.75rem; color:var(--subtle); margin-top:2px;">Analyze this feature</div>
+                        </div>
+                    </div>`;
+                });
+            }
+
+            menu.innerHTML = html;
+            menu.style.display = 'block';
+            let x = e.clientX, y = e.clientY;
+            if (x + 350 > window.innerWidth) x -= 350;
+            const itemCount = (richData && richData[2]) ? richData[2].length : hashes.length;
+            if (y + (itemCount * 52 + 50) > window.innerHeight) y -= (itemCount * 52 + 50);
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+
+            const onMenuClick = (me) => {
+                const item = me.target.closest('.context-menu-item');
+                if (item) {
+                    const h = item.dataset.hash;
+                    const c = item.dataset.col;
+                    const url = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
+
+                    if (me.ctrlKey || me.metaKey) {
+                        window.open(url, '_blank');
+                    } else if (window.parent && window.parent !== window && typeof window.parent.showGlobalFeaturePanel === 'function') {
+                        window.parent.showGlobalFeaturePanel(h, c);
+                    } else {
+                        window.location.href = url;
+                    }
+                }
+                closeMenu();
+            };
+            const closeMenu = () => {
+                menu.style.display = 'none';
+                menu.removeEventListener('click', onMenuClick);
+                document.removeEventListener('mousedown', closeGlobal);
+            };
+            const closeGlobal = (me) => { if (!menu.contains(me.target)) closeMenu(); };
+            setTimeout(() => {
+                menu.addEventListener('click', onMenuClick);
+                document.addEventListener('mousedown', closeGlobal);
+            }, 10);
+        }
+
+        document.addEventListener('contextmenu', e => {
+            if (e.target.closest('.feature-highlight')) {
+                showTokenContextMenu(e);
+            }
+        });
+
+        function setGlobalHighlight(state) {
+            document.querySelectorAll('.feature-highlight').forEach(el => {
+                el.classList.toggle('bsim-group-active-unique', state);
+            });
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function addToDiff(id, btn, name) {
+            if (window.parent && window.parent !== window && typeof window.parent.addToDiff === 'function') {
+                window.parent.addToDiff(id, name);
+                btn.innerHTML = '<span>✓</span> Added to Queue';
+                btn.style.color = '#a6e22e';
+                btn.style.borderColor = 'rgba(166,226,46,0.3)';
+                btn.style.background = 'rgba(166,226,46,0.1)';
+                btn.disabled = true;
+            } else {
+                // Standalone mode: sync via localStorage
+                try {
+                    let queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                    const existing = queue.findIndex(item => item.id === id);
+                    if (existing !== -1) {
+                        queue.splice(existing, 1);
+                        btn.innerHTML = '<span>+</span> Queue for Diff';
+                        btn.style.color = ''; btn.style.borderColor = ''; btn.style.background = '';
+                    } else {
+                        queue.push({ id, name });
+                        if (queue.length > 2) queue.shift();
+                        btn.innerHTML = '<span>✓</span> Queued (Tab Sync)';
+                        btn.style.color = '#a6e22e';
+                        btn.style.borderColor = 'rgba(166,226,46,0.3)';
+                        btn.style.background = 'rgba(166,226,46,0.1)';
+                    }
+                    localStorage.setItem('bsim_diff_queue', JSON.stringify(queue));
+                    updateDiffQueueUI();
+                } catch (e) {
+                    console.error("Standalone diff queue error", e);
+                }
+            }
+        }
+
+        function loadDiffQueue() {
+            if (window.parent && window.parent !== window) return;
+            const bar = document.getElementById('standalone-diff-bar');
+            bar.style.display = 'flex';
+            updateDiffQueueUI();
+        }
+
+        function updateDiffQueueUI() {
+            if (window.parent && window.parent !== window) return;
+            const status = document.getElementById('standalone-diff-status');
+            const btn = document.getElementById('standalone-diff-btn');
+
+            try {
+                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                if (queue.length === 0) {
+                    status.innerHTML = '<span class="dim">Diff Queue is empty. Select functions to compare.</span>';
+                    btn.style.display = 'none';
+                } else if (queue.length === 1) {
+                    status.innerHTML = `<span>1/2 Ready: <b>${queue[0].name}</b></span>`;
+                    btn.style.display = 'none';
+                } else {
+                    status.innerHTML = `<span style="color:var(--success)">2/2 Ready: <b>${queue[0].name}</b> vs <b>${queue[1].name}</b></span>`;
+                    btn.style.display = 'block';
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        function openStandaloneDiff() {
+            try {
+                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
+                if (queue.length < 2) return;
+                window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
+
+                // Clear queue after opening in new tab
+                localStorage.setItem('bsim_diff_queue', '[]');
+                updateDiffQueueUI();
+            } catch (e) { console.error(e); }
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'bsim_diff_queue') updateDiffQueueUI();
+        });
+
+        loadDiffQueue();
+        fetchPage();
+    </script>
+</body>
+
+</html>

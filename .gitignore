@@ -1,0 +1,8 @@
+venv/
+.venv/
+trash/
+archive/
+pyrightconfig.json
+.aiexclude
+
+__pycache__

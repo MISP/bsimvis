@@ -1,0 +1,32 @@
+[profiles.fast]
+    description = "Fast analysis, focus on strings & functions"
+    [profiles.fast.analyzers]
+        # Heavy decompilation-based analyzers (DISABLE)
+        "Decompiler Parameter ID" = false
+        "Decompiler Switch Analysis" = false
+        
+        # Heavy data/archive analyzers (DISABLE)
+        "Apply Data Archives" = false
+        "Function ID" = false
+        
+        # Stack & Variable analyzers (DISABLE)
+        "Stack" = false
+        "Call Convention ID" = false
+        
+        # Keep features needed for strings and cross-referencing
+        "Data Reference" = true
+        "ASCII Strings" = true
+    [profiles.fast.decompilation]
+
+[profiles.full]
+    description = "Comprehensive analysis (slow)"
+    [profiles.full.analyzers]
+        "Decompiler Parameter ID" = true
+        "Stack" = true
+        "Create Address Tables" = true
+    [profiles.full.decompilation]
+
+
+[profiles.no-analysis]
+    description = "Decompile only"
+    no_analysis = true

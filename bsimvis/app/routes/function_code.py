@@ -89,6 +89,13 @@ def get_function_code():
             meta['file-md5'] = md5
             if 'decompiler-id' not in meta:
                 meta['decompiler-id'] = source.get('metadata', {}).get('decompiler-id', 'unknown')
+            
+            if 'function-id' not in meta:
+                meta['function-id'] = f"{collection}:function:{md5}:{addr}"
+            if 'file-id' not in meta:
+                meta['file-id'] = f"{collection}:file:{md5}"
+            if 'batch-id' not in meta and meta.get('batch-uuid'):
+                meta['batch-id'] = f"{collection}:batch:{meta['batch-uuid']}"
 
         return jsonify({
             "rows": rows,

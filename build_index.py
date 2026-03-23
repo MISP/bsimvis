@@ -119,8 +119,16 @@ def rebuild_all_collections():
     print(f"Total processing time: {time.time() - overall_start:.2f}s")
 
 if __name__ == "__main__":
-    # You can now call individual collections:
-    # rebuild_single_collection("main")
-    
-    # Or do a full sweep:
-    rebuild_all_collections()
+    import argparse
+    parser = argparse.ArgumentParser(description="Build BSimVis Index")
+    parser.add_argument("-c", "--collection", help="Specific collection to rebuild", type=str)
+    parser.add_argument("--all", action="store_true", help="Rebuild all collections")
+    args = parser.parse_args()
+
+    if args.collection:
+        clear_collection_index(args.collection)
+        rebuild_single_collection(args.collection)
+    elif args.all:
+        rebuild_all_collections()
+    else:
+        parser.print_help()

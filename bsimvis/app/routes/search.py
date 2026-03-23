@@ -31,9 +31,10 @@ def search_collections():
     pipe = r.pipeline()
     for name in collection_names:
         pipe.hgetall(f"global:collection:{name}:meta")
-    
+        
     metas = pipe.execute()
-    
+
+
     # 3. Format for the frontend
     for name, meta in zip(collection_names, metas):
         results.append({
@@ -84,6 +85,10 @@ def search_batches():
         if item:
             # If it's a string from hget, parse it. If it's a dict from json().get, use as is.
             data = json.loads(item) if isinstance(item, str) else item
+            col = data.get('collection') or target_collection
+            b_uuid = data.get('batch-uuid') or data.get('batch_uuid')
+            if col and b_uuid and 'batch-id' not in data:
+                data['batch-id'] = f"{col}:batch:{b_uuid}"
             results.append(data)
     
                 
@@ -158,12 +163,26 @@ def search_files():
     try:
         results = r.ft("idx:files").search(query)
         
+        files_list = []
+        for doc in results.docs:
+            data = json.loads(doc.json)
+            col = data.get('collection', collection)
+            md5 = data.get('file_md5') or data.get('file-md5')
+            b_uuid = data.get('batch_uuid') or data.get('batch-uuid')
+            
+            if col and md5 and 'file-id' not in data:
+                data['file-id'] = f"{col}:file:{md5}"
+            if col and b_uuid and 'batch-id' not in data:
+                data['batch-id'] = f"{col}:batch:{b_uuid}"
+                
+            files_list.append(data)
+
         # 5. Return Data + Metadata
         return jsonify({
             "total": results.total,      # Total matches in DB
             "offset": offset,            # Current starting point
             "limit": limit,              # Batch size
-            "files": [json.loads(doc.json) for doc in results.docs]
+            "files": files_list
         })
 
     except Exception as e:
@@ -261,12 +280,29 @@ def search_functions():
     try:
         results = r.ft("idx:functions").search(query)
 
+        functions_list = []
+        for doc in results.docs:
+            data = json.loads(doc.json)
+            col = data.get('collection', collection)
+            md5 = data.get('file_md5') or data.get('file-md5')
+            addr = data.get('entrypoint_address') or data.get('entrypoint-address')
+            b_uuid = data.get('batch_uuid') or data.get('batch-uuid')
+
+            if col and md5 and addr and 'function-id' not in data:
+                data['function-id'] = f"{col}:function:{md5}:{addr}"
+            if col and md5 and 'file-id' not in data:
+                data['file-id'] = f"{col}:file:{md5}"
+            if col and b_uuid and 'batch-id' not in data:
+                data['batch-id'] = f"{col}:batch:{b_uuid}"
+                
+            functions_list.append(data)
+
         # 5. Return Data + Metadata
         return jsonify({
             "total": results.total,      # Total matches in DB
             "offset": offset,            # Current starting point
             "limit": limit,              # Batch size
-            "functions": [json.loads(doc.json) for doc in results.docs]
+            "functions": functions_list
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -424,6 +460,9 @@ def search_features():
     
     # 2. Enrich with context
     feature_list = _enrich_feature_context(r, collection, feature_list)
+    for f in feature_list:
+        if 'feature-id' not in f:
+            f['feature-id'] = f"{collection}:feature:{f['hash']}"
 
     return jsonify({
         "total_estimated": total_found,
@@ -484,6 +523,19 @@ def get_feature_details(f_hash):
                 occ['tf'] = int(tf_score) if tf_score is not None else 0
         except Exception:
             pass # Fallback to existing data if augmentation fails
+
+    for occ in paginated_meta:
+        col = occ.get('collection', collection)
+        md5 = occ.get('file_md5') or occ.get('file-md5')
+        addr = occ.get('entrypoint_address') or occ.get('entrypoint-address')
+        b_uuid = occ.get('batch_uuid') or occ.get('batch-uuid')
+        
+        if 'function-id' not in occ and col and md5 and addr:
+            occ['function-id'] = f"{col}:function:{md5}:{addr}"
+        if 'file-id' not in occ and col and md5:
+            occ['file-id'] = f"{col}:file:{md5}"
+        if 'batch-id' not in occ and col and b_uuid:
+            occ['batch-id'] = f"{col}:batch:{b_uuid}"
 
     return jsonify({
         "hash": f_hash,

@@ -163,6 +163,16 @@ def diff_api():
     # Reusing your alignment logic
     rows, left_tips, right_tips = render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2)
 
+    if meta1:
+        if 'function-id' not in meta1: meta1['function-id'] = f"{collection1}:function:{md5_1}:{addr_1}"
+        if 'file-id' not in meta1: meta1['file-id'] = f"{collection1}:file:{md5_1}"
+        if 'batch-id' not in meta1 and meta1.get('batch-uuid'): meta1['batch-id'] = f"{collection1}:batch:{meta1['batch-uuid']}"
+        
+    if meta2:
+        if 'function-id' not in meta2: meta2['function-id'] = f"{collection2}:function:{md5_2}:{addr_2}"
+        if 'file-id' not in meta2: meta2['file-id'] = f"{collection2}:file:{md5_2}"
+        if 'batch-id' not in meta2 and meta2.get('batch-uuid'): meta2['batch-id'] = f"{collection2}:batch:{meta2['batch-uuid']}"
+
     # Flask's jsonify handles the dictionary to JSON conversion
     return jsonify({
         "rows": rows,

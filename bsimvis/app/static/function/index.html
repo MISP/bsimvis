@@ -115,26 +115,6 @@
             transform: translateY(-1px);
         }
 
-        .btn-diff-action {
-            background: rgba(102, 217, 239, 0.1);
-            color: #66d9ef;
-            border: 1px solid rgba(102, 217, 239, 0.3);
-            border-radius: 4px;
-            padding: 4px 10px;
-            font-size: 0.75rem;
-            cursor: pointer;
-            font-weight: bold;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .btn-diff-action:hover {
-            background: rgba(102, 217, 239, 0.2);
-            border-color: #66d9ef;
-        }
-
         body {
             padding-bottom: 60px;
         }
@@ -168,6 +148,14 @@
         let funcTips = {};
         const rowH = 24;
         const OVERSCAN = 20;
+
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+            }).catch(err => console.error('Failed to copy', err));
+        }
 
         function normalizeFuncId(id) {
             if (!id || typeof id !== 'string') return id;
@@ -307,7 +295,7 @@
                 funcTips = data.tips;
                 fullMeta = data.meta;
 
-                id = data.meta["collection"] + ":function:" + data.meta["file-md5"] + ":" + data.meta["entrypoint-address"];
+                id = data.meta["function-id"] || data.meta["collection"] + ":function:" + data.meta["file-md5"] + ":" + data.meta["entrypoint-address"];
                 window.currentFuncId = normalizeFuncId(id);
                 window.currentFuncName = data.meta['function-name'] || 'unknown';
 
@@ -370,11 +358,15 @@
             container.innerHTML = `
                 <div class="func-meta-card">
                     <span class="meta-title">
-                        <div style="display:flex; align-items:center; gap:10px">
+                        <div style="display:flex; align-items:center; gap:8px">
                             
-                            <span class="meta-return-type">${returnType}</span>${label} 
-                            <button class="meta-more-btn" style="background:rgba(166,226,46,0.15); color:var(--success); border-color:rgba(166,226,46,0.3); padding:4px 10px;" 
-                                onclick="navigateToFeatures('${id}', event)">Features 🔍</button>
+                            <span class="meta-return-type">${returnType}</span>${label}
+                            <button class="btn-copy" title="Copy Function ID: ${window.currentFuncId}" onclick="copyToClipboard('${window.currentFuncId}', this)">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                            <button class="btn-feat-action" onclick="navigateToFeatures('${id}', event)">
+                                <span>🔍</span> Features
+                            </button>
                             <button id="add-diff-btn" class="btn-diff-action" onclick="addToDiff(window.currentFuncId, this, window.currentFuncName)">
                                 <span>+</span> Add to Diff
                             </button>
@@ -470,7 +462,7 @@
                 if (data) {
                     let h = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<hr>`;
                     for (const f of data[2]) {
-                        h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
+                        h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Type: ${f[3]}<br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
                     }
                     tooltipEl.innerHTML = h;
                     tooltipEl.style.display = 'block';

@@ -75,33 +75,6 @@
             align-items: center;
         }
 
-        .btn-diff-action {
-            background: rgba(102, 217, 239, 0.1);
-            color: #66d9ef;
-            border: 1px solid rgba(102, 217, 239, 0.3);
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-size: 0.85rem;
-            cursor: pointer;
-            font-weight: bold;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .btn-diff-action:hover {
-            background: rgba(102, 217, 239, 0.2);
-            border-color: #66d9ef;
-            transform: translateY(-1px);
-        }
-
-        .btn-diff-action:disabled {
-            opacity: 0.6;
-            cursor: default;
-            transform: none;
-        }
-
         /* Standalone Diff Bar */
         .standalone-diff-bar {
             position: fixed;
@@ -114,14 +87,19 @@
             display: none;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 -4px 15px rgba(0,0,0,0.6);
+            box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.6);
             z-index: 1000;
             animation: slideUp 0.3s ease-out;
         }
 
         @keyframes slideUp {
-            from { transform: translateY(100%); }
-            to { transform: translateY(0); }
+            from {
+                transform: translateY(100%);
+            }
+
+            to {
+                transform: translateY(0);
+            }
         }
 
         .diff-status-text {
@@ -148,8 +126,12 @@
             filter: brightness(1.1);
             transform: translateY(-1px);
         }
-        
-        body { padding-bottom: 60px; } /* Space for bar */
+
+        body {
+            padding-bottom: 60px;
+        }
+
+        /* Space for bar */
 
         tr:hover {
             background: var(--hover);
@@ -241,29 +223,39 @@
 <body>
     <div class="container">
         <div class="header">
-        <div>
-            <h1>Features for Function: <span id="func-id" style="color:var(--accent)">...</span></h1>
-            <div id="feature-count" class="dim">0 features</div>
+            <div>
+                <h1>Features for Function: <span id="func-id" style="color:var(--accent)">...</span></h1>
+                <div id="feature-count" class="dim">0 features</div>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <button class="btn-code-action"
+                    onclick="window.open('/function/index.html?id=' + encodeURIComponent(window.featureId), '_self')">
+                    <span>↗</span> Code
+                </button>
+                <button id="add-diff-btn" class="btn-diff-action"
+                    onclick="addToDiff(window.featureId, this, window.featureName)">
+                    <span>+</span> Add to Diff
+                </button>
+            </div>
         </div>
-        <button id="add-diff-btn" class="btn-diff-action" onclick="addToDiff(window.featureId, this, window.featureName)">
-            <span>+</span> Add to Diff Queue
-        </button>
-    </div>
 
-    <div id="standalone-diff-bar" class="standalone-diff-bar">
-        <div id="standalone-diff-status" class="diff-status-text"></div>
-        <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions →</button>
-    </div>
+        <div id="standalone-diff-bar" class="standalone-diff-bar">
+            <div id="standalone-diff-status" class="diff-status-text"></div>
+            <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions
+                →</button>
+        </div>
 
         <div class="feature-table-container">
             <table>
                 <thead>
                     <tr>
-                        <th style="width: 150px;">Hash</th>
+                        <th style="width: 110px;">Hash</th>
+                        <th style="width: 110px;">Sequence</th>
                         <th style="width: 80px;">Type</th>
-                        <th style="width: 80px;">PCode Op</th>
-                        <th style="width: 200px;">PCode Context</th>
-                        <th style="width: 80px;">TF</th>
+                        <th style="width: 140px;">PCode Op</th>
+                        <th style="width: 180px;">PCode Context</th>
+                        <th style="width: 220px;">P-Code Block</th>
+                        <th style="width: 40px;">TF</th>
                         <th>Source Context</th>
                     </tr>
                 </thead>
@@ -276,13 +268,21 @@
         </div>
     </div>
 
-        <div id="bsim-tooltip"></div>
+    <div id="bsim-tooltip"></div>
 
-        <script>
+    <script>
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+            }).catch(err => console.error('Failed to copy', err));
+        }
+
         function normalizeFuncId(id) {
             if (!id || typeof id !== 'string') return id;
             if (id.includes(':function:')) return id;
-            
+
             // Pattern for raw BSim ID: collection:#md5::funcName:@addr
             const parts = id.split(':');
             if (parts.length >= 4) {
@@ -291,7 +291,7 @@
                 const emptyPart = parts.pop();
                 const md5Part = parts.pop();
                 const colPart = parts.join(':');
-                
+
                 if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
                     const cleanAddr = addrPart.substring(1);
                     const cleanMd5 = md5Part.substring(1);
@@ -318,7 +318,7 @@
                 const res = await fetch(`/api/function/features?id=${encodeURIComponent(id)}`);
                 const data = await res.json();
                 window.globalTips = data.tips || {};
-                
+
                 // Determine function name for diff display
                 let name = id.split(':').pop();
                 if (data.features && data.features.length > 0) {
@@ -347,7 +347,7 @@
             if (!data) return;
 
             let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
-            
+
             data[2].forEach(f => {
                 const color = f[8] || 'var(--accent)';
                 html += `<div style="margin-bottom:8px;">
@@ -360,7 +360,7 @@
             tooltipEl.style.display = 'block';
             tooltipEl.style.left = (e.clientX + 15) + "px";
             tooltipEl.style.top = (e.clientY + 15) + "px";
-            
+
             const rect = tooltipEl.getBoundingClientRect();
             if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
             if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
@@ -372,7 +372,7 @@
                 const y = e.clientY + 15;
                 tooltipEl.style.left = x + "px";
                 tooltipEl.style.top = y + "px";
-                
+
                 const rect = tooltipEl.getBoundingClientRect();
                 if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + "px";
                 if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + "px";
@@ -392,7 +392,7 @@
             features.forEach(f => {
                 window.featureMeta[f.hash] = {
                     type: f.type || 'N/A',
-                    op: f['pcode-op'] || 'feat',
+                    op: f['pcode-op'] || 'N/A',
                     tf: f.tf || 0
                 };
                 const tr = document.createElement('tr');
@@ -428,14 +428,40 @@
                 const currentCollection = params.get('collection') || id.split(':')[0];
                 tr.innerHTML = `
                     <td>
-                        <a href="/feature/index.html?collection=${encodeURIComponent(currentCollection)}&hash=${encodeURIComponent(f.hash)}" 
-                        style="text-decoration: none;">
-                            <span class="hash-badge" style="cursor: pointer;">${f.hash}</span>
-                        </a>
+                        <div style="display:inline-flex; align-items:center; gap:5px;">
+                            <a href="/feature/index.html?collection=${encodeURIComponent(currentCollection)}&hash=${encodeURIComponent(f.hash)}" 
+                            style="text-decoration: none;">
+                                <span class="hash-badge" style="cursor: pointer;">${f.hash}</span>
+                            </a>
+                            <button class="btn-copy" title="Copy Feature ID: ${f['feature-id']}" onclick="copyToClipboard('${f['feature-id']}', this)">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                        </div>
                     </td>
+                    <td><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${f['seq'] || 'N/A'}</span></td>
                     <td><span class="type-badge" style="color:var(--accent); font-weight:bold; font-size:0.75rem;">${f.type || 'N/A'}</span></td>
-                    <td><span class="pcode-badge">${f['pcode-op'] || 'feat'}</span></td>
+                    <td>
+                        <div style="display:inline-flex; flex-direction:column; gap:3px;">
+                            ${f['previous-pcode-op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${f['previous-pcode-op']}</span>` : ''}
+                            <span class="pcode-badge">${f['pcode-op'] || 'N/A'}</span>
+                            ${f['addr'] ? `<span class="addr-badge">${f['addr']}</span>` : ''}
+                        </div>
+                    </td>
                     <td class="pcode-cell">${f['pcode-op-full'] || 'N/A'}</td>
+                    <td>
+                        ${(f['pcode-block'] && Object.keys(f['pcode-block']).length > 0) ?
+                        `<div class="pcode-block-container">
+                                ${Object.entries(f['pcode-block']).map(([s, op]) => {
+                            const isActive = (s === f['seq']);
+                            const isPrevActive = (s === f['previous-seq']);
+                            const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
+                            const addrPart = s.split(':')[0];
+                            return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
+                        }).join('')}
+                            </div>` :
+                        '<span class="dim">---</span>'
+                    }
+                    </td>
                     <td class="dim" style="font-size:0.75rem;">${f.tf || 'N/A'}</td>
                     <td class="code-cell">${codeHtml}</td>
                 `;
@@ -485,13 +511,13 @@
             const onMenuClick = (me) => {
                 const item = me.target.closest('.context-menu-item');
                 if (item) {
-                     const h = item.dataset.hash;
-                     const c = item.dataset.col;
-                     if (window.parent && window.parent !== window && typeof window.parent.showGlobalFeaturePanel === 'function') {
+                    const h = item.dataset.hash;
+                    const c = item.dataset.col;
+                    if (window.parent && window.parent !== window && typeof window.parent.showGlobalFeaturePanel === 'function') {
                         window.parent.showGlobalFeaturePanel(h, c);
-                     } else {
+                    } else {
                         window.location.href = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
-                     }
+                    }
                 }
                 closeMenu();
             };
@@ -552,7 +578,7 @@
             if (window.parent && window.parent !== window) return;
             const status = document.getElementById('standalone-diff-status');
             const btn = document.getElementById('standalone-diff-btn');
-            
+
             try {
                 const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
                 if (queue.length === 0) {
@@ -573,7 +599,7 @@
                 const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
                 if (queue.length < 2) return;
                 window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
-                
+
                 // Clear queue after opening in new tab
                 localStorage.setItem('bsim_diff_queue', '[]');
                 updateDiffQueueUI();

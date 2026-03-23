@@ -158,34 +158,6 @@
             display: none;
         }
 
-        .btn-diff-action {
-            background: rgba(102, 217, 239, 0.1);
-            color: #66d9ef;
-            border: 1px solid rgba(102, 217, 239, 0.3);
-            border-radius: 4px;
-            padding: 4px 10px;
-            font-size: 0.75rem;
-            cursor: pointer;
-            margin-top: 10px;
-            font-weight: bold;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        }
-
-        .btn-diff-action:hover {
-            background: rgba(102, 217, 239, 0.2);
-            border-color: #66d9ef;
-            transform: translateY(-1px);
-        }
-
-        .btn-diff-action:disabled {
-            opacity: 0.6;
-            cursor: default;
-            transform: none;
-        }
-
         /* Standalone Diff Bar */
         .standalone-diff-bar {
             position: fixed;
@@ -256,10 +228,12 @@
         <table>
             <thead>
                 <tr>
-                    <th style="width: 250px;">Function Origin</th>
+                    <th style="width: 220px;">Function Origin</th>
                     <th style="width: 120px;">Type & Op</th>
-                    <th style="width: 250px;">Pcode Context</th>
-                    <th style="width: 60px;">TF</th>
+                    <th style="width: 110px;">Sequence</th>
+                    <th style="width: 200px;">PCode Context</th>
+                    <th style="width: 220px;">P-Code Block</th>
+                    <th style="width: 40px;">TF</th>
                     <th>Source Context (Highlighted)</th>
                 </tr>
             </thead>
@@ -293,6 +267,14 @@
     </div>
 
     <script>
+        function copyToClipboard(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+            }).catch(err => console.error('Failed to copy', err));
+        }
+
         function normalizeFuncId(id) {
             if (!id || typeof id !== 'string') return id;
             if (id.includes(':function:')) return id;
@@ -416,7 +398,8 @@
 
                 if (currentOffset === 0) {
                     body.innerHTML = '';
-                    document.getElementById('title-text').innerHTML = `Feature occurences: <span class="hash-badge">${featureHash}</span>`;
+                    const fullId = `${collection}:feature:${featureHash}`;
+                    document.getElementById('title-text').innerHTML = `Feature occurences: <span class="hash-badge">${featureHash}</span> <button class="btn-copy" style="vertical-align:text-bottom" title="Copy Feature ID: ${fullId}" onclick="copyToClipboard('${fullId}', this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
                     document.getElementById('meta-info').innerHTML = `<span class="dim">Collection:</span> ${collection} | <span class="dim">Total Instances:</span> ${totalOccurrences}`;
                 }
 
@@ -437,16 +420,30 @@
                         <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
                         <div class="dim" style="font-size:0.7rem;">Binary: ${md5}</div>
                         <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${occ['line-idx'].map(l => l + 1).join(', ')}</span></div>
-                        <code class="origin-id" style="font-size:0.6rem; margin-top:8px; display:block;">${funcId}</code>
-                        <button class="btn-diff-action" onclick="addToDiff('${funcId}', this, '${funcName.replace(/'/g, "\\'")}')">
-                            <span>+</span> Queue for Diff
-                        </button>
+                        <div style="display:flex; align-items:center; gap:5px; margin-top:8px;">
+                            <code class="origin-id" style="font-size:0.6rem;">${funcId}</code>
+                            <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            </button>
+                        </div>
+                        <div style="display:flex; gap:5px; margin-top:5px;">
+                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', ''); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}'), '_blank'); }">
+                                <span>↗</span> Code
+                            </button>
+                            <button class="btn-diff-action" onclick="addToDiff('${funcId}', this, '${funcName.replace(/'/g, "\\'")}')">
+                                <span>+</span> Add to Diff
+                            </button>
+                        </div>
                     `;
 
                     // 2. Meta Column
                     const metaHtml = `
                         <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${occ.type}</div>
-                        <span class="op-badge" title="${occ['pcode-op-full'] || ''}">${occ['pcode-op']}</span>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            ${occ['previous-pcode-op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${occ['previous-pcode-op']}</span>` : ''}
+                            <span class="op-badge" title="${occ['pcode-op-full'] || ''}">${occ['pcode-op']}</span>
+                            ${occ['addr'] ? `<span class="addr-badge">${occ['addr']}</span>` : ''}
+                        </div>
                     `;
 
                     const targetLinesStr = (occ['line-idx'] || []).map(l => l + 1).join(',');
@@ -461,7 +458,21 @@
                         </div>
                     `;
 
-                    // 4. TF Column
+                    // 4. P-Code Block Column
+                    const pb = occ['pcode-block'] || {};
+                    const pcodeBlockHtml = (Object.keys(pb).length > 0) ? 
+                        `<div class="pcode-block-container">
+                            ${Object.entries(pb).map(([s, op]) => {
+                                const isActive = (s === occ['seq']);
+                                const isPrevActive = (s === occ['previous-seq']);
+                                const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
+                                const addrPart = s.split(':')[0];
+                                return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
+                            }).join('')}
+                        </div>` :
+                        '<div class="dim">---</div>';
+
+                    // 5. TF Column
                     const tfHtml = `
                         <div class="mono" style="font-size: 0.75rem; color: var(--accent); text-align: center;">${occ.tf || '---'}</div>
                     `;
@@ -501,14 +512,22 @@
                         contextHtml += '</div>';
                     }
 
-                    tr.innerHTML = `<td>${originHtml}</td><td>${metaHtml}</td><td>${pcodeHtml}</td><td>${tfHtml}</td><td>${contextHtml}</td>`;
+                    tr.innerHTML = `
+                        <td class="code-cell">${originHtml}</td>
+                        <td class="code-cell">${metaHtml}</td>
+                        <td class="code-cell"><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${occ['seq'] || 'N/A'}</span></td>
+                        <td class="code-cell">${pcodeHtml}</td>
+                        <td class="code-cell">${pcodeBlockHtml}</td>
+                        <td class="code-cell">${tfHtml}</td>
+                        <td class="code-cell" style="padding:0;">${contextHtml}</td>
+                    `;
                     body.appendChild(tr);
                 }
 
                 currentOffset += occurrences.length;
 
                 if (totalOccurrences === 0 && currentOffset === 0) {
-                    body.innerHTML = '<tr><td colspan="3" class="loader">No instances found in this collection.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="7" class="loader">No instances found in this collection.</td></tr>';
                     loadMoreContainer.style.display = 'none';
                 } else if (currentOffset < totalOccurrences) {
                     loadMoreContainer.style.display = 'block';
@@ -521,7 +540,7 @@
             } catch (err) {
                 console.error(err);
                 if (currentOffset === 0) {
-                    body.innerHTML = `<tr><td colspan="3" class="loader" style="color:#f92672">Error: ${err.message}</td></tr>`;
+                    body.innerHTML = `<tr><td colspan="7" class="loader" style="color:#f92672">Error: ${err.message}</td></tr>`;
                 }
             }
         }

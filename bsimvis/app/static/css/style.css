@@ -137,6 +137,29 @@ body {
     z-index: 100;
 }
 
+.btn-action:hover {
+    color: var(--accent);
+    background: rgba(102, 217, 239, 0.1);
+}
+
+.btn-copy {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--subtle);
+    padding: 2px 4px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    transition: all 0.2s;
+}
+
+.btn-copy:hover {
+    color: var(--foreground);
+    background: rgba(255, 255, 255, 0.1);
+}
+
 /* Diff Styles */
 .c-code-container {
     font-family: 'Consolas', monospace;
@@ -339,7 +362,75 @@ body {
     min-width: max-content;
 }
 
-/* Code Card Component */
+/* --- Action Buttons --- */
+.btn-diff-action {
+    background-color: rgba(253, 151, 31, 0.15); /* Orange hint */
+    color: #fd971f;
+    border: 1px solid rgba(253, 151, 31, 0.3);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.btn-diff-action:hover {
+    background-color: rgba(253, 151, 31, 0.25);
+    border-color: #fd971f;
+}
+.btn-diff-action span {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.btn-feat-action {
+    background-color: rgba(166, 226, 46, 0.15); /* Green hint */
+    color: var(--success);
+    border: 1px solid rgba(166, 226, 46, 0.3);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.btn-feat-action:hover {
+    background-color: rgba(166, 226, 46, 0.25);
+    border-color: var(--success);
+}
+.btn-feat-action span {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.btn-code-action {
+    background-color: rgba(102, 217, 239, 0.15); /* Blue hint */
+    color: #66d9ef;
+    border: 1px solid rgba(102, 217, 239, 0.3);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.btn-code-action:hover {
+    background-color: rgba(102, 217, 239, 0.25);
+    border-color: #66d9ef;
+}
+.btn-code-action span {
+    font-size: 1.1rem;
+    line-height: 1;
+}
 .code-card {
     background: #272822 !important;
     /* Monokai background */
@@ -489,4 +580,73 @@ body {
 .context-menu-icon {
     font-size: 1.1rem;
     opacity: 0.8;
+}
+/* P-Code Block Display */
+.pcode-block-container {
+    background: #1a1a1a;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+    max-height: 120px;
+    overflow-y: auto;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 0.7rem;
+    color: #ae81ff; 
+    white-space: pre;
+    line-height: 1.4;
+    text-align: left;
+}
+.pcode-block-line {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    padding: 1px 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pcode-block-line:last-child {
+    border-bottom: none;
+}
+
+.pcode-block-line.active {
+    background: rgba(166, 226, 46, 0.2);
+    color: #a6e22e;
+    font-weight: bold;
+    border-left: 2px solid #a6e22e;
+    padding-left: 4px;
+}
+.pcode-block-line.prev-active {
+    background: rgba(102, 217, 239, 0.15);
+    color: var(--accent);
+    border-left: 2px solid var(--accent);
+    padding-left: 4px;
+}
+
+.prev-badge {
+    color: var(--accent);
+    font-size: 0.65rem;
+    font-weight: normal;
+    background: rgba(102, 217, 239, 0.1);
+    border: 1px solid rgba(102, 217, 239, 0.3);
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-right: 4px;
+}
+.addr-badge {
+    color: var(--subtle);
+    font-family: monospace;
+    font-size: 0.65rem;
+    opacity: 0.8;
+}
+
+.pcode-block-seq {
+    color: var(--subtle);
+    font-size: 0.6rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0 4px;
+    border-radius: 2px;
+    margin-right: 8px;
+    display: inline-block;
+    min-width: 55px;
+    text-align: right;
+    font-family: monospace;
+    opacity: 0.7;
 }

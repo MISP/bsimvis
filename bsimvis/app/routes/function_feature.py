@@ -64,6 +64,14 @@ def get_function_features():
             
             rich_features.append(enriched_feat)
 
+        if meta:
+            if 'function-id' not in meta:
+                meta['function-id'] = f"{collection}:function:{md5}:{addr}"
+            if 'file-id' not in meta:
+                meta['file-id'] = f"{collection}:file:{md5}"
+            if 'batch-id' not in meta and meta.get('batch-uuid'):
+                meta['batch-id'] = f"{collection}:batch:{meta['batch-uuid']}"
+
         return jsonify({
             "id": func_id,
             "meta": meta or {},

@@ -22,6 +22,10 @@ import time
 import uuid
 import datetime
 import logging
+
+
+GHIDRA_DECOMP_MAX_TIMEOUT = 10
+
 def upload_bsim_data(data, args, config):
     if not data or not data.get("functions"):
         return
@@ -52,6 +56,7 @@ def upload_bsim_data(data, args, config):
             initial_global_batch = {
                 "name": batch_name,
                 "batch-uuid": batch_uuid,
+                "batch-id": global_batch_key,
                 "created-at": timestamp,
                 "last-updated": timestamp,
                 "collections": {}
@@ -74,6 +79,7 @@ def upload_bsim_data(data, args, config):
                 initial_batch_data = {
                     "name": batch_name,
                     "batch-uuid": batch_uuid,
+                    "batch-id": batch_key,
                     "created-at": timestamp,
                     "last-updated": timestamp,
                     "total-files": 0,
@@ -91,6 +97,7 @@ def upload_bsim_data(data, args, config):
                 file_meta_key = f"{collection}:file:{file_md5}:meta"
                 coll_file_meta = dict(file_meta)
                 coll_file_meta["collection"] = collection
+                coll_file_meta["file-id"] = f"{collection}:file:{file_md5}"
                 pipe.json().set(file_meta_key, '$', coll_file_meta)
 
                 # --- 2. Function Data ---
@@ -104,6 +111,7 @@ def upload_bsim_data(data, args, config):
                     addr = full_id.split(":@")[-1] if ":@" in full_id else "unknown_addr"
 
                     base_func_key = f"{collection}:function:{file_md5}:{addr}"
+                    func_meta["function-id"] = base_func_key
 
                     pipe.json().set(f"{base_func_key}:meta", '$', func_meta)
                     pipe.json().set(f"{base_func_key}:source", '$', func_source)
@@ -270,20 +278,27 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
     ts_pcode = time.time()
     # ... [Setup seq_to_pcode and signatures as per your original code] ...
     seq_to_pcode = {}
+    block_addr_to_pcode_dump = {}
     # block_index_to_start_addr = {} # Unused map removed for performance
     for block in hfunction.getBasicBlocks():
         # block_index_to_start_addr[block.getIndex()] = block.getStart()
         op_iter = block.getIterator()
+        block_ops = {}
         while op_iter.hasNext():
             op = op_iter.next()
             seq_to_pcode[op.getSeqnum()] = op
+            block_ops[op.getSeqnum().toString()] = op.toString()
+        block_addr_to_pcode_dump[str(block.getStart()).split(":")[-1]] = block_ops
+
     times["pcode"] = time.time() - ts_pcode
 
     ts_sigs = time.time()
+    # Assuming signatures is a List<SignatureRecord>
     signatures = decomp_interface.debugSignatures(func, 10, monitor)
     times["sigs"] = time.time() - ts_sigs
 
-    if not signatures: return bsim_meta, bsim_raw, [], times
+    if not signatures: 
+        return bsim_meta, bsim_raw, [], times
 
     ts_loop = time.time()
 
@@ -291,51 +306,105 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
         sig = signatures.get(i)
         feature_hash = hex(sig.hash & 0xFFFFFFFF)[2:]
         
-        
         feature_data = {
             "hash": feature_hash,
             "type": "UNKNOWN",
             "pcode-op": None,
+            "previous-pcode-op": None,
+            "previous-seq": None,
             "line-idx": [],
             "seq-to-token-idx": [],
             "addr-to-token-idx": [],
-            "addr":None,
-            "seq-time":None,
-            "seq":None
+            "addr": None,
+            "seq-time": None,
+            "seq": None,
+            "block-index": None,
+            "pcode-block": []
         }
 
-        # A Feature comes either from a varnode or a a block
         target_seq = None
+        prev_target_seq = None
+        hex_addr = None
+        # --- Java Logic Port ---
+        
+        # 1. VarnodeSignature (DATA_FLOW)
         if isinstance(sig, VarnodeSignature):
             target_seq = sig.seqNum
             feature_data["type"] = "DATA_FLOW"
-        elif isinstance(sig, BlockSignature) and sig.opSeq:
-            target_seq = sig.opSeq
-            feature_data["type"] = "CONTROL_FLOW"
+            # Note: Java also handles sig.vn here if needed
+
+        # 2. CopySignature (COPY_SIG) - Checking by class name if type not imported
+        elif sig.getClass().getSimpleName() == "CopySignature":
+            feature_data["type"] = "COPY_SIG"
+            feature_data["block-index"] = sig.index
+            # Java creates a dummy sequence at the start of the block
+            # basicBlockStart = hfunction.getBasicBlocks().get(sig.index).getStart()
+            # In Python, we'll wait to resolve the address via the block index if needed
+
+        # 3. BlockSignature (CONTROL_FLOW, COMBINED, or DUAL_FLOW)
+        elif isinstance(sig, BlockSignature):
+            feature_data["block-index"] = sig.index
+            
+            if not getattr(sig, 'opSeq', None):
+                # Pure control-flow feature
+                feature_data["type"] = "CONTROL_FLOW"
+                # Java: seq = new SequenceNumber(sig.blockSeq, 0)
+                # We'll use the blockSeq (Address) as the target
+                if hasattr(sig, 'blockSeq') and sig.blockSeq:
+                    hex_addr = str(sig.blockSeq).split(":")[-1]
+                
+            
+            elif sig.previousOpSeq is None:
+                # First root op mixed with control-flow
+                feature_data["type"] = "COMBINED"
+                target_seq = sig.opSeq
+            
+            else:
+                # Two consecutive root ops mixed together
+                feature_data["type"] = "DUAL_FLOW"
+                target_seq = sig.opSeq
+                prev_target_seq = sig.previousOpSeq
+
+        # --- Data Extraction & Mapping ---
 
         if target_seq:
-            seq_str = target_seq.toString()
-            feature_data["seq"] = seq_str
+            feature_data["seq"] = target_seq.toString()
             feature_data["seq-time"] = target_seq.getTime()
-            hex_addr = str(target_seq.getTarget()).split(":")[-1]  # GetTarget = get address of instruction this sequence belongs to
-            # 1. Map to P-Code mnemonic
             p_op = seq_to_pcode.get(target_seq)
             if p_op:
                 feature_data["pcode-op"] = p_op.getMnemonic()
                 feature_data["pcode-op-full"] = p_op.toString()
             
-            # 2. Precise Address Fallback (Since we can't see the c_tokens list here)
-            # To be truly precise without changing signatures, we use the target address
-            feature_data["addr"]=hex_addr
+            if prev_target_seq:
+                feature_data["previous-seq"] = prev_target_seq.toString()
+                prev_p_op = seq_to_pcode.get(prev_target_seq)
+                if prev_p_op:
+                    feature_data["previous-pcode-op"] = prev_p_op.getMnemonic()
+
+            hex_addr = str(target_seq.getTarget()).split(":")[-1]
+
+        if hex_addr:
+            feature_data["addr"] = hex_addr
+            
+
+            # Map Previous P-Code (for DUAL_FLOW)
+
+
+            # Map UI/Token indices
             feature_data["line-idx"] = addr_to_line.get(hex_addr, [])
-            feature_data["seq-to-token-idx"] = seq_to_token_idx.get(seq_str, [])
+            feature_data["seq-to-token-idx"] = seq_to_token_idx.get(feature_data["seq"], [])
             feature_data["addr-to-token-idx"] = addr_to_token_idx.get(hex_addr, [])
+
+
+            # Dump the whole Pcode block
+            feature_data["pcode-block"] = block_addr_to_pcode_dump.get(feature_data["seq"], [])
 
         bsim_meta.append(feature_data)
         bsim_raw.append(feature_hash)
     
     times["loop"] = time.time() - ts_loop
 
+    # Finalize TF (Term Frequency)
     tf_counts = Counter(bsim_raw)
     sorted_tf = sorted(tf_counts.items(), key=lambda x: (-x[1], x[0]))
     bsim_tf = [{"hash": k, "tf": v} for k, v in sorted_tf]
@@ -430,7 +499,7 @@ def get_bsim_data(program, args, config, batch_order):
         
         # Generate the signatures (10 second timeout per function)
         t0 = time.time()
-        decomp_results = decomp_interface.decompileFunction(func, 60, monitor)
+        decomp_results = decomp_interface.decompileFunction(func, GHIDRA_DECOMP_MAX_TIMEOUT, monitor)
         total_decomp_time += time.time() - t0
 
         t1 = time.time()
@@ -562,22 +631,31 @@ def process_target(target, args, config, batch_order) -> int:
             
         try:
             t0 = time.time()
-            program = project.importProgram(target_path)
+            root_folder = project.getProjectData().getRootFolder()
+            files = root_folder.getFiles()
+            for file in tqdm(files, desc=f"Proj: {target_path.stem}", unit="bin", leave=False):
+                # getImmutableDomainObject(Object consumer, int version, TaskMonitor monitor)
+                program = file.getImmutableDomainObject(project, -1, None)
+                try:
+                    run_profile_analysis(program, args.profile, config)
+                
+                    t_analysis = time.time()
+                    data = get_bsim_data(program, args, config, batch_order)
 
-            run_profile_analysis(program, args.profile, config)
+                    t_get = time.time()
+                    upload_bsim_data(data, args, config)
 
-            t_analysis = time.time()
-            data = get_bsim_data(program, args, config, batch_order)
-
-            t_get = time.time()
-            upload_bsim_data(data, args, config)
-
-            t_upload = time.time()
-            logging.info(f"[+] Job {batch_order} finished for project : {target_path.name} in {t_upload - t0:.3f}s (Analysis: {t_analysis - t0:.3f}s, Data: {t_get - t_analysis:.3f}s, Upload: {t_upload - t_get:.3f}s)")
+                    t_upload = time.time()
+                    logging.info(f"[+] Job {batch_order} finished for project file : {file.getName()} in {t_upload - t0:.3f}s (Analysis: {t_analysis - t0:.3f}s, Data: {t_get - t_analysis:.3f}s, Upload: {t_upload - t_get:.3f}s)")
+                finally:
+                    if program:
+                        program.release(project)
             return 1
         except Exception as e:
             logging.error(f"[!] Job {batch_order} failed for project : {target_path.name}: {e}")
             return 0
+        finally:
+            project.close()
 
     # CASE 2: Raw Binary (ELF, PE, Mach-O, etc.)
     else:
@@ -604,6 +682,9 @@ def process_target(target, args, config, batch_order) -> int:
             except Exception as e:
                 logging.error(f"[!] Job {batch_order} failed for file : {target_path.name}: {e}")
                 return 0
+            finally:
+                if 'program' in locals() and program:
+                    program.release(project)
 
 def worker(target, args, config, batch_order):
     """Thread entry point."""

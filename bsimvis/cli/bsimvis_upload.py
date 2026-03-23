@@ -276,19 +276,34 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
         return bsim_meta, bsim_raw, [], times
 
     ts_pcode = time.time()
-    # ... [Setup seq_to_pcode and signatures as per your original code] ...
     seq_to_pcode = {}
+    seq_to_pcode_full = {}
+    addr_to_pcodes = {}
     block_addr_to_pcode_dump = {}
-    # block_index_to_start_addr = {} # Unused map removed for performance
+    addr_to_block_start = {}
+
     for block in hfunction.getBasicBlocks():
-        # block_index_to_start_addr[block.getIndex()] = block.getStart()
+        start_hex = str(block.getStart()).split(":")[-1]
+        this_block_ops = {}
         op_iter = block.getIterator()
-        block_ops = {}
         while op_iter.hasNext():
             op = op_iter.next()
-            seq_to_pcode[op.getSeqnum()] = op
-            block_ops[op.getSeqnum().toString()] = op.toString()
-        block_addr_to_pcode_dump[str(block.getStart()).split(":")[-1]] = block_ops
+            s_num = op.getSeqnum()
+            s_str = s_num.toString()
+            op_str = op.toString()
+            instr_hex = str(s_num.getTarget()).split(":")[-1]
+            
+            seq_to_pcode[s_num] = op
+            seq_to_pcode_full[s_str] = op_str
+            this_block_ops[s_str] = op_str
+            
+            if instr_hex not in addr_to_pcodes:
+                addr_to_pcodes[instr_hex] = {}
+            addr_to_pcodes[instr_hex][s_str] = op_str
+            
+            addr_to_block_start[instr_hex] = start_hex
+        
+        block_addr_to_pcode_dump[start_hex] = this_block_ops
 
     times["pcode"] = time.time() - ts_pcode
 
@@ -386,6 +401,15 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
         if hex_addr:
             feature_data["addr"] = hex_addr
             
+            # Tiered fallback for pcode-block (Seq -> Addr -> Block)
+            if feature_data["seq"] and feature_data["seq"] in seq_to_pcode_full:
+                feature_data["pcode-block"] = {feature_data["seq"]: seq_to_pcode_full[feature_data["seq"]]}
+            elif hex_addr in addr_to_pcodes:
+                feature_data["pcode-block"] = addr_to_pcodes[hex_addr]
+            elif hex_addr in addr_to_block_start:
+                parent_start = addr_to_block_start[hex_addr]
+                feature_data["pcode-block"] = block_addr_to_pcode_dump.get(parent_start, {})
+            
 
             # Map Previous P-Code (for DUAL_FLOW)
 
@@ -396,8 +420,8 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
             feature_data["addr-to-token-idx"] = addr_to_token_idx.get(hex_addr, [])
 
 
-            # Dump the whole Pcode block
-            feature_data["pcode-block"] = block_addr_to_pcode_dump.get(feature_data["seq"], [])
+            if feature_data["seq"]:
+                feature_data["seq-to-token-idx"] = seq_to_token_idx.get(feature_data["seq"], [])
 
         bsim_meta.append(feature_data)
         bsim_raw.append(feature_hash)

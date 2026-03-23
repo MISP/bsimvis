@@ -82,7 +82,8 @@ def rebuild_single_collection(collection):
                     "pcode-op-full": feat_item.get("pcode-op-full"),
                     "tf": int(next((score for h, score in tf_data if h == f_hash), 0)),
                     "line-idx": feat_item.get("line-idx"),
-                    "addr-to-token-idx": feat_item.get("addr-to-token-idx")
+                    "addr-to-token-idx": feat_item.get("addr-to-token-idx"),
+                    "pcode-block": feat_item.get("pcode-block")
                 }
                 pipe.json().arrappend(feat_meta_key, '$', meta_entry)
                 

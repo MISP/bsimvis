@@ -231,8 +231,8 @@
                     <th style="width: 220px;">Function Origin</th>
                     <th style="width: 120px;">Type & Op</th>
                     <th style="width: 110px;">Sequence</th>
-                    <th style="width: 200px;">PCode Context</th>
-                    <th style="width: 220px;">P-Code Block</th>
+                    <th style="width: 200px;">PCode</th>
+                    <th style="width: 220px;">PCode Context</th>
                     <th style="width: 40px;">TF</th>
                     <th>Source Context (Highlighted)</th>
                 </tr>
@@ -460,15 +460,15 @@
 
                     // 4. P-Code Block Column
                     const pb = occ['pcode-block'] || {};
-                    const pcodeBlockHtml = (Object.keys(pb).length > 0) ? 
+                    const pcodeBlockHtml = (Object.keys(pb).length > 0) ?
                         `<div class="pcode-block-container">
                             ${Object.entries(pb).map(([s, op]) => {
-                                const isActive = (s === occ['seq']);
-                                const isPrevActive = (s === occ['previous-seq']);
-                                const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
-                                const addrPart = s.split(':')[0];
-                                return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
-                            }).join('')}
+                            const isActive = (s === occ['seq']);
+                            const isPrevActive = (s === occ['previous-seq']);
+                            const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
+                            const addrPart = s.split(':')[0];
+                            return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
+                        }).join('')}
                         </div>` :
                         '<div class="dim">---</div>';
 

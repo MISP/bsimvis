@@ -498,7 +498,7 @@ def get_feature_details(f_hash):
     pipe = r.pipeline()
     augment_indices = []
     for i, occ in enumerate(paginated_meta):
-        if 'pcode-op-full' not in occ or 'tf' not in occ:
+        if 'pcode-op-full' not in occ or 'tf' not in occ or 'pcode-block' not in occ:
             func_id = occ.get('function-id')
             if func_id:
                 pipe.json().get(f"{func_id}:vec:meta")
@@ -518,6 +518,7 @@ def get_feature_details(f_hash):
                     for feat in vec_meta:
                         if feat.get('hash') == f_hash:
                             occ['pcode-op-full'] = feat.get('pcode-op-full', 'N/A')
+                            occ['pcode-block'] = feat.get('pcode-block', {})
                             break
                 
                 occ['tf'] = int(tf_score) if tf_score is not None else 0

@@ -44,7 +44,7 @@ if __name__ == "__main__":
     # Arguments
     parser.add_argument("--prefix", type=str, required=True, help="The prefix to match (e.g., 'main:file:')")
     parser.add_argument("--host", type=str, default="localhost", help="Redis host (default: localhost)")
-    parser.add_argument("--port", type=int, default=6667, help="Redis port (default: 6667)")
+    parser.add_argument("--port", type=int, default=6666, help="Redis port (default: 6666)")
     parser.add_argument("--batch", type=int, default=1000, help="Number of keys to delete per batch (default: 1000)")
     parser.add_argument("--force", action="store_true", help="Skip confirmation prompt")
 

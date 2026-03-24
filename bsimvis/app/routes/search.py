@@ -19,6 +19,20 @@ def escape_tag_value(value):
     # Any non-alphanumeric character should ideally be escaped. 
     return re.sub(r"([,.\\/ \-@:;!#$%^&*()=+~[\]{}|<>?])", r"\\\1", str(value))
 
+# TODO : This is temporary
+def normalize_tags(data):
+    """Ensure the 'tags' field is always a list, splitting strings if needed."""
+    tags = data.get('tags')
+    if isinstance(tags, str):
+        if not tags:
+            data['tags'] = []
+        else:
+            # Kvrocks returns TAG fields as comma-separated strings
+            data['tags'] = [t.strip() for t in tags.split(',')]
+    elif tags is None:
+        data['tags'] = []
+    return data
+
 @search_bp.route("/api/collection/search")
 def search_collections():
     r = get_redis()
@@ -39,9 +53,9 @@ def search_collections():
     for name, meta in zip(collection_names, metas):
         results.append({
             "name": name,
-            "total-files": int(meta.get("total-files", 0)),
-            "total-functions": int(meta.get("total-functions", 0)),
-            "last-updated": meta.get("last-updated", "N/A")
+            "total_files": int(meta.get("total_files", 0)),
+            "total_functions": int(meta.get("total_functions", 0)),
+            "last_updated": meta.get("last_updated", "N/A")
         })
     
     return jsonify(results)
@@ -73,7 +87,7 @@ def search_batches():
         # If you have multiple collections, we'd use the global:batch_summaries HASH instead
         # For this POC, let's look at the specific collection path:
         if target_collection:
-            pipe.json().get(f"{target_collection}:batch:{uuid}")
+            pipe.json().get(f"{target_collection}:batch:{uuid}", "$")
         else:
             # Fallback: find the first collection this batch belongs to 
             # (Requires the global:batch_summaries hash we discussed earlier)
@@ -83,17 +97,19 @@ def search_batches():
 
     for item in raw_data:
         if item:
-            # If it's a string from hget, parse it. If it's a dict from json().get, use as is.
-            data = json.loads(item) if isinstance(item, str) else item
+            # Kvrocks JSON.GET with $ returns a list [doc]
+            data = item[0] if isinstance(item, list) and item else item
+            # If it's a string from hget, parse it.
+            data = json.loads(data) if isinstance(data, str) else data
             col = data.get('collection') or target_collection
-            b_uuid = data.get('batch-uuid') or data.get('batch_uuid')
-            if col and b_uuid and 'batch-id' not in data:
-                data['batch-id'] = f"{col}:batch:{b_uuid}"
+            b_uuid = data.get('batch_uuid') or data.get('batch_uuid')
+            if col and b_uuid and 'batch_id' not in data:
+                data['batch_id'] = f"{col}:batch:{b_uuid}"
             results.append(data)
     
                 
     # Sort by newest first
-    results.sort(key=lambda x: x.get('last-updated', ''), reverse=True)
+    results.sort(key=lambda x: x.get('last_updated', ''), reverse=True)
     return jsonify(results)
 
 
@@ -124,40 +140,44 @@ def search_files():
     tags = request.args.getlist('tag')
     
 
-    # 3. Build Query (Standardized naming)
-    query_parts = [f"@collection:{{ {escape_tag_value(collection)} }}"]
+    # 3. Build Query (Standardized naming - no spaces and quoted TAGs for Kvrocks)
+    query_parts = [
+        f"@collection:{{{collection}}}",
+        "@type:{file}"
+    ]
 
     for tag in tags:
-        query_parts.append(f'@tag:{{ {escape_tag_value(tag)} }}')
+        query_parts.append(f'@tags:{{"{tag}"}}')
     
     # Optional filters
     if filters["batch_uuid"]:
-        query_parts.append(f'@batch_uuid:{{ {escape_tag_value(filters["batch_uuid"])} }}')
+        query_parts.append(f'@batch_uuid:{{"{filters["batch_uuid"]}"}}')
     
     if filters["language_id"]:
         # Handles complex Ghidra strings like 'AARCH64:LE:64:v8A'
-        query_parts.append(f'@language_id:{{ {escape_tag_value(filters["language_id"])} }}')
+        query_parts.append(f'@language_id:{{"{filters["language_id"]}"}}')
     
     if filters["file_md5"]:
-        query_parts.append(f'@file_md5:{{ {escape_tag_value(filters["file_md5"])} }}')
+        query_parts.append(f'@file_md5:{{"{filters["file_md5"]}"}}')
     
     if filters["file_name"]:
         # Text field with wildcards for partial match
         query_parts.append(f'@file_name:*{filters["file_name"]}*')
 
+    
     search_str = " ".join(query_parts)
 
     if search_str == "":
         search_str = "*"
 
-    logging.info(f"[*] Searching for '{search_str}' in collection '{collection}'")
+    logging.info(f"[*] Searching for {search_str} in collection '{collection}'")
     # 4. Execute with Paging and Sorting
     # We sort by entry_date DESC so the newest uploads appear first
     query = (
         Query(search_str)
         .dialect(2)
         .paging(offset, limit)
-        .sort_by("entry_date", asc=False)
+        #.sort_by("entry_date", asc=False)
     )
 
     try:
@@ -165,16 +185,22 @@ def search_files():
         
         files_list = []
         for doc in results.docs:
-            data = json.loads(doc.json)
+            if hasattr(doc, 'json'):
+                data = json.loads(doc.json)
+            else:
+                # Fallback for systems (like Kvrocks) that return flat fields
+                data = doc.__dict__
+
             col = data.get('collection', collection)
-            md5 = data.get('file_md5') or data.get('file-md5')
-            b_uuid = data.get('batch_uuid') or data.get('batch-uuid')
+            md5 = data.get('file_md5') or data.get('file_md5')
+            b_uuid = data.get('batch_uuid') or data.get('batch_uuid')
             
-            if col and md5 and 'file-id' not in data:
-                data['file-id'] = f"{col}:file:{md5}"
-            if col and b_uuid and 'batch-id' not in data:
-                data['batch-id'] = f"{col}:batch:{b_uuid}"
-                
+            if col and md5 and 'file_id' not in data:
+                data['file_id'] = f"{col}:file:{md5}"
+            if col and b_uuid and 'batch_id' not in data:
+                data['batch_id'] = f"{col}:batch:{b_uuid}"
+            
+            normalize_tags(data)
             files_list.append(data)
 
         # 5. Return Data + Metadata
@@ -212,43 +238,42 @@ def search_functions():
         "tag": request.args.get('tag'),
         "decompiler_id": request.args.get('decompiler_id'),
         "function_name": request.args.get('function_name'),
-        "is_thunk": request.args.get('is_thunk'),
         "return_type": request.args.get('return_type'),
         "calling_convention": request.args.get('calling_convention'),
         "entrypoint_address": request.args.get('entrypoint_address'),
     }
 
-    # 3. Build Query (Standardized naming)
-    query_parts = [f"@collection:{{ {escape_tag_value(collection)} }}"]
+    # 3. Build Query (Standardized naming - no spaces and quoted TAGs for Kvrocks)
+    query_parts = [
+        f"@collection:{{{collection}}}",
+        "@type:{function}"
+    ]
 
     tags = request.args.getlist('tag')
     for tag in tags:
-        query_parts.append(f'@tag:{{ {escape_tag_value(tag)} }}')
+        query_parts.append(f'@tags:{{"{tag}"}}')
     
     # Optional filters
     if filters["batch_uuid"]:
-        query_parts.append(f'@batch_uuid:{{ {escape_tag_value(filters["batch_uuid"])} }}')
+        query_parts.append(f'@batch_uuid:{{"{filters["batch_uuid"]}"}}')
     
     if filters["language_id"]:
         # Handles complex Ghidra strings like 'AARCH64:LE:64:v8A'
-        query_parts.append(f'@language_id:{{ {escape_tag_value(filters["language_id"])} }}')
+        query_parts.append(f'@language_id:{{"{filters["language_id"]}"}}')
     
     if filters["file_md5"]:
-        query_parts.append(f'@file_md5:{{ {escape_tag_value(filters["file_md5"])} }}')
+        query_parts.append(f'@file_md5:{{"{filters["file_md5"]}"}}')
     
     if filters["file_name"]:
         # Text field with wildcards for partial match
         query_parts.append(f'@file_name:*{filters["file_name"]}*')
 
     if filters["decompiler_id"]:
-        query_parts.append(f'@decompiler_id:{{ {escape_tag_value(filters["decompiler_id"])} }}')
+        query_parts.append(f'@decompiler_id:{{"{filters["decompiler_id"]}"}}')
     
     if filters["function_name"]:
         # TextField, use quotes for phrase
         query_parts.append(f'@function_name:"{filters["function_name"]}"')
-    
-    if filters["is_thunk"]:
-        query_parts.append(f'@is_thunk:{{ {escape_tag_value(filters["is_thunk"])} }}')
     
     if filters["return_type"]:
         # TextField
@@ -274,7 +299,7 @@ def search_functions():
         Query(search_str)
         .dialect(2)
         .paging(offset, limit)
-        .sort_by("entry_date", asc=False)
+        #.sort_by("entry_date", asc=False)
     )
 
     try:
@@ -282,19 +307,25 @@ def search_functions():
 
         functions_list = []
         for doc in results.docs:
-            data = json.loads(doc.json)
-            col = data.get('collection', collection)
-            md5 = data.get('file_md5') or data.get('file-md5')
-            addr = data.get('entrypoint_address') or data.get('entrypoint-address')
-            b_uuid = data.get('batch_uuid') or data.get('batch-uuid')
+            if hasattr(doc, 'json'):
+                data = json.loads(doc.json)
+            else:
+                # Fallback for systems (like Kvrocks) that return flat fields
+                data = doc.__dict__
 
-            if col and md5 and addr and 'function-id' not in data:
-                data['function-id'] = f"{col}:function:{md5}:{addr}"
-            if col and md5 and 'file-id' not in data:
-                data['file-id'] = f"{col}:file:{md5}"
-            if col and b_uuid and 'batch-id' not in data:
-                data['batch-id'] = f"{col}:batch:{b_uuid}"
-                
+            col = data.get('collection', collection)
+            md5 = data.get('file_md5') or data.get('file_md5')
+            addr = data.get('entrypoint_address') or data.get('entrypoint_address')
+            b_uuid = data.get('batch_uuid') or data.get('batch_uuid')
+
+            if col and md5 and addr and 'function_id' not in data:
+                data['function_id'] = f"{col}:function:{md5}:{addr}"
+            if col and md5 and 'file_id' not in data:
+                data['file_id'] = f"{col}:file:{md5}"
+            if col and b_uuid and 'batch_id' not in data:
+                data['batch_id'] = f"{col}:batch:{b_uuid}"
+            
+            normalize_tags(data)
             functions_list.append(data)
 
         # 5. Return Data + Metadata
@@ -375,19 +406,19 @@ def _enrich_feature_context(r, collection, feature_list):
             fm = meta_pkg[0] if meta_pkg and len(meta_pkg) > 0 else None
             f = feature_list[i]
             if fm:
-                parts = fm.get("function-id", "").split(':')
+                parts = fm.get("function_id", "").split(':')
                 f['context'] = {
                     "type": fm.get("type", "N/A"),
-                    "op": fm.get("pcode-op", "N/A"),
-                    "pcode_full": fm.get("pcode-op-full"),
-                    "func_id": fm.get("function-id"),
-                    "line_idxs": fm.get("line-idx", []),
+                    "op": fm.get("pcode_op", "N/A"),
+                    "pcode_full": fm.get("pcode_op_full"),
+                    "func_id": fm.get("function_id"),
+                    "line_idxs": fm.get("line_idx", []),
                     "md5": parts[2] if len(parts) >= 3 else "N/A",
                     "addr": parts[3] if len(parts) >= 4 else "N/A",
-                    "name": fm.get("function-name", parts[3] if len(parts) >= 4 else "N/A"),
+                    "name": fm.get("function_name", parts[3] if len(parts) >= 4 else "N/A"),
                     "c_code": None
                 }
-                func_id = fm.get("function-id")
+                func_id = fm.get("function_id")
                 if func_id and f['context']['line_idxs']:
                     pipe.json().get(f"{func_id}:source")
                     f['_line_idx'] = f['context']['line_idxs'][0]
@@ -413,7 +444,7 @@ def _enrich_feature_context(r, collection, feature_list):
             if source_data and isinstance(source_data, dict) and '_line_idx' in f:
                 target_line = int(f['_line_idx'])
                 try:
-                    c_tokens = source_data.get('c-tokens', [])
+                    c_tokens = source_data.get('c_tokens', [])
                     line_tokens = [t for t in c_tokens if int(t.get('line', -1)) == target_line]
                     if line_tokens:
                         f['context']["c_code"] = [
@@ -425,7 +456,7 @@ def _enrich_feature_context(r, collection, feature_list):
             if vec_meta and isinstance(vec_meta, list) and not f['context']['pcode_full']:
                 for feat in vec_meta:
                     if feat.get('hash') == f['hash']:
-                        f['context']['pcode_full'] = feat.get('pcode-op-full', 'N/A')
+                        f['context']['pcode_full'] = feat.get('pcode_op_full', 'N/A')
                         break
             
             if not f['context'].get('pcode_full'): f['context']['pcode_full'] = "N/A"
@@ -461,8 +492,8 @@ def search_features():
     # 2. Enrich with context
     feature_list = _enrich_feature_context(r, collection, feature_list)
     for f in feature_list:
-        if 'feature-id' not in f:
-            f['feature-id'] = f"{collection}:feature:{f['hash']}"
+        if 'feature_id' not in f:
+            f['feature_id'] = f"{collection}:feature:{f['hash']}"
 
     return jsonify({
         "total_estimated": total_found,
@@ -489,8 +520,10 @@ def get_feature_details(f_hash):
     func_ids = r.smembers(f"{collection}:feature:{f_hash}:functions")
     
     # 2. Get the specific occurrences metadata (the JSON array we built in the rebuilder)
-    meta_data = r.json().get(f"{collection}:feature:{f_hash}:meta") or []
+    meta_data = r.json().get(f"{collection}:feature:{f_hash}:meta", "$") or []
     
+    if isinstance(meta_data, list) and meta_data and len(meta_data) == 1: meta_data = meta_data[0]
+
     total_occurrences = len(meta_data)
     paginated_meta = meta_data[offset : offset + limit]
 
@@ -498,8 +531,8 @@ def get_feature_details(f_hash):
     pipe = r.pipeline()
     augment_indices = []
     for i, occ in enumerate(paginated_meta):
-        if 'pcode-op-full' not in occ or 'tf' not in occ or 'pcode-block' not in occ:
-            func_id = occ.get('function-id')
+        if 'pcode_op_full' not in occ or 'tf' not in occ or 'pcode_block' not in occ:
+            func_id = occ.get('function_id')
             if func_id:
                 pipe.json().get(f"{func_id}:vec:meta")
                 pipe.zscore(f"{func_id}:vec:tf", f_hash)
@@ -517,8 +550,8 @@ def get_feature_details(f_hash):
                     # Find this specific feature in the function's vector meta
                     for feat in vec_meta:
                         if feat.get('hash') == f_hash:
-                            occ['pcode-op-full'] = feat.get('pcode-op-full', 'N/A')
-                            occ['pcode-block'] = feat.get('pcode-block', {})
+                            occ['pcode_op_full'] = feat.get('pcode_op_full', 'N/A')
+                            occ['pcode_block'] = feat.get('pcode_block', {})
                             break
                 
                 occ['tf'] = int(tf_score) if tf_score is not None else 0
@@ -527,16 +560,16 @@ def get_feature_details(f_hash):
 
     for occ in paginated_meta:
         col = occ.get('collection', collection)
-        md5 = occ.get('file_md5') or occ.get('file-md5')
-        addr = occ.get('entrypoint_address') or occ.get('entrypoint-address')
-        b_uuid = occ.get('batch_uuid') or occ.get('batch-uuid')
+        md5 = occ.get('file_md5') or occ.get('file_md5')
+        addr = occ.get('entrypoint_address') or occ.get('entrypoint_address')
+        b_uuid = occ.get('batch_uuid') or occ.get('batch_uuid')
         
-        if 'function-id' not in occ and col and md5 and addr:
-            occ['function-id'] = f"{col}:function:{md5}:{addr}"
-        if 'file-id' not in occ and col and md5:
-            occ['file-id'] = f"{col}:file:{md5}"
-        if 'batch-id' not in occ and col and b_uuid:
-            occ['batch-id'] = f"{col}:batch:{b_uuid}"
+        if 'function_id' not in occ and col and md5 and addr:
+            occ['function_id'] = f"{col}:function:{md5}:{addr}"
+        if 'file_id' not in occ and col and md5:
+            occ['file_id'] = f"{col}:file:{md5}"
+        if 'batch_id' not in occ and col and b_uuid:
+            occ['batch_id'] = f"{col}:batch:{b_uuid}"
 
     return jsonify({
         "hash": f_hash,
@@ -547,3 +580,145 @@ def get_feature_details(f_hash):
         "associated_functions": list(func_ids),
         "occurrences": paginated_meta
     })
+
+@search_bp.route("/api/similarity/search", methods=["GET"])
+def similarity_search_api():
+    col = request.args.get('collection')
+    algo = request.args.get('algo', 'unweighted_cosine')
+    
+    try:
+        threshold = float(request.args.get('threshold', 0.1))
+        offset = int(request.args.get('offset', 0))
+        limit = int(request.args.get('limit', DEFAULT_PAGING_LIMIT))
+        min_features = int(request.args.get('min_features', 0))
+    except ValueError:
+        return jsonify({"detail": "Invalid threshold, offset, limit, or min_features parameters"}), 400
+
+    md5_filters = request.args.getlist('md5')
+    func_filters = request.args.getlist('func')
+
+    if not col:
+        return jsonify({"detail": "Missing collection"}), 400
+
+    try:
+        r = get_redis()
+        zset_key = f"{col}:all_sim:{algo}"
+        
+        # --- LUA Optimized Similarity Search with Metadata Filtering ---
+        # This handles pagination correctly even when filtering in RediSearch/JSON
+        LUA_SIM_FILTER = """
+        local zset_key = ARGV[1]
+        local threshold = tonumber(ARGV[2])
+        local offset = tonumber(ARGV[3])
+        local limit = tonumber(ARGV[4])
+        local min_feat = tonumber(ARGV[5])
+        
+        local results = {}
+        local found = 0
+        local scanned = 0
+        local batch = 100
+        
+        while found < (offset + limit) do
+            local pairs = redis.call('ZREVRANGEBYSCORE', zset_key, 1.0, threshold, 'LIMIT', scanned, batch, 'WITHSCORES')
+            if #pairs == 0 then break end
+            
+            for i = 1, #pairs, 2 do
+                local ps = pairs[i]
+                local sc = pairs[i+1]
+                local pass = true
+                
+                if min_feat > 0 then
+                    -- Extract IDs from "id1::id2"
+                    local idx = string.find(ps, "::")
+                    if idx then
+                        local id1 = string.sub(ps, 1, idx-1)
+                        local id2 = string.sub(ps, idx+2)
+                        
+                        local m1 = redis.call('JSON.GET', id1 .. ':meta', '$.bsim_features_count')
+                        local m2 = redis.call('JSON.GET', id2 .. ':meta', '$.bsim_features_count')
+                        
+                        -- Kvrocks JSON.GET returns "[count]" or "[null]"
+                        local v1 = 0
+                        local v2 = 0
+                        if m1 then
+                           local d1 = cjson.decode(m1)
+                           v1 = (d1 and d1[1]) or 0
+                        end
+                        if m2 then
+                           local d2 = cjson.decode(m2)
+                           v2 = (d2 and d2[1]) or 0
+                        end
+                        
+                        if v1 < min_feat or v2 < min_feat then
+                            pass = false
+                        end
+                    end
+                end
+                
+                if pass then
+                    found = found + 1
+                    if found > offset then
+                        table.insert(results, {ps, sc})
+                        if #results >= limit then break end
+                    end
+                end
+                scanned = scanned + 1
+            end
+            if #results >= limit then break end
+        end
+        return results
+        """
+        
+        # Lua returns a list of [pair_str, score]
+        results = r.eval(LUA_SIM_FILTER, 0, zset_key, threshold, offset, limit, min_features)
+        
+        # If no Lua script or filtering failed, fallback? 
+        # But this should be standard on our Kvrocks setup.
+        
+        total = r.zcount(zset_key, threshold, 1.0) # This is approximate now if filtering
+        # Note: Correct 'total' after filtering is hard without scanning whole ZSET.
+        # We'll return total pairs in ZSET as a hint.
+
+        # Enrichment with metadata
+        enriched_pairs = []
+        if results:
+            pipe = r.pipeline()
+            for pair_info in results:
+                pair_str = pair_info[0]
+                id1, id2 = pair_str.split('::')
+                pipe.json().get(f"{id1}:meta", "$")
+                pipe.json().get(f"{id2}:meta", "$")
+            
+            metas = pipe.execute()
+            
+            for i, pair_info in enumerate(results):
+                pair_str = pair_info[0]
+                score = pair_info[1]
+                id1, id2 = pair_str.split('::')
+                m1_list = metas[i*2]
+                m2_list = metas[i*2 + 1]
+                m1 = m1_list[0] if isinstance(m1_list, list) and m1_list else m1_list
+                m2 = m2_list[0] if isinstance(m2_list, list) and m2_list else m2_list
+                
+                enriched_pairs.append({
+                    "id1": id1,
+                    "id2": id2,
+                    "score": float(score),
+                    "name1": m1.get("function_name", id1.split(':')[-1]) if m1 else id1.split(':')[-1],
+                    "name2": m2.get("function_name", id2.split(':')[-1]) if m2 else id2.split(':')[-1],
+                    "meta1": m1 or {},
+                    "meta2": m2 or {}
+                })
+
+        return jsonify({
+            "collection": col,
+            "algo": algo,
+            "threshold": threshold,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "pairs": enriched_pairs
+        })
+
+    except Exception as e:
+        return jsonify({"detail": f"Error searching similarities: {str(e)}"}), 500

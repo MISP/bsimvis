@@ -1,7 +1,5 @@
 from bsimvis.app import create_app
-from bsimvis.database.setup_redis import setup_indices
 
-setup_indices()
 app = create_app()
 
 if __name__ == "__main__":

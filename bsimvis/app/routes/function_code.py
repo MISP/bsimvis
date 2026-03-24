@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
-
+import traceback
 function_code_bp = Blueprint('function_code', __name__)
 
 def render_single_function(source, features, tf_map):
@@ -8,7 +8,7 @@ def render_single_function(source, features, tf_map):
     Renders the semantic tokens for a single function without any diffing logic.
     """
     f_map = get_feature_map(features)
-    tokens = source.get('c-tokens', [])
+    tokens = source.get('c_tokens', [])
     if not tokens:
         return []
         
@@ -17,7 +17,7 @@ def render_single_function(source, features, tf_map):
     for idx, t in enumerate(tokens):
         lines_dict[t['line']].append((idx, t))
         
-    addr_map = source.get('line-to-addr', {})
+    addr_map = source.get('line_to_addr', {})
     
     rows = []
     tips = {}
@@ -38,8 +38,8 @@ def render_single_function(source, features, tf_map):
             if token_features:
                 for f in token_features:
                     tip_features.append([
-                        f['hash'], f.get('pcode-op'), f.get('pcode-op-full'), 
-                        f.get('type'), f.get('seq'), f.get('addr'), f.get('line-idx'),
+                        f['hash'], f.get('pcode_op'), f.get('pcode_op_full'), 
+                        f.get('type'), f.get('seq'), f.get('addr'), f.get('line_idx'),
                         tf_map.get(f['hash'], "N/A"), "#66d9ef" # cyan for neutral base
                     ])
                 tips[global_idx] = [token.get('type'), token.get('seq'), tip_features]
@@ -86,16 +86,16 @@ def get_function_code():
         
         # Ensure MD5 and Decompiler ID are in meta if missing, but otherwise keep full meta
         if meta:
-            meta['file-md5'] = md5
-            if 'decompiler-id' not in meta:
-                meta['decompiler-id'] = source.get('metadata', {}).get('decompiler-id', 'unknown')
+            meta['file_md5'] = md5
+            if 'decompiler_id' not in meta:
+                meta['decompiler_id'] = source.get('metadata', {}).get('decompiler_id', 'unknown')
             
-            if 'function-id' not in meta:
-                meta['function-id'] = f"{collection}:function:{md5}:{addr}"
-            if 'file-id' not in meta:
-                meta['file-id'] = f"{collection}:file:{md5}"
-            if 'batch-id' not in meta and meta.get('batch-uuid'):
-                meta['batch-id'] = f"{collection}:batch:{meta['batch-uuid']}"
+            if 'function_id' not in meta:
+                meta['function_id'] = f"{collection}:function:{md5}:{addr}"
+            if 'file_id' not in meta:
+                meta['file_id'] = f"{collection}:file:{md5}"
+            if 'batch_id' not in meta and meta.get('batch_uuid'):
+                meta['batch_id'] = f"{collection}:batch:{meta['batch_uuid']}"
 
         return jsonify({
             "rows": rows,
@@ -103,4 +103,14 @@ def get_function_code():
             "meta": meta or {}
         })
     except Exception as e:
-        return jsonify({"detail": str(e)}), 500
+        # Capture the full stack trace as a string
+        error_traceback = traceback.format_exc()
+        
+        # Log it to your console/file so you don't lose it
+        print(error_traceback) 
+
+        return jsonify({
+            "detail": str(e),
+            "type": e.__class__.__name__,
+            "traceback": error_traceback  # Optional: only for development
+        }), 500

@@ -146,7 +146,7 @@
     <div id="loader">Fetching Diff Data...</div>
 
     <div id="selection-tool">
-        <h2 style="margin-top:0">Functional Diff Selection</h2>
+        <h2 style="margin-top:0">Function Diff Selection</h2>
         <div class="selection-columns">
             <div class="selection-col" id="col-left">
                 <h3>Left Side</h3>
@@ -585,11 +585,11 @@
         function formatMetaCard(m, fullId, isLeft) {
             if (!m) return "";
             // Handle both dash and underscore conventions
-            const label = m['function-name'] || m['function_name'] || 'unknown_func';
-            const returnType = m['return-type'] || m['return_type'] || 'N/A';
+            const label = m['function_name'] || m['function_name'] || 'unknown_func';
+            const returnType = m['return_type'] || m['return_type'] || 'N/A';
             const addr = fullId ? fullId.split(':').pop() : 'N/A';
-            const fileName = m['file-name'] || m['file_name'] || 'N/A';
-            const lang = m['language-id'] || m['language_id'] || 'N/A';
+            const fileName = m['file_name'] || m['file_name'] || 'N/A';
+            const lang = m['language_id'] || m['language_id'] || 'N/A';
 
             const swapIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>`;
             const swapBtnHtml = isLeft ? `<button class="swap-btn" id="swap-btn" title="Swap Sides">${swapIcon}</button>` : '';
@@ -599,7 +599,7 @@
             const tagsHtml = tags.length > 0 ? tags.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
 
             // Generate "More Info" rows for all other keys (excluding what we show by default)
-            const skipKeys = ['function-name', 'function_name', 'return-type', 'return_type', 'entrypoint-address', 'entrypoint_address', 'file-name', 'file_name', 'language-id', 'language_id', 'full-id', 'full_id', 'tags'];
+            const skipKeys = ['function_name', 'function_name', 'return_type', 'return_type', 'entrypoint_address', 'entrypoint_address', 'file_name', 'file_name', 'language_id', 'language_id', 'full_id', 'full_id', 'tags'];
             let moreHtml = '';
             Object.keys(m).sort().forEach(k => {
                 if (!skipKeys.includes(k)) {
@@ -719,8 +719,8 @@
             fileSel.innerHTML = '<option value="">-- Choose File --</option>';
             res.files.forEach(f => {
                 const opt = document.createElement('option');
-                opt.value = f['file-md5'];
-                opt.innerText = f['file-name'] || f['file-md5'];
+                opt.value = f['file_md5'];
+                opt.innerText = f['file_name'] || f['file_md5'];
                 fileSel.appendChild(opt);
             });
             fileSel.disabled = false;
@@ -741,8 +741,8 @@
             funcSel.innerHTML = '<option value="">-- Choose Function --</option>';
             res.functions.forEach(f => {
                 const opt = document.createElement('option');
-                opt.value = f['entrypoint-address'];
-                opt.innerText = `${f['function-name']} (${f['entrypoint-address']})`;
+                opt.value = f['entrypoint_address'];
+                opt.innerText = `${f['function_name']} (${f['entrypoint_address']})`;
                 funcSel.appendChild(opt);
             });
             funcSel.disabled = false;

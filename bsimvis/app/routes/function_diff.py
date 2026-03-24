@@ -12,7 +12,7 @@ function_diff_bp = Blueprint('function_diff', __name__)
 # fetch_function_data and get_feature_map are now in function_service.py
 
 def get_lines_data(source, f_map, common_hashes):
-    tokens = source.get('c-tokens', [])
+    tokens = source.get('c_tokens', [])
     if not tokens:
         return {}, []
         
@@ -55,8 +55,8 @@ def render_line_content(line_tokens, common_hashes, feature_map, tf_map, side="l
         if token_features:
             for f in token_features:
                 tip_features.append([
-                    f['hash'], f.get('pcode-op'), f.get('pcode-op-full'), 
-                    f.get('type'), f.get('seq'), f.get('addr'), f.get('line-idx'),
+                    f['hash'], f.get('pcode_op'), f.get('pcode_op_full'), 
+                    f.get('type'), f.get('seq'), f.get('addr'), f.get('line_idx'),
                     tf_map.get(f['hash'], "N/A"), "#00ff00" if f['hash'] in common_hashes else "#ff003c"
                 ])
             side_tips[global_idx] = [token.get('type'), token.get('seq'), tip_features]
@@ -92,7 +92,7 @@ def render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2):
 
         chunk_class = f"tag-{tag} chunk-{chunk_id}"
         line_identity = identities[line_idx] if line_idx < len(identities) else ""
-        addr_map = s_data.get('line-to-addr', {})
+        addr_map = s_data.get('line_to_addr', {})
         addr = addr_map.get(str(line_idx), [""])[0] if addr_map else ""
         
         line_tokens = lines_dict.get(line_idx, [])
@@ -164,14 +164,14 @@ def diff_api():
     rows, left_tips, right_tips = render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2)
 
     if meta1:
-        if 'function-id' not in meta1: meta1['function-id'] = f"{collection1}:function:{md5_1}:{addr_1}"
-        if 'file-id' not in meta1: meta1['file-id'] = f"{collection1}:file:{md5_1}"
-        if 'batch-id' not in meta1 and meta1.get('batch-uuid'): meta1['batch-id'] = f"{collection1}:batch:{meta1['batch-uuid']}"
+        if 'function_id' not in meta1: meta1['function_id'] = f"{collection1}:function:{md5_1}:{addr_1}"
+        if 'file_id' not in meta1: meta1['file_id'] = f"{collection1}:file:{md5_1}"
+        if 'batch_id' not in meta1 and meta1.get('batch_uuid'): meta1['batch_id'] = f"{collection1}:batch:{meta1['batch_uuid']}"
         
     if meta2:
-        if 'function-id' not in meta2: meta2['function-id'] = f"{collection2}:function:{md5_2}:{addr_2}"
-        if 'file-id' not in meta2: meta2['file-id'] = f"{collection2}:file:{md5_2}"
-        if 'batch-id' not in meta2 and meta2.get('batch-uuid'): meta2['batch-id'] = f"{collection2}:batch:{meta2['batch-uuid']}"
+        if 'function_id' not in meta2: meta2['function_id'] = f"{collection2}:function:{md5_2}:{addr_2}"
+        if 'file_id' not in meta2: meta2['file_id'] = f"{collection2}:file:{md5_2}"
+        if 'batch_id' not in meta2 and meta2.get('batch_uuid'): meta2['batch_id'] = f"{collection2}:batch:{meta2['batch_uuid']}"
 
     # Flask's jsonify handles the dictionary to JSON conversion
     return jsonify({

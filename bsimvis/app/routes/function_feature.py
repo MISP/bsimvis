@@ -24,6 +24,7 @@ def get_function_features():
         addr = parts[3]
         
         source, features, meta, tf_map = fetch_function_data(collection, md5, addr)
+        
         if not source:
             return jsonify({"detail": "Function not found"}), 404
             
@@ -39,7 +40,7 @@ def get_function_features():
         # 3. Process features and attach context lines
         rich_features = []
         for feat in (features or []):
-            t_idxs = feat.get('addr-to-token-idx', [])
+            t_idxs = feat.get('addr_to_token_idx', [])
             # Handle both list and single value (Ghidra export varies)
             if not isinstance(t_idxs, list):
                 t_idxs = [t_idxs] if t_idxs is not None else []
@@ -65,12 +66,12 @@ def get_function_features():
             rich_features.append(enriched_feat)
 
         if meta:
-            if 'function-id' not in meta:
-                meta['function-id'] = f"{collection}:function:{md5}:{addr}"
-            if 'file-id' not in meta:
-                meta['file-id'] = f"{collection}:file:{md5}"
-            if 'batch-id' not in meta and meta.get('batch-uuid'):
-                meta['batch-id'] = f"{collection}:batch:{meta['batch-uuid']}"
+            if 'function_id' not in meta:
+                meta['function_id'] = f"{collection}:function:{md5}:{addr}"
+            if 'file_id' not in meta:
+                meta['file_id'] = f"{collection}:file:{md5}"
+            if 'batch_id' not in meta and meta.get('batch_uuid'):
+                meta['batch_id'] = f"{collection}:batch:{meta['batch_uuid']}"
 
         return jsonify({
             "id": func_id,

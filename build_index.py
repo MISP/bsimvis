@@ -4,7 +4,7 @@ import time
 import math
 # Configuration
 REDIS_HOST = 'localhost'
-REDIS_PORT = 6667
+REDIS_PORT = 6666
 BATCH_SIZE = 1000
 
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
@@ -34,6 +34,11 @@ def rebuild_single_collection(collection):
 
     # Pattern targets the metadata JSON for each function
     match_pattern = f"{collection}:function:*:*:vec:meta"
+    
+    # Track which feature metadata arrays we've already initialized in this run
+    # (Since we cleared the index at the start, these don't exist yet in Redis)
+    # We use a set to avoid the 'NX' flag which is unsupported on Kvrocks.
+    initialized_features = set()
 
     while True:
         cursor, keys = r.scan(cursor=cursor, match=match_pattern, count=BATCH_SIZE)
@@ -48,7 +53,10 @@ def rebuild_single_collection(collection):
             
             # 1. Fetch Metadata and TF ZSet
             # We need both: Meta for the feature details, TF for the L2 Norm
-            raw_meta = r.json().get(key)
+            raw_meta = r.json().get(key, "$")
+
+            if isinstance(raw_meta, list) and raw_meta and len(raw_meta) == 1: raw_meta = raw_meta[0]
+
             tf_data = r.zrange(f"{base_func_id}:vec:tf", 0, -1, withscores=True)
             
             if not raw_meta or not tf_data:
@@ -72,18 +80,20 @@ def rebuild_single_collection(collection):
                 feat_meta_key = f"{collection}:feature:{f_hash}:meta"
                 
                 # Ensure the JSON array exists before appending
-                pipe.json().set(feat_meta_key, '$', [], nx=True)
+                if feat_meta_key not in initialized_features:
+                    pipe.json().set(feat_meta_key, '$', [])
+                    initialized_features.add(feat_meta_key)
                 
                 # Prepare the meta object for storage
                 meta_entry = {
-                    "function-id": base_func_id,
+                    "function_id": base_func_id,
                     "type": feat_item.get("type"),
-                    "pcode-op": feat_item.get("pcode-op"),
-                    "pcode-op-full": feat_item.get("pcode-op-full"),
+                    "pcode_op": feat_item.get("pcode_op"),
+                    "pcode_op_full": feat_item.get("pcode_op_full"),
                     "tf": int(next((score for h, score in tf_data if h == f_hash), 0)),
-                    "line-idx": feat_item.get("line-idx"),
-                    "addr-to-token-idx": feat_item.get("addr-to-token-idx"),
-                    "pcode-block": feat_item.get("pcode-block")
+                    "line_idx": feat_item.get("line_idx"),
+                    "addr_to_token_idx": feat_item.get("addr_to_token_idx"),
+                    "pcode_block": feat_item.get("pcode_block")
                 }
                 pipe.json().arrappend(feat_meta_key, '$', meta_entry)
                 

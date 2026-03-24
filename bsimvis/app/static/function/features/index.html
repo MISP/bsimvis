@@ -392,7 +392,7 @@
             features.forEach(f => {
                 window.featureMeta[f.hash] = {
                     type: f.type || 'N/A',
-                    op: f['pcode-op'] || 'N/A',
+                    op: f['pcode_op'] || 'N/A',
                     tf: f.tf || 0
                 };
                 const tr = document.createElement('tr');
@@ -433,7 +433,7 @@
                             style="text-decoration: none;">
                                 <span class="hash-badge" style="cursor: pointer;">${f.hash}</span>
                             </a>
-                            <button class="btn-copy" title="Copy Feature ID: ${f['feature-id']}" onclick="copyToClipboard('${f['feature-id']}', this)">
+                            <button class="btn-copy" title="Copy Feature ID: ${f['feature_id']}" onclick="copyToClipboard('${f['feature_id']}', this)">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
@@ -442,18 +442,18 @@
                     <td><span class="type-badge" style="color:var(--accent); font-weight:bold; font-size:0.75rem;">${f.type || 'N/A'}</span></td>
                     <td>
                         <div style="display:inline-flex; flex-direction:column; gap:3px;">
-                            ${f['previous-pcode-op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${f['previous-pcode-op']}</span>` : ''}
-                            <span class="pcode-badge">${f['pcode-op'] || 'N/A'}</span>
+                            ${f['previous_pcode_op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${f['previous_pcode_op']}</span>` : ''}
+                            <span class="pcode-badge">${f['pcode_op'] || 'N/A'}</span>
                             ${f['addr'] ? `<span class="addr-badge">${f['addr']}</span>` : ''}
                         </div>
                     </td>
-                    <td class="pcode-cell">${f['pcode-op-full'] || 'N/A'}</td>
+                    <td class="pcode-cell">${f['pcode_op_full'] || 'N/A'}</td>
                     <td>
-                        ${(f['pcode-block'] && Object.keys(f['pcode-block']).length > 0) ?
+                        ${(f['pcode_block'] && Object.keys(f['pcode_block']).length > 0) ?
                         `<div class="pcode-block-container">
-                                ${Object.entries(f['pcode-block']).map(([s, op]) => {
+                                ${Object.entries(f['pcode_block']).map(([s, op]) => {
                             const isActive = (s === f['seq']);
-                            const isPrevActive = (s === f['previous-seq']);
+                            const isPrevActive = (s === f['previous_seq']);
                             const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
                             const addrPart = s.split(':')[0];
                             return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;

@@ -1,0 +1,203 @@
+import redis
+import json
+import time
+import math
+import argparse
+import logging
+import datetime
+
+# Configuration
+REDIS_HOST = 'localhost'
+REDIS_PORT = 6666
+DEFAULT_BATCH_SIZE = 100
+DEFAULT_TOP_K = 20
+DEFAULT_THRESHOLD = 0.1
+
+# --- Turbo Similarity Bake Lua Script (Resource Optimized) ---
+# Supports Jaccard and Unweighted Cosine algorithms.
+# Stores results in per-function keys and a global collection-wide ZSET.
+# Thresholding is applied early to prevent memory and CPU bloat.
+LUA_ENHANCED_SIM_SCRIPT = """
+local target_id = ARGV[1]
+local collection = ARGV[2]
+local algo = ARGV[3]
+local top_k = tonumber(ARGV[4])
+local target_md5 = ARGV[5]
+local target_addr = ARGV[6]
+local threshold = tonumber(ARGV[7])
+
+-- ARGV[8...] are feature hashes
+local target_features = {}
+for i = 8, #ARGV do
+    target_features[#target_features + 1] = ARGV[i]
+end
+
+local target_count = #target_features
+local intersection_counts = {}
+local candidates_seen = {}
+
+-- 1. Identify all candidates and count intersections
+for _, f_hash in ipairs(target_features) do
+    local functions = redis.call('SMEMBERS', collection .. ':feature:' .. f_hash .. ':functions')
+    for _, func_id in ipairs(functions) do
+        if func_id ~= target_id then
+            if not candidates_seen[func_id] then
+                candidates_seen[func_id] = true
+                intersection_counts[func_id] = 0
+            end
+            intersection_counts[func_id] = intersection_counts[func_id] + 1
+        end
+    end
+end
+
+-- 2. Scored Candidates (Filtered by Threshold)
+local candidate_list = {}
+for id, intersect in pairs(intersection_counts) do
+    local cand_count = redis.call('ZCARD', id .. ':vec:tf')
+    if cand_count and cand_count > 0 then
+        local score = 0
+        if algo == 'jaccard' then
+            score = intersect / (target_count + cand_count - intersect)
+        elseif algo == 'unweighted_cosine' then
+            score = intersect / math.sqrt(target_count * cand_count)
+        end
+        
+        -- ONLY keep if above threshold
+        if score >= threshold then
+            table.insert(candidate_list, {id = id, score = score})
+        end
+    end
+end
+
+-- 3. Sort by score
+table.sort(candidate_list, function(a, b) return a.score > b.score end)
+
+-- 4. Enrich Top K and Prepare for Storage
+local matches = {}
+local limit = math.min(top_k, #candidate_list)
+local global_zset_key = collection .. ':all_sim:' .. algo
+
+for i = 1, limit do
+    local item = candidate_list[i]
+    local meta_raw = redis.call('JSON.GET', item.id .. ':meta')
+    local meta = {}
+    if meta_raw then
+        meta = cjson.decode(meta_raw)
+    end
+    
+    local score_rounded = math.floor(item.score * 10000 + 0.5) / 10000
+    
+    table.insert(matches, {
+        id = item.id,
+        name = meta["function_name"] or item.id,
+        score = score_rounded,
+        md5 = meta["file_md5"] or ""
+    })
+    
+    -- 5. Add to collection-wide similarity scoreboard (ZSET)
+    local pair_id = target_id .. '::' .. item.id
+    redis.call('ZADD', global_zset_key, score_rounded, pair_id)
+end
+
+-- 6. Store result directly in Redis
+local result_key = collection .. ':function:' .. target_md5 .. ':' .. target_addr .. ':sim:' .. algo
+redis.call('JSON.SET', result_key, '$', cjson.encode(matches))
+
+return #matches
+"""
+
+def bake_enhanced_similarities(args):
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    sim_script = r.register_script(LUA_ENHANCED_SIM_SCRIPT)
+    
+    collection = args.collection
+    algo = args.algo
+    top_k = args.top_k
+    threshold = args.threshold
+    
+    print(f"[*] Enhanced Sim Bake | Collection: {collection} | Algo: {algo} | Threshold: {threshold}")
+    
+    # Selecting targets based on filters
+    keys_to_process = []
+    
+    # 1. Binary Filters (MD5s)
+    if args.md5:
+        for md5 in args.md5:
+            keys_to_process.extend(r.keys(f"{collection}:function:{md5}:*:vec:tf"))
+    
+    # 2. Function Filters
+    if args.func:
+        for f in args.func:
+            if ":" in f:
+                keys_to_process.append(f"{collection}:function:{f}:vec:tf")
+            else:
+                pattern = f"{collection}:function:*:{f}:vec:tf"
+                keys_to_process.extend(r.keys(pattern))
+
+    # If no filters, keys_to_process remains empty but we skip to SCAN
+    if not args.md5 and not args.func:
+        keys_to_process = None
+
+    start_time = time.time()
+    processed = 0
+
+    if keys_to_process is not None:
+        # Use set to avoid duplicates if multiple filters overlap
+        unique_keys = sorted(list(set(keys_to_process)))
+        for key in unique_keys:
+            process_single_key(r, sim_script, key, collection, algo, top_k, threshold)
+            processed += 1
+            if processed % 10 == 0: print_progress(processed, start_time, collection)
+            if args.delay > 0: time.sleep(args.delay)
+    else:
+        # Full SCAN mode
+        cursor = 0
+        match_pattern = f"{collection}:function:*:*:vec:tf"
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=match_pattern, count=args.batch_size)
+            for key in keys:
+                process_single_key(r, sim_script, key, collection, algo, top_k, threshold)
+                processed += 1
+                if processed % 50 == 0: print_progress(processed, start_time, collection)
+                if args.delay > 0: time.sleep(args.delay)
+            if cursor == 0: break
+
+    print(f"[+] DONE: {processed} functions baked in {time.time() - start_time:.2f}s")
+
+def process_single_key(r, script, key, collection, algo, top_k, threshold):
+    parts = key.split(':')
+    if len(parts) < 4: return
+    md5, addr = parts[2], parts[3]
+    base_id = f"{collection}:function:{md5}:{addr}"
+    
+    features = r.zrange(key, 0, -1)
+    if not features: return
+    
+    # Lua ARGV: [id, collection, algo, top_k, md5, addr, threshold, features...]
+    lua_args = [base_id, collection, algo, top_k, md5, addr, threshold] + features
+    
+    try:
+        script(args=lua_args)
+    except Exception as e:
+        logging.error(f"Lua Error for {base_id}: {e}")
+
+def print_progress(count, start, collection):
+    elapsed = time.time() - start
+    rate = count / elapsed if elapsed > 0 else 0
+    print(f"  [i] {collection}: {count} functions baked ({rate:.1f} func/s)...")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="BSim Turbo Similarity Baker with Resource Guards")
+    parser.add_argument("-c", "--collection", required=True, help="Collection name")
+    parser.add_argument("--algo", default="unweighted_cosine", choices=["jaccard", "unweighted_cosine"], help="Similarity algorithm")
+    parser.add_argument("--md5", action="append", help="Filter by specific binary MD5 (can be used multiple times)")
+    parser.add_argument("--func", action="append", help="Filter by specific function (ID or MD5:ADDR, can be used multiple times)")
+    parser.add_argument("-k", "--top-k", type=int, default=DEFAULT_TOP_K, help="Top K matches per function")
+    parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help="Minimum similarity score (e.g., 0.1)")
+    parser.add_argument("--delay", type=float, default=0.0, help="Artificial delay (seconds) between calculations")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Internal SCAN batch size")
+    
+    args = parser.parse_args()
+    bake_enhanced_similarities(args)
+
+

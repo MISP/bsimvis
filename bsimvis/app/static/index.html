@@ -155,7 +155,8 @@
             position: fixed;
             display: none;
             z-index: 10000;
-            background: #272822; /* Monokai Background */
+            background: #272822;
+            /* Monokai Background */
             border: 1px solid #3e3d32;
             pointer-events: auto;
             z-index: 9999;
@@ -352,6 +353,7 @@
         <a href="#files" id="nav-files" style="color:var(--text)">Files</a>
         <a href="#functions" id="nav-functions" style="color:var(--text)">Functions</a>
         <a href="#features-global" id="nav-features-global" style="color:var(--text)">Global Features</a>
+        <a href="#top-correlations" id="nav-top-correlations" style="color:var(--text)">Top Correlations</a>
         <a href="#" id="nav-diffing" onclick="showDiffView()" style="color:var(--text)">Diffing Tool</a>
     </nav>
 
@@ -415,6 +417,12 @@
                 api: '/api/feature/search',
                 headers: ['Feature Hash', 'Type / Op', 'PCode Context', 'C Code Context', 'Total TF', 'Funcs', 'Actions'],
                 renderer: renderGlobalFeatures
+            },
+            '#top-correlations': {
+                title: 'Top Correlations',
+                api: '/api/similarity/search',
+                headers: ['Function Pair', 'Score', 'Collections / MD5s', 'Actions'],
+                renderer: renderTopCorrelations
             }
         };
 
@@ -434,7 +442,7 @@
             lastHashPath = full_hash;
 
             const params = new URLSearchParams(queryString);
-            if (hashPath === '#files' || hashPath === '#functions' || hashPath === '#features-global') {
+            if (hashPath === '#files' || hashPath === '#functions' || hashPath === '#features-global' || hashPath === '#top-correlations') {
                 params.set('offset', currentOffset);
                 params.set('limit', PAGE_SIZE);
             }
@@ -447,7 +455,7 @@
                 const data = await response.json();
 
                 // Extract the list of items based on the API response structure
-                const items = data.files || data.functions || data.features || (Array.isArray(data) ? data : []);
+                const items = data.files || data.functions || data.features || data.pairs || (Array.isArray(data) ? data : []);
                 const total = data.total || data.total_estimated || (Array.isArray(data) ? data.length : items.length || 0);
 
                 const tbody = document.getElementById('table-body');
@@ -468,7 +476,7 @@
         }
 
         function updateUI(path, params, route) {
-            const col = params.get('collection') || 'main';
+            const col = params.get('collection');
 
             // Sidebar
             document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
@@ -486,6 +494,7 @@
             document.getElementById('nav-files').href = `#files?collection=${col}`;
             document.getElementById('nav-functions').href = `#functions?collection=${col}`;
             document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
+            document.getElementById('nav-top-correlations').href = `#top-correlations?collection=${col}`;
 
             // Table Head
             const thead = document.getElementById('table-head');
@@ -524,6 +533,24 @@
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="sort-tf" ${p.get('sort') === 'tf' ? 'checked' : ''} onchange="applySearch()">
                         <label for="sort-tf" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Sort by Total TF</label>
+                    </div>
+                </div>`;
+            } else if (path === '#top-correlations') {
+                const p = new URLSearchParams(params);
+                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <span class="dim" style="font-size:0.75rem;">Threshold:</span>
+                        <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.1'}" step="0.05" min="0" max="1" style="width:80px;">
+                        
+                        <span class="dim" style="font-size:0.75rem;">Min Features:</span>
+                        <input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" style="width:60px;">
+
+                        <span class="dim" style="font-size:0.75rem;">Algo:</span>
+                        <select id="sim-algo" style="background:#000; color:var(--text); border:1px solid var(--border); padding:8px; border-radius:4px;">
+                            <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                            <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                        </select>
+                        <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Update</button>
                     </div>
                 </div>`;
             } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
@@ -570,17 +597,31 @@
             const fields = ['function_name', 'tag', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
             fields.forEach(f => {
                 const val = document.getElementById('flt-' + f).value;
-                if (val) params.set(f, val);
-                else params.delete(f);
             });
             currentOffset = 0;
             isEndOfResults = false;
             window.location.hash = `#functions?${params.toString()}`;
         }
 
+        function applySimSearch() {
+            const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+            const params = new URLSearchParams(queryString);
+
+            const threshold = document.getElementById('sim-threshold').value;
+            const algo = document.getElementById('sim-algo').value;
+            const minFeatures = document.getElementById('sim-min-features').value;
+
+            params.set('threshold', threshold);
+            params.set('algo', algo);
+            params.set('min_features', minFeatures);
+            currentOffset = 0;
+            isEndOfResults = false;
+            window.location.hash = `${hashPath}?${params.toString()}`;
+        }
+
         function renderPagination(path) {
             const container = document.getElementById('pagination-container');
-            container.innerHTML = ((path === '#files' || path === '#functions' || path === '#features-global') && !isEndOfResults) ?
+            container.innerHTML = ((path === '#files' || path === '#functions' || path === '#features-global' || path === '#top-correlations') && !isEndOfResults) ?
                 `<button class="btn-primary" onclick="refreshData(true)">Load More Results</button>` : '';
         }
 
@@ -600,9 +641,9 @@
             return data.map(col => `
         <tr>
             <td><b style="color:var(--accent)">${col.name}</b></td>
-            <td class="mono">${col['total-files']}</td>
-            <td class="mono">${col['total-functions']}</td>
-            <td class="dim">${formatDate(col['last-updated'])}</td>
+            <td class="mono">${col['total_files']}</td>
+            <td class="mono">${col['total_functions']}</td>
+            <td class="dim">${formatDate(col['last_updated'])}</td>
             <td>
                 <div style="display: flex; gap: 15px;">
                     <a class="btn-action" href="#batches?collection=${col.name}">
@@ -626,60 +667,60 @@
                     <td>
                         <div style="display:inline-flex; align-items:center; gap:8px;">
                             <b>${b.name || 'Unnamed'}</b>
-                            <button class="btn-copy" title="Copy Batch ID: ${b['batch-id']}" onclick="copyToClipboard('${b['batch-id']}', this)">
+                            <button class="btn-copy" title="Copy Batch ID: ${b['batch_id']}" onclick="copyToClipboard('${b['batch_id']}', this)">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                     </td>
-                    <td class="mono dim" style="font-size:0.7rem">${b['batch-uuid']}</td>
-                    <td class="mono">${b['total-files']}</td>
-                    <td class="mono">${b['total-functions']}</td>
-                    <td class="dim">${formatDate(b['last-updated'] || b['created-at'])}</td>
-                    <td><a class="btn-action" href="#files?collection=${col}&batch_uuid=${b['batch-uuid']}">View Files</a></td>
+                    <td class="mono dim" style="font-size:0.7rem">${b['batch_uuid']}</td>
+                    <td class="mono">${b['total_files']}</td>
+                    <td class="mono">${b['total_functions']}</td>
+                    <td class="dim">${formatDate(b['last_updated'] || b['created_at'])}</td>
+                    <td><a class="btn-action" href="#files?collection=${col}&batch_uuid=${b['batch_uuid']}">View Files</a></td>
                 </tr>
             `}).join('');
         }
 
         function renderFiles(data) {
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-            const col = params.get('collection') || 'main';
+            const col = params.get('collection');
             return data.map(f => `
                 <tr>
                     <td>
                         <div style="display:inline-flex; align-items:center; gap:8px;">
-                            <b style="color:var(--accent)">${f['file-name']}</b>
-                            <button class="btn-copy" title="Copy File ID: ${f['file-id']}" onclick="copyToClipboard('${f['file-id']}', this)">
+                            <b style="color:var(--accent)">${f['file_name']}</b>
+                            <button class="btn-copy" title="Copy File ID: ${f['file_id']}" onclick="copyToClipboard('${f['file_id']}', this)">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                     </td>
                     <td>
-                        <div class="mono" style="font-size:0.7rem">${f['file-md5']}</div>
-                        <div class="dim">${f['language-id']}</div>
+                        <div class="mono" style="font-size:0.7rem">${f['file_md5']}</div>
+                        <div class="dim">${f['language_id']}</div>
                     </td>
-                    <td class="dim">${formatDate(f['entry-date'])}</td>
-                    <td><a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file-md5']}">Functions →</a></td>
+                    <td class="dim">${formatDate(f['entry_date'])}</td>
+                    <td><a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}">Functions →</a></td>
                 </tr>
             `).join('');
         }
 
         function renderFunctions(data) {
             return data.map(f => {
-                const meta = f['function-metadata'] || f;
-                const name = meta['function-name'] || 'Unknown';
-                const entry = meta['entrypoint-address'] || '';
+                const meta = f['function_metadata'] || f;
+                const name = meta['function_name'] || 'Unknown';
+                const entry = meta['entrypoint_address'] || '';
                 const tags = (meta['tags'] || []).map(t => `<span class="tag-card">${t}</span>`).join('');
-                const fileName = meta['file-name'] || '';
-                const file_md5 = meta['file-md5'] || '';
-                const decompiler = meta['decompiler-id'] || '';
-                const isThunk = meta['is-thunk'] ? 'Yes' : 'No';
-                const retType = meta['return-type'] || 'void';
-                const cc = meta['calling-convention'] || 'unknown';
-                const funcId = meta['function-id'] || `${meta.collection || 'main'}:function:${file_md5}:${entry}`;
+                const fileName = meta['file_name'] || '';
+                const file_md5 = meta['file_md5'] || '';
+                const decompiler = meta['decompiler_id'] || '';
+                const isThunk = meta['is_thunk'] ? 'Yes' : 'No';
+                const retType = meta['return_type'] || 'void';
+                const cc = meta['calling_convention'] || 'unknown';
+                const funcId = meta['function_id'] || `${meta.collection}:function:${file_md5}:${entry}`;
 
                 // BSim features
-                const featCount = meta['bsim-features-count'] || 0;
-                const uniqueCount = meta['bsim-unique-features-count'] || 0;
+                const featCount = meta['bsim_features_count'] || 0;
+                const uniqueCount = meta['bsim_unique_features_count'] || 0;
 
                 // Safe quote escaping for onclick
                 const safeName = (name || '').replace(/'/g, "\\'");
@@ -711,7 +752,7 @@
                         <span class="badge">F: ${featCount}</span><br>
                         <span class="badge" style="margin-top:2px;display:inline-block">U: ${uniqueCount}</span>
                     </td>
-                    <td class="dim">${formatDate(meta['entry-date'] || meta['file-date'])}</td>
+                    <td class="dim">${formatDate(meta['entry_date'] || meta['file_date'])}</td>
                     <td>
                         <div style="display:flex; gap:5px; margin-top:10px;">
                             <button class="btn-feat-action" onclick="showFeaturePanel('${funcId}')"><span>🔍</span> Features</button>
@@ -725,7 +766,7 @@
 
         function renderGlobalFeatures(items) {
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-            const col = params.get('collection') || 'main';
+            const col = params.get('collection');
             if (!items.length) return '<tr><td colspan="6" style="text-align:center">No features found.</td></tr>';
 
             return items.map(f => {
@@ -777,7 +818,7 @@
                     <td>
                         <div style="display:inline-flex; align-items:center; gap:8px;">
                             <code class="mono" style="color:var(--accent)">${f.hash}</code>
-                            <button class="btn-copy" title="Copy Feature ID: ${f['feature-id']}" onclick="copyToClipboard('${f['feature-id']}', this)">
+                            <button class="btn-copy" title="Copy Feature ID: ${f['feature_id']}" onclick="copyToClipboard('${f['feature_id']}', this)">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
@@ -793,6 +834,50 @@
                     <td>
                         <button class="btn-action" style="background:none; border:none; padding:0; font-size:0.8rem; text-align:left; color:var(--accent);" 
                             onclick="showGlobalFeaturePanel('${f.hash}', '${col}')">Analyze →</button>
+                    </td>
+                </tr>
+            `}).join('');
+        }
+
+        function renderTopCorrelations(items) {
+            if (!items || !items.length) return '<tr><td colspan="4" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
+
+            return items.map(p => {
+                const s1 = p.id1.split(':');
+                const s2 = p.id2.split(':');
+                const m1 = s1[2] || '---';
+                const m2 = s2[2] || '---';
+                const addr1 = s1[3] || '---';
+                const addr2 = s2[3] || '---';
+
+                return `
+                <tr>
+                    <td>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="badge" style="min-width:40px; text-align:center;">L</span>
+                                <b style="color:var(--accent); cursor:pointer;" onclick="showFunctionCodeById('${p.id1}', '${p.name1.replace(/'/g, "\\'")}')">${p.name1}</b>
+                                <span class="dim" style="font-size:0.7rem;">@ ${addr1}</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span class="badge" style="min-width:40px; text-align:center; background:var(--success); color:#000;">R</span>
+                                <b style="color:var(--accent); cursor:pointer;" onclick="showFunctionCodeById('${p.id2}', '${p.name2.replace(/'/g, "\\'")}')">${p.name2}</b>
+                                <span class="dim" style="font-size:0.7rem;">@ ${addr2}</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <div style="font-size:1.2rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
+                        <div class="dim" style="font-size:0.65rem;">similarity</div>
+                    </td>
+                    <td>
+                        <div class="dim" style="font-size:0.7rem; margin-bottom:4px;">L: <span class="mono">${m1}</span></div>
+                        <div class="dim" style="font-size:0.7rem;">R: <span class="mono">${m2}</span></div>
+                    </td>
+                    <td>
+                        <button class="btn-diff-action" onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')">
+                            <span>↔</span> Run Diff
+                        </button>
                     </td>
                 </tr>
             `}).join('');
@@ -887,55 +972,36 @@
             diffSelection = [];
             updateDiffQueueUI();
             saveDiffQueue();
-            hideDiffPanel();
-        }
-
-        function updateDiffIframe() {
-            const p = document.getElementById('diff-panel');
-            const f = document.getElementById('diff-frame');
-            const title = document.getElementById('diff-title');
-
-            if (p) {
-                if (diffSelection.length === 2) {
-                    if (title) title.innerText = `${diffSelection[0].name} ↔ ${diffSelection[1].name}`;
-                    f.src = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
-                } else {
-                    if (title) title.innerText = `Diff Selection Tool`;
-                    f.src = `/diff/index.html`;
-                }
-            }
         }
 
         function showDiffPanel(force = false) {
             if (!force && diffSelection.length < 2) return;
-            hideCodePanel();
-            hideFeaturePanel();
-            hideGlobalFeaturePanel();
-            const p = document.getElementById('diff-panel');
-            if (p) {
-                p.style.display = 'flex';
-                updateDiffIframe();
-
-                if (diffSelection.length === 2) {
-                    // Reset queue after opening, ready for next pair
-                    diffSelection = [];
-                    updateDiffQueueUI();
-                    saveDiffQueue();
-                }
+            
+            let url = '/diff/index.html';
+            if (diffSelection.length === 2) {
+                url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
             }
+
+            window.open(url, '_blank');
+            
+            if (diffSelection.length === 2) {
+                // Reset queue after opening
+                diffSelection = [];
+                updateDiffQueueUI();
+                saveDiffQueue();
+            }
+        }
+
+        function openDiffDirectly(id1, name1, id2, name2) {
+            const url = `/diff/index.html?id1=${encodeURIComponent(normalizeFuncId(id1))}&id2=${encodeURIComponent(normalizeFuncId(id2))}`;
+            window.open(url, '_blank');
         }
 
         function showDiffView() {
             showDiffPanel(true);
         }
 
-        function hideDiffPanel() {
-            const p = document.getElementById('diff-panel');
-            if (p) p.style.display = 'none';
-        }
-
         function showFunctionCodeById(id, name, lineHash = '') {
-            hideDiffPanel();
             hideFeaturePanel();
             hideGlobalFeaturePanel();
             const p = document.getElementById('code-panel');
@@ -954,7 +1020,6 @@
 
         // --- Feature Panel Logic ---
         function showFeaturePanel(id) {
-            hideDiffPanel();
             hideCodePanel();
             const p = document.getElementById('feature-panel');
             const f = document.getElementById('feature-frame');
@@ -974,7 +1039,6 @@
 
         // --- Global Feature Panel Logic ---
         function showGlobalFeaturePanel(hash, collection) {
-            hideDiffPanel();
             hideCodePanel();
             hideFeaturePanel();
             const p = document.getElementById('global-feature-panel');
@@ -994,13 +1058,7 @@
         function launchExternal(type) {
             let url = '';
             if (type === 'diff') {
-                const f = document.getElementById('diff-frame');
-                // Use iframe src if set (since queue is cleared after opening)
-                if (f && f.src && f.src.includes('id1=')) {
-                    url = f.src;
-                } else if (diffSelection.length === 2) {
-                    url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
-                }
+                return; // No longer needed for diff as it opens in new window anyway
             } else if (type === 'code') {
                 url = document.getElementById('code-frame').src;
             } else if (type === 'features') {
@@ -1011,8 +1069,7 @@
 
             if (url) {
                 window.open(url, '_blank');
-                if (type === 'diff') hideDiffPanel();
-                else if (type === 'code') hideCodePanel();
+                if (type === 'code') hideCodePanel();
                 else if (type === 'features') hideFeaturePanel();
                 else if (type === 'global-feature') hideGlobalFeaturePanel();
             }
@@ -1068,24 +1125,6 @@
             }
         });
     </script>
-
-    <!-- Diff Panel (Moved to root for correct stacking) -->
-    <div id="diff-panel">
-        <div class="resize-handle"></div>
-        <div id="diff-panel-header">
-            <div style="display:flex; align-items:center;">
-                <span class="diff-queue-badge">DIFF MODE</span>
-                <span id="diff-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Compare
-                    Functions</span>
-            </div>
-            <div class="panel-actions">
-                <button class="btn-panel" onclick="launchExternal('diff')">Open in New Window ↗</button>
-                <button class="btn-panel" onclick="hideDiffPanel()"
-                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Diff</button>
-            </div>
-        </div>
-        <iframe id="diff-frame"></iframe>
-    </div>
 
     <!-- Code Panel -->
     <div id="code-panel">
@@ -1169,7 +1208,7 @@
 
             // Rich data from preview tips if available
             const richData = (idx !== undefined && window.previewTips) ? window.previewTips[idx] : null;
-            const collection = window.previewCollection || 'main';
+            const collection = window.previewCollection;
 
             let menu = document.getElementById('token-context-menu');
             if (!menu) {
@@ -1393,7 +1432,6 @@
             }
         });
 
-        initResize('diff-panel');
         initResize('code-panel');
         initResize('feature-panel');
         initResize('global-feature-panel');

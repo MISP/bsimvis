@@ -405,7 +405,7 @@
 
                 // Iterate through every representation of this feature in this page
                 for (const occ of occurrences) {
-                    let funcId = normalizeFuncId(occ['function-id']);
+                    let funcId = normalizeFuncId(occ['function_id']);
                     const sourceData = await fetchSource(funcId);
                     const tr = document.createElement('tr');
 
@@ -413,13 +413,13 @@
                     const parts = funcId.split(':');
                     const addr = parts.pop();
                     const md5 = parts[2]; // Use parts[2] for md5 following normalization
-                    const funcName = (sourceData && sourceData.meta) ? sourceData.meta['function-name'] : addr;
+                    const funcName = (sourceData && sourceData.meta) ? sourceData.meta['function_name'] : addr;
 
                     const originHtml = `
                         <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${funcName}</div>
                         <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
                         <div class="dim" style="font-size:0.7rem;">Binary: ${md5}</div>
-                        <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${occ['line-idx'].map(l => l + 1).join(', ')}</span></div>
+                        <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${occ['line_idx'].map(l => l + 1).join(', ')}</span></div>
                         <div style="display:flex; align-items:center; gap:5px; margin-top:8px;">
                             <code class="origin-id" style="font-size:0.6rem;">${funcId}</code>
                             <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
@@ -440,31 +440,31 @@
                     const metaHtml = `
                         <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${occ.type}</div>
                         <div style="display:flex; flex-direction:column; gap:2px;">
-                            ${occ['previous-pcode-op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${occ['previous-pcode-op']}</span>` : ''}
-                            <span class="op-badge" title="${occ['pcode-op-full'] || ''}">${occ['pcode-op']}</span>
+                            ${occ['previous_pcode_op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${occ['previous_pcode_op']}</span>` : ''}
+                            <span class="op-badge" title="${occ['pcode_op_full'] || ''}">${occ['pcode_op']}</span>
                             ${occ['addr'] ? `<span class="addr-badge">${occ['addr']}</span>` : ''}
                         </div>
                     `;
 
-                    const targetLinesStr = (occ['line-idx'] || []).map(l => l + 1).join(',');
+                    const targetLinesStr = (occ['line_idx'] || []).map(l => l + 1).join(',');
                     const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';
 
                     // 3. Pcode Context Column
                     const pcodeHtml = `
                         <div class="code-card" style="box-shadow: none;">
                             <div class="code-card-line">
-                                <div class="code-card-text pcode-text">${occ['pcode-op-full'] || '<span class="dim">N/A</span>'}</div>
+                                <div class="code-card-text pcode-text">${occ['pcode_op_full'] || '<span class="dim">N/A</span>'}</div>
                             </div>
                         </div>
                     `;
 
                     // 4. P-Code Block Column
-                    const pb = occ['pcode-block'] || {};
+                    const pb = occ['pcode_block'] || {};
                     const pcodeBlockHtml = (Object.keys(pb).length > 0) ?
                         `<div class="pcode-block-container">
                             ${Object.entries(pb).map(([s, op]) => {
                             const isActive = (s === occ['seq']);
-                            const isPrevActive = (s === occ['previous-seq']);
+                            const isPrevActive = (s === occ['previous_seq']);
                             const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
                             const addrPart = s.split(':')[0];
                             return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
@@ -483,7 +483,7 @@
                              onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}'); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
 
                         const contextLineSet = new Set();
-                        occ['line-idx'].forEach(l => {
+                        occ['line_idx'].forEach(l => {
                             const normalizedIdx = l + 1;
                             for (let i = -CONTEXT_WINDOW; i <= CONTEXT_WINDOW; i++) {
                                 contextLineSet.add(normalizedIdx + i);
@@ -500,7 +500,7 @@
                                     contextHtml += `<div class="code-card-line" style="opacity: 0.2; justify-content: center; padding: 4px 0;"><span style="font-size: 0.6rem; letter-spacing: 3px;">...</span></div>`;
                                 }
                                 lastLineIdx = lineIdx;
-                                const isFeatureLine = occ['line-idx'].includes(lineIdx - 1);
+                                const isFeatureLine = occ['line_idx'].includes(lineIdx - 1);
                                 const rowStyle = isFeatureLine ? '' : 'opacity: 0.5;';
                                 contextHtml += `
                                      <div class="code-card-line" style="${rowStyle}">

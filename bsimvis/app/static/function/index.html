@@ -295,9 +295,9 @@
                 funcTips = data.tips;
                 fullMeta = data.meta;
 
-                id = data.meta["function-id"] || data.meta["collection"] + ":function:" + data.meta["file-md5"] + ":" + data.meta["entrypoint-address"];
+                id = data.meta["function_id"] || data.meta["collection"] + ":function:" + data.meta["file_md5"] + ":" + data.meta["entrypoint_address"];
                 window.currentFuncId = normalizeFuncId(id);
-                window.currentFuncName = data.meta['function-name'] || 'unknown';
+                window.currentFuncName = data.meta['function_name'] || 'unknown';
 
                 renderMeta(data.meta);
 
@@ -332,16 +332,16 @@
 
         function renderMeta(m) {
             const container = document.getElementById('meta-container');
-            const label = m['function-name'] || 'unknown_func';
-            const returnType = m['return-type'] || 'N/A';
-            const addr = m['entrypoint-address'] || 'N/A';
-            const fileName = m['file-name'] || 'N/A';
-            const lang = m['language-id'] || 'N/A';
+            const label = m['function_name'] || 'unknown_func';
+            const returnType = m['return_type'] || 'N/A';
+            const addr = m['entrypoint_address'] || 'N/A';
+            const fileName = m['file_name'] || 'N/A';
+            const lang = m['language_id'] || 'N/A';
 
             const tags = (m['tags'] || []);
             const tagsHtml = tags.length > 0 ? tags.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
 
-            const skipKeys = ['function-name', 'return-type', 'entrypoint-address', 'file-name', 'language-id', 'full-id', 'tags'];
+            const skipKeys = ['function_name', 'return_type', 'entrypoint_address', 'file_name', 'language_id', 'full_id', 'tags'];
             let moreHtml = '';
             Object.keys(m).sort().forEach(k => {
                 if (!skipKeys.includes(k)) {

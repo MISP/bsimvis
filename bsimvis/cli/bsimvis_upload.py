@@ -13,8 +13,6 @@ import concurrent.futures, threading
 
 from tqdm import tqdm
 
-
-
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
 DEFAULT_GHIDRA_PROJECT_NAME = "TempGhidraProject"
@@ -31,16 +29,16 @@ def upload_bsim_data(data, args, config):
         return
 
     # 1. Grab file-level metadata
-    file_meta = data.get("file-metadata", {})
-    file_md5 = file_meta.get("file-md5", "unknown_md5")
+    file_meta = data.get("file_metadata", {})
+    file_md5 = file_meta.get("file_md5", "unknown_md5")
 
     functions_data = data.get("functions", [])
 
     num_files = 1
     num_functions = len(functions_data)
     timestamp = datetime.datetime.now().isoformat()
-    batch_uuid = file_meta.get("batch-uuid", "unknown_batch_uuid")
-    batch_name = file_meta.get("batch-name", "unknown_batch_name")
+    batch_uuid = file_meta.get("batch_uuid", "unknown_batch_uuid")
+    batch_name = file_meta.get("batch_name", "unknown_batch_name")
 
     for h, host in enumerate(args.hosts):
         dest = host.split(":")[0]
@@ -55,74 +53,77 @@ def upload_bsim_data(data, args, config):
             global_batch_key = f"global:batch:{batch_uuid}"
             initial_global_batch = {
                 "name": batch_name,
-                "batch-uuid": batch_uuid,
-                "batch-id": global_batch_key,
-                "created-at": timestamp,
-                "last-updated": timestamp,
+                "batch_uuid": batch_uuid,
+                "batch_id": global_batch_key,
+                "created_at": timestamp,
+                "last_updated": timestamp,
                 "collections": {}
             }
-            pipe.json().set(global_batch_key, '$', initial_global_batch, nx=True)
-            pipe.json().set(global_batch_key, '$.last-updated', timestamp)
+            if not r.exists(global_batch_key):
+                r.json().set(global_batch_key, '$', initial_global_batch)
+            pipe.json().set(global_batch_key, '$["last_updated"]', timestamp)
 
             for c, collection in enumerate(args.collections):
                 pipe.sadd("global:collections", collection)
-                pipe.json().set(global_batch_key, f'$.collections.{collection}', True)
+                pipe.json().set(global_batch_key, f'$["collections"]["{collection}"]', True)
 
                 # --- Collection Stats ---
                 coll_meta_key = f"global:collection:{collection}:meta"
-                pipe.hincrby(coll_meta_key, "total-files", num_files)
-                pipe.hincrby(coll_meta_key, "total-functions", num_functions)
-                pipe.hset(coll_meta_key, "last-updated", timestamp)
+                pipe.hincrby(coll_meta_key, "total_files", num_files)
+                pipe.hincrby(coll_meta_key, "total_functions", num_functions)
+                pipe.hset(coll_meta_key, "last_updated", timestamp)
 
                 # --- Collection Batch Metadata ---
                 batch_key = f"{collection}:batch:{batch_uuid}"
                 initial_batch_data = {
                     "name": batch_name,
-                    "batch-uuid": batch_uuid,
-                    "batch-id": batch_key,
-                    "created-at": timestamp,
-                    "last-updated": timestamp,
-                    "total-files": 0,
-                    "total-functions": 0,
+                    "batch_uuid": batch_uuid,
+                    "batch_id": batch_key,
+                    "created_at": timestamp,
+                    "last_updated": timestamp,
+                    "total_files": 0,
+                    "total_functions": 0,
                     "collection": collection
                 }
-                pipe.json().set(batch_key, '$', initial_batch_data, nx=True)
-                pipe.json().numincrby(batch_key, '$.total-files', num_files)
-                pipe.json().numincrby(batch_key, '$.total-functions', num_functions)
-                pipe.json().set(batch_key, '$.last-updated', timestamp)
+                if not r.exists(batch_key):
+                    r.json().set(batch_key, '$', initial_batch_data)
+                pipe.json().numincrby(batch_key, '$["total_files"]', num_files)
+                pipe.json().numincrby(batch_key, '$["total_functions"]', num_functions)
+                pipe.json().set(batch_key, '$["last_updated"]', timestamp)
                 # Keep fields as requested
-                pipe.json().set(batch_key, f'$.collections.{collection}', True)
+                pipe.json().set(batch_key, f'$["collections"]["{collection}"]', True)
 
                 # --- 1. File Metadata ---
                 file_meta_key = f"{collection}:file:{file_md5}:meta"
                 coll_file_meta = dict(file_meta)
                 coll_file_meta["collection"] = collection
-                coll_file_meta["file-id"] = f"{collection}:file:{file_md5}"
+                coll_file_meta["type"] = "file"
+                coll_file_meta["file_id"] = f"{collection}:file:{file_md5}"
                 pipe.json().set(file_meta_key, '$', coll_file_meta)
 
                 # --- 2. Function Data ---
                 for func_data in functions_data:
-                    func_meta = dict(func_data.get("function-metadata", {}))
+                    func_meta = dict(func_data.get("function_metadata", {}))
                     func_meta["collection"] = collection
-                    func_features = func_data.get("function-features", {})
-                    func_source = func_data.get("function-source", {})
+                    func_features = func_data.get("function_features", {})
+                    func_source = func_data.get("function_source", {})
                     
-                    full_id = func_meta.get("full-id", "")
+                    full_id = func_meta.get("full_id", "")
                     addr = full_id.split(":@")[-1] if ":@" in full_id else "unknown_addr"
 
                     base_func_key = f"{collection}:function:{file_md5}:{addr}"
-                    func_meta["function-id"] = base_func_key
+                    func_meta["function_id"] = base_func_key
 
                     pipe.json().set(f"{base_func_key}:meta", '$', func_meta)
                     pipe.json().set(f"{base_func_key}:source", '$', func_source)
 
-                    vec_meta = func_features.get("bsim-features-meta", [])
+                    vec_meta = func_features.get("bsim_features_meta", [])
                     pipe.json().set(f"{base_func_key}:vec:meta", '$', vec_meta)
 
-                    vec_raw = func_features.get("bsim-features-raw", [])
+                    vec_raw = func_features.get("bsim_features_raw", [])
                     pipe.json().set(f"{base_func_key}:vec:raw", '$', vec_raw)
 
-                    vec_tf_list = func_features.get("bsim-features-tf", [])
+                    vec_tf_list = func_features.get("bsim_features_tf", [])
                     if vec_tf_list:
                         zset_mapping = {item["hash"]: item["tf"] for item in vec_tf_list}
                         pipe.zadd(f"{base_func_key}:vec:tf", zset_mapping)
@@ -223,7 +224,7 @@ def build_semantic_source(markup):
             "type": get_token_type(clazz),
             "line": line_idx,
             "addr": hex_addr,
-            "pcode-time": pcode_time,
+            "pcode_time": pcode_time,
             "seq": seq_str
         }
         c_tokens.append(token_obj)
@@ -324,17 +325,17 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
         feature_data = {
             "hash": feature_hash,
             "type": "UNKNOWN",
-            "pcode-op": None,
-            "previous-pcode-op": None,
-            "previous-seq": None,
-            "line-idx": [],
-            "seq-to-token-idx": [],
-            "addr-to-token-idx": [],
+            "pcode_op": None,
+            "previous_pcode_op": None,
+            "previous_seq": None,
+            "line_idx": [],
+            "seq_to_token_idx": [],
+            "addr_to_token_idx": [],
             "addr": None,
-            "seq-time": None,
+            "seq_time": None,
             "seq": None,
-            "block-index": None,
-            "pcode-block": []
+            "block_index": None,
+            "pcode_block": []
         }
 
         target_seq = None
@@ -351,14 +352,14 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
         # 2. CopySignature (COPY_SIG) - Checking by class name if type not imported
         elif sig.getClass().getSimpleName() == "CopySignature":
             feature_data["type"] = "COPY_SIG"
-            feature_data["block-index"] = sig.index
+            feature_data["block_index"] = sig.index
             # Java creates a dummy sequence at the start of the block
             # basicBlockStart = hfunction.getBasicBlocks().get(sig.index).getStart()
             # In Python, we'll wait to resolve the address via the block index if needed
 
         # 3. BlockSignature (CONTROL_FLOW, COMBINED, or DUAL_FLOW)
         elif isinstance(sig, BlockSignature):
-            feature_data["block-index"] = sig.index
+            feature_data["block_index"] = sig.index
             
             if not getattr(sig, 'opSeq', None):
                 # Pure control-flow feature
@@ -384,17 +385,17 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
 
         if target_seq:
             feature_data["seq"] = target_seq.toString()
-            feature_data["seq-time"] = target_seq.getTime()
+            feature_data["seq_time"] = target_seq.getTime()
             p_op = seq_to_pcode.get(target_seq)
             if p_op:
-                feature_data["pcode-op"] = p_op.getMnemonic()
-                feature_data["pcode-op-full"] = p_op.toString()
+                feature_data["pcode_op"] = p_op.getMnemonic()
+                feature_data["pcode_op_full"] = p_op.toString()
             
             if prev_target_seq:
-                feature_data["previous-seq"] = prev_target_seq.toString()
+                feature_data["previous_seq"] = prev_target_seq.toString()
                 prev_p_op = seq_to_pcode.get(prev_target_seq)
                 if prev_p_op:
-                    feature_data["previous-pcode-op"] = prev_p_op.getMnemonic()
+                    feature_data["previous_pcode_op"] = prev_p_op.getMnemonic()
 
             hex_addr = str(target_seq.getTarget()).split(":")[-1]
 
@@ -403,25 +404,25 @@ def extract_bsim_features(decomp_results, decomp_interface, func, monitor, langu
             
             # Tiered fallback for pcode-block (Seq -> Addr -> Block)
             if feature_data["seq"] and feature_data["seq"] in seq_to_pcode_full:
-                feature_data["pcode-block"] = {feature_data["seq"]: seq_to_pcode_full[feature_data["seq"]]}
+                feature_data["pcode_block"] = {feature_data["seq"]: seq_to_pcode_full[feature_data["seq"]]}
             elif hex_addr in addr_to_pcodes:
-                feature_data["pcode-block"] = addr_to_pcodes[hex_addr]
+                feature_data["pcode_block"] = addr_to_pcodes[hex_addr]
             elif hex_addr in addr_to_block_start:
                 parent_start = addr_to_block_start[hex_addr]
-                feature_data["pcode-block"] = block_addr_to_pcode_dump.get(parent_start, {})
+                feature_data["pcode_block"] = block_addr_to_pcode_dump.get(parent_start, {})
             
 
             # Map Previous P-Code (for DUAL_FLOW)
 
 
             # Map UI/Token indices
-            feature_data["line-idx"] = addr_to_line.get(hex_addr, [])
-            feature_data["seq-to-token-idx"] = seq_to_token_idx.get(feature_data["seq"], [])
-            feature_data["addr-to-token-idx"] = addr_to_token_idx.get(hex_addr, [])
+            feature_data["line_idx"] = addr_to_line.get(hex_addr, [])
+            feature_data["seq_to_token_idx"] = seq_to_token_idx.get(feature_data["seq"], [])
+            feature_data["addr_to_token_idx"] = addr_to_token_idx.get(hex_addr, [])
 
 
             if feature_data["seq"]:
-                feature_data["seq-to-token-idx"] = seq_to_token_idx.get(feature_data["seq"], [])
+                feature_data["seq_to_token_idx"] = seq_to_token_idx.get(feature_data["seq"], [])
 
         bsim_meta.append(feature_data)
         bsim_raw.append(feature_hash)
@@ -456,16 +457,16 @@ def get_bsim_data(program, args, config, batch_order):
     file_id = f"{file_md5}:#{file_md5}"
 
     file_metadata = {
-        "entry-date": now_iso,
-        "file-date": str(program.getCreationDate().toInstant().toString()),
-        "file-md5": file_md5,
-        "file-name": file_name,
-        "batch-uuid": batch_uuid,
-        "batch-name": batch_name,
-        "batch-order": batch_order,
+        "entry_date": now_iso,
+        "file_date": str(program.getCreationDate().toInstant().toString()),
+        "file_md5": file_md5,
+        "file_name": file_name,
+        "batch_uuid": batch_uuid,
+        "batch_name": batch_name,
+        "batch_order": batch_order,
         "tags":tags,
-        "language-id": lang_id,
-        "file-id": file_id
+        "language_id": lang_id,
+        "file_id": file_id
     }
 
     symbol_table = program.getSymbolTable()
@@ -546,49 +547,50 @@ def get_bsim_data(program, args, config, batch_order):
         
         t2 = time.time()
         func_meta = {
-            "function-name":func.getName(),
-            "calling-convention": call_conv,
-            "decompiler-id": decompiler_id,
-            "entry-date": now_iso,
-            "file-date": file_metadata["file-date"],
-            "file-md5": file_md5,
-            "file-name": file_name,
-            "full-id": full_id,
-            "batch-uuid": batch_uuid,
-            "batch-name": batch_name,
+            "type": "function",
+            "function_name":func.getName(),
+            "calling_convention": call_conv,
+            "decompiler_id": decompiler_id,
+            "entry_date": now_iso,
+            "file_date": file_metadata["file_date"],
+            "file_md5": file_md5,
+            "file_name": file_name,
+            "full_id": full_id,
+            "batch_uuid": batch_uuid,
+            "batch_name": batch_name,
             "tags":tags,
-            "instruction-count": func.getBody().getNumAddresses(), # Quick fallback for instruction counting
-            "is-thunk": func.isThunk(),
+            "instruction_count": func.getBody().getNumAddresses(),
+            "is_thunk": func.isThunk(),
             "labels": labels,
-            "language-id": lang_id,
-            "return-type": return_type,
-            "entrypoint-address" : entry_str,
-            "bsim-features-count":len(bsim_raw),
-            "bsim-unique-features-count":len(bsim_tf)
+            "language_id": lang_id,
+            "return_type": return_type,
+            "entrypoint_address" : entry_str,
+            "bsim_features_count":len(bsim_raw),
+            "bsim_unique_features_count":len(bsim_tf)
         }
 
         bsim_features = {
-            "bsim-features-meta": bsim_meta,
-            "bsim-features-raw": bsim_raw,
-            "bsim-features-tf": bsim_tf,
-            "bsim-features-count":len(bsim_raw),
-            "bsim-unique-features-count":len(bsim_tf)
+            "bsim_features_meta": bsim_meta,
+            "bsim_features_raw": bsim_raw,
+            "bsim_features_tf": bsim_tf,
+            "bsim_features_count":len(bsim_raw),
+            "bsim_unique_features_count":len(bsim_tf)
         }
 
         func_source = {
-            "c-lines":c_lines,
-            "c-tokens":c_tokens,
-            "addr-to-line": addr_to_line,     # {addr: line_idx}
-            "addr-to-token": addr_to_token_idx, # {addr: [token_idxs]}
-            "seq-to-token": seq_to_token_idx, # {addr: [token_idxs]}
-            "line-to-token":line_to_token_idx,
-            "line-to-addr":line_to_addr
+            "c_lines":c_lines,
+            "c_tokens":c_tokens,
+            "addr_to_line": addr_to_line,     # {addr: line_idx}
+            "addr_to_token": addr_to_token_idx, # {addr: [token_idxs]}
+            "seq_to_token": seq_to_token_idx, # {addr: [token_idxs]}
+            "line_to_token":line_to_token_idx,
+            "line_to_addr":line_to_addr
         }
 
         all_function_data.append({
-            "function-metadata": func_meta,
-            "function-source": func_source,
-            "function-features": bsim_features
+            "function_metadata": func_meta,
+            "function_source": func_source,
+            "function_features": bsim_features
         })
         total_json_time += time.time() - t2
 
@@ -605,7 +607,7 @@ def get_bsim_data(program, args, config, batch_order):
     )
     
     return {
-        "file-metadata": file_metadata,
+        "file_metadata": file_metadata,
         "functions": all_function_data
     }
 
@@ -744,7 +746,7 @@ def main(args):
     if not args.batch_uuid: args.batch_uuid = str(uuid.uuid4())
 
     logging.info(f"[i] Processing targets using profile: {args.profile}")
-    print(f"[i] Uploading to collections {args.collections} on hosts {args.hosts}")
+    print(f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         future_to_target = {
@@ -783,7 +785,7 @@ if __name__ == "__main__":
     start = time.time()
 
     parser = argparse.ArgumentParser(
-                    prog='BSimVis CLI',
+                    prog='BSimVis',
                     description='...',
                     epilog='...')
     
@@ -862,7 +864,7 @@ if __name__ == "__main__":
     
     jvm_options = parser.add_argument_group('JVM Options')
     jvm_options.add_argument('--max-ram-percent', help='Set JVM Max Ram %% of host RAM', default=60.0)
-    jvm_options.add_argument('--print-flags', help='Print JVM flags at start', action='store_true')
+    jvm_options.add_argument('--print-flags', help='Print JVM flags at start', action='store_true', default=False)
     jvm_options.add_argument('--jvm-args', nargs='?', help='JVM args to add at start', default=None)
 
 

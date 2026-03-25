@@ -7,3 +7,5 @@ pyrightconfig.json
 
 __pycache__
 AGENTS.md
+
+*.egg-info/

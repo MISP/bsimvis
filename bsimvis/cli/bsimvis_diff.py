@@ -6,12 +6,13 @@ import argparse
 import logging
 import datetime
 
-# Configuration
-REDIS_HOST = 'localhost'
-REDIS_PORT = 6666
-DEFAULT_BATCH_SIZE = 100
-DEFAULT_TOP_K = 20
-DEFAULT_THRESHOLD = 0.1
+_r = None
+
+def get_redis(host="localhost", port=6666):
+    global _r
+    if _r is None:
+        _r = redis.Redis(host=host, port=port, decode_responses=True)
+    return _r
 
 # --- Turbo Similarity Bake Lua Script (Resource Optimized) ---
 # Supports Jaccard and Unweighted Cosine algorithms.
@@ -135,8 +136,8 @@ redis.call('JSON.SET', result_key, '$', cjson.encode(matches))
 return #matches
 """
 
-def bake_enhanced_similarities(args):
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+def bake_enhanced_similarities(args, r=None):
+    r = r or get_redis()
     sim_script = r.register_script(LUA_ENHANCED_SIM_SCRIPT)
     
     collection = args.collection
@@ -217,7 +218,48 @@ def print_progress(count, start, collection):
     rate = count / elapsed if elapsed > 0 else 0
     print(f"  [i] {collection}: {count} functions baked ({rate:.1f} func/s)...")
 
-if __name__ == "__main__":
+def run_diff(host, port, args):
+    r = get_redis(host, port)
+    coll = args.collection
+    
+    if args.action == "status":
+        print(f"[*] Checking similarity bake status for: {coll}")
+        # Placeholder: Check for existence of any similarity keys
+        cursor, keys = r.scan(0, match=f"{coll}:all_sim:*", count=1)
+        if keys:
+            print("OK")
+        else:
+            print("No similarity data found.")
+            
+    elif args.action == "build":
+        bake_enhanced_similarities(args, r=r)
+        
+    elif args.action == "rebuild":
+        print(f"[*] Clearing and rebuilding similarities for: {coll}")
+        diff_clear(coll, r=r)
+        bake_enhanced_similarities(args, r=r)
+        
+    elif args.action == "clear":
+        diff_clear(coll, r=r)
+
+def diff_clear(collection, r=None):
+    r = r or get_redis()
+    print(f"[*] Clearing similarity data for: {collection}...")
+    patterns = [
+        f"{collection}:all_sim:*",
+        f"{collection}:sim_meta:*",
+        f"{collection}:function:*:sim:*"
+    ]
+    for pattern in patterns:
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+            if keys:
+                r.delete(*keys)
+            if cursor == 0: break
+    print("[+] Similarity data cleared.")
+
+def main():
     parser = argparse.ArgumentParser(description="BSim Turbo Similarity Baker with Resource Guards")
     parser.add_argument("-c", "--collection", required=True, help="Collection name")
     parser.add_argument("--algo", default="unweighted_cosine", choices=["jaccard", "unweighted_cosine"], help="Similarity algorithm")
@@ -230,5 +272,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     bake_enhanced_similarities(args)
+
+if __name__ == "__main__":
+    main()
 
 

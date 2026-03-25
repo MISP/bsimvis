@@ -3,6 +3,10 @@ import redis
 # Hardcoded for your POC, but easy to move to env vars later
 REDIS_CONFIG = {"host": "localhost", "port": 6666, "decode_responses": True}
 
+def init_redis(host=None, port=None):
+    if host: REDIS_CONFIG["host"] = host
+    if port: REDIS_CONFIG["port"] = port
+
 def get_redis():
     return redis.Redis(**REDIS_CONFIG)
 

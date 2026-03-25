@@ -13,3 +13,12 @@ dependencies = [
     "redis>=7.3.0",
     "tqdm>=4.67.3",
 ]
+
+[project.scripts]
+bsimvis = "bsimvis.cli.main:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools]
+packages = ["bsimvis"]

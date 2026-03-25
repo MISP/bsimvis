@@ -2,14 +2,17 @@ import redis
 import json
 import time
 import math
-# Configuration
-REDIS_HOST = 'localhost'
-REDIS_PORT = 6666
-BATCH_SIZE = 1000
 
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+_r = None
 
-def clear_collection_index(collection):
+def get_redis(host="localhost", port=6666):
+    global _r
+    if _r is None:
+        _r = redis.Redis(host=host, port=port, decode_responses=True)
+    return _r
+
+def clear_collection_index(collection, r=None):
+    r = r or get_redis()
     print(f"[*] Clearing all index data for: {collection}...")
     
     patterns = [
@@ -29,7 +32,8 @@ def clear_collection_index(collection):
             if cursor == 0:
                 break
 
-def update_functions_incremental(collection, function_ids, label=None):
+def update_functions_incremental(collection, function_ids, label=None, r=None):
+    r = r or get_redis()
     """
     Precisely updates specific functions in the index, handling overwrites and cleanup.
     """
@@ -122,7 +126,8 @@ def update_functions_incremental(collection, function_ids, label=None):
     
     print() # Newline after progress bar
 
-def rebuild_single_collection(collection):
+def rebuild_single_collection(collection, r=None):
+    r = r or get_redis()
     print(f"[*] Rebuilding index for: {collection} batch-by-batch")
     
     batch_uuids = sorted(list(r.smembers("global:batches")))
@@ -157,7 +162,8 @@ def rebuild_all_collections():
     print(f"\n[+---] ALL COLLECTIONS COMPLETE [---+]")
     print(f"Total processing time: {time.time() - overall_start:.2f}s")
 
-def resolve_functions(collection, batch_uuid=None, md5=None, func_id=None):
+def resolve_functions(collection, batch_uuid=None, md5=None, func_id=None, r=None):
+    r = r or get_redis()
     """Resolves CLI filters to a list of function IDs."""
     if func_id:
         return [f"{collection}:function:{func_id}"]
@@ -210,7 +216,8 @@ def resolve_functions(collection, batch_uuid=None, md5=None, func_id=None):
             return found
     return []
 
-def clear_functions_index(collection, func_ids):
+def clear_functions_index(collection, func_ids, r=None):
+    r = r or get_redis()
     if not func_ids:
         print("[!] No functions specified for clear.")
         return
@@ -257,7 +264,8 @@ def clear_functions_index(collection, func_ids):
             
     return []
 
-def rebuild_all_batch_mappings(collection):
+def rebuild_all_batch_mappings(collection, r=None):
+    r = r or get_redis()
     print(f"[*] Rebuilding batch-to-function mappings for {collection} (via scan)...")
     cursor = 0
     match_pattern = f"{collection}:function:*:*:meta"
@@ -287,7 +295,8 @@ def rebuild_all_batch_mappings(collection):
         if cursor == 0: break
     print(f"[+] Mapping complete: {count} functions processed.")
 
-def list_missing_batches(collection, batch_filter=None):
+def list_missing_batches(collection, batch_filter=None, r=None):
+    r = r or get_redis()
     print(f"\n[*] Indexing Status for Collection: {collection}")
     if batch_filter:
         print(f"[*] Filtering for Batch: {batch_filter}")
@@ -339,7 +348,8 @@ def list_missing_batches(collection, batch_filter=None):
     if not found_any:
         print(f"[!] No batches found for collection {collection}.")
 
-def bake_missing(collection):
+def bake_missing(collection, r=None):
+    r = r or get_redis()
     print(f"[*] Checking for missing functions in {collection}...")
     batch_uuids = sorted(list(r.smembers("global:batches")))
     indexed_set = f"{collection}:indexed:functions"
@@ -365,7 +375,77 @@ def bake_missing(collection):
     
     print(f"\n[+] Bake complete.")
 
-if __name__ == "__main__":
+def index_quick_status(collection, batch_uuid=None, r=None):
+    r = r or get_redis()
+    indexed_set = f"{collection}:indexed:functions"
+    
+    total = 0
+    indexed = 0
+    
+    batch_uuids = [batch_uuid] if batch_uuid else list(r.smembers("global:batches"))
+    for b_uuid in batch_uuids:
+        batch_func_set = f"{collection}:batch:{b_uuid}:functions"
+        if not r.exists(batch_func_set): continue
+        
+        b_total = r.scard(batch_func_set)
+        total += b_total
+        try:
+            b_indexed = r.execute_command("SINTERCARD", "2", batch_func_set, indexed_set)
+        except:
+            b_indexed = len(r.sinter(batch_func_set, indexed_set))
+        indexed += b_indexed
+        
+    if total == 0:
+        print("[!] No data found for this collection.")
+    elif indexed == total:
+        print("OK")
+    else:
+        print(f"{total - indexed} unindexed")
+
+def run_index(host, port, args):
+    r = get_redis(host, port)
+    coll = args.collection
+    
+    if args.action == "status":
+        index_quick_status(coll, batch_uuid=args.batch, r=r)
+    elif args.action == "list":
+        list_missing_batches(coll, batch_filter=args.batch, r=r)
+    elif args.action == "build":
+        if args.all:
+            clear_collection_index(coll, r=r)
+            rebuild_single_collection(coll, r=r)
+        elif args.sync:
+            rebuild_all_batch_mappings(coll, r=r)
+        elif args.batch or args.md5:
+            func_ids = resolve_functions(coll, batch_uuid=args.batch, md5=args.md5, r=r)
+            if func_ids:
+                update_functions_incremental(coll, func_ids, r=r)
+            else:
+                print(f"[!] No functions found to build.")
+        else:
+            bake_missing(coll, r=r)
+    elif args.action == "rebuild":
+        if args.batch or args.md5:
+            func_ids = resolve_functions(coll, batch_uuid=args.batch, md5=args.md5, r=r)
+            if func_ids:
+                clear_functions_index(coll, func_ids, r=r)
+                update_functions_incremental(coll, func_ids, r=r)
+            else:
+                print(f"[!] No functions found to rebuild.")
+        else:
+            clear_collection_index(coll, r=r)
+            rebuild_single_collection(coll, r=r)
+    elif args.action == "clear":
+        if args.all:
+            clear_collection_index(coll, r=r)
+        elif args.batch or args.md5:
+            func_ids = resolve_functions(coll, batch_uuid=args.batch, md5=args.md5, r=r)
+            if func_ids:
+                clear_functions_index(coll, func_ids, r=r)
+            else:
+                print(f"[!] No functions found to clear.")
+
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="BSimVis Index Management Tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -442,3 +522,6 @@ if __name__ == "__main__":
                 clear_functions_index(coll, func_ids)
             else:
                 print(f"[!] No functions found to clear.")
+
+if __name__ == "__main__":
+    main()

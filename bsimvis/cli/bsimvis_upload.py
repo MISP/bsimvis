@@ -12,6 +12,7 @@ from collections import Counter
 import concurrent.futures, threading
 
 from tqdm import tqdm
+from bsimvis.app.services.redis_client import get_redis, init_redis
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
@@ -721,6 +722,28 @@ def worker(target, args, config, batch_order):
 
     return result
 
+def run_upload(host, port, args):
+    if host:
+        init_redis(host, port)
+    
+    # Ensure hosts list exists
+    if not hasattr(args, "hosts") or not args.hosts:
+        if host:
+            args.hosts = [f"{host}:{port}"]
+        else:
+            args.hosts = ["localhost:6666"]
+
+    if args.verbose == 0:
+        level = logging.WARNING
+    elif args.verbose == 1:
+        level = logging.INFO
+    else:
+        level = logging.DEBUG
+
+    logging.basicConfig(level=level, force=True)
+    
+    # Map back to what main(args) expects
+    main(args)
 
 def main(args):
 
@@ -782,8 +805,7 @@ def load_config(path=DEFAULT_CONFIG_NAME):
     with open(path, "rb") as f:
         return tomllib.load(f)
     
-if __name__ == "__main__":
-
+def cli_main():
     start = time.time()
 
     parser = argparse.ArgumentParser(
@@ -899,3 +921,6 @@ if __name__ == "__main__":
     end = time.time()
 
     print(f"[i] Total time : {end - start:.6f} seconds")
+
+if __name__ == "__main__":
+    cli_main()

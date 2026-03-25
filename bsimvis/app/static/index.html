@@ -344,17 +344,25 @@
 
         <div style="padding: 20px 20px 5px 20px; border-top: 1px solid var(--border); margin-top: 15px;">
             <div class="dim" style="font-size: 0.6rem; text-transform: uppercase;">Current Collection</div>
-            <div id="side-collection-name"
-                style="color: var(--success); font-weight: bold; font-size: 0.8rem; margin-top:5px; word-break: break-all;">
-                None</div>
+            <select id="side-collection-select"
+                style="width: 100%; background: #111; color: var(--success); border: 1px solid var(--border); padding: 5px; margin-top: 5px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; cursor: pointer;">
+                <option value="">None Selected</option>
+            </select>
         </div>
 
-        <a href="#batches" id="nav-batches">Batches</a>
-        <a href="#files" id="nav-files" style="color:var(--text)">Files</a>
-        <a href="#functions" id="nav-functions" style="color:var(--text)">Functions</a>
-        <a href="#features-global" id="nav-features-global" style="color:var(--text)">Global Features</a>
-        <a href="#top-correlations" id="nav-top-correlations" style="color:var(--text)">Top Correlations</a>
-        <a href="#" id="nav-diffing" onclick="showDiffView()" style="color:var(--text)">Diffing Tool</a>
+        <a href="#batches" id="nav-batches" style="display:none">Batches</a>
+        <a href="#files" id="nav-files" style="color:var(--text); display:none">Files</a>
+        <a href="#functions" id="nav-functions" style="color:var(--text); display:none">Functions</a>
+        <a href="#features-global" id="nav-features-global" style="color:var(--text); display:none">Global Features</a>
+        <a href="#top-correlations" id="nav-top-correlations" style="color:var(--text); display:none">Top
+            Correlations</a>
+
+        <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
+            <div class="dim" style="padding: 0 20px 10px 20px; font-size: 0.6rem; text-transform: uppercase;">Tools
+            </div>
+            <a href="#" id="nav-diffing" onclick="showDiffView()" style="color:var(--accent); font-weight:bold;">Diffing
+                Tool</a>
+        </div>
     </nav>
 
     <main>
@@ -489,12 +497,17 @@
                 `<span class="badge">Collection: ${col}</span>` : '';
 
             // Side Collections Info
-            document.getElementById('side-collection-name').innerText = col;
-            document.getElementById('nav-batches').href = `#batches?collection=${col}`;
-            document.getElementById('nav-files').href = `#files?collection=${col}`;
-            document.getElementById('nav-functions').href = `#functions?collection=${col}`;
-            document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
-            document.getElementById('nav-top-correlations').href = `#top-correlations?collection=${col}`;
+            const sideSelect = document.getElementById('side-collection-select');
+            if (sideSelect) sideSelect.value = col || '';
+            updateNavVisibility(col);
+
+            if (col) {
+                document.getElementById('nav-batches').href = `#batches?collection=${col}`;
+                document.getElementById('nav-files').href = `#files?collection=${col}`;
+                document.getElementById('nav-functions').href = `#functions?collection=${col}`;
+                document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
+                document.getElementById('nav-top-correlations').href = `#top-correlations?collection=${col}`;
+            }
 
             // Table Head
             const thead = document.getElementById('table-head');
@@ -537,11 +550,14 @@
                 </div>`;
             } else if (path === '#top-correlations') {
                 const p = new URLSearchParams(params);
-                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
+                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px; flex-wrap: wrap;">
                     <div style="display:flex; gap:10px; align-items:center;">
-                        <span class="dim" style="font-size:0.75rem;">Threshold:</span>
-                        <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.1'}" step="0.05" min="0" max="1" style="width:80px;">
+                        <span class="dim" style="font-size:0.75rem;">Min Score:</span>
+                        <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.1'}" step="0.05" min="0" max="1" style="width:70px;">
                         
+                        <span class="dim" style="font-size:0.75rem;">Max Score:</span>
+                        <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" style="width:70px;">
+
                         <span class="dim" style="font-size:0.75rem;">Min Features:</span>
                         <input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" style="width:60px;">
 
@@ -550,6 +566,12 @@
                             <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
                             <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                         </select>
+                        
+                        <div style="display:flex; align-items:center; gap:5px;">
+                            <input type="checkbox" id="sim-cross-binary" ${p.get('cross_binary') === 'true' ? 'checked' : ''}>
+                            <label for="sim-cross-binary" class="dim" style="font-size:0.75rem; cursor:pointer;">Cross Binary</label>
+                        </div>
+
                         <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Update</button>
                     </div>
                 </div>`;
@@ -608,12 +630,17 @@
             const params = new URLSearchParams(queryString);
 
             const threshold = document.getElementById('sim-threshold').value;
+            const maxScore = document.getElementById('sim-max-score').value;
             const algo = document.getElementById('sim-algo').value;
             const minFeatures = document.getElementById('sim-min-features').value;
+            const crossBinary = document.getElementById('sim-cross-binary').checked;
 
             params.set('threshold', threshold);
+            params.set('max_score', maxScore);
             params.set('algo', algo);
             params.set('min_features', minFeatures);
+            params.set('cross_binary', crossBinary);
+
             currentOffset = 0;
             isEndOfResults = false;
             window.location.hash = `${hashPath}?${params.toString()}`;
@@ -976,29 +1003,65 @@
 
         function showDiffPanel(force = false) {
             if (!force && diffSelection.length < 2) return;
-            
+
+            hideCodePanel();
+            hideFeaturePanel();
+            hideGlobalFeaturePanel();
+
+            const p = document.getElementById('diff-panel');
+            const f = document.getElementById('diff-frame');
+            const title = document.getElementById('diff-title');
+
             let url = '/diff/index.html';
+            let label = 'Function Comparison';
+
             if (diffSelection.length === 2) {
                 url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
-            }
+                label = `Diff: ${diffSelection[0].name} vs ${diffSelection[1].name}`;
 
-            window.open(url, '_blank');
-            
-            if (diffSelection.length === 2) {
                 // Reset queue after opening
                 diffSelection = [];
                 updateDiffQueueUI();
                 saveDiffQueue();
             }
+
+            if (p) p.style.display = 'flex';
+            if (title) title.innerText = label;
+            if (f) f.src = url;
         }
 
         function openDiffDirectly(id1, name1, id2, name2) {
+            hideCodePanel();
+            hideFeaturePanel();
+            hideGlobalFeaturePanel();
+
+            const p = document.getElementById('diff-panel');
+            const f = document.getElementById('diff-frame');
+            const title = document.getElementById('diff-title');
+
             const url = `/diff/index.html?id1=${encodeURIComponent(normalizeFuncId(id1))}&id2=${encodeURIComponent(normalizeFuncId(id2))}`;
-            window.open(url, '_blank');
+
+            if (p) p.style.display = 'flex';
+            if (title) title.innerText = `Diff: ${name1} vs ${name2}`;
+            if (f) f.src = url;
+        }
+
+        function hideDiffPanel() {
+            const p = document.getElementById('diff-panel');
+            if (p) p.style.display = 'none';
         }
 
         function showDiffView() {
-            showDiffPanel(true);
+            let url = '/diff/index.html';
+            if (diffSelection.length === 2) {
+                url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
+
+                // Reset queue after opening in new window
+                diffSelection = [];
+                updateDiffQueueUI();
+                saveDiffQueue();
+            }
+            window.open(url, '_blank');
         }
 
         function showFunctionCodeById(id, name, lineHash = '') {
@@ -1058,7 +1121,7 @@
         function launchExternal(type) {
             let url = '';
             if (type === 'diff') {
-                return; // No longer needed for diff as it opens in new window anyway
+                url = document.getElementById('diff-frame').src;
             } else if (type === 'code') {
                 url = document.getElementById('code-frame').src;
             } else if (type === 'features') {
@@ -1069,7 +1132,8 @@
 
             if (url) {
                 window.open(url, '_blank');
-                if (type === 'code') hideCodePanel();
+                if (type === 'diff') hideDiffPanel();
+                else if (type === 'code') hideCodePanel();
                 else if (type === 'features') hideFeaturePanel();
                 else if (type === 'global-feature') hideGlobalFeaturePanel();
             }
@@ -1111,9 +1175,56 @@
         window.addEventListener('hashchange', refreshData);
         window.addEventListener('load', () => {
             if (!window.location.hash) window.location.hash = '#collections';
+            populateCollectionDropdown();
             refreshData();
             loadDiffQueue();
         });
+
+        async function populateCollectionDropdown() {
+            try {
+                const res = await fetch('/api/collection/search');
+                if (!res.ok) return;
+                const collections = await res.json();
+                const select = document.getElementById('side-collection-select');
+                if (!select) return;
+
+                select.innerHTML = '<option value="">None Selected</option>';
+                collections.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.name;
+                    opt.innerText = c.name;
+                    select.appendChild(opt);
+                });
+
+                // Sync with current URL
+                const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                select.value = params.get('collection') || '';
+                updateNavVisibility(select.value);
+
+                // Add event listener once populated
+                if (!select.dataset.hasListener) {
+                    select.addEventListener('change', (e) => {
+                        const val = e.target.value;
+                        const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+                        const p = new URLSearchParams(queryString);
+                        if (val) p.set('collection', val);
+                        else p.delete('collection');
+                        window.location.hash = `${hashPath}?${p.toString()}`;
+                    });
+                    select.dataset.hasListener = "true";
+                }
+            } catch (e) {
+                console.error("Failed to populate collections", e);
+            }
+        }
+
+        function updateNavVisibility(collection) {
+            const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-top-correlations'];
+            navItems.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.style.display = collection ? 'block' : 'none';
+            });
+        }
 
         window.addEventListener('storage', (e) => {
             if (e.key === 'bsim_diff_queue') {
@@ -1183,6 +1294,25 @@
             </div>
         </div>
         <iframe id="global-feature-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
+    </div>
+
+    <!-- Diff Panel -->
+    <div id="diff-panel">
+        <div class="resize-handle"></div>
+        <div id="diff-panel-header">
+            <div style="display:flex; align-items:center;">
+                <span
+                    style="background:#f92672; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px; font-weight:bold;">DIFF</span>
+                <span id="diff-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Function
+                    Comparison</span>
+            </div>
+            <div class="panel-actions">
+                <button class="btn-panel" onclick="launchExternal('diff')">Open in New Window ↗</button>
+                <button class="btn-panel" onclick="hideDiffPanel()"
+                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Panel</button>
+            </div>
+        </div>
+        <iframe id="diff-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
     </div>
 
     <div id="code-preview-tooltip"></div>
@@ -1435,6 +1565,7 @@
         initResize('code-panel');
         initResize('feature-panel');
         initResize('global-feature-panel');
+        initResize('diff-panel');
     </script>
 </body>
 

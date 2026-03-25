@@ -588,137 +588,100 @@ def similarity_search_api():
     
     try:
         threshold = float(request.args.get('threshold', 0.1))
+        max_score = float(request.args.get('max_score', 1.0))
         offset = int(request.args.get('offset', 0))
         limit = int(request.args.get('limit', DEFAULT_PAGING_LIMIT))
         min_features = int(request.args.get('min_features', 0))
     except ValueError:
-        return jsonify({"detail": "Invalid threshold, offset, limit, or min_features parameters"}), 400
+        return jsonify({"detail": "Invalid threshold, max_score, offset, limit, or min_features parameters"}), 400
 
     md5_filters = request.args.getlist('md5')
-    func_filters = request.args.getlist('func')
+    is_cross_binary = request.args.get('cross_binary', 'false').lower() == 'true'
 
     if not col:
         return jsonify({"detail": "Missing collection"}), 400
 
     try:
         r = get_redis()
-        zset_key = f"{col}:all_sim:{algo}"
         
-        # --- LUA Optimized Similarity Search with Metadata Filtering ---
-        # This handles pagination correctly even when filtering in RediSearch/JSON
-        LUA_SIM_FILTER = """
-        local zset_key = ARGV[1]
-        local threshold = tonumber(ARGV[2])
-        local offset = tonumber(ARGV[3])
-        local limit = tonumber(ARGV[4])
-        local min_feat = tonumber(ARGV[5])
+        # Build RediSearch Query (Dialect 2)
+        query_parts = [
+            f"@collection:{{{col}}}",
+            f"@algo:{{{algo}}}",
+            f"@score:[{threshold} {max_score}]"
+        ]
         
-        local results = {}
-        local found = 0
-        local scanned = 0
-        local batch = 100
-        
-        while found < (offset + limit) do
-            local pairs = redis.call('ZREVRANGEBYSCORE', zset_key, 1.0, threshold, 'LIMIT', scanned, batch, 'WITHSCORES')
-            if #pairs == 0 then break end
+        if min_features > 0:
+            query_parts.append(f"@feat_count1:[{min_features} +inf]")
+            query_parts.append(f"@feat_count2:[{min_features} +inf]")
             
-            for i = 1, #pairs, 2 do
-                local ps = pairs[i]
-                local sc = pairs[i+1]
-                local pass = true
-                
-                if min_feat > 0 then
-                    -- Extract IDs from "id1::id2"
-                    local idx = string.find(ps, "::")
-                    if idx then
-                        local id1 = string.sub(ps, 1, idx-1)
-                        local id2 = string.sub(ps, idx+2)
-                        
-                        local m1 = redis.call('JSON.GET', id1 .. ':meta', '$.bsim_features_count')
-                        local m2 = redis.call('JSON.GET', id2 .. ':meta', '$.bsim_features_count')
-                        
-                        -- Kvrocks JSON.GET returns "[count]" or "[null]"
-                        local v1 = 0
-                        local v2 = 0
-                        if m1 then
-                           local d1 = cjson.decode(m1)
-                           v1 = (d1 and d1[1]) or 0
-                        end
-                        if m2 then
-                           local d2 = cjson.decode(m2)
-                           v2 = (d2 and d2[1]) or 0
-                        end
-                        
-                        if v1 < min_feat or v2 < min_feat then
-                            pass = false
-                        end
-                    end
-                end
-                
-                if pass then
-                    found = found + 1
-                    if found > offset then
-                        table.insert(results, {ps, sc})
-                        if #results >= limit then break end
-                    end
-                end
-                scanned = scanned + 1
-            end
-            if #results >= limit then break end
-        end
-        return results
-        """
-        
-        # Lua returns a list of [pair_str, score]
-        results = r.eval(LUA_SIM_FILTER, 0, zset_key, threshold, offset, limit, min_features)
-        
-        # If no Lua script or filtering failed, fallback? 
-        # But this should be standard on our Kvrocks setup.
-        
-        total = r.zcount(zset_key, threshold, 1.0) # This is approximate now if filtering
-        # Note: Correct 'total' after filtering is hard without scanning whole ZSET.
-        # We'll return total pairs in ZSET as a hint.
+        if is_cross_binary:
+            query_parts.append("@is_cross_binary:{true}")
+            
+        if md5_filters:
+            md5_str = " | ".join([f'"{m}"' for m in md5_filters])
+            query_parts.append(f"(@md5_1:{{{md5_str}}} | @md5_2:{{{md5_str}}})")
+            
+        search_str = " ".join(query_parts)
+        logging.info(f"[*] Similarity Search Query: {search_str}")
 
-        # Enrichment with metadata
-        enriched_pairs = []
-        if results:
-            pipe = r.pipeline()
-            for pair_info in results:
-                pair_str = pair_info[0]
-                id1, id2 = pair_str.split('::')
-                pipe.json().get(f"{id1}:meta", "$")
-                pipe.json().get(f"{id2}:meta", "$")
+        query = (
+            Query(search_str)
+            .dialect(2)
+            .paging(offset, limit)
+            .sort_by("score", asc=False)
+        )
+
+        try:
+            results = r.ft("idx:similarities").search(query)
             
-            metas = pipe.execute()
-            
-            for i, pair_info in enumerate(results):
-                pair_str = pair_info[0]
-                score = pair_info[1]
-                id1, id2 = pair_str.split('::')
-                m1_list = metas[i*2]
-                m2_list = metas[i*2 + 1]
-                m1 = m1_list[0] if isinstance(m1_list, list) and m1_list else m1_list
-                m2 = m2_list[0] if isinstance(m2_list, list) and m2_list else m2_list
+            enriched_pairs = []
+            for doc in results.docs:
+                if hasattr(doc, 'json'):
+                    data = json.loads(doc.json)
+                else:
+                    # Fallback for systems that return flat fields
+                    data = doc.__dict__
                 
+                # Cleanup internal fields
+                if 'id' in data: del data['id']
+                if 'payload' in data: del data['payload']
+                
+                # Format to match expectations of the Similarity frontend component
                 enriched_pairs.append({
-                    "id1": id1,
-                    "id2": id2,
-                    "score": float(score),
-                    "name1": m1.get("function_name", id1.split(':')[-1]) if m1 else id1.split(':')[-1],
-                    "name2": m2.get("function_name", id2.split(':')[-1]) if m2 else id2.split(':')[-1],
-                    "meta1": m1 or {},
-                    "meta2": m2 or {}
+                    "id1": data.get("id1"),
+                    "id2": data.get("id2"),
+                    "name1": data.get("name1", data.get("id1", ":").split(':')[-1]),
+                    "name2": data.get("name2", data.get("id2", ":").split(':')[-1]),
+                    "score": float(data.get("score", 0)),
+                    "meta1": {
+                        "file_md5": data.get("md5_1"),
+                        "tags": data.get("tags1", []),
+                        "batch_uuid": data.get("batch_uuid1"),
+                        "language_id": data.get("language_id1"),
+                        "bsim_features_count": data.get("feat_count1")
+                    },
+                    "meta2": {
+                        "file_md5": data.get("md5_2"),
+                        "tags": data.get("tags2", []),
+                        "batch_uuid": data.get("batch_uuid2"),
+                        "language_id": data.get("language_id2"),
+                        "bsim_features_count": data.get("feat_count2")
+                    }
                 })
 
-        return jsonify({
-            "collection": col,
-            "algo": algo,
-            "threshold": threshold,
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "pairs": enriched_pairs
-        })
+            return jsonify({
+                "collection": col,
+                "algo": algo,
+                "threshold": threshold,
+                "total": results.total,
+                "offset": offset,
+                "limit": limit,
+                "pairs": enriched_pairs
+            })
+        except Exception as se:
+            logging.error(f"RediSearch Error: {se}")
+            return jsonify({"detail": f"Search execution failed: {str(se)}"}), 500
 
     except Exception as e:
         return jsonify({"detail": f"Error searching similarities: {str(e)}"}), 500

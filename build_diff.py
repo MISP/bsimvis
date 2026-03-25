@@ -21,10 +21,14 @@ LUA_ENHANCED_SIM_SCRIPT = """
 local target_id = ARGV[1]
 local collection = ARGV[2]
 local algo = ARGV[3]
-local top_k = tonumber(ARGV[4])
+local limit = tonumber(ARGV[4])
 local target_md5 = ARGV[5]
 local target_addr = ARGV[6]
 local threshold = tonumber(ARGV[7])
+
+local target_meta_raw = redis.call('JSON.GET', target_id .. ':meta')
+local target_meta = {}
+if target_meta_raw then target_meta = cjson.decode(target_meta_raw) end
 
 -- ARGV[8...] are feature hashes
 local target_features = {}
@@ -74,10 +78,10 @@ table.sort(candidate_list, function(a, b) return a.score > b.score end)
 
 -- 4. Enrich Top K and Prepare for Storage
 local matches = {}
-local limit = math.min(top_k, #candidate_list)
+local limit_val = math.min(limit, #candidate_list)
 local global_zset_key = collection .. ':all_sim:' .. algo
 
-for i = 1, limit do
+for i = 1, limit_val do
     local item = candidate_list[i]
     local meta_raw = redis.call('JSON.GET', item.id .. ':meta')
     local meta = {}
@@ -97,9 +101,34 @@ for i = 1, limit do
     -- 5. Add to collection-wide similarity scoreboard (ZSET)
     local pair_id = target_id .. '::' .. item.id
     redis.call('ZADD', global_zset_key, score_rounded, pair_id)
+
+    -- 6. Store similarity metadata for RediSearch
+    local sim_meta_key = collection .. ':sim_meta:' .. algo .. ':' .. target_id .. ':' .. item.id
+    local sim_doc = {
+        type = "sim",
+        collection = collection,
+        algo = algo,
+        score = score_rounded,
+        id1 = target_id,
+        id2 = item.id,
+        name1 = target_meta["function_name"] or target_id,
+        name2 = meta["function_name"] or item.id,
+        md5_1 = target_md5,
+        md5_2 = meta["file_md5"] or "",
+        tags1 = table.concat(target_meta["tags"] or {}, ","),
+        tags2 = table.concat(meta["tags"] or {}, ","),
+        batch_uuid1 = target_meta["batch_uuid"] or "",
+        batch_uuid2 = meta["batch_uuid"] or "",
+        language_id1 = target_meta["language_id"] or "",
+        language_id2 = meta["language_id"] or "",
+        feat_count1 = target_meta["bsim_features_count"] or 0,
+        feat_count2 = meta["bsim_features_count"] or 0,
+        is_cross_binary = (target_md5 ~= meta["file_md5"]) and "true" or "false"
+    }
+    redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
 end
 
--- 6. Store result directly in Redis
+-- 7. Store result directly in Redis
 local result_key = collection .. ':function:' .. target_md5 .. ':' .. target_addr .. ':sim:' .. algo
 redis.call('JSON.SET', result_key, '$', cjson.encode(matches))
 
@@ -144,6 +173,7 @@ def bake_enhanced_similarities(args):
     if keys_to_process is not None:
         # Use set to avoid duplicates if multiple filters overlap
         unique_keys = sorted(list(set(keys_to_process)))
+        print(f"[*] Found {len(unique_keys)} keys in batch")
         for key in unique_keys:
             process_single_key(r, sim_script, key, collection, algo, top_k, threshold)
             processed += 1
@@ -155,6 +185,7 @@ def bake_enhanced_similarities(args):
         match_pattern = f"{collection}:function:*:*:vec:tf"
         while True:
             cursor, keys = r.scan(cursor=cursor, match=match_pattern, count=args.batch_size)
+            print(f"[*] Found {len(keys)} keys in batch")
             for key in keys:
                 process_single_key(r, sim_script, key, collection, algo, top_k, threshold)
                 processed += 1

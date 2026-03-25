@@ -122,6 +122,8 @@ def upload_bsim_data(data, args, config):
 
                     vec_raw = func_features.get("bsim_features_raw", [])
                     pipe.json().set(f"{base_func_key}:vec:raw", '$', vec_raw)
+                    # Add to batch-to-functions mapping SET for instant status reporting
+                    pipe.sadd(f"{collection}:batch:{batch_uuid}:functions", base_func_key)
 
                     vec_tf_list = func_features.get("bsim_features_tf", [])
                     if vec_tf_list:

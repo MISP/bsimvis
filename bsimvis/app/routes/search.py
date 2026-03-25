@@ -354,11 +354,11 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
             
             all_matches.sort(key=lambda x: x[1], reverse=True)
             page = all_matches[offset : offset + limit]
-            return [{"hash": h, "tf_score": s, "frequency": r.scard(f"{collection}:feature:{h}:functions")} for h, s in page], len(all_matches)
+            return [{"hash": h, "tf_score": s, "frequency": r.zcard(f"{collection}:feature:{h}:functions")} for h, s in page], len(all_matches)
         else:
             total = r.zcard(zset_key)
             page = r.zrevrange(zset_key, offset, offset + limit - 1, withscores=True)
-            return [{"hash": h, "tf_score": s, "frequency": r.scard(f"{collection}:feature:{h}:functions")} for h, s in page], total
+            return [{"hash": h, "tf_score": s, "frequency": r.zcard(f"{collection}:feature:{h}:functions")} for h, s in page], total
     else:
         match_pattern = f"{collection}:feature:{feature_prefix}*:functions"
         feature_list = []
@@ -372,7 +372,7 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
                     parts = key.split(':')
                     if len(parts) >= 3:
                         fh = parts[2]
-                        feature_list.append({"hash": fh, "frequency": r.scard(key)})
+                        feature_list.append({"hash": fh, "frequency": r.zcard(key)})
                 current_idx += 1
                 total_found += 1
             if cursor == 0 or (len(feature_list) >= limit and total_found > offset + limit + 1000):
@@ -394,11 +394,18 @@ def _enrich_feature_context(r, collection, feature_list):
     if not feature_list: return feature_list
 
     try:
-        # 1. Fetch first meta entry for each feature
+        # 1. Fetch one sample meta entry for each feature context
         pipe = r.pipeline()
         for f in feature_list:
-            pipe.json().get(f"{collection}:feature:{f['hash']}:meta", '$[0]')
-        first_metas = pipe.execute()
+            pipe.execute_command('HVALS', f"{collection}:feature:{f['hash']}:meta") 
+        first_metas_raw = pipe.execute()
+        
+        first_metas = []
+        for res in first_metas_raw:
+            if res and isinstance(res, list) and len(res) > 0:
+                first_metas.append([json.loads(res[0])])
+            else:
+                first_metas.append([])
         
         # 2. Prepare for stage 2 (Source and Fallback Meta)
         pipe = r.pipeline()
@@ -412,6 +419,7 @@ def _enrich_feature_context(r, collection, feature_list):
                     "op": fm.get("pcode_op", "N/A"),
                     "pcode_full": fm.get("pcode_op_full"),
                     "func_id": fm.get("function_id"),
+                    "seq": fm.get("seq"),
                     "line_idxs": fm.get("line_idx", []),
                     "md5": parts[2] if len(parts) >= 3 else "N/A",
                     "addr": parts[3] if len(parts) >= 4 else "N/A",
@@ -420,13 +428,13 @@ def _enrich_feature_context(r, collection, feature_list):
                 }
                 func_id = fm.get("function_id")
                 if func_id and f['context']['line_idxs']:
-                    pipe.json().get(f"{func_id}:source")
+                    pipe.json().get(f"{func_id}:source", "$")
                     f['_line_idx'] = f['context']['line_idxs'][0]
                 else:
                     pipe.execute_command('ECHO', 'no_source')
                 
                 if not f['context']['pcode_full'] and func_id:
-                    pipe.json().get(f"{func_id}:vec:meta")
+                    pipe.json().get(f"{func_id}:vec:meta", "$")
                 else:
                     pipe.execute_command('ECHO', 'no_meta_fallback')
             else:
@@ -439,7 +447,10 @@ def _enrich_feature_context(r, collection, feature_list):
         for i, f in enumerate(feature_list):
             if 'context' not in f: continue
             source_data = second_results[i*2]
+            if isinstance(source_data, list) and source_data: source_data = source_data[0]
+            
             vec_meta = second_results[i*2 + 1]
+            if isinstance(vec_meta, list) and vec_meta: vec_meta = vec_meta[0]
             
             if source_data and isinstance(source_data, dict) and '_line_idx' in f:
                 target_line = int(f['_line_idx'])
@@ -516,13 +527,12 @@ def get_feature_details(f_hash):
     except ValueError:
         return jsonify({"error": "Offset and limit must be integers"}), 400
 
-    # 1. Get all functions containing this feature
-    func_ids = r.smembers(f"{collection}:feature:{f_hash}:functions")
+    # 1. Get all functions containing this feature (now a ZSET)
+    func_ids = r.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
     
-    # 2. Get the specific occurrences metadata (the JSON array we built in the rebuilder)
-    meta_data = r.json().get(f"{collection}:feature:{f_hash}:meta", "$") or []
-    
-    if isinstance(meta_data, list) and meta_data and len(meta_data) == 1: meta_data = meta_data[0]
+    # 2. Get the specific occurrences metadata (now a HASH mapping func_id -> JSON)
+    raw_meta_vals = r.hvals(f"{collection}:feature:{f_hash}:meta")
+    meta_data = [json.loads(v) for v in raw_meta_vals] if raw_meta_vals else []
 
     total_occurrences = len(meta_data)
     paginated_meta = meta_data[offset : offset + limit]
@@ -531,10 +541,10 @@ def get_feature_details(f_hash):
     pipe = r.pipeline()
     augment_indices = []
     for i, occ in enumerate(paginated_meta):
-        if 'pcode_op_full' not in occ or 'tf' not in occ or 'pcode_block' not in occ:
+        if 'pcode_op_full' not in occ or 'tf' not in occ or 'pcode_block' not in occ or 'seq' not in occ:
             func_id = occ.get('function_id')
             if func_id:
-                pipe.json().get(f"{func_id}:vec:meta")
+                pipe.json().get(f"{func_id}:vec:meta", "$")
                 pipe.zscore(f"{func_id}:vec:tf", f_hash)
                 augment_indices.append(i)
     
@@ -544,6 +554,7 @@ def get_feature_details(f_hash):
             for i, idx in enumerate(augment_indices):
                 occ = paginated_meta[idx]
                 vec_meta = extra_results[i*2]
+                if isinstance(vec_meta, list) and vec_meta and len(vec_meta) == 1: vec_meta = vec_meta[0]
                 tf_score = extra_results[i*2 + 1]
                 
                 if vec_meta:
@@ -552,6 +563,7 @@ def get_feature_details(f_hash):
                         if feat.get('hash') == f_hash:
                             occ['pcode_op_full'] = feat.get('pcode_op_full', 'N/A')
                             occ['pcode_block'] = feat.get('pcode_block', {})
+                            occ['seq'] = feat.get('seq')
                             break
                 
                 occ['tf'] = int(tf_score) if tf_score is not None else 0

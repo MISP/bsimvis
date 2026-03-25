@@ -42,7 +42,7 @@ local candidates_seen = {}
 
 -- 1. Identify all candidates and count intersections
 for _, f_hash in ipairs(target_features) do
-    local functions = redis.call('SMEMBERS', collection .. ':feature:' .. f_hash .. ':functions')
+    local functions = redis.call('ZRANGE', collection .. ':feature:' .. f_hash .. ':functions', 0, -1)
     for _, func_id in ipairs(functions) do
         if func_id ~= target_id then
             if not candidates_seen[func_id] then

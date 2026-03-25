@@ -3,9 +3,9 @@ from redis.commands.search.index_definition import IndexDefinition, IndexType
 from redis.commands.search.field import TagField, TextField
 import argparse
 
-def setup_similarity_index(collections):
+def setup_similarity_index(collection):
     r = get_redis()
-    idx_name = "idx:similarities"
+    idx_name = f"{collection}:idx:similarities"
     
     try:
         r.ft(idx_name).dropindex(delete_documents=False)
@@ -14,15 +14,10 @@ def setup_similarity_index(collections):
     
     print(f"[*] Creating index '{idx_name}' for similarity metadata...")
     
-    # We use explicit prefixes to avoid scanning non-JSON keys (like 'global:collections') 
-    # which causes WRONGTYPE errors on Kvrocks.
-    prefixes = [f"{c}:sim_meta" for c in collections]
-    
     cmd = [
         "FT.CREATE", idx_name,
         "ON", "JSON",
-        "PREFIX", str(len(prefixes))
-    ] + prefixes + [
+        "PREFIX", "1", f"{collection}:sim_meta",
         "SCHEMA",
         "type", "TAG",
         "collection", "TAG",
@@ -46,7 +41,7 @@ def setup_similarity_index(collections):
     ]
     try:
         r.execute_command(*cmd)
-        print(f"[+] Index '{idx_name}' created successfully with prefixes: {prefixes}")
+        print(f"[+] Index '{idx_name}' created successfully.")
     except Exception as e:
         print(f"[-] Failed to create index '{idx_name}': {e}")
 
@@ -54,35 +49,34 @@ def setup_indices(collections, index_types=None):
     if index_types is None:
         index_types = ['functions', 'files', 'similarities']
         
-    print(f"Setting up {index_types} indices for collections: {collections}")
+    print(f"[*] Setting up {index_types} indices for {len(collections)} collections...")
     
-    if 'functions' in index_types:
-        setup_function_index(collections)
-    if 'files' in index_types:
-        setup_file_index(collections)
-    if 'similarities' in index_types:
-        setup_similarity_index(collections)
+    for coll in collections:
+        print(f"\n--- Processing Collection: {coll} ---")
+        if 'functions' in index_types:
+            setup_function_index(coll)
+        if 'files' in index_types:
+            setup_file_index(coll)
+        if 'similarities' in index_types:
+            setup_similarity_index(coll)
     
-    print("Indices set up")
+    print("\n[+] All requested indices set up.")
 
-def setup_file_index(collections):
+def setup_file_index(collection):
     r = get_redis()
-    idx_name = "idx:files"
+    idx_name = f"{collection}:idx:files"
     
     try:
         r.ft(idx_name).dropindex(delete_documents=False)
     except:
         pass
     
-    print(f"[*] Creating index '{idx_name}' with comprehensive filters...")
-
-    prefixes = [f"{c}:file" for c in collections]
+    print(f"[*] Creating index '{idx_name}'...")
 
     # Manual command to avoid IndexDefinition/PREFIX/FILTER issues on Kvrocks
     cmd = [
         "FT.CREATE", idx_name, "ON", "JSON", 
-        "PREFIX", str(len(prefixes))
-    ] + prefixes + [
+        "PREFIX", "1", f"{collection}:file",
         "SCHEMA",
         "type", "TAG",
         "collection", "TAG",
@@ -97,29 +91,25 @@ def setup_file_index(collections):
     ]
     try:
         r.execute_command(*cmd)
-        print(f"[+] Index '{idx_name}' created successfully with prefixes: {prefixes}")
+        print(f"[+] Index '{idx_name}' created successfully.")
     except Exception as e:
         print(f"[-] Failed to create index '{idx_name}': {e}")
 
-def setup_function_index(collections):
+def setup_function_index(collection):
     r = get_redis()
-    idx_name = "idx:functions"
+    idx_name = f"{collection}:idx:functions"
     
     try:
         r.ft(idx_name).dropindex(delete_documents=False)
     except:
         pass
     
-    print(f"[*] Creating index '{idx_name}' with comprehensive filters...")
+    print(f"[*] Creating index '{idx_name}'...")
     
-    prefixes = [f"{c}:function" for c in collections]
-
-    # Manual command to avoid IndexDefinition/PREFIX/FILTER issues on Kvrocks
     cmd = [
         "FT.CREATE", idx_name,
         "ON", "JSON",
-        "PREFIX", str(len(prefixes))
-    ] + prefixes + [
+        "PREFIX", "1", f"{collection}:function",
         "SCHEMA",
         "type", "TAG",
         "collection", "TAG",
@@ -132,7 +122,6 @@ def setup_function_index(collections):
         "entry_date", "TAG",
         "file_date", "TAG",
         "function_name", "TAG",
-        #"is_thunk", "TAG",
         "decompiler_id", "TAG",
         "return_type", "TAG",
         "calling_convention", "TAG",
@@ -142,7 +131,7 @@ def setup_function_index(collections):
     ]
     try:
         r.execute_command(*cmd)
-        print(f"[+] Index '{idx_name}' created successfully with prefixes: {prefixes}")
+        print(f"[+] Index '{idx_name}' created successfully.")
     except Exception as e:
         print(f"[-] Failed to create index '{idx_name}': {e}")
 

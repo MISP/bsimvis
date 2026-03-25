@@ -81,22 +81,34 @@ Batch Options:
 ...
 ```
 
-Assuming you have a redis/kvrocks server running on localhost:6667, you can upload data using the following command:
+Assuming you have a redis/kvrocks server running on localhost:6666, you can upload data using the following command:
 
 ```bash
-uv run bsimvis/cli/bsimvis_upload.py <target1> <target2> ... <targetN> --host localhost:6667 -c <collection_name> -t <tag> -n <num_threads> --config <config_file> --profile <profile_name>
+uv run bsimvis/cli/bsimvis_upload.py <target1> <target2> ... <targetN> --host localhost:6666 -c <collection_name> -t <tag> -n <num_threads> --config <config_file> --profile <profile_name>
 ```
-
 See bsimvis_config.toml for an example config file (default config file if none is provided)
 
-# API App
 
+Setup Redis FT search indexes in Redis/kvrocks: (necessary for API searches)
+
+```bash
+uv run setup_redis_indexes.py -c <collection_name>
+```
+
+
+To launch the web App / API :
 ```bash
 uv run app.py
 ```
 
-# Build feature inverted Index
+Build inverted index using : 
 
 ```bash
-uv run build_index.py
+uv run build_index.py -i inverted -c <collection_name>
+```
+
+Build similarities index using : (inverted index is necessary)
+
+```bash
+uv run setup_redis_indexes.py -i similarities -c <collection_name>
 ```

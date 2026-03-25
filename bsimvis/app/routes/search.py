@@ -181,7 +181,7 @@ def search_files():
     )
 
     try:
-        results = r.ft("idx:files").search(query)
+        results = r.ft(f"{collection}:idx:files").search(query)
         
         files_list = []
         for doc in results.docs:
@@ -303,7 +303,7 @@ def search_functions():
     )
 
     try:
-        results = r.ft("idx:functions").search(query)
+        results = r.ft(f"{collection}:idx:functions").search(query)
 
         functions_list = []
         for doc in results.docs:
@@ -633,7 +633,7 @@ def similarity_search_api():
         )
 
         try:
-            results = r.ft("idx:similarities").search(query)
+            results = r.ft(f"{col}:idx:similarities").search(query)
             
             enriched_pairs = []
             for doc in results.docs:

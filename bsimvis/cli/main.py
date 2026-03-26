@@ -2,7 +2,7 @@ import argparse
 import sys
 import logging
 import time
-from bsimvis.cli import bsimvis_setup, bsimvis_index, bsimvis_diff, bsimvis_upload, bsimvis_batch
+from bsimvis.cli import bsimvis_setup, bsimvis_index, bsimvis_sim, bsimvis_upload, bsimvis_batch
 
 def main():
     parser = argparse.ArgumentParser(prog="bsimvis", description="Unified BSimVis CLI")
@@ -54,19 +54,24 @@ def main():
     clear_group.add_argument("--all", action="store_true", help="Clear everything in the collection")
     idx_clear.add_argument("--md5", help="Clear functions for a specific file")
 
-    # --- DIFF ---
-    diff_parser = subparsers.add_parser("diff", help="Similarity analytics")
-    diff_actions = diff_parser.add_subparsers(dest="action", required=True)
+    # --- SIM ---
+    sim_parser = subparsers.add_parser("sim", help="Similarity analytics")
+    sim_actions = sim_parser.add_subparsers(dest="action", required=True)
     
-    for action in ["status", "build", "rebuild", "clear"]:
-        dp = diff_actions.add_parser(action, help=f"{action.capitalize()} similarity scores")
+    for action in ["status", "list", "build", "rebuild", "clear"]:
+        dp = sim_actions.add_parser(action, help=f"{action.capitalize()} similarity scores")
         dp.add_argument("-c", "--collection", required=True, help="Collection name")
         dp.add_argument("--batch", help="Target specific batch UUID")
+        dp.add_argument("--md5", action="append", help="Filter by binary MD5")
+        dp.add_argument("--func", action="append", help="Filter by specific function ID/pattern")
+        
         if action in ["build", "rebuild"]:
             dp.add_argument("--algo", default="unweighted_cosine", choices=["jaccard", "unweighted_cosine"])
-            dp.add_argument("-k", "--top-k", type=int, default=20)
+            dp.add_argument("-k", "--top-k", type=int, default=20, help="Top K matches per function")
             dp.add_argument("--threshold", type=float, default=0.1)
             dp.add_argument("--delay", type=float, default=0.0)
+            dp.add_argument("--batch-size", type=int, default=100, help="Internal SCAN batch size")
+            dp.add_argument("--ignore-indexing", action="store_true", help="Skip the full-index check before baking")
 
     # --- BATCH ---
     batch_parser = subparsers.add_parser("batch", help="Batch management")
@@ -135,8 +140,8 @@ def main():
             bsimvis_setup.run_setup(g_host, int(g_port), args)
         elif args.subcommand == "index":
             bsimvis_index.run_index(g_host, int(g_port), args)
-        elif args.subcommand == "diff":
-            bsimvis_diff.run_diff(g_host, int(g_port), args)
+        elif args.subcommand == "sim":
+            bsimvis_sim.run_sim(g_host, int(g_port), args)
         elif args.subcommand == "upload":
             # If no hosts provided in subcommand, use the global one
             if not args.hosts:

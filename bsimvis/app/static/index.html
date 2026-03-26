@@ -238,6 +238,24 @@
             text-decoration: underline;
         }
 
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary:hover {
+            filter: brightness(1.2);
+            box-shadow: 0 0 15px var(--accent);
+        }
+
+
+
         #loader {
             padding: 20px;
             text-align: center;
@@ -619,6 +637,8 @@
             const fields = ['function_name', 'tag', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
             fields.forEach(f => {
                 const val = document.getElementById('flt-' + f).value;
+                if (val) params.set(f, val);
+                else params.delete(f);
             });
             currentOffset = 0;
             isEndOfResults = false;

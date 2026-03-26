@@ -33,6 +33,29 @@ def normalize_tags(data):
         data['tags'] = []
     return data
 
+def get_true_total(r, collection, doc_type, algo=None):
+    """
+    Retrieves accurate global total for a collection/type.
+    On Kvrocks, FT.SEARCH with LIMIT caps the total result count to the page size.
+    We bypass this by using persistent metadata and tracking sets.
+    """
+    try:
+        if doc_type == "function":
+            return r.scard(f"{collection}:indexed:functions")
+        
+        if doc_type == "file":
+            total = r.hget(f"global:collection:{collection}:meta", "total_files")
+            return int(total) if total else 0
+            
+        if doc_type == "similarity" and algo:
+            # We have a collection-wide ZSET for each algorithm's top matches
+            return r.zcard(f"{collection}:all_sim:{algo}")
+            
+        return 0
+    except Exception as e:
+        logging.error(f"Error fetching true total for {collection}:{doc_type}: {e}")
+        return 0
+
 @search_bp.route("/api/collection/search")
 def search_collections():
     r = get_redis()
@@ -44,7 +67,7 @@ def search_collections():
     # 2. Use a pipeline to fetch all HASH metadata in one trip
     pipe = r.pipeline()
     for name in collection_names:
-        pipe.hgetall(f"global:collection:{name}:meta")
+        pipe.hgetall(f"global:collection:{name}:meta")  
         
     metas = pipe.execute()
 
@@ -204,8 +227,14 @@ def search_files():
             files_list.append(data)
 
         # 5. Return Data + Metadata
+        # Kvrocks FT.SEARCH with LIMIT might cap the reported 'results.total'
+        # We use persistent metadata to get the true total matches in the index
+        res_total = results.total
+        if res_total == limit:
+            res_total = get_true_total(r, collection, "file")
+
         return jsonify({
-            "total": results.total,      # Total matches in DB
+            "total": res_total,          # Total matches in DB
             "offset": offset,            # Current starting point
             "limit": limit,              # Batch size
             "files": files_list
@@ -329,8 +358,14 @@ def search_functions():
             functions_list.append(data)
 
         # 5. Return Data + Metadata
+        # Kvrocks FT.SEARCH with LIMIT might cap the reported 'results.total'
+        # We use persistent tracking sets to get the true total matches in the index
+        res_total = results.total
+        if res_total == limit:
+            res_total = get_true_total(r, collection, "function")
+
         return jsonify({
-            "total": results.total,      # Total matches in DB
+            "total": res_total,          # Total matches in DB
             "offset": offset,            # Current starting point
             "limit": limit,              # Batch size
             "functions": functions_list
@@ -682,11 +717,17 @@ def similarity_search_api():
                     }
                 })
 
+            # Kvrocks FT.SEARCH with LIMIT might cap the reported 'results.total'
+            # We use per-algorithm ZSETs to get the true total matches
+            res_total = results.total
+            if res_total == limit:
+                res_total = get_true_total(r, col, "similarity", algo=algo)
+
             return jsonify({
                 "collection": col,
                 "algo": algo,
                 "threshold": threshold,
-                "total": results.total,
+                "total": res_total,
                 "offset": offset,
                 "limit": limit,
                 "pairs": enriched_pairs

@@ -60,6 +60,7 @@ def update_functions_incremental(collection, function_ids, label=None, r=None):
         new_tf_data = r.zrange(tf_key, 0, -1, withscores=True)
         if not raw_meta or not new_tf_data:
             print(f"  [!] Skipping {func_id}: Missing metadata or vector data.")
+            r.sadd(f"{collection}:indexed:functions", func_id)
             continue
 
         # Note: We no longer track stale features individually per-function.
@@ -116,11 +117,11 @@ def update_functions_incremental(collection, function_ids, label=None, r=None):
         
         # 3. Mark function as indexed and map to batch
         pipe.sadd(f"{collection}:indexed:functions", func_id)
-        pipe.json().set(f"{func_id}:vec:meta", "$.indexed", True)
+        #pipe.json().set(f"{func_id}:vec:meta", "$.indexed", True)
         
-        batch_uuid = raw_meta[0].get('batch_uuid') if isinstance(raw_meta, list) and raw_meta else raw_meta.get('batch_uuid')
-        if batch_uuid:
-            pipe.sadd(f"{collection}:batch:{batch_uuid}:functions", func_id)
+        #batch_uuid = raw_meta[0].get('batch_uuid') if isinstance(raw_meta, list) and raw_meta else raw_meta.get('batch_uuid')
+        #if batch_uuid:
+        #    pipe.sadd(f"{collection}:batch:{batch_uuid}:functions", func_id)
         
         pipe.execute()
     
@@ -257,7 +258,7 @@ def clear_functions_index(collection, func_ids, r=None):
             
             # Reset status flags
             pipe.srem(f"{collection}:indexed:functions", fid)
-            pipe.json().set(f"{fid}:vec:meta", "$.indexed", False)
+            #pipe.json().set(f"{fid}:vec:meta", "$.indexed", False)
             
         pipe.execute()
     print(f"[+] Clearing complete.")
@@ -398,9 +399,9 @@ def index_quick_status(collection, batch_uuid=None, r=None):
     if total == 0:
         print("[!] No data found for this collection.")
     elif indexed == total:
-        print("OK")
+        print(f"OK : 0 unindexed / {total} total")
     else:
-        print(f"{total - indexed} unindexed")
+        print(f"{total - indexed} unindexed / {total} total")
 
 def run_index(host, port, args):
     r = get_redis(host, port)

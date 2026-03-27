@@ -122,6 +122,10 @@ for i = 1, limit_val do
         batch_uuid2 = meta["batch_uuid"] or "",
         language_id1 = target_meta["language_id"] or "",
         language_id2 = meta["language_id"] or "",
+        return_type1 = target_meta["return_type"] or "",
+        return_type2 = meta["return_type"] or "",
+        decompiler1 = target_meta["decompiler_id"] or "",
+        decompiler2 = meta["decompiler_id"] or "",
         feat_count1 = target_meta["bsim_features_count"] or 0,
         feat_count2 = meta["bsim_features_count"] or 0,
         is_cross_binary = (target_md5 ~= meta["file_md5"]) and "true" or "false"

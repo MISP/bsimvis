@@ -2,7 +2,7 @@ import argparse
 import sys
 import logging
 import time
-from bsimvis.cli import bsimvis_setup, bsimvis_index, bsimvis_sim, bsimvis_upload, bsimvis_batch
+from bsimvis.cli import bsimvis_setup, bsimvis_index, bsimvis_sim, bsimvis_upload, bsimvis_batch, bsimvis_features
 
 def main():
     parser = argparse.ArgumentParser(prog="bsimvis", description="Unified BSimVis CLI")
@@ -146,7 +146,7 @@ def main():
         if args.subcommand == "setup":
             bsimvis_setup.run_setup(g_host, int(g_port), args)
         elif args.subcommand == "features":
-            bsimvis_index.run_features(g_host, int(g_port), args)
+            bsimvis_features.run_features(g_host, int(g_port), args)
         elif args.subcommand == "index":
             if args.action == "status":
                 bsimvis_index.run_index_status(g_host, int(g_port), args)

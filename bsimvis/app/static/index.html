@@ -353,6 +353,66 @@
             color: #fff;
             border-color: var(--accent);
         }
+
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th.sortable:hover {
+            background: #111;
+            color: #fff;
+        }
+
+        .filter-row th {
+            padding: 5px 10px;
+            background: #080808;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .filter-row input {
+            width: 100%;
+            background: #000;
+            border: 1px solid #333;
+            color: #aaa;
+            font-size: 0.7rem;
+            padding: 4px;
+            border-radius: 2px;
+        }
+
+        .filter-row input:focus {
+            border-color: var(--accent);
+            outline: none;
+            color: #fff;
+        }
+
+        #diff-preview-tooltip {
+            position: fixed;
+            display: none;
+            z-index: 10002;
+            background: #0d0f14;
+            color: #fff;
+            border: 1px solid #f92672;
+            border-radius: 4px;
+            padding: 0;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+            width: 800px;
+            max-height: 500px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .diff-preview-header {
+            background: #1a1a1a;
+            padding: 8px 15px;
+            font-size: 0.75rem;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            color: var(--accent);
+            font-weight: bold;
+        }
     </style>
 
 <body>
@@ -447,7 +507,14 @@
             '#top-correlations': {
                 title: 'Top Correlations',
                 api: '/api/similarity/search',
-                headers: ['Function Pair', 'Score', 'Collections / MD5s', 'Actions'],
+                headers: [
+                    { label: 'Function Pair', sort: 'name', width: '25%' },
+                    { label: 'Similarity', sort: 'score', width: '15%' },
+                    { label: 'Features', sort: 'feat_count', width: '12%' },
+                    { label: 'Language / Tags', width: '23%' },
+                    { label: 'Binary MD5s', width: '15%' },
+                    { label: 'Actions / Algo', width: '10%' }
+                ],
                 renderer: renderTopCorrelations
             }
         };
@@ -529,7 +596,52 @@
 
             // Table Head
             const thead = document.getElementById('table-head');
-            thead.innerHTML = `<tr>${route.headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+            let headHtml = '<tr>';
+            route.headers.forEach(h => {
+                const label = typeof h === 'string' ? h : h.label;
+                const sortKey = typeof h === 'object' ? h.sort : null;
+                const width = typeof h === 'object' ? h.width : 'auto';
+
+                let style = width !== 'auto' ? `style="width:${width}"` : '';
+                if (sortKey) {
+                    const currentSort = params.get('sort_by');
+                    const currentOrder = params.get('sort_order') || 'desc';
+                    const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
+                    headHtml += `<th ${style} class="sortable" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small></th>`;
+                } else {
+                    headHtml += `<th ${style}>${label}</th>`;
+                }
+            });
+            headHtml += '</tr>';
+
+            // Add Filter Row for Correlations
+            if (path === '#top-correlations') {
+                const p = new URLSearchParams(params);
+                headHtml += `<tr class="filter-row">
+                    <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th style="vertical-align: middle;">
+                        <div style="display:flex; align-items:center; gap:2px;">
+                            <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.0'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
+                            <span class="dim" style="font-size:0.6rem">-</span>
+                            <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
+                        </div>
+                    </th>
+                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
+                    <th><input type="text" id="flt-sim-tag" placeholder="Tag/Lang..." value="${p.get('tag') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th style="font-size: 0.65rem;">
+                        <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                            <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
+                            <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                        </select>
+                        <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                            <input type="checkbox" id="sim-cross-binary" ${p.get('cross_binary') === 'true' ? 'checked' : ''} onchange="applySimSearch()">
+                            <label for="sim-cross-binary" class="dim" style="font-size:0.6rem; white-space:nowrap;">Cross</label>
+                        </div>
+                    </th>
+                </tr>`;
+            }
+            thead.innerHTML = headHtml;
 
             // Search Bar for Files
             const searchArea = document.getElementById('search-area');
@@ -564,33 +676,6 @@
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="sort-tf" ${p.get('sort') === 'tf' ? 'checked' : ''} onchange="applySearch()">
                         <label for="sort-tf" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Sort by Total TF</label>
-                    </div>
-                </div>`;
-            } else if (path === '#top-correlations') {
-                const p = new URLSearchParams(params);
-                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px; flex-wrap: wrap;">
-                    <div style="display:flex; gap:10px; align-items:center;">
-                        <span class="dim" style="font-size:0.75rem;">Min Score:</span>
-                        <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.1'}" step="0.05" min="0" max="1" style="width:70px;">
-                        
-                        <span class="dim" style="font-size:0.75rem;">Max Score:</span>
-                        <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" style="width:70px;">
-
-                        <span class="dim" style="font-size:0.75rem;">Min Features:</span>
-                        <input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" style="width:60px;">
-
-                        <span class="dim" style="font-size:0.75rem;">Algo:</span>
-                        <select id="sim-algo" style="background:#000; color:var(--text); border:1px solid var(--border); padding:8px; border-radius:4px;">
-                            <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                            <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                        </select>
-                        
-                        <div style="display:flex; align-items:center; gap:5px;">
-                            <input type="checkbox" id="sim-cross-binary" ${p.get('cross_binary') === 'true' ? 'checked' : ''}>
-                            <label for="sim-cross-binary" class="dim" style="font-size:0.75rem; cursor:pointer;">Cross Binary</label>
-                        </div>
-
-                        <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Update</button>
                     </div>
                 </div>`;
             } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
@@ -632,6 +717,21 @@
             window.location.hash = `${hashPath}?${params.toString()}`;
         }
 
+        function toggleSort(key) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const currentSort = params.get('sort_by');
+            const currentOrder = params.get('sort_order') || 'desc';
+
+            if (currentSort === key) {
+                params.set('sort_order', currentOrder === 'desc' ? 'asc' : 'desc');
+            } else {
+                params.set('sort_by', key);
+                params.set('sort_order', 'desc');
+            }
+            currentOffset = 0;
+            window.location.hash = `${window.location.hash.split('?')[0]}?${params.toString()}`;
+        }
+
         function applyFuncSearch() {
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
             const fields = ['function_name', 'tag', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
@@ -660,6 +760,15 @@
             params.set('algo', algo);
             params.set('min_features', minFeatures);
             params.set('cross_binary', crossBinary);
+
+            // Per-column filters
+            const nameFlt = document.getElementById('flt-sim-name')?.value;
+            const tagFlt = document.getElementById('flt-sim-tag')?.value;
+            const md5Flt = document.getElementById('flt-sim-md5')?.value;
+
+            if (nameFlt) params.set('name', nameFlt); else params.delete('name');
+            if (tagFlt) params.set('tag', tagFlt); else params.delete('tag');
+            if (md5Flt) params.set('md5', md5Flt); else params.delete('md5');
 
             currentOffset = 0;
             isEndOfResults = false;
@@ -887,7 +996,7 @@
         }
 
         function renderTopCorrelations(items) {
-            if (!items || !items.length) return '<tr><td colspan="4" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
+            if (!items || !items.length) return '<tr><td colspan="6" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
 
             return items.map(p => {
                 const s1 = p.id1.split(':');
@@ -897,32 +1006,49 @@
                 const addr1 = s1[3] || '---';
                 const addr2 = s2[3] || '---';
 
+                const tags1 = (p.meta1?.tags || []).map(t => `<span class="tag-card" style="font-size:0.6rem">${t}</span>`).join('');
+                const tags2 = (p.meta2?.tags || []).map(t => `<span class="tag-card" style="font-size:0.6rem; border-color:rgba(166,226,46,0.3); color:#a6e22e; background:rgba(166,226,46,0.05);">${t}</span>`).join('');
+
                 return `
-                <tr>
+                <tr onmouseenter="showDiffPreview('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}', event)" 
+                    onmousemove="moveCodePreview(event)"
+                    onmouseleave="hideDiffPreview(event)">
                     <td>
-                        <div style="display:flex; flex-direction:column; gap:4px;">
+                        <div style="display:flex; flex-direction:column; gap:6px;">
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span class="badge" style="min-width:40px; text-align:center;">L</span>
-                                <b style="color:var(--accent); cursor:pointer;" onclick="showFunctionCodeById('${p.id1}', '${p.name1.replace(/'/g, "\\'")}')">${p.name1}</b>
-                                <span class="dim" style="font-size:0.7rem;">@ ${addr1}</span>
+                                <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center;">L</span>
+                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id1}', '${p.name1.replace(/'/g, "\\'")}')">${p.name1}</b>
+                                <span class="dim" style="font-size:0.65rem;">@ ${addr1}</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:8px;">
-                                <span class="badge" style="min-width:40px; text-align:center; background:var(--success); color:#000;">R</span>
-                                <b style="color:var(--accent); cursor:pointer;" onclick="showFunctionCodeById('${p.id2}', '${p.name2.replace(/'/g, "\\'")}')">${p.name2}</b>
-                                <span class="dim" style="font-size:0.7rem;">@ ${addr2}</span>
+                                <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center; background:var(--success); color:#000;">R</span>
+                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id2}', '${p.name2.replace(/'/g, "\\'")}')">${p.name2}</b>
+                                <span class="dim" style="font-size:0.65rem;">@ ${addr2}</span>
                             </div>
                         </div>
                     </td>
                     <td>
-                        <div style="font-size:1.2rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                        <div class="dim" style="font-size:0.65rem;">similarity</div>
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
+                        <div class="dim" style="font-size:0.6rem;">SIMILARITY</div>
                     </td>
                     <td>
-                        <div class="dim" style="font-size:0.7rem; margin-bottom:4px;">L: <span class="mono">${m1}</span></div>
-                        <div class="dim" style="font-size:0.7rem;">R: <span class="mono">${m2}</span></div>
+                        <span class="badge" style="background:#000; border:1px solid #333;">L: ${p.meta1?.bsim_features_count || 0}</span><br>
+                        <span class="badge" style="background:#000; border:1px solid #333; margin-top:2px; display:inline-block;">R: ${p.meta2?.bsim_features_count || 0}</span>
                     </td>
                     <td>
-                        <button class="btn-diff-action" onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')">
+                        <div style="margin-bottom:5px;">
+                            <span class="dim" style="font-size:0.65rem;">L:</span> <span class="mono" style="font-size:0.7rem; color:var(--accent)">${p.meta1?.language_id || '---'}</span> ${tags1}
+                        </div>
+                        <div>
+                            <span class="dim" style="font-size:0.65rem;">R:</span> <span class="mono" style="font-size:0.7rem; color:var(--success)">${p.meta2?.language_id || '---'}</span> ${tags2}
+                        </div>
+                    </td>
+                    <td>
+                        <div class="dim" style="font-size:0.7rem; margin-bottom:4px; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${m1}">L: <span class="mono">${m1}</span></div>
+                        <div class="dim" style="font-size:0.7rem; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${m2}">R: <span class="mono">${m2}</span></div>
+                    </td>
+                    <td>
+                        <button class="btn-diff-action" onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="font-size:0.7rem; padding:4px 8px;">
                             <span>↔</span> Run Diff
                         </button>
                     </td>
@@ -1337,6 +1463,7 @@
 
     <div id="code-preview-tooltip"></div>
     <div id="token-tooltip"></div>
+    <div id="diff-preview-tooltip"></div>
 
     <script>
         // --- Code Preview Logic ---
@@ -1492,7 +1619,7 @@
         function moveCodePreview(e) {
             const offset = 15; // px away from cursor
 
-            [tooltip, document.getElementById('token-tooltip')].forEach(el => {
+            [tooltip, document.getElementById('token-tooltip'), document.getElementById('diff-preview-tooltip')].forEach(el => {
                 if (el && el.style.display === 'block') {
                     let x = e.clientX + offset;
                     let y = e.clientY + offset;
@@ -1581,6 +1708,87 @@
                 showTokenContextMenu(e);
             }
         });
+
+        // --- Diff Preview Logic ---
+        let diffPreviewTimer = null;
+        const diffPreviewCache = new Map();
+
+        function hideDiffPreview(e) {
+            if (diffPreviewTimer) clearTimeout(diffPreviewTimer);
+            const tooltip = document.getElementById('diff-preview-tooltip');
+            if (e && e.relatedTarget && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
+            if (tooltip) tooltip.style.display = 'none';
+        }
+
+        async function showDiffPreview(id1, name1, id2, name2, e) {
+            const cacheKey = `${id1}::${id2}`;
+            const tooltip = document.getElementById('diff-preview-tooltip');
+
+            if (diffPreviewTimer) clearTimeout(diffPreviewTimer);
+            diffPreviewTimer = setTimeout(async () => {
+                if (!tooltip) return;
+                tooltip.style.display = 'flex';
+                tooltip.innerHTML = `<div class="diff-preview-header">
+                    <span>Diff Preview: ${name1} vs ${name2}</span>
+                    <span style="color:var(--subtle)">Loading...</span>
+                </div>`;
+
+                if (diffPreviewCache.has(cacheKey)) {
+                    renderDiffPreview(diffPreviewCache.get(cacheKey), name1, name2);
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`/api/diff?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+                    if (!res.ok) throw new Error("Diff failed");
+                    const data = await res.json();
+                    diffPreviewCache.set(cacheKey, data);
+                    renderDiffPreview(data, name1, name2);
+                } catch (err) {
+                    tooltip.innerHTML = `<div class="diff-preview-header" style="color:#ff5555">Error loading diff preview</div>`;
+                }
+            }, 300); // 300ms delay to avoid spamming
+        }
+
+        function renderDiffPreview(data, name1, name2) {
+            const tooltip = document.getElementById('diff-preview-tooltip');
+            if (!tooltip) return;
+
+            const maxRows = 12;
+            const rows = data.rows.slice(0, maxRows);
+
+            let html = `
+                <div class="diff-preview-header">
+                    <span>Diff Preview: ${name1} vs ${name2}</span>
+                    <span style="color:var(--success)">${rows.length} rows shown</span>
+                </div>
+                <div style="flex:1; overflow:hidden; display:flex; background:#0d0f14; font-family:'JetBrains Mono', monospace; font-size:0.7rem;">
+                    <div style="flex:1; border-right:1px solid #333; overflow:hidden;">
+                        ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
+                    </div>
+                    <div style="flex:1; overflow:hidden;">
+                        ${rows.map(r => renderPreviewSide(r.r, 'r')).join('')}
+                    </div>
+                </div>
+                ${data.rows.length > maxRows ? `<div style="background:#111; text-align:center; font-size:0.6rem; color:var(--subtle); padding:2px;">... ${data.rows.length - maxRows} more rows (click 'Run Diff' for full view) ...</div>` : ''}
+            `;
+            tooltip.innerHTML = html;
+        }
+
+        function renderPreviewSide(sideData, side) {
+            if (!sideData) return `<div style="height:1.2em; background:rgba(255,255,255,0.02)"></div>`;
+
+            const tokens = sideData.tokens || [];
+            let lineHtml = tokens.map(t => {
+                const cls = t.diff_class || '';
+                return `<span class="${cls}">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+            }).join('');
+
+            const bgMap = { 'diff-match': 'rgba(166,226,46,0.05)', 'diff-unique': 'rgba(249,38,114,0.05)', 'tag-replace': 'rgba(102,217,239,0.05)' };
+            const bg = bgMap[sideData.chunk_class?.split(' ')[0]] || 'transparent';
+
+            return `<div style="white-space:pre; height:1.2em; padding:0 5px; background:${bg}; border-bottom:1px solid rgba(255,255,255,0.02); overflow:hidden;">${lineHtml}</div>`;
+        }
 
         initResize('code-panel');
         initResize('feature-panel');

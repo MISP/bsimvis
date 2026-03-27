@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
 import json
 
-search_collection_bp = Blueprint('search_collection', __name__)
+search_collection_bp = Blueprint("search_collection", __name__)
 
 
 @search_collection_bp.route("/api/collection/search")
@@ -17,12 +17,14 @@ def search_collections():
 
     results = []
     for name, meta in zip(collection_names, metas):
-        results.append({
-            "name": name,
-            "total_files": int(meta.get("total_files", 0)),
-            "total_functions": int(meta.get("total_functions", 0)),
-            "last_updated": meta.get("last_updated", "N/A")
-        })
+        results.append(
+            {
+                "name": name,
+                "total_files": int(meta.get("total_files", 0)),
+                "total_functions": int(meta.get("total_functions", 0)),
+                "last_updated": meta.get("last_updated", "N/A"),
+            }
+        )
 
     return jsonify(results)
 
@@ -30,7 +32,7 @@ def search_collections():
 @search_collection_bp.route("/api/batch/search")
 def search_batches():
     r = get_redis()
-    target_collection = request.args.get('collection')
+    target_collection = request.args.get("collection")
     if not target_collection:
         return jsonify({"error": "No collection specified"})
 
@@ -47,11 +49,11 @@ def search_batches():
             continue
         data = item[0] if isinstance(item, list) and item else item
         data = json.loads(data) if isinstance(data, str) else data
-        col = data.get('collection') or target_collection
-        b_uuid = data.get('batch_uuid')
-        if col and b_uuid and 'batch_id' not in data:
-            data['batch_id'] = f"{col}:batch:{b_uuid}"
+        col = data.get("collection") or target_collection
+        b_uuid = data.get("batch_uuid")
+        if col and b_uuid and "batch_id" not in data:
+            data["batch_id"] = f"{col}:batch:{b_uuid}"
         results.append(data)
 
-    results.sort(key=lambda x: x.get('last_updated', ''), reverse=True)
+    results.sort(key=lambda x: x.get("last_updated", ""), reverse=True)
     return jsonify(results)

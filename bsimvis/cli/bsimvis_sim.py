@@ -8,11 +8,13 @@ import datetime
 
 _r = None
 
+
 def get_redis(host="localhost", port=6666):
     global _r
     if _r is None:
         _r = redis.Redis(host=host, port=port, decode_responses=True)
     return _r
+
 
 # --- Turbo Similarity Bake Lua Script (Resource Optimized) ---
 # Supports Jaccard and Unweighted Cosine algorithms.
@@ -140,59 +142,70 @@ redis.call('JSON.SET', result_key, '$', cjson.encode(matches))
 return #matches
 """
 
+
 def is_fully_indexed(collection, r):
     indexed_set = f"idx:{collection}:indexed:functions"
     total = 0
     indexed = 0
-    
+
     batch_uuids = list(r.smembers("global:batches"))
     for b_uuid in batch_uuids:
         batch_func_set = f"{collection}:batch:{b_uuid}:functions"
-        if not r.exists(batch_func_set): continue
-        
+        if not r.exists(batch_func_set):
+            continue
+
         b_total = r.scard(batch_func_set)
         total += b_total
         try:
-            b_indexed = r.execute_command("SINTERCARD", "2", batch_func_set, indexed_set)
+            b_indexed = r.execute_command(
+                "SINTERCARD", "2", batch_func_set, indexed_set
+            )
         except:
             b_indexed = len(r.sinter(batch_func_set, indexed_set))
         indexed += b_indexed
-    
+
     if total == 0:
         return False, 0, 0
     return indexed == total, indexed, total
 
+
 def bake_enhanced_similarities(args, r=None):
     r = r or get_redis()
-    
+
     # --- Index Status Check ---
-    if not getattr(args, 'ignore_indexing', False):
+    if not getattr(args, "ignore_indexing", False):
         is_ok, indexed, total = is_fully_indexed(args.collection, r)
         if not is_ok:
             if total == 0:
                 print(f"[!] ERROR: No data found for collection '{args.collection}'.")
             else:
-                print(f"[!] ERROR: Collection '{args.collection}' is not fully indexed ({indexed}/{total}).")
-                print(f"    Please run 'bsimvis index build -c {args.collection}' first, or use --ignore-indexing.")
+                print(
+                    f"[!] ERROR: Collection '{args.collection}' is not fully indexed ({indexed}/{total})."
+                )
+                print(
+                    f"    Please run 'bsimvis index build -c {args.collection}' first, or use --ignore-indexing."
+                )
             return
-    
+
     sim_script = r.register_script(LUA_ENHANCED_SIM_SCRIPT)
-    
+
     collection = args.collection
     algo = args.algo
     top_k = args.top_k
     threshold = args.threshold
-    
-    print(f"[*] Enhanced Sim Bake | Collection: {collection} | Algo: {algo} | Threshold: {threshold}")
-    
+
+    print(
+        f"[*] Enhanced Sim Bake | Collection: {collection} | Algo: {algo} | Threshold: {threshold}"
+    )
+
     # Selecting targets based on filters
     keys_to_process = []
-    
+
     # 1. Binary Filters (MD5s)
     if args.md5:
         for md5 in args.md5:
             keys_to_process.extend(r.keys(f"{collection}:function:{md5}:*:vec:tf"))
-    
+
     # 2. Function Filters
     if args.func:
         for f in args.func:
@@ -214,38 +227,52 @@ def bake_enhanced_similarities(args, r=None):
         unique_keys = sorted(list(set(keys_to_process)))
         print(f"[*] Found {len(unique_keys)} keys in batch")
         for key in unique_keys:
-            if process_single_key(r, sim_script, key, collection, algo, top_k, threshold):
+            if process_single_key(
+                r, sim_script, key, collection, algo, top_k, threshold
+            ):
                 processed += 1
-            if processed % 10 == 0: print_progress(processed, start_time, collection)
-            if args.delay > 0: time.sleep(args.delay)
+            if processed % 10 == 0:
+                print_progress(processed, start_time, collection)
+            if args.delay > 0:
+                time.sleep(args.delay)
     else:
         # Full SCAN mode
         cursor = 0
         match_pattern = f"{collection}:function:*:*:vec:tf"
         while True:
-            cursor, keys = r.scan(cursor=cursor, match=match_pattern, count=args.batch_size)
+            cursor, keys = r.scan(
+                cursor=cursor, match=match_pattern, count=args.batch_size
+            )
             print(f"[*] Found {len(keys)} keys in batch")
             for key in keys:
-                if process_single_key(r, sim_script, key, collection, algo, top_k, threshold):
+                if process_single_key(
+                    r, sim_script, key, collection, algo, top_k, threshold
+                ):
                     processed += 1
-                if processed % 50 == 0: print_progress(processed, start_time, collection)
-                if args.delay > 0: time.sleep(args.delay)
-            if cursor == 0: break
+                if processed % 50 == 0:
+                    print_progress(processed, start_time, collection)
+                if args.delay > 0:
+                    time.sleep(args.delay)
+            if cursor == 0:
+                break
 
     print(f"[+] DONE: {processed} functions baked in {time.time() - start_time:.2f}s")
 
+
 def process_single_key(r, script, key, collection, algo, top_k, threshold):
-    parts = key.split(':')
-    if len(parts) < 4: return
+    parts = key.split(":")
+    if len(parts) < 4:
+        return
     md5, addr = parts[2], parts[3]
     base_id = f"{collection}:function:{md5}:{addr}"
-    
+
     features = r.zrange(key, 0, -1)
-    if not features: return
-    
+    if not features:
+        return
+
     # Lua ARGV: [id, collection, algo, top_k, md5, addr, threshold, features...]
     lua_args = [base_id, collection, algo, top_k, md5, addr, threshold] + features
-    
+
     try:
         script(args=lua_args)
         r.sadd(f"idx:{collection}:baked:functions:{algo}", base_id)
@@ -254,29 +281,32 @@ def process_single_key(r, script, key, collection, algo, top_k, threshold):
         logging.error(f"Lua Error for {base_id}: {e}")
         return False
 
+
 def print_progress(count, start, collection):
     elapsed = time.time() - start
     rate = count / elapsed if elapsed > 0 else 0
     print(f"  [i] {collection}: {count} functions baked ({rate:.1f} func/s)...")
 
+
 def run_sim(host, port, args):
     r = get_redis(host, port)
     coll = args.collection
-    
+
     if args.action == "status":
         sim_quick_status(coll, r=r)
     elif args.action == "list":
         list_sim_batches(coll, batch_filter=args.batch, r=r)
     elif args.action == "build":
         bake_enhanced_similarities(args, r=r)
-        
+
     elif args.action == "rebuild":
         print(f"[*] Clearing and rebuilding similarities for: {coll}")
         sim_clear(coll, r=r)
         bake_enhanced_similarities(args, r=r)
-        
+
     elif args.action == "clear":
         sim_clear(coll, r=r)
+
 
 def sim_clear(collection, r=None):
     r = r or get_redis()
@@ -285,7 +315,7 @@ def sim_clear(collection, r=None):
         f"{collection}:all_sim:*",
         f"{collection}:sim_meta:*",
         f"{collection}:function:*:sim:*",
-        f"idx:{collection}:baked:functions:*"
+        f"idx:{collection}:baked:functions:*",
     ]
     for pattern in patterns:
         cursor = 0
@@ -293,85 +323,133 @@ def sim_clear(collection, r=None):
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
             if keys:
                 r.delete(*keys)
-            if cursor == 0: break
+            if cursor == 0:
+                break
     print("[+] Similarity data cleared.")
+
 
 def sim_quick_status(collection, r=None):
     r = r or get_redis()
     total_set = f"idx:{collection}:indexed:functions"
     total_count = r.scard(total_set)
-    
+
     algos = ["jaccard", "unweighted_cosine"]
     print(f"[*] Similarity Bake Status for: {collection}")
     for algo in algos:
         baked_set = f"idx:{collection}:baked:functions:{algo}"
         baked_count = r.scard(baked_set)
         unbaked = max(0, total_count - baked_count)
-        
+
         if unbaked == 0 and total_count > 0:
             print(f"  {algo:<18}: OK : 0 unbaked / {total_count} total")
         else:
             print(f"  {algo:<18}: {unbaked} unbaked / {total_count} total")
+
 
 def list_sim_batches(collection, batch_filter=None, r=None):
     r = r or get_redis()
     print(f"\n[*] Similarity Bake Status for Collection: {collection}")
     if batch_filter:
         print(f"[*] Filtering for Batch: {batch_filter}")
-        
-    print(f"{'Batch UUID':<40} | {'Name':<20} | {'Src Funcs':<10} | {'Jaccard':<10} | {'Cosine':<10} | {'Ratio':<6}")
+
+    print(
+        f"{'Batch UUID':<40} | {'Name':<20} | {'Src Funcs':<10} | {'Jaccard':<10} | {'Cosine':<10} | {'Ratio':<6}"
+    )
     print("-" * 115)
-    
+
     batch_uuids = r.smembers("global:batches")
     algos = ["jaccard", "unweighted_cosine"]
-    
+
     found_any = False
     for uuid in sorted(list(batch_uuids)):
-        if batch_filter and batch_filter != uuid: continue
-        
+        if batch_filter and batch_filter != uuid:
+            continue
+
         batch_func_set = f"{collection}:batch:{uuid}:functions"
         meta_key = f"{collection}:batch:{uuid}"
-        
-        if not r.exists(batch_func_set): continue
+
+        if not r.exists(batch_func_set):
+            continue
         found_any = True
-        
+
         name_raw = r.json().get(meta_key, "$.name")
-        name = name_raw[0] if (isinstance(name_raw, list) and name_raw) else (name_raw or "Unknown")
+        name = (
+            name_raw[0]
+            if (isinstance(name_raw, list) and name_raw)
+            else (name_raw or "Unknown")
+        )
         total = r.scard(batch_func_set)
-        
+
         baked_counts = {}
         for algo in algos:
             baked_set = f"idx:{collection}:baked:functions:{algo}"
             try:
-                baked_counts[algo] = r.execute_command("SINTERCARD", "2", batch_func_set, baked_set)
+                baked_counts[algo] = r.execute_command(
+                    "SINTERCARD", "2", batch_func_set, baked_set
+                )
             except:
                 baked_counts[algo] = len(r.sinter(batch_func_set, baked_set))
-        
-        # We use Jaccard as the primary ratio for display, or average them if needed. 
+
+        # We use Jaccard as the primary ratio for display, or average them if needed.
         # Here we show the Jaccard ratio.
         ratio = (baked_counts["jaccard"] / total * 100) if total > 0 else 0
-        
-        print(f"{uuid:<40} | {str(name)[:20]:<20} | {total:<10} | {baked_counts['jaccard']:<10} | {baked_counts['unweighted_cosine']:<10} | {ratio:>5.1f}%")
+
+        print(
+            f"{uuid:<40} | {str(name)[:20]:<20} | {total:<10} | {baked_counts['jaccard']:<10} | {baked_counts['unweighted_cosine']:<10} | {ratio:>5.1f}%"
+        )
 
     if not found_any:
         print(f"[!] No batches found for collection {collection}.")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="BSim Turbo Similarity Baker with Resource Guards")
+    parser = argparse.ArgumentParser(
+        description="BSim Turbo Similarity Baker with Resource Guards"
+    )
     parser.add_argument("-c", "--collection", required=True, help="Collection name")
-    parser.add_argument("--algo", default="unweighted_cosine", choices=["jaccard", "unweighted_cosine"], help="Similarity algorithm")
-    parser.add_argument("--md5", action="append", help="Filter by specific binary MD5 (can be used multiple times)")
-    parser.add_argument("--func", action="append", help="Filter by specific function (ID or MD5:ADDR, can be used multiple times)")
-    parser.add_argument("-k", "--top-k", type=int, default=20, help="Top K matches per function")
-    parser.add_argument("--threshold", type=float, default=0.1, help="Minimum similarity score (e.g., 0.1)")
-    parser.add_argument("--delay", type=float, default=0.0, help="Artificial delay (seconds) between calculations")
-    parser.add_argument("--batch-size", type=int, default=100, help="Internal SCAN batch size")
-    parser.add_argument("--ignore-indexing", action="store_true", help="Skip the full-index check before baking")
-    
+    parser.add_argument(
+        "--algo",
+        default="unweighted_cosine",
+        choices=["jaccard", "unweighted_cosine"],
+        help="Similarity algorithm",
+    )
+    parser.add_argument(
+        "--md5",
+        action="append",
+        help="Filter by specific binary MD5 (can be used multiple times)",
+    )
+    parser.add_argument(
+        "--func",
+        action="append",
+        help="Filter by specific function (ID or MD5:ADDR, can be used multiple times)",
+    )
+    parser.add_argument(
+        "-k", "--top-k", type=int, default=20, help="Top K matches per function"
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.1,
+        help="Minimum similarity score (e.g., 0.1)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.0,
+        help="Artificial delay (seconds) between calculations",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=100, help="Internal SCAN batch size"
+    )
+    parser.add_argument(
+        "--ignore-indexing",
+        action="store_true",
+        help="Skip the full-index check before baking",
+    )
+
     args = parser.parse_args()
     bake_enhanced_similarities(args)
 
+
 if __name__ == "__main__":
     main()
-
-

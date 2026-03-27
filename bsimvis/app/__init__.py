@@ -4,19 +4,17 @@ import os
 import time
 import logging
 
+
 def create_app():
-    
+
     # Tell Flask the static folder is one level up
-    app = Flask(__name__, static_folder='static')
+    app = Flask(__name__, static_folder="static")
     CORS(app)
 
-
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(message)s'
+        level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
     )
 
-    
     # 2. Performance Hooks
     @app.before_request
     def start_timer():
@@ -24,10 +22,10 @@ def create_app():
 
     @app.after_request
     def log_response(response):
-        if hasattr(g, 'start_time'):
+        if hasattr(g, "start_time"):
             elapsed = (time.time() - g.start_time) * 1000
             # Only log API calls to keep the terminal clean from static file spam
-            if request.path.startswith('/api'):
+            if request.path.startswith("/api"):
                 logging.info(
                     f"{request.method} {request.path} "
                     f"| Status: {response.status_code} "
@@ -54,11 +52,11 @@ def create_app():
     app.register_blueprint(search_similarity_bp)
 
     # Serve the Bare JS frontend
-    @app.route('/')
+    @app.route("/")
     def index():
-        return send_from_directory(app.static_folder, 'index.html')
+        return send_from_directory(app.static_folder, "index.html")
 
-    @app.route('/<path:path>')
+    @app.route("/<path:path>")
     def serve_static(path):
         return send_from_directory(app.static_folder, path)
 

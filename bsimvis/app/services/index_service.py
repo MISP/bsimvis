@@ -12,23 +12,58 @@ import json
 # ---------------------------------------------------------------------------
 # TAG fields that get a Set per value
 # ---------------------------------------------------------------------------
-FILE_TAG_FIELDS = ["type", "collection", "batch_uuid", "file_md5", "language_id", "tags", "file_name"]
-FUNC_TAG_FIELDS = ["type", "collection", "batch_uuid", "file_md5", "language_id", "tags",
-                   "file_name", "function_name", "decompiler_id", "return_type",
-                   "calling_convention", "entrypoint_address"]
-SIM_TAG_FIELDS  = ["type", "collection", "algo", "md5_1", "md5_2", "is_cross_binary",
-                   "id1", "id2", "name1", "name2", "tags1", "tags2",
-                   "batch_uuid1", "batch_uuid2", "language_id1", "language_id2"]
+FILE_TAG_FIELDS = [
+    "type",
+    "collection",
+    "batch_uuid",
+    "file_md5",
+    "language_id",
+    "tags",
+    "file_name",
+]
+FUNC_TAG_FIELDS = [
+    "type",
+    "collection",
+    "batch_uuid",
+    "file_md5",
+    "language_id",
+    "tags",
+    "file_name",
+    "function_name",
+    "decompiler_id",
+    "return_type",
+    "calling_convention",
+    "entrypoint_address",
+]
+SIM_TAG_FIELDS = [
+    "type",
+    "collection",
+    "algo",
+    "md5_1",
+    "md5_2",
+    "is_cross_binary",
+    "id1",
+    "id2",
+    "name1",
+    "name2",
+    "tags1",
+    "tags2",
+    "batch_uuid1",
+    "batch_uuid2",
+    "language_id1",
+    "language_id2",
+]
 
 # NUMERIC fields stored in a ZSET (member=doc_id, score=value)
 FILE_NUM_FIELDS = ["batch_order"]
 FUNC_NUM_FIELDS = ["batch_order", "instruction_count", "bsim_features_count"]
-SIM_NUM_FIELDS  = ["score", "feat_count1", "feat_count2"]
+SIM_NUM_FIELDS = ["score", "feat_count1", "feat_count2"]
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _index_tag(pipe, coll, field, value, doc_id):
     """Add doc_id to the tag set for field=value."""
@@ -41,6 +76,7 @@ def _index_tag(pipe, coll, field, value, doc_id):
             continue
         pipe.sadd(f"idx:{coll}:{field}:{v}", doc_id)
 
+
 def _unindex_tag(pipe, coll, field, value, doc_id):
     """Remove doc_id from the tag set for field=value."""
     if value is None:
@@ -51,6 +87,7 @@ def _unindex_tag(pipe, coll, field, value, doc_id):
             continue
         pipe.srem(f"idx:{coll}:{field}:{v}", doc_id)
 
+
 def _index_num(pipe, coll, field, value, doc_id):
     """Add doc_id to the numeric ZSET for field."""
     if value is None:
@@ -60,6 +97,7 @@ def _index_num(pipe, coll, field, value, doc_id):
     except (ValueError, TypeError):
         pass
 
+
 def _unindex_num(pipe, coll, field, doc_id):
     """Remove doc_id from the numeric ZSET."""
     pipe.zrem(f"idx:{coll}:{field}", doc_id)
@@ -68,6 +106,7 @@ def _unindex_num(pipe, coll, field, doc_id):
 # ---------------------------------------------------------------------------
 # Public: save
 # ---------------------------------------------------------------------------
+
 
 def save_file(pipe, coll, file_md5, data):
     """Index all fields for a file doc. Must be called with an active pipeline."""
@@ -101,8 +140,8 @@ def save_similarity(pipe, coll, sim_id, data):
         _index_num(pipe, coll, f"sim:{f}", data.get(f), doc_id)
     # Fast lookup by md5 pair
     md5_1 = data.get("md5_1")
-    score  = data.get("score", 0)
-    md5_2  = data.get("md5_2")
+    score = data.get("score", 0)
+    md5_2 = data.get("md5_2")
     if md5_1 and md5_2:
         pipe.zadd(f"idx:{coll}:sim:{md5_1}", {sim_id: float(score)})
     pipe.sadd(f"idx:{coll}:all_similarities", doc_id)
@@ -111,6 +150,7 @@ def save_similarity(pipe, coll, sim_id, data):
 # ---------------------------------------------------------------------------
 # Public: delete
 # ---------------------------------------------------------------------------
+
 
 def delete_file(r, coll, file_md5):
     """Remove a file from all indexes. Reads current data first."""
@@ -151,7 +191,10 @@ def delete_function(r, coll, md5, addr):
 # Public: query
 # ---------------------------------------------------------------------------
 
-def query_ids(r, coll, doc_type, tag_filters=None, num_filters=None, offset=0, limit=100):
+
+def query_ids(
+    r, coll, doc_type, tag_filters=None, num_filters=None, offset=0, limit=100
+):
     """
     Resolve filters to a list of doc IDs.
 
@@ -210,6 +253,6 @@ def query_ids(r, coll, doc_type, tag_filters=None, num_filters=None, offset=0, l
 
     total = len(all_ids)
     all_ids_sorted = sorted(all_ids)
-    page = all_ids_sorted[offset: offset + limit]
+    page = all_ids_sorted[offset : offset + limit]
 
     return page, total

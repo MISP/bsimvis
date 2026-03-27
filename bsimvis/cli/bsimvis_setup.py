@@ -3,6 +3,7 @@ import argparse
 
 _r = None
 
+
 def get_redis(host="localhost", port=6666):
     global _r
     if _r is None:
@@ -30,7 +31,9 @@ def run_setup(host, port, args):
     r = get_redis(host, port)
     collections = []
     if args.collection:
-        collections = [args.collection] if isinstance(args.collection, str) else args.collection
+        collections = (
+            [args.collection] if isinstance(args.collection, str) else args.collection
+        )
     if not collections:
         print("[-] No collections specified.")
         return
@@ -39,7 +42,9 @@ def run_setup(host, port, args):
 
 def setup_indices(collections, index_types=None, r_override=None):
     # index_types kept for CLI compatibility but ignored (no FT indexes to create)
-    print(f"[*] Setting up secondary index metadata for {len(collections)} collections...")
+    print(
+        f"[*] Setting up secondary index metadata for {len(collections)} collections..."
+    )
     for coll in collections:
         print(f"\n--- Processing Collection: {coll} ---")
         setup_collection_index(coll, r_override)
@@ -48,11 +53,19 @@ def setup_indices(collections, index_types=None, r_override=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Setup BSimVis secondary indexes.")
-    parser.add_argument("--all", action="store_true", help="Setup for all existing collections.")
-    parser.add_argument("-c", "--collection", nargs="+", help="Collection names to setup.")
-    parser.add_argument("-i", "--index", nargs="+",
-                        choices=["functions", "files", "similarities"],
-                        help="(Legacy) Ignored – no FT indexes used.")
+    parser.add_argument(
+        "--all", action="store_true", help="Setup for all existing collections."
+    )
+    parser.add_argument(
+        "-c", "--collection", nargs="+", help="Collection names to setup."
+    )
+    parser.add_argument(
+        "-i",
+        "--index",
+        nargs="+",
+        choices=["functions", "files", "similarities"],
+        help="(Legacy) Ignored – no FT indexes used.",
+    )
 
     args = parser.parse_args()
 

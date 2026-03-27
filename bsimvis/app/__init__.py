@@ -36,22 +36,22 @@ def create_app():
         return response
 
     from .routes.function_diff import function_diff_bp
-    from .routes.search import search_bp
     from .routes.function_code import function_code_bp
     from .routes.function_feature import function_feature_bp
-    # from .routes.function import func_bp
-    # from .routes.batch import batch_bp
-    # from .routes.collection import collection_bp
-    
- 
+    from .routes.search_collection import search_collection_bp
+    from .routes.search_file import search_file_bp
+    from .routes.search_function import search_function_bp
+    from .routes.search_feature import search_feature_bp
+    from .routes.search_similarity import search_similarity_bp
+
     app.register_blueprint(function_diff_bp)
-    app.register_blueprint(search_bp)
     app.register_blueprint(function_code_bp)
     app.register_blueprint(function_feature_bp)
-    # app.register_blueprint(func_bp)
-    # app.register_blueprint(batch_bp)
-    # app.register_blueprint(collection_bp)
-    # app.register_blueprint(feature_bp)
+    app.register_blueprint(search_collection_bp)
+    app.register_blueprint(search_file_bp)
+    app.register_blueprint(search_function_bp)
+    app.register_blueprint(search_feature_bp)
+    app.register_blueprint(search_similarity_bp)
 
     # Serve the Bare JS frontend
     @app.route('/')

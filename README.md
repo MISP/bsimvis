@@ -43,7 +43,7 @@ positional arguments:
   {setup,index,sim,batch,upload}
     setup               System setup
     index               Index management
-    sim                 Similarity analytics
+    sim                 Similarity management
     batch               Batch management
     upload              Push data to Redis
 

@@ -22,7 +22,7 @@ def fetch_function_data(collection, md5, addr):
         if isinstance(features, list) and features and len(features) == 1: features = features[0]
         if isinstance(meta, list) and meta and len(meta) == 1: meta = meta[0]
 
-        tf_map = {member: int(score) for member, score in tf_raw} if tf_raw else {}
+        tf_map = {member: int(float(score)) for member, score in tf_raw} if tf_raw else {}
 
         return source, features, meta, tf_map
     except Exception as e:

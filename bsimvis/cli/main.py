@@ -18,44 +18,51 @@ def main():
     ft_parser.add_argument("-i", "--index", nargs="+", default=["functions", "files", "similarities"], 
                           help="Index types (default: all)")
 
-    # --- INDEX ---
-    index_parser = subparsers.add_parser("index", help="Index management")
-    index_actions = index_parser.add_subparsers(dest="action", required=True)
+    # --- FEATURES (formerly Index) ---
+    features_parser = subparsers.add_parser("features", help="BSim Feature management (Indexing)")
+    features_actions = features_parser.add_subparsers(dest="action", required=True)
     
-    # index status
-    idx_status = index_actions.add_parser("status", help="Quick indexing check")
-    idx_status.add_argument("-c", "--collection", required=True, help="Collection name")
-    idx_status.add_argument("--batch", help="Filter by batch UUID")
+    # features status
+    feat_status = features_actions.add_parser("status", help="Quick features indexing check")
+    feat_status.add_argument("-c", "--collection", required=True, help="Collection name")
+    feat_status.add_argument("--batch", help="Filter by batch UUID")
 
-    # index list
-    idx_list = index_actions.add_parser("list", help="Show batch table and ratios")
-    idx_list.add_argument("-c", "--collection", required=True, help="Collection name")
-    idx_list.add_argument("--batch", help="Filter by batch UUID")
+    # features list
+    feat_list = features_actions.add_parser("list", help="Show batch table and ratios")
+    feat_list.add_argument("-c", "--collection", required=True, help="Collection name")
+    feat_list.add_argument("--batch", help="Filter by batch UUID")
 
-    # index build
-    idx_build = index_actions.add_parser("build", help="Index missing functions")
-    idx_build.add_argument("-c", "--collection", required=True, help="Collection name")
-    idx_build.add_argument("--batch", help="Index a specific batch UUID")
-    idx_build.add_argument("--all", action="store_true", help="Clear and rebuild everything")
-    idx_build.add_argument("--sync", action="store_true", help="Sync batch mappings (scan)")
-    idx_build.add_argument("--md5", help="Index functions for a specific file")
+    # features build
+    feat_build = features_actions.add_parser("build", help="Index missing functions")
+    feat_build.add_argument("-c", "--collection", required=True, help="Collection name")
+    feat_build.add_argument("--batch", help="Index a specific batch UUID")
+    feat_build.add_argument("--all", action="store_true", help="Clear and rebuild everything")
+    feat_build.add_argument("--sync", action="store_true", help="Sync batch mappings (scan)")
+    feat_build.add_argument("--md5", help="Index functions for a specific file")
 
-    # index rebuild
-    idx_rebuild = index_actions.add_parser("rebuild", help="Clear and rebuild")
-    idx_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
-    idx_rebuild.add_argument("--batch", help="Rebuild a specific batch UUID")
-    idx_rebuild.add_argument("--md5", help="Rebuild a specific file")
+    # features rebuild
+    feat_rebuild = features_actions.add_parser("rebuild", help="Clear and rebuild")
+    feat_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
+    feat_rebuild.add_argument("--batch", help="Rebuild a specific batch UUID")
+    feat_rebuild.add_argument("--md5", help="Rebuild a specific file")
 
-    # index clear
-    idx_clear = index_actions.add_parser("clear", help="Remove indexing data")
-    idx_clear.add_argument("-c", "--collection", required=True, help="Collection name")
-    clear_group = idx_clear.add_mutually_exclusive_group(required=True)
-    clear_group.add_argument("--batch", help="Clear a specific batch UUID")
-    clear_group.add_argument("--all", action="store_true", help="Clear everything in the collection")
-    idx_clear.add_argument("--md5", help="Clear functions for a specific file")
+    # features clear
+    feat_clear = features_actions.add_parser("clear", help="Remove indexing data")
+    feat_clear.add_argument("-c", "--collection", required=True, help="Collection name")
+    clear_group_feat = feat_clear.add_mutually_exclusive_group(required=True)
+    clear_group_feat.add_argument("--batch", help="Clear a specific batch UUID")
+    clear_group_feat.add_argument("--all", action="store_true", help="Clear everything in the collection")
+    feat_clear.add_argument("--md5", help="Clear functions for a specific file")
+
+    # --- INDEX (Stats & Health) ---
+    index_parser = subparsers.add_parser("index", help="Index health and statistics")
+    index_actions = index_parser.add_subparsers(dest="action", required=True)
+    index_status = index_actions.add_parser("status", help="Show database index statistics")
+    index_status.add_argument("-c", "--collection", required=True, help="Collection name")
+    index_status.add_argument("-v", "--verbose", "--details", dest="details", action="store_true", help="Show comprehensive space and size analysis")
 
     # --- SIM ---
-    sim_parser = subparsers.add_parser("sim", help="Similarity analytics")
+    sim_parser = subparsers.add_parser("sim", help="Similarity management")
     sim_actions = sim_parser.add_subparsers(dest="action", required=True)
     
     for action in ["status", "list", "build", "rebuild", "clear"]:
@@ -85,7 +92,7 @@ def main():
     b_remove.add_argument("--batch", required=True, help="Batch UUID to remove")
 
     # --- UPLOAD ---
-    upload_parser = subparsers.add_parser("upload", help="Push data to Redis")
+    upload_parser = subparsers.add_parser("upload", help="Upload binaries to redis/kvrocks")
     
     # Mirroring EXACT arguments from bsimvis_upload.py
     upload_parser.add_argument(
@@ -138,8 +145,11 @@ def main():
     try:
         if args.subcommand == "setup":
             bsimvis_setup.run_setup(g_host, int(g_port), args)
+        elif args.subcommand == "features":
+            bsimvis_index.run_features(g_host, int(g_port), args)
         elif args.subcommand == "index":
-            bsimvis_index.run_index(g_host, int(g_port), args)
+            if args.action == "status":
+                bsimvis_index.run_index_status(g_host, int(g_port), args)
         elif args.subcommand == "sim":
             bsimvis_sim.run_sim(g_host, int(g_port), args)
         elif args.subcommand == "upload":

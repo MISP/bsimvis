@@ -143,11 +143,20 @@ def diff_api():
         return jsonify({"detail": "Missing id1 or id2"}), 400
 
     # Business logic
-    collection1, _, md5_1, addr_1 = id1.split(':')
-    collection2, _, md5_2, addr_2 = id2.split(':')
+    try:
+        parts1 = id1.split(':')
+        parts2 = id2.split(':')
+        
+        if len(parts1) < 4 or len(parts2) < 4:
+            return jsonify({"detail": "Invalid ID format. Expected coll:type:md5:addr"}), 400
+            
+        collection1, _, md5_1, addr_1 = parts1[:4]
+        collection2, _, md5_2, addr_2 = parts2[:4]
+    except Exception:
+        return jsonify({"detail": "Malformed ID"}), 400
     
     if not collection1 or not md5_1 or not addr_1 or not collection2 or not md5_2 or not addr_2:
-        return jsonify({"detail": "Invalid ID format. Expected collection:md5:addr"}), 400
+        return jsonify({"detail": "Invalid ID components"}), 400
 
     s1, f1, meta1, tf1 = fetch_function_data(collection1, md5_1, addr_1)
     s2, f2, meta2, tf2 = fetch_function_data(collection2, md5_2, addr_2)

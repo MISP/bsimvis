@@ -13,6 +13,7 @@ import concurrent.futures, threading
 
 from tqdm import tqdm
 from bsimvis.app.services.redis_client import get_redis, init_redis
+from bsimvis.app.services.index_service import save_file, save_function
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
@@ -101,6 +102,8 @@ def upload_bsim_data(data, args, config):
                 coll_file_meta["type"] = "file"
                 coll_file_meta["file_id"] = f"{collection}:file:{file_md5}"
                 pipe.json().set(file_meta_key, '$', coll_file_meta)
+                # Populate secondary index
+                save_file(pipe, collection, file_md5, coll_file_meta)
 
                 # --- 2. Function Data ---
                 for func_data in functions_data:
@@ -117,6 +120,8 @@ def upload_bsim_data(data, args, config):
 
                     pipe.json().set(f"{base_func_key}:meta", '$', func_meta)
                     pipe.json().set(f"{base_func_key}:source", '$', func_source)
+                    # Populate secondary index
+                    save_function(pipe, collection, file_md5, addr, func_meta)
 
                     vec_meta = func_features.get("bsim_features_meta", [])
                     pipe.json().set(f"{base_func_key}:vec:meta", '$', vec_meta)

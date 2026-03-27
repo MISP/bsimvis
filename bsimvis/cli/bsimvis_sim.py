@@ -43,7 +43,7 @@ local candidates_seen = {}
 
 -- 1. Identify all candidates and count intersections
 for _, f_hash in ipairs(target_features) do
-    local functions = redis.call('ZRANGE', collection .. ':feature:' .. f_hash .. ':functions', 0, -1)
+    local functions = redis.call('ZRANGE', 'idx:' .. collection .. ':feature:' .. f_hash .. ':functions', 0, -1)
     for _, func_id in ipairs(functions) do
         if func_id ~= target_id then
             if not candidates_seen[func_id] then
@@ -137,7 +137,7 @@ return #matches
 """
 
 def is_fully_indexed(collection, r):
-    indexed_set = f"{collection}:indexed:functions"
+    indexed_set = f"idx:{collection}:indexed:functions"
     total = 0
     indexed = 0
     
@@ -244,7 +244,7 @@ def process_single_key(r, script, key, collection, algo, top_k, threshold):
     
     try:
         script(args=lua_args)
-        r.sadd(f"{collection}:baked:functions:{algo}", base_id)
+        r.sadd(f"idx:{collection}:baked:functions:{algo}", base_id)
         return True
     except Exception as e:
         logging.error(f"Lua Error for {base_id}: {e}")
@@ -281,7 +281,7 @@ def sim_clear(collection, r=None):
         f"{collection}:all_sim:*",
         f"{collection}:sim_meta:*",
         f"{collection}:function:*:sim:*",
-        f"{collection}:baked:functions:*"
+        f"idx:{collection}:baked:functions:*"
     ]
     for pattern in patterns:
         cursor = 0
@@ -294,13 +294,13 @@ def sim_clear(collection, r=None):
 
 def sim_quick_status(collection, r=None):
     r = r or get_redis()
-    total_set = f"{collection}:indexed:functions"
+    total_set = f"idx:{collection}:indexed:functions"
     total_count = r.scard(total_set)
     
     algos = ["jaccard", "unweighted_cosine"]
     print(f"[*] Similarity Bake Status for: {collection}")
     for algo in algos:
-        baked_set = f"{collection}:baked:functions:{algo}"
+        baked_set = f"idx:{collection}:baked:functions:{algo}"
         baked_count = r.scard(baked_set)
         unbaked = max(0, total_count - baked_count)
         
@@ -337,7 +337,7 @@ def list_sim_batches(collection, batch_filter=None, r=None):
         
         baked_counts = {}
         for algo in algos:
-            baked_set = f"{collection}:baked:functions:{algo}"
+            baked_set = f"idx:{collection}:baked:functions:{algo}"
             try:
                 baked_counts[algo] = r.execute_command("SINTERCARD", "2", batch_func_set, baked_set)
             except:

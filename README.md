@@ -35,17 +35,18 @@ Binary analysis is done using Ghidra's decompiler thanks to Pyghidra scripting.
 ## Usage 
 
 ```bash
-usage: bsimvis [-h] [-H HOST] {setup,index,sim,batch,upload} ...
+usage: bsimvis [-h] [-H HOST] {setup,features,index,sim,batch,upload} ...
 
 Unified BSimVis CLI
 
 positional arguments:
-  {setup,index,sim,batch,upload}
+  {setup,features,index,sim,batch,upload}
     setup               System setup
-    index               Index management
+    features            BSim Feature management (Indexing)
+    index               Index health and statistics
     sim                 Similarity management
     batch               Batch management
-    upload              Push data to Redis
+    upload              Upload binaries
 
 options:
   -h, --help            show this help message and exit
@@ -60,12 +61,6 @@ bsimvis upload <target1> <target2> ... <targetN> --host localhost:6666 -c <colle
 See bsimvis_config.toml for an example config file (default config file if none is provided)
 
 
-Setup Redis FT search indexes in Redis/kvrocks: (necessary for API searches)
-
-```bash
-bsimvis setup ftsearch -c <collection_name>
-```
-
 
 To launch the web App / API :
 ```bash
@@ -75,7 +70,7 @@ uv run app.py
 Build inverted index using : 
 
 ```bash
-bsimvis index build -c <collection_name>
+bsimvis features build -c <collection_name>
 ```
 
 Build similarities index using : (inverted index is necessary)
@@ -88,7 +83,7 @@ bsimvis sim build -c <collection_name>
 # Adding new binaries to existing collection
 
 ```bash
-$ bsimvis index status <collection_name>
+$ bsimvis features status <collection_name>
 
 [*] Indexing Status for Collection: main
 Batch UUID                               | Name                           | Src Funcs  | Indexed  | Ratio 
@@ -103,17 +98,17 @@ bc847936-7bb5-4c6c-afa0-16cfeef500d6     | Ghidra Batch                   | 3   
 Missing functions will be indexed with:
 
 ```bash
-bsimvis index build <collection_name>
+bsimvis features build <collection_name>
 ```
 
 To index a specific batch:
 
 ```bash
-bsimvis index build <collection_name> --batch <batch_uuid>
+bsimvis features build <collection_name> --batch <batch_uuid>
 ```
 
 To rebuild a specific batch:
 
 ```bash
-bsimvis index rebuild <collection_name> --batch <batch_uuid>
+bsimvis features rebuild <collection_name> --batch <batch_uuid>
 ```

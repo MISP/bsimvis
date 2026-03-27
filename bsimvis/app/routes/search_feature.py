@@ -221,7 +221,7 @@ def search_features():
 
     return jsonify(
         {
-            "total_estimated": total_found,
+            "total": total_found,
             "offset": offset,
             "limit": limit,
             "features": feature_list,

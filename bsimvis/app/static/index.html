@@ -446,7 +446,12 @@
     <main>
         <div class="header">
             <div class="header-top">
-                <h1 id="view-title" style="margin:0">Dashboard</h1>
+                <div style="display:flex; align-items:center; gap:15px;">
+                    <h1 id="view-title" style="margin:0">Dashboard</h1>
+                    <span id="view-total" class="badge"
+                        style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
+                    <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
+                </div>
                 <div style="display:flex; gap:10px; align-items:center;">
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
                     <button onclick="refreshData()"
@@ -508,7 +513,7 @@
                 title: 'Top Correlations',
                 api: '/api/similarity/search',
                 headers: [
-                    { label: 'Function Pair', sort: 'name', width: '25%' },
+                    { label: 'Function Pair', width: '25%' },
                     { label: 'Similarity', sort: 'score', width: '15%' },
                     { label: 'Features', sort: 'feat_count', width: '12%' },
                     { label: 'Language / Tags', width: '23%' },
@@ -519,7 +524,8 @@
             }
         };
 
-        async function refreshData(append = false) {
+        async function refreshData(appendArg = false) {
+            const append = (appendArg === true);
             const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
             const full_hash = hashPath + (queryString ? '?' + queryString : '');
             const route = routes[hashPath];
@@ -530,15 +536,13 @@
                 isEndOfResults = false;
                 document.getElementById('table-body').innerHTML = '';
                 document.getElementById('loader').style.display = 'block';
-
             }
             lastHashPath = full_hash;
 
             const params = new URLSearchParams(queryString);
-            if (hashPath === '#files' || hashPath === '#functions' || hashPath === '#features-global' || hashPath === '#top-correlations') {
-                params.set('offset', currentOffset);
-                params.set('limit', PAGE_SIZE);
-            }
+            // Standard pagination for all search routes
+            params.set('offset', currentOffset);
+            params.set('limit', PAGE_SIZE);
 
             let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
             updateUI(hashPath, params, route);
@@ -548,8 +552,35 @@
                 const data = await response.json();
 
                 // Extract the list of items based on the API response structure
-                const items = data.files || data.functions || data.features || data.pairs || (Array.isArray(data) ? data : []);
-                const total = data.total || data.total_estimated || (Array.isArray(data) ? data.length : items.length || 0);
+                const items = data.items || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
+                const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
+
+                const totalEl = document.getElementById('view-total');
+                const settingsEl = document.getElementById('search-settings-container');
+                if (totalEl) {
+                    totalEl.style.display = 'inline-block';
+                    totalEl.innerText = `${total.toLocaleString()} total`;
+
+                    if (hashPath === '#top-correlations') {
+                        settingsEl.style.display = 'flex';
+                        const currentLimit = params.get('pool_limit') || '1000000';
+                        settingsEl.innerHTML = `
+                            <span class="dim" style="font-size:0.65rem; margin-left:8px;">Pool Limit:</span>
+                            <input type="number" id="sim-pool-limit" value="${currentLimit}" step="100000" min="1000" max="1000000" 
+                                title="Max candidates to score" 
+                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                                onchange="applySimSearch()">
+                        `;
+                        if (data.truncated) {
+                            totalEl.innerHTML += ` <span class="badge badge-warning" style="color:var(--danger); font-size:0.7rem; font-weight:bold; margin-left:8px; border:1px solid var(--danger); background:rgba(255,0,0,0.1);">[TRUNCATED]</span>`;
+                            const input = document.getElementById('sim-pool-limit');
+                            if (input) input.style.borderColor = 'var(--danger)';
+                        }
+                    } else {
+                        settingsEl.style.display = 'none';
+                        settingsEl.innerHTML = '';
+                    }
+                }
 
                 const tbody = document.getElementById('table-body');
                 if (items.length === 0 && !append) {
@@ -621,7 +652,7 @@
                     <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
                     <th style="vertical-align: middle;">
                         <div style="display:flex; align-items:center; gap:2px;">
-                            <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.0'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
+                            <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                             <span class="dim" style="font-size:0.6rem">-</span>
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
@@ -636,7 +667,7 @@
                         </select>
                         <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
                             <input type="checkbox" id="sim-cross-binary" ${p.get('cross_binary') === 'true' ? 'checked' : ''} onchange="applySimSearch()">
-                            <label for="sim-cross-binary" class="dim" style="font-size:0.6rem; white-space:nowrap;">Cross</label>
+                            <label for="sim-cross-binary" class="dim" style="font-size:0.6rem; white-space:nowrap;">No Cross-Binary</label>
                         </div>
                     </th>
                 </tr>`;
@@ -749,17 +780,20 @@
             const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
             const params = new URLSearchParams(queryString);
 
-            const threshold = document.getElementById('sim-threshold').value;
-            const maxScore = document.getElementById('sim-max-score').value;
-            const algo = document.getElementById('sim-algo').value;
-            const minFeatures = document.getElementById('sim-min-features').value;
-            const crossBinary = document.getElementById('sim-cross-binary').checked;
+            const threshold = document.getElementById('sim-threshold')?.value;
+            const maxScore = document.getElementById('sim-max-score')?.value;
+            const algo = document.getElementById('sim-algo')?.value;
+            const minFeatures = document.getElementById('sim-min-features')?.value;
+            const crossBinary = document.getElementById('sim-cross-binary')?.checked;
 
-            params.set('threshold', threshold);
-            params.set('max_score', maxScore);
-            params.set('algo', algo);
-            params.set('min_features', minFeatures);
-            params.set('cross_binary', crossBinary);
+            if (threshold && parseFloat(threshold) !== 0.95) params.set('threshold', threshold); else params.delete('threshold');
+            if (maxScore && parseFloat(maxScore) < 1.0) params.set('max_score', maxScore); else params.delete('max_score');
+            if (algo && algo !== 'unweighted_cosine') params.set('algo', algo); else params.delete('algo');
+            if (minFeatures && parseInt(minFeatures) > 0) params.set('min_features', minFeatures); else params.delete('min_features');
+            if (crossBinary) params.set('cross_binary', 'true'); else params.delete('cross_binary');
+
+            const poolLimit = document.getElementById('sim-pool-limit')?.value;
+            if (poolLimit && parseInt(poolLimit) !== 1000000) params.set('pool_limit', poolLimit); else params.delete('pool_limit');
 
             // Per-column filters
             const nameFlt = document.getElementById('flt-sim-name')?.value;
@@ -777,7 +811,7 @@
 
         function renderPagination(path) {
             const container = document.getElementById('pagination-container');
-            container.innerHTML = ((path === '#files' || path === '#functions' || path === '#features-global' || path === '#top-correlations') && !isEndOfResults) ?
+            container.innerHTML = (!isEndOfResults) ?
                 `<button class="btn-primary" onclick="refreshData(true)">Load More Results</button>` : '';
         }
 
@@ -1009,20 +1043,23 @@
                 const tags1 = (p.meta1?.tags || []).map(t => `<span class="tag-card" style="font-size:0.6rem">${t}</span>`).join('');
                 const tags2 = (p.meta2?.tags || []).map(t => `<span class="tag-card" style="font-size:0.6rem; border-color:rgba(166,226,46,0.3); color:#a6e22e; background:rgba(166,226,46,0.05);">${t}</span>`).join('');
 
+                const name1 = (p.name1 || '---').replace(/'/g, "\\'");
+                const name2 = (p.name2 || '---').replace(/'/g, "\\'");
+
                 return `
-                <tr onmouseenter="showDiffPreview('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}', event)" 
+                <tr onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', event)" 
                     onmousemove="moveCodePreview(event)"
                     onmouseleave="hideDiffPreview(event)">
                     <td>
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center;">L</span>
-                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id1}', '${p.name1.replace(/'/g, "\\'")}')">${p.name1}</b>
+                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id1}', '${name1}')">${p.name1 || '---'}</b>
                                 <span class="dim" style="font-size:0.65rem;">@ ${addr1}</span>
                             </div>
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center; background:var(--success); color:#000;">R</span>
-                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id2}', '${p.name2.replace(/'/g, "\\'")}')">${p.name2}</b>
+                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id2}', '${name2}')">${p.name2 || '---'}</b>
                                 <span class="dim" style="font-size:0.65rem;">@ ${addr2}</span>
                             </div>
                         </div>
@@ -1330,7 +1367,8 @@
             try {
                 const res = await fetch('/api/collection/search');
                 if (!res.ok) return;
-                const collections = await res.json();
+                const data = await res.json();
+                const collections = data.collections || (Array.isArray(data) ? data : []);
                 const select = document.getElementById('side-collection-select');
                 if (!select) return;
 

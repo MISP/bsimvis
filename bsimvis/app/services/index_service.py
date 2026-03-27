@@ -74,7 +74,8 @@ def _index_tag(pipe, coll, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        pipe.sadd(f"idx:{coll}:{field}:{v}", doc_id)
+        # Store tags lower-cased for case-insensitive search
+        pipe.sadd(f"idx:{coll}:{field}:{str(v).lower()}", doc_id)
 
 
 def _unindex_tag(pipe, coll, field, value, doc_id):
@@ -85,7 +86,7 @@ def _unindex_tag(pipe, coll, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        pipe.srem(f"idx:{coll}:{field}:{v}", doc_id)
+        pipe.srem(f"idx:{coll}:{field}:{str(v).lower()}", doc_id)
 
 
 def _index_num(pipe, coll, field, value, doc_id):
@@ -143,7 +144,14 @@ def save_similarity(pipe, coll, sim_id, data):
     score = data.get("score", 0)
     md5_2 = data.get("md5_2")
     if md5_1 and md5_2:
-        pipe.zadd(f"idx:{coll}:sim:{md5_1}", {sim_id: float(score)})
+        pipe.zadd(f"idx:{coll}:sim:{md5_1}", {doc_id: float(score)})
+
+    # Global scoreboard for the algorithm
+    parts = sim_id.split(":")
+    if parts:
+        algo = parts[0]
+        pipe.zadd(f"{coll}:all_sim:{algo}", {doc_id: float(score)})
+
     pipe.sadd(f"idx:{coll}:all_similarities", doc_id)
 
 
@@ -218,7 +226,7 @@ def query_ids(
     for field, value in tag_filters.items():
         if value is None or value == "":
             continue
-        filter_keys.append(f"idx:{coll}:{doc_type}:{field}:{value}")
+        filter_keys.append(f"idx:{coll}:{doc_type}:{field}:{str(value).lower()}")
 
     # Choose the base key: first specific filter if any, else all_key
     if filter_keys:

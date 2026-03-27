@@ -101,12 +101,11 @@ for i = 1, limit_val do
         md5 = meta["file_md5"] or ""
     })
     
-    -- 5. Add to collection-wide similarity scoreboard (ZSET)
-    local pair_id = target_id .. '::' .. item.id
-    redis.call('ZADD', global_zset_key, score_rounded, pair_id)
-
-    -- 6. Store similarity metadata for RediSearch
+    -- 5. Store similarity metadata for RediSearch
     local sim_meta_key = collection .. ':sim_meta:' .. algo .. ':' .. target_id .. ':' .. item.id
+    
+    -- 6. Add to collection-wide similarity scoreboard (ZSET)
+    redis.call('ZADD', global_zset_key, score_rounded, sim_meta_key)
     local sim_doc = {
         type = "sim",
         collection = collection,
@@ -133,6 +132,50 @@ for i = 1, limit_val do
         is_cross_binary = (target_md5 ~= meta["file_md5"]) and "true" or "false"
     }
     redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
+
+    -- 6.1 Secondary Indexing (Kvrocks-optimized)
+    local all_key = 'idx:' .. collection .. ':all_similarities'
+    redis.call('SADD', all_key, sim_meta_key)
+    
+    -- Index individual fields for filtering
+    local function index_tag(field, value)
+        if value and value ~= "" then
+            redis.call('SADD', 'idx:' .. collection .. ':sim:' .. field .. ':' .. string.lower(tostring(value)), sim_meta_key)
+        end
+    end
+
+    index_tag('name1', sim_doc.name1)
+    index_tag('name2', sim_doc.name2)
+    index_tag('md5_1', sim_doc.md5_1)
+    index_tag('md5_2', sim_doc.md5_2)
+    index_tag('batch_uuid1', sim_doc.batch_uuid1)
+    index_tag('batch_uuid2', sim_doc.batch_uuid2)
+    index_tag('language_id1', sim_doc.language_id1)
+    index_tag('language_id2', sim_doc.language_id2)
+    
+    -- Special handling for IDs (which are md5:addr)
+    index_tag('id1', target_md5 .. ':' .. target_addr)
+    index_tag('id2', meta["file_md5"] .. ':' .. (meta["entrypoint_address"] or "0"))
+
+    -- Numeric Indexes
+    if sim_doc.feat_count1 then
+        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count1', sim_doc.feat_count1, sim_meta_key)
+    end
+    if sim_doc.feat_count2 then
+        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count2', sim_doc.feat_count2, sim_meta_key)
+    end
+
+    -- Tags (split by comma if needed, though they come as comma-string here)
+    if target_meta["tags"] then
+        for _, t in ipairs(target_meta["tags"]) do
+            index_tag('tags1', t)
+        end
+    end
+    if meta["tags"] then
+        for _, t in ipairs(meta["tags"]) do
+            index_tag('tags2', t)
+        end
+    end
 end
 
 -- 7. Store result directly in Redis

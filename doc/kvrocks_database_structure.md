@@ -1,6 +1,6 @@
 # Kvrocks Database Structure Documentation
 
-BSimVis uses Kvrocks (Redis-compatible) for storing binary analysis data, features, and similarity results. It implements a manual secondary indexing system instead of relying on `RediSearch` (FT.CREATE).
+BSimVis uses Kvrocks (Redis-compatible) for storing binary analysis data, features, and similarity results. It implements secondary indexes using Sets and ZSets.
 
 ## Key Naming Conventions
 
@@ -59,12 +59,20 @@ Used for fields like `file_md5`, `function_name`, `tags`, `language_id`, etc.
 Stores `doc_id` as member and the numeric value as score.
 - **Fields:** `instruction_count`, `bsim_features_count`, `score`, `batch_order`.
 
+### Similarity Secondary Indexes
+Used for filtered searches in `bsimvis/app/routes/search_similarity.py`. These indexes refer to the "first" and "second" functions in a similarity pair.
+- **Sets (Exact/Substring):** `idx:{coll}:sim:{field}{1|2}:{value}` (e.g., `idx:main:sim:name1:FUN_000080d4`).
+    - **Fields:** `md5_`, `name`, `tag`, `language_id`.
+- **ZSets (Range):** `idx:{coll}:sim:feat_count{1|2}`.
+    - **Score:** Feature count of the respective function in the pair.
+
 ### Tracking & Relationships
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
 | `idx:{coll}:all_{type}s` | **Set** | Tracking all files, functions, or similarities (e.g., `idx:main:all_files`). |
 | `idx:{coll}:file_funcs:{md5}` | **Set** | Maps a file MD5 to all its member function meta keys. |
 | `idx:{coll}:sim:{md5_1}` | **ZSet** | Maps a file MD5 to its similarities (Member: `sim_id`, Score: `score`). |
+| `{coll}:all_sim:{algo}` | **ZSet** | Global scoreboard for an algorithm. Member: `sim_id`, Score: `similarity_score`. |
 
 ---
 

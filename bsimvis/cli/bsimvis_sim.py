@@ -86,103 +86,116 @@ local global_zset_key = collection .. ':all_sim:' .. algo
 
 for i = 1, limit_val do
     local item = candidate_list[i]
-    local meta_raw = redis.call('JSON.GET', item.id .. ':meta')
-    local meta = {}
-    if meta_raw then
-        meta = cjson.decode(meta_raw)
+    
+    -- --- Canonical Check: Only store if target_id > item.id ---
+    -- target_id format: collection:function:target_md5:target_addr
+    -- item.id format:   collection:function:item_md5:item_addr
+    
+    local parts2 = {}
+    for p in string.gmatch(item.id, "([^:]+)") do
+        table.insert(parts2, p)
     end
     
-    local score_rounded = math.floor(item.score * 10000 + 0.5) / 10000
+    local item_md5 = parts2[3]
+    local item_addr = parts2[4] or "0"
     
-    table.insert(matches, {
-        id = item.id,
-        name = meta["function_name"] or item.id,
-        score = score_rounded,
-        md5 = meta["file_md5"] or ""
-    })
-    
-    -- 5. Store similarity metadata for RediSearch
-    local sim_meta_key = collection .. ':sim_meta:' .. algo .. ':' .. target_id .. ':' .. item.id
-    
-    -- 6. Add to collection-wide similarity scoreboard (ZSET)
-    redis.call('ZADD', global_zset_key, score_rounded, sim_meta_key)
-    local sim_doc = {
-        type = "sim",
-        collection = collection,
-        algo = algo,
-        score = score_rounded,
-        id1 = target_id,
-        id2 = item.id,
-        name1 = target_meta["function_name"] or target_id,
-        name2 = meta["function_name"] or item.id,
-        md5_1 = target_md5,
-        md5_2 = meta["file_md5"] or "",
-        tags1 = table.concat(target_meta["tags"] or {}, ","),
-        tags2 = table.concat(meta["tags"] or {}, ","),
-        batch_uuid1 = target_meta["batch_uuid"] or "",
-        batch_uuid2 = meta["batch_uuid"] or "",
-        language_id1 = target_meta["language_id"] or "",
-        language_id2 = meta["language_id"] or "",
-        return_type1 = target_meta["return_type"] or "",
-        return_type2 = meta["return_type"] or "",
-        decompiler1 = target_meta["decompiler_id"] or "",
-        decompiler2 = meta["decompiler_id"] or "",
-        feat_count1 = target_meta["bsim_features_count"] or 0,
-        feat_count2 = meta["bsim_features_count"] or 0,
-        is_cross_binary = (target_md5 ~= meta["file_md5"]) and "true" or "false"
-    }
-    redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
-
-    -- 6.1 Secondary Indexing (Kvrocks-optimized)
-    local all_key = 'idx:' .. collection .. ':all_similarities'
-    redis.call('SADD', all_key, sim_meta_key)
-    
-    -- Index individual fields for filtering
-    local function index_tag(field, value)
-        if value and value ~= "" then
-            redis.call('SADD', 'idx:' .. collection .. ':sim:' .. field .. ':' .. string.lower(tostring(value)), sim_meta_key)
+    local should_store = false
+    if target_addr > item_addr then
+        should_store = true
+    elseif target_addr == item_addr then
+        if target_md5 > item_md5 then
+            should_store = true
         end
     end
-
-    index_tag('name1', sim_doc.name1)
-    index_tag('name2', sim_doc.name2)
-    index_tag('md5_1', sim_doc.md5_1)
-    index_tag('md5_2', sim_doc.md5_2)
-    index_tag('batch_uuid1', sim_doc.batch_uuid1)
-    index_tag('batch_uuid2', sim_doc.batch_uuid2)
-    index_tag('language_id1', sim_doc.language_id1)
-    index_tag('language_id2', sim_doc.language_id2)
     
-    -- Special handling for IDs (which are md5:addr)
-    index_tag('id1', target_md5 .. ':' .. target_addr)
-    index_tag('id2', meta["file_md5"] .. ':' .. (meta["entrypoint_address"] or "0"))
-
-    -- Numeric Indexes
-    if sim_doc.feat_count1 then
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count1', sim_doc.feat_count1, sim_meta_key)
-    end
-    if sim_doc.feat_count2 then
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count2', sim_doc.feat_count2, sim_meta_key)
-    end
-
-    -- Tags (split by comma if needed, though they come as comma-string here)
-    if target_meta["tags"] then
-        for _, t in ipairs(target_meta["tags"]) do
-            index_tag('tags1', t)
+    if should_store then
+        local meta_raw = redis.call('JSON.GET', item.id .. ':meta')
+        local meta = {}
+        if meta_raw then
+            meta = cjson.decode(meta_raw)
         end
-    end
-    if meta["tags"] then
-        for _, t in ipairs(meta["tags"]) do
-            index_tag('tags2', t)
+        
+        local score_rounded = math.floor(item.score * 10000 + 0.5) / 10000
+        
+        -- 5. Store similarity metadata for RediSearch
+        local sim_meta_key = collection .. ':sim_meta:' .. algo .. ':' .. target_id .. ':' .. item.id
+        
+        -- 6. Add to collection-wide similarity scoreboard (ZSET)
+        redis.call('ZADD', global_zset_key, score_rounded, sim_meta_key)
+        local sim_doc = {
+            type = "sim",
+            collection = collection,
+            algo = algo,
+            score = score_rounded,
+            id1 = target_id,
+            id2 = item.id,
+            name1 = target_meta["function_name"] or target_id,
+            name2 = meta["function_name"] or item.id,
+            md5_1 = target_md5,
+            md5_2 = meta["file_md5"] or "",
+            tags1 = table.concat(target_meta["tags"] or {}, ","),
+            tags2 = table.concat(meta["tags"] or {}, ","),
+            batch_uuid1 = target_meta["batch_uuid"] or "",
+            batch_uuid2 = meta["batch_uuid"] or "",
+            language_id1 = target_meta["language_id"] or "",
+            language_id2 = meta["language_id"] or "",
+            return_type1 = target_meta["return_type"] or "",
+            return_type2 = meta["return_type"] or "",
+            decompiler1 = target_meta["decompiler_id"] or "",
+            decompiler2 = meta["decompiler_id"] or "",
+            feat_count1 = target_meta["bsim_features_count"] or 0,
+            feat_count2 = meta["bsim_features_count"] or 0,
+            is_cross_binary = (target_md5 ~= meta["file_md5"]) and "true" or "false"
+        }
+        redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
+
+        -- 6.1 Secondary Indexing (Kvrocks-optimized)
+        local all_key = 'idx:' .. collection .. ':all_similarities'
+        redis.call('SADD', all_key, sim_meta_key)
+        
+        -- Index individual fields for filtering
+        local function index_tag(field, value)
+            if value and value ~= "" then
+                redis.call('SADD', 'idx:' .. collection .. ':sim:' .. field .. ':' .. string.lower(tostring(value)), sim_meta_key)
+            end
+        end
+
+        index_tag('name1', sim_doc.name1)
+        index_tag('name2', sim_doc.name2)
+        index_tag('md5_1', sim_doc.md5_1)
+        index_tag('md5_2', sim_doc.md5_2)
+        index_tag('batch_uuid1', sim_doc.batch_uuid1)
+        index_tag('batch_uuid2', sim_doc.batch_uuid2)
+        index_tag('language_id1', sim_doc.language_id1)
+        index_tag('language_id2', sim_doc.language_id2)
+        
+        -- Special handling for IDs (which are md5:addr)
+        index_tag('id1', target_md5 .. ':' .. target_addr)
+        index_tag('id2', meta["file_md5"] .. ':' .. (meta["entrypoint_address"] or "0"))
+
+        -- Numeric Indexes
+        if sim_doc.feat_count1 then
+            redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count1', sim_doc.feat_count1, sim_meta_key)
+        end
+        if sim_doc.feat_count2 then
+            redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count2', sim_doc.feat_count2, sim_meta_key)
+        end
+
+        -- Tags (split by comma if needed, though they come as comma-string here)
+        if target_meta["tags"] then
+            for _, t in ipairs(target_meta["tags"]) do
+                index_tag('tags1', t)
+            end
+        end
+        if meta["tags"] then
+            for _, t in ipairs(meta["tags"]) do
+                index_tag('tags2', t)
+            end
         end
     end
 end
 
--- 7. Store result directly in Redis
-local result_key = collection .. ':function:' .. target_md5 .. ':' .. target_addr .. ':sim:' .. algo
-redis.call('JSON.SET', result_key, '$', cjson.encode(matches))
-
-return #matches
+return 1
 """
 
 

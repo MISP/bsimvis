@@ -39,6 +39,9 @@ Primary data is stored as JSON objects or specific data types.
 | `{coll}:function:{md5}:{addr}:vec:norm` | **String** | Pre-calculated L2 norm of the function's feature vector. |
 
 ### Similarities & Batches
+
+sim id is {coll}:sim_meta:{function_id1}:{function_id2} with function_id1 > function_id2 (address > address or md5 > md5)
+
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
 | `{coll}:sim_meta:{sim_id}` | **JSON** | Details of a similarity match between two functions. |

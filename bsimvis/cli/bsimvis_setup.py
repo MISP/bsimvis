@@ -64,7 +64,7 @@ def main():
         "--index",
         nargs="+",
         choices=["functions", "files", "similarities"],
-        help="(Legacy) Ignored – no FT indexes used.",
+        help="(Legacy) Ignored - no FT indexes used.",
     )
 
     args = parser.parse_args()

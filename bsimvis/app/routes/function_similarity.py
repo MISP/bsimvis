@@ -20,10 +20,15 @@ def similarity_api():
         scores = {}
 
         for algo in algorithms:
+            # Correcting format to match bsimvis_sim.py and index_service.py
+            # Format: coll:sim_meta:algo:id1:id2
+            key1 = f"{coll1}:sim_meta:{algo}:{id1}:{id2}"
+            key2 = f"{coll1}:sim_meta:{algo}:{id2}:{id1}"
+
             zset_key = f"{coll1}:all_sim:{algo}"
-            score = r.zscore(zset_key, f"{id1}::{id2}")
+            score = r.zscore(zset_key, key1)
             if score is None:
-                score = r.zscore(zset_key, f"{id2}::{id1}")
+                score = r.zscore(zset_key, key2)
 
             scores[algo] = float(score) if score is not None else None
 

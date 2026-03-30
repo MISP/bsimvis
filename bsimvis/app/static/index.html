@@ -413,6 +413,33 @@
             color: var(--accent);
             font-weight: bold;
         }
+
+        /* View Toggle Switch */
+        .view-toggle {
+            display: flex;
+            background: #111;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 2px;
+            margin-left: 20px;
+        }
+
+        .view-btn {
+            background: none;
+            border: none;
+            color: #666;
+            padding: 4px 12px;
+            border-radius: 18px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .view-btn.active {
+            background: var(--accent);
+            color: #111;
+        }
     </style>
 
 <body>
@@ -462,12 +489,18 @@
             <div id="search-area"></div>
         </div>
 
-        <div class="table-container">
+        <div class="table-container" id="table-view-container">
             <table id="data-table">
                 <thead id="table-head"></thead>
                 <tbody id="table-body"></tbody>
             </table>
             <div id="loader">Loading...</div>
+
+            <div id="graph-view-container"
+                style="display:none; height:calc(100vh - 350px); border:1px solid var(--border); background:#121212; border-radius:4px; overflow:hidden; margin-top:10px;">
+                <iframe id="graph-iframe" style="width:100%; height:100%; border:none;"></iframe>
+            </div>
+
             <div id="pagination-container" class="load-more-container"></div>
         </div>
     </main>
@@ -541,11 +574,18 @@
 
             const params = new URLSearchParams(queryString);
             // Standard pagination for all search routes
+            const countLimit = params.get('limit') || (params.get('view') === 'graph' ? '1000' : '20');
             params.set('offset', currentOffset);
-            params.set('limit', PAGE_SIZE);
+            params.set('limit', countLimit);
 
             let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
             updateUI(hashPath, params, route);
+
+            if (params.get('view') === 'graph' && hashPath === '#top-correlations') {
+                console.log("refreshData: Skipping table fetch for Graph Mode");
+                document.getElementById('loader').style.display = 'none';
+                return;
+            }
 
             try {
                 const response = await fetch(apiUrl);
@@ -562,23 +602,11 @@
                     totalEl.innerText = `${total.toLocaleString()} total`;
 
                     if (hashPath === '#top-correlations') {
-                        settingsEl.style.display = 'flex';
-                        const currentLimit = params.get('pool_limit') || '1000000';
-                        settingsEl.innerHTML = `
-                            <span class="dim" style="font-size:0.65rem; margin-left:8px;">Pool Limit:</span>
-                            <input type="number" id="sim-pool-limit" value="${currentLimit}" step="100000" min="1000" max="1000000" 
-                                title="Max candidates to score" 
-                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                                onchange="applySimSearch()">
-                        `;
                         if (data.truncated) {
                             totalEl.innerHTML += ` <span class="badge badge-warning" style="color:var(--danger); font-size:0.7rem; font-weight:bold; margin-left:8px; border:1px solid var(--danger); background:rgba(255,0,0,0.1);">[TRUNCATED]</span>`;
                             const input = document.getElementById('sim-pool-limit');
                             if (input) input.style.borderColor = 'var(--danger)';
                         }
-                    } else {
-                        settingsEl.style.display = 'none';
-                        settingsEl.innerHTML = '';
                     }
                 }
 
@@ -644,12 +672,52 @@
                 }
             });
             headHtml += '</tr>';
+            thead.innerHTML = headHtml;
 
-            // Add Filter Row for Correlations
+            // Similarity-specific UI (Toggle, Pool Limit, View Handling)
+            const settingsEl = document.getElementById('search-settings-container');
             if (path === '#top-correlations') {
+                settingsEl.style.display = 'flex';
+                const viewMode = params.get('view') || 'table';
+                const currentLimit = params.get('pool_limit') || '1000000';
+                const countLimit = params.get('limit') || (viewMode === 'graph' ? '1000' : '20');
+
+                settingsEl.innerHTML = `
+                    <div class="view-toggle">
+                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
+                        <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
+                    </div>
+                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
+                    <input type="number" id="sim-pool-limit" value="${currentLimit}" step="100000" min="1000" max="1000000" 
+                        title="Max candidates to score" 
+                        style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                        onchange="applySimSearch()">
+                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
+                    <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
+                        title="Max results to display (Output Limit)" 
+                        style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                        onchange="applySimSearch()">
+                `;
+
+                const tbody = document.getElementById('table-body');
+                const pag = document.getElementById('pagination-container');
+                const gview = document.getElementById('graph-view-container');
+
+                if (viewMode === 'graph') {
+                    tbody.style.display = 'none';
+                    pag.style.display = 'none';
+                    gview.style.display = 'flex';
+                    console.log("updateUI: Loading Graph...");
+                    loadGraphView(params);
+                } else {
+                    tbody.style.display = 'table-row-group';
+                    pag.style.display = 'block';
+                    gview.style.display = 'none';
+                }
+
                 const p = new URLSearchParams(params);
                 headHtml += `<tr class="filter-row">
-                    <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
                     <th style="vertical-align: middle;">
                         <div style="display:flex; align-items:center; gap:2px;">
                             <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
@@ -671,8 +739,14 @@
                         </div>
                     </th>
                 </tr>`;
+                thead.innerHTML = headHtml;
+            } else {
+                settingsEl.style.display = 'none';
+                settingsEl.innerHTML = '';
+                document.getElementById('table-body').style.display = 'table-row-group';
+                document.getElementById('pagination-container').style.display = 'block';
+                document.getElementById('graph-view-container').style.display = 'none';
             }
-            thead.innerHTML = headHtml;
 
             // Search Bar for Files
             const searchArea = document.getElementById('search-area');
@@ -708,6 +782,12 @@
                         <input type="checkbox" id="sort-tf" ${p.get('sort') === 'tf' ? 'checked' : ''} onchange="applySearch()">
                         <label for="sort-tf" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Sort by Total TF</label>
                     </div>
+                </div>`;
+            } else if (path === '#top-correlations') {
+                const p = new URLSearchParams(params);
+                searchArea.innerHTML = `<div class="filter-bar">
+                    <input type="text" id="sim-search-input" placeholder="Search by Keywords (space-separated)..." value="${p.get('q') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()">
+                    <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
                 </div>`;
             } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
                 searchArea.innerHTML = '';
@@ -776,6 +856,30 @@
             window.location.hash = `#functions?${params.toString()}`;
         }
 
+        function switchSimView(mode) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            params.set('view', mode);
+            window.location.hash = `#top-correlations?${params.toString()}`;
+        }
+
+        function loadGraphView(params) {
+            const iframe = document.getElementById('graph-iframe');
+            const url = `/similarity/plot?${params.toString()}`;
+            console.log("loadGraphView: Setting iframe source to " + url);
+            iframe.onload = function () {
+                setTimeout(() => {
+                    try {
+                        const innerBtn = iframe.contentWindow.document.querySelector('button');
+                        if (innerBtn && innerBtn.innerText.includes("Load")) {
+                            console.log("loadGraphView: Auto-clicking Load Button...");
+                            innerBtn.click();
+                        }
+                    } catch (e) { console.warn("Could not auto-click graph button (probably cross-origin or too early):", e); }
+                }, 200);
+            };
+            iframe.src = url;
+        }
+
         function applySimSearch() {
             const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
             const params = new URLSearchParams(queryString);
@@ -785,15 +889,19 @@
             const algo = document.getElementById('sim-algo')?.value;
             const minFeatures = document.getElementById('sim-min-features')?.value;
             const crossBinary = document.getElementById('sim-cross-binary')?.checked;
-
-            if (threshold && parseFloat(threshold) !== 0.95) params.set('threshold', threshold); else params.delete('threshold');
-            if (maxScore && parseFloat(maxScore) < 1.0) params.set('max_score', maxScore); else params.delete('max_score');
-            if (algo && algo !== 'unweighted_cosine') params.set('algo', algo); else params.delete('algo');
-            if (minFeatures && parseInt(minFeatures) > 0) params.set('min_features', minFeatures); else params.delete('min_features');
-            if (crossBinary) params.set('cross_binary', 'true'); else params.delete('cross_binary');
-
+            const globalQ = document.getElementById('sim-search-input')?.value;
             const poolLimit = document.getElementById('sim-pool-limit')?.value;
-            if (poolLimit && parseInt(poolLimit) !== 1000000) params.set('pool_limit', poolLimit); else params.delete('pool_limit');
+            const countLimit = document.getElementById('sim-limit')?.value;
+
+            // ALWAY set params for canonical URL state (Perfect Match)
+            params.set('q', globalQ || '');
+            params.set('threshold', threshold || '0.95');
+            params.set('max_score', maxScore || '1.0');
+            params.set('algo', algo || 'unweighted_cosine');
+            params.set('min_features', minFeatures || '0');
+            params.set('cross_binary', crossBinary ? 'true' : 'false');
+            params.set('pool_limit', poolLimit || '1000000');
+            params.set('limit', countLimit || (params.get('view') === 'graph' ? '1000' : '20'));
 
             // Per-column filters
             const nameFlt = document.getElementById('flt-sim-name')?.value;
@@ -802,7 +910,12 @@
 
             if (nameFlt) params.set('name', nameFlt); else params.delete('name');
             if (tagFlt) params.set('tag', tagFlt); else params.delete('tag');
-            if (md5Flt) params.set('md5', md5Flt); else params.delete('md5');
+
+            params.delete('md5');
+            if (md5Flt) {
+                const md5s = md5Flt.split(/[\s,]+/).filter(x => x.length > 0);
+                md5s.forEach(m => params.append('md5', m));
+            }
 
             currentOffset = 0;
             isEndOfResults = false;

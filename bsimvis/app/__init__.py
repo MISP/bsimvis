@@ -41,6 +41,7 @@ def create_app():
     from .routes.search_function import search_function_bp
     from .routes.search_feature import search_feature_bp
     from .routes.search_similarity import search_similarity_bp
+    from .routes.search_similarity_plot import search_similarity_plot_bp
 
     app.register_blueprint(function_diff_bp)
     app.register_blueprint(function_code_bp)
@@ -50,6 +51,7 @@ def create_app():
     app.register_blueprint(search_function_bp)
     app.register_blueprint(search_feature_bp)
     app.register_blueprint(search_similarity_bp)
+    app.register_blueprint(search_similarity_plot_bp)
 
     # Serve the Bare JS frontend
     @app.route("/")

@@ -1,5 +1,6 @@
 import json
 import logging
+import hashlib
 
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
@@ -10,6 +11,7 @@ search_similarity_bp = Blueprint("search_similarity", __name__)
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
 MAX_POOL_LIMIT = 1000000
+CACHE_TIME_THRESHOLD = 0.5  # Only cache requests that take more than X seconds
 
 
 @search_similarity_bp.route("/api/similarity/search", methods=["GET"])
@@ -59,233 +61,301 @@ def similarity_search():
         )
         has_min_features = min_features > 0
 
-        if has_set_filters:
-            # --- DATABASE-SIDE INTERSECTION STRATEGY ---
-            filter_keys = []
-            temp_keys = []
-            import uuid
+        # --- CACHING LOGIC ---
+        cache_params = {
+            "col": col,
+            "algo": algo,
+            "threshold": threshold,
+            "max_score": max_score,
+            "min_features": min_features,
+            "q": search_q,
+            "name": name_filter,
+            "tag": tag_filter,
+            "language": lang_filter,
+            "md5": sorted(md5_filters),
+            "cross_binary": is_cross_binary,
+            "pool_limit": pool_limit,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+        }
+        cache_hash = hashlib.md5(
+            json.dumps(cache_params, sort_keys=True).encode()
+        ).hexdigest()
+        cache_key = f"cache:search:sim:{cache_hash}"
 
-            session_id = str(uuid.uuid4())[:8]
+        cached_res = r.get(cache_key)
+        cache_hit = False
 
+        if cached_res:
             try:
-                # 1. MD5 Filters (Union if multiple)
-                if md5_filters:
-                    m_key = f"tmp:{col}:filter:{session_id}:md5"
-                    m_keys = [f"idx:{col}:sim:md5_1:{m}" for m in md5_filters] + [
-                        f"idx:{col}:sim:md5_2:{m}" for m in md5_filters
-                    ]
-                    r.sunionstore(m_key, *m_keys)
-                    r.expire(m_key, 60)
-                    filter_keys.append(m_key)
-                    temp_keys.append(m_key)
+                final_list, truncated, total = json.loads(cached_res)
+                cache_hit = True
+                r.expire(cache_key, 60)
+            except (ValueError, TypeError):
+                logging.warning(f"Failed to load cache for key {cache_key}")
+                final_list = []
 
-                # 2. Substring/Search Resolution Helper
-                def resolve_db_substring(field_prefix, substring):
-                    if not substring:
+        if not cache_hit:
+            import time
+            start_time = time.time()
+            
+            if has_set_filters:
+                # --- DATABASE-SIDE INTERSECTION STRATEGY ---
+                filter_keys = []
+                temp_keys = []
+                import uuid
+
+                session_id = str(uuid.uuid4())[:8]
+
+                try:
+                    # 1. MD5 Filters (Union if multiple)
+                    if md5_filters:
+                        m_key = f"tmp:{col}:filter:{session_id}:md5"
+                        m_keys = [f"idx:{col}:sim:md5_1:{m}" for m in md5_filters] + [
+                            f"idx:{col}:sim:md5_2:{m}" for m in md5_filters
+                        ]
+                        r.sunionstore(m_key, *m_keys)
+                        r.expire(m_key, 60)
+                        filter_keys.append(m_key)
+                        temp_keys.append(m_key)
+
+                    # 2. Substring/Search Resolution Helper
+                    def resolve_db_substring(field_prefix, substring):
+                        if not substring:
+                            return None
+                        patterns = []
+                        # Try original case first (default to *substring* if no * provided)
+                        target_sub = substring if "*" in substring else f"*{substring}*"
+                        pat1 = f"idx:{col}:sim:{field_prefix}*:{target_sub}"
+                        patterns.append(pat1)
+                        # Try lowercase if different
+                        if substring.lower() != substring:
+                            sub_low = substring.lower()
+                            target_low = sub_low if "*" in sub_low else f"*{sub_low}*"
+                            pat_low = f"idx:{col}:sim:{field_prefix}*:{target_low}"
+                            patterns.append(pat_low)
+
+                        found_keys = []
+                        for pat in patterns:
+                            cursor = 0
+                            while True:
+                                cursor, sub_keys = r.scan(
+                                    cursor=cursor, match=pat, count=5000
+                                )
+                                if sub_keys:
+                                    found_keys.extend(sub_keys)
+                                if cursor == 0:
+                                    break
+
+                        if found_keys:
+                            # Dedup keys if both original and lower case matched some same keys
+                            found_keys = list(set(found_keys))
+                            u_key = f"tmp:{col}:filter:{session_id}:sub:{field_prefix}"
+                            # BATCH sunionstore to avoid argument limits or memory spikes
+                            batch_size = 500
+                            for i in range(0, len(found_keys), batch_size):
+                                batch = found_keys[i : i + batch_size]
+                                if i == 0:
+                                    r.sunionstore(u_key, *batch)
+                                else:
+                                    r.sunionstore(u_key, u_key, *batch)
+                            r.expire(u_key, 60)
+                            return u_key
                         return None
-                    patterns = []
-                    # Try original case first (default to *substring* if no * provided)
-                    target_sub = substring if "*" in substring else f"*{substring}*"
-                    pat1 = f"idx:{col}:sim:{field_prefix}*:{target_sub}"
-                    patterns.append(pat1)
-                    # Try lowercase if different
-                    if substring.lower() != substring:
-                        sub_low = substring.lower()
-                        target_low = sub_low if "*" in sub_low else f"*{sub_low}*"
-                        pat_low = f"idx:{col}:sim:{field_prefix}*:{target_low}"
-                        patterns.append(pat_low)
 
-                    found_keys = []
-                    for pat in patterns:
+                    # 3. Apply Substring Filters (Name, Tags, Language)
+                    for f_p, val in [
+                        ("language_id", lang_filter),
+                        ("name", name_filter),
+                        ("tags", tag_filter),
+                    ]:
+                        if val:
+                            sk = resolve_db_substring(f_p, val)
+                            if sk:
+                                filter_keys.append(sk)
+                                temp_keys.append(sk)
+                            else:
+                                return jsonify(
+                                    {
+                                        "total": 0,
+                                        "pairs": [],
+                                        "algo": algo,
+                                        "truncated": False,
+                                    }
+                                )
+
+                    # 4. Search Query (Global keyword search - intersect multiple words)
+                    if search_q:
+                        words = [w for w in search_q.split() if w.strip()]
+                        if words:
+                            word_keys = []
+                            for i, word in enumerate(words):
+                                word_union_key = f"tmp:{col}:filter:{session_id}:word:{i}"
+                                sub_components = []
+                                for f_p in ["name", "tags", "id", "language_id"]:
+                                    sk = resolve_db_substring(f_p, word)
+                                    if sk:
+                                        sub_components.append(sk)
+                                        temp_keys.append(sk)
+                                
+                                if sub_components:
+                                    r.sunionstore(word_union_key, *sub_components)
+                                    r.expire(word_union_key, 60)
+                                    word_keys.append(word_union_key)
+                                    temp_keys.append(word_union_key)
+                                else:
+                                    # This word matches nothing, and since we intersect, total is 0
+                                    return jsonify({
+                                        "total": 0, "pairs": [], "algo": algo, "truncated": False
+                                    })
+                            
+                            if word_keys:
+                                q_key = f"tmp:{col}:filter:{session_id}:search"
+                                r.sinterstore(q_key, *word_keys)
+                                r.expire(q_key, 60)
+                                filter_keys.append(q_key)
+                                temp_keys.append(q_key)
+
+                    # 5. Final Intersection
+                    if filter_keys:
+                        inter_key = f"tmp:{col}:filter:{session_id}:final"
+                        r.sinterstore(inter_key, *filter_keys)
+                        r.expire(inter_key, 60)
+                        temp_keys.append(inter_key)
+
+                        candidate_list = []
                         cursor = 0
-                        while True:
-                            cursor, sub_keys = r.scan(
-                                cursor=cursor, match=pat, count=5000
+                        while len(candidate_list) < pool_limit:
+                            cursor, batch = r.sscan(
+                                inter_key, cursor=cursor, count=5000
                             )
-                            if sub_keys:
-                                found_keys.extend(sub_keys)
-                            if cursor == 0:
+                            candidate_list.extend(batch)
+                            if cursor == 0 or len(candidate_list) >= pool_limit:
                                 break
 
-                    if found_keys:
-                        # Dedup keys if both original and lower case matched some same keys
-                        found_keys = list(set(found_keys))
-                        u_key = f"tmp:{col}:filter:{session_id}:sub:{field_prefix}"
-                        # BATCH sunionstore to avoid argument limits or memory spikes
-                        batch_size = 500
-                        for i in range(0, len(found_keys), batch_size):
-                            batch = found_keys[i : i + batch_size]
-                            if i == 0:
-                                r.sunionstore(u_key, *batch)
-                            else:
-                                r.sunionstore(u_key, u_key, *batch)
-                        r.expire(u_key, 60)
-                        return u_key
-                    return None
+                        if len(candidate_list) > pool_limit:
+                            candidate_list = candidate_list[:pool_limit]
+                            truncated = True
 
-                # 3. Apply Substring Filters (Name, Tags, Language)
-                for f_p, val in [
-                    ("language_id", lang_filter),
-                    ("name", name_filter),
-                    ("tags", tag_filter),
-                ]:
-                    if val:
-                        sk = resolve_db_substring(f_p, val)
-                        if sk:
-                            filter_keys.append(sk)
-                            temp_keys.append(sk)
-                        else:
-                            return jsonify(
-                                {
-                                    "total": 0,
-                                    "pairs": [],
-                                    "algo": algo,
-                                    "truncated": False,
-                                }
-                            )
+                finally:
+                    if temp_keys:
+                        pipe = r.pipeline()
+                        for k in temp_keys:
+                            pipe.delete(k)
+                        pipe.execute()
 
-                # 4. Search Query (Global keyword search)
-                if search_q:
-                    q_key = f"tmp:{col}:filter:{session_id}:search"
-                    sub_components = []
-                    for f_p in ["name", "tags", "id", "language_id"]:
-                        sk = resolve_db_substring(f_p, search_q)
-                        if sk:
-                            sub_components.append(sk)
-                            temp_keys.append(sk)
-                    if sub_components:
-                        r.sunionstore(q_key, *sub_components)
-                        r.expire(q_key, 60)
-                        filter_keys.append(q_key)
-                        temp_keys.append(q_key)
-                    else:
-                        return jsonify(
-                            {"total": 0, "pairs": [], "algo": algo, "truncated": False}
-                        )
+            elif has_min_features:
+                # Optimized path for ONLY min_features filter: Use ZSET range with LIMIT
+                ids1 = r.zrangebyscore(
+                    f"idx:{col}:sim:feat_count1",
+                    min_features,
+                    float("inf"),
+                    start=0,
+                    num=pool_limit,
+                )
+                ids2 = r.zrangebyscore(
+                    f"idx:{col}:sim:feat_count2",
+                    min_features,
+                    float("inf"),
+                    start=0,
+                    num=pool_limit,
+                )
+                candidate_list = list(set(ids1) | set(ids2))[:pool_limit]
+                # Since we can't easily get the true total of the Union without fetching, we estimate
+                # Or just check if we hit the limit
+                if len(candidate_list) >= pool_limit:
+                    truncated = True
 
-                # 5. Final Intersection
-                if filter_keys:
-                    inter_key = f"tmp:{col}:filter:{session_id}:final"
-                    r.sinterstore(inter_key, *filter_keys)
-                    r.expire(inter_key, 60)
-                    temp_keys.append(inter_key)
+            # --- SCORING PHASE for Filtered Matches ---
+            if (has_set_filters or has_min_features) and candidate_list:
+                pipe = r.pipeline()
+                feat1_zset = f"idx:{col}:sim:feat_count1"
+                feat2_zset = f"idx:{col}:sim:feat_count2"
+                for sid in candidate_list:
+                    pipe.zscore(algo_zset, sid)
+                    if sort_by == "feat_count" or has_min_features:
+                        pipe.zscore(feat1_zset, sid)
+                        pipe.zscore(feat2_zset, sid)
 
-                    candidate_list = []
-                    cursor = 0
-                    while len(candidate_list) < pool_limit:
-                        cursor, batch = r.sscan(inter_key, cursor=cursor, count=5000)
-                        candidate_list.extend(batch)
-                        if cursor == 0 or len(candidate_list) >= pool_limit:
-                            break
+                results = pipe.execute()
+                res_idx = 0
+                for sid in candidate_list:
+                    sc = results[res_idx]
+                    res_idx += 1
 
-                    if len(candidate_list) > pool_limit:
-                        candidate_list = candidate_list[:pool_limit]
-                        truncated = True
+                    f1_count = 0
+                    f2_count = 0
+                    if sort_by == "feat_count" or has_min_features:
+                        f1_count = float(results[res_idx] or 0)
+                        res_idx += 1
+                        f2_count = float(results[res_idx] or 0)
+                        res_idx += 1
 
-            finally:
-                if temp_keys:
+                    if sc is not None:
+                        s_val = float(sc)
+                        if threshold <= s_val <= max_score:
+                            if (
+                                has_min_features
+                                and max(f1_count, f2_count) < min_features
+                            ):
+                                continue
+                            if is_cross_binary:
+                                parts = sid.split(":")
+                                if len(parts) >= 11 and parts[5] == parts[9]:
+                                    continue
+                            final_list.append((sid, s_val, f1_count))
+
+            elif not has_set_filters and not has_min_features:
+                # NO filters: fetch all scores in range (up to the pool limit)
+                score_tuples = r.zrevrangebyscore(
+                    algo_zset,
+                    max_score,
+                    threshold,
+                    withscores=True,
+                    start=0,
+                    num=pool_limit,
+                )
+
+                if sort_by == "feat_count" or is_cross_binary:
+                    candidate_list = [t[0] for t in score_tuples]
                     pipe = r.pipeline()
-                    for k in temp_keys:
-                        pipe.delete(k)
-                    pipe.execute()
+                    feat_zset = f"idx:{col}:sim:feat_count1"
+                    for sid in candidate_list:
+                        pipe.zscore(feat_zset, sid)
+                    f_counts = pipe.execute()
 
-        elif has_min_features:
-            # Optimized path for ONLY min_features filter: Use ZSET range with LIMIT
-            ids1 = r.zrangebyscore(
-                f"idx:{col}:sim:feat_count1",
-                min_features,
-                float("inf"),
-                start=0,
-                num=pool_limit,
-            )
-            ids2 = r.zrangebyscore(
-                f"idx:{col}:sim:feat_count2",
-                min_features,
-                float("inf"),
-                start=0,
-                num=pool_limit,
-            )
-            candidate_list = list(set(ids1) | set(ids2))[:pool_limit]
-            # Since we can't easily get the true total of the Union without fetching, we estimate
-            # Or just check if we hit the limit
-            if len(candidate_list) >= pool_limit:
-                truncated = True
-
-        # --- SCORING PHASE for Filtered Matches ---
-        if (has_set_filters or has_min_features) and candidate_list:
-            pipe = r.pipeline()
-            feat1_zset = f"idx:{col}:sim:feat_count1"
-            feat2_zset = f"idx:{col}:sim:feat_count2"
-            for sid in candidate_list:
-                pipe.zscore(algo_zset, sid)
-                if sort_by == "feat_count" or has_min_features:
-                    pipe.zscore(feat1_zset, sid)
-                    pipe.zscore(feat2_zset, sid)
-
-            results = pipe.execute()
-            res_idx = 0
-            for sid in candidate_list:
-                sc = results[res_idx]
-                res_idx += 1
-
-                f1_count = 0
-                f2_count = 0
-                if sort_by == "feat_count" or has_min_features:
-                    f1_count = float(results[res_idx] or 0)
-                    res_idx += 1
-                    f2_count = float(results[res_idx] or 0)
-                    res_idx += 1
-
-                if sc is not None:
-                    s_val = float(sc)
-                    if threshold <= s_val <= max_score:
-                        if has_min_features and max(f1_count, f2_count) < min_features:
-                            continue
+                    for (sid, sc), fc in zip(score_tuples, f_counts):
                         if is_cross_binary:
                             parts = sid.split(":")
                             if len(parts) >= 11 and parts[5] == parts[9]:
                                 continue
-                        final_list.append((sid, s_val, f1_count))
+                        final_list.append((sid, float(sc), float(fc or 0)))
+                else:
+                    final_list = [(sid, float(sc), 0) for sid, sc in score_tuples]
 
-        elif not has_set_filters and not has_min_features:
-            # NO filters: fetch all scores in range (up to the pool limit)
-            score_tuples = r.zrevrangebyscore(
-                algo_zset,
-                max_score,
-                threshold,
-                withscores=True,
-                start=0,
-                num=pool_limit,
-            )
+                if len(final_list) >= pool_limit:
+                    truncated = True
 
-            if sort_by == "feat_count" or is_cross_binary:
-                candidate_list = [t[0] for t in score_tuples]
-                pipe = r.pipeline()
-                feat_zset = f"idx:{col}:sim:feat_count1"
-                for sid in candidate_list:
-                    pipe.zscore(feat_zset, sid)
-                f_counts = pipe.execute()
+            total = len(final_list)
 
-                for (sid, sc), fc in zip(score_tuples, f_counts):
-                    if is_cross_binary:
-                        parts = sid.split(":")
-                        if len(parts) >= 11 and parts[5] == parts[9]:
-                            continue
-                    final_list.append((sid, float(sc), float(fc or 0)))
+            # --- GLOBAL SORTING & PAGINATION ---
+            reverse = sort_order == "desc"
+            if sort_by == "feat_count":
+                final_list.sort(key=lambda x: x[2], reverse=reverse)
             else:
-                final_list = [(sid, float(sc), 0) for sid, sc in score_tuples]
+                final_list.sort(key=lambda x: x[1], reverse=reverse)
 
-            if len(final_list) >= pool_limit:
-                truncated = True
 
-        total = len(final_list)
-
-        # --- GLOBAL SORTING & PAGINATION ---
-        reverse = sort_order == "desc"
-        if sort_by == "feat_count":
-            final_list.sort(key=lambda x: x[2], reverse=reverse)
-        else:
-            final_list.sort(key=lambda x: x[1], reverse=reverse)
+            elapsed_time = time.time() - start_time
+            # Store in cache only if it's an "expensive" query
+            if elapsed_time >= CACHE_TIME_THRESHOLD:
+                try:
+                    r.setex(cache_key, 60, json.dumps((final_list, truncated, total)))
+                    logging.info(f"Expensive query cached ({elapsed_time:.2f}s): {cache_key}")
+                except Exception as e:
+                    logging.error(f"Failed to save search to cache: {e}")
+            else:
+                logging.debug(f"Cheap query skipped cache ({elapsed_time:.2f}s)")
 
         page_ids = final_list[offset : offset + limit]
 
@@ -342,7 +412,7 @@ def similarity_search():
                 key=lambda x: x["name1"].lower(), reverse=(sort_order == "desc")
             )
 
-        return jsonify(
+        resp = jsonify(
             {
                 "collection": col,
                 "algo": algo,
@@ -355,8 +425,11 @@ def similarity_search():
                 "pairs": enriched_pairs,
                 "sort_by": sort_by,
                 "sort_order": sort_order,
+                "cached_response": cache_hit,
             }
         )
+        #resp.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
+        return resp
 
     except Exception as e:
         import traceback

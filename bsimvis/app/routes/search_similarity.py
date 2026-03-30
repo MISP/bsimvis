@@ -97,8 +97,9 @@ def similarity_search():
 
         if not cache_hit:
             import time
+
             start_time = time.time()
-            
+
             if has_set_filters:
                 # --- DATABASE-SIDE INTERSECTION STRATEGY ---
                 filter_keys = []
@@ -190,14 +191,16 @@ def similarity_search():
                         if words:
                             word_keys = []
                             for i, word in enumerate(words):
-                                word_union_key = f"tmp:{col}:filter:{session_id}:word:{i}"
+                                word_union_key = (
+                                    f"tmp:{col}:filter:{session_id}:word:{i}"
+                                )
                                 sub_components = []
                                 for f_p in ["name", "tags", "id", "language_id"]:
                                     sk = resolve_db_substring(f_p, word)
                                     if sk:
                                         sub_components.append(sk)
                                         temp_keys.append(sk)
-                                
+
                                 if sub_components:
                                     r.sunionstore(word_union_key, *sub_components)
                                     r.expire(word_union_key, 60)
@@ -205,10 +208,15 @@ def similarity_search():
                                     temp_keys.append(word_union_key)
                                 else:
                                     # This word matches nothing, and since we intersect, total is 0
-                                    return jsonify({
-                                        "total": 0, "pairs": [], "algo": algo, "truncated": False
-                                    })
-                            
+                                    return jsonify(
+                                        {
+                                            "total": 0,
+                                            "pairs": [],
+                                            "algo": algo,
+                                            "truncated": False,
+                                        }
+                                    )
+
                             if word_keys:
                                 q_key = f"tmp:{col}:filter:{session_id}:search"
                                 r.sinterstore(q_key, *word_keys)
@@ -345,13 +353,14 @@ def similarity_search():
             else:
                 final_list.sort(key=lambda x: x[1], reverse=reverse)
 
-
             elapsed_time = time.time() - start_time
             # Store in cache only if it's an "expensive" query
             if elapsed_time >= CACHE_TIME_THRESHOLD:
                 try:
                     r.setex(cache_key, 60, json.dumps((final_list, truncated, total)))
-                    logging.info(f"Expensive query cached ({elapsed_time:.2f}s): {cache_key}")
+                    logging.info(
+                        f"Expensive query cached ({elapsed_time:.2f}s): {cache_key}"
+                    )
                 except Exception as e:
                     logging.error(f"Failed to save search to cache: {e}")
             else:
@@ -367,6 +376,31 @@ def similarity_search():
                 pipe.json().get(sid, "$")
             page_raw = pipe.execute()
 
+            # --- Code Snippets Fetch (for rich tooltips) ---
+            func_ids = set()
+            for (sid, score, feat_count), raw in zip(page_ids, page_raw):
+                if raw:
+                    data = raw[0] if isinstance(raw, list) else raw
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    if data.get("id1"):
+                        func_ids.add(data.get("id1"))
+                    if data.get("id2"):
+                        func_ids.add(data.get("id2"))
+
+            code_snippets = {}
+            if func_ids:
+                snippet_pipe = r.pipeline()
+                sorted_fids = sorted(list(func_ids))
+                for fid in sorted_fids:
+                    snippet_pipe.json().get(fid, "$.code")
+                snippet_raw = snippet_pipe.execute()
+                for fid, raw_code in zip(sorted_fids, snippet_raw):
+                    if raw_code and isinstance(raw_code, list):
+                        code_snippets[fid] = (raw_code[0] or "")[:120].strip().replace(
+                            "\n", " "
+                        ) + "..."
+
             for (sid, score, feat_count), raw in zip(page_ids, page_raw):
                 if not raw:
                     continue
@@ -374,20 +408,20 @@ def similarity_search():
                 if isinstance(data, str):
                     data = json.loads(data)
 
+                id1 = data.get("id1")
+                id2 = data.get("id2")
                 tags1 = data.get("tags1", "").split(",") if data.get("tags1") else []
                 tags2 = data.get("tags2", "").split(",") if data.get("tags2") else []
 
                 enriched_pairs.append(
                     {
-                        "id1": data.get("id1"),
-                        "id2": data.get("id2"),
-                        "name1": data.get(
-                            "name1", (data.get("id1") or ":").split(":")[-1]
-                        ),
-                        "name2": data.get(
-                            "name2", (data.get("id2") or ":").split(":")[-1]
-                        ),
+                        "id1": id1,
+                        "id2": id2,
+                        "name1": data.get("name1", (id1 or ":").split(":")[-1]),
+                        "name2": data.get("name2", (id2 or ":").split(":")[-1]),
                         "score": score,
+                        "snippet1": code_snippets.get(id1, ""),
+                        "snippet2": code_snippets.get(id2, ""),
                         "meta1": {
                             "file_md5": data.get("md5_1"),
                             "tags": tags1,
@@ -428,7 +462,7 @@ def similarity_search():
                 "cached_response": cache_hit,
             }
         )
-        #resp.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
+        # resp.headers["X-Cache"] = "HIT" if cache_hit else "MISS"
         return resp
 
     except Exception as e:

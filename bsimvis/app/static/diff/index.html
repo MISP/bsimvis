@@ -685,11 +685,12 @@
 
         // --- Selection Tool Logic ---
         async function initSelectionTool() {
-            const colls = await fetchJSON('/api/collection/search');
+            const res = await fetchJSON('/api/collection/search?limit=1000');
+            const collections = res.collections || (Array.isArray(res) ? res : []);
             ['l', 'r'].forEach(side => {
                 const sel = document.getElementById(`select-coll-${side}`);
                 sel.innerHTML = '<option value="">-- Choose Collection --</option>';
-                colls.forEach(c => {
+                collections.forEach(c => {
                     const opt = document.createElement('option');
                     opt.value = c.name;
                     opt.innerText = c.name;

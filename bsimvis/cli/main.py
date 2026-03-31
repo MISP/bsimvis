@@ -9,6 +9,7 @@ from bsimvis.cli import (
     bsimvis_upload,
     bsimvis_batch,
     bsimvis_features,
+    bsimvis_cache,
 )
 
 
@@ -158,6 +159,12 @@ def main():
     b_remove.add_argument("-c", "--collection", required=True, help="Collection name")
     b_remove.add_argument("--batch", required=True, help="Batch UUID to remove")
 
+    # --- CACHE ---
+    cache_parser = subparsers.add_parser("cache", help="Cache management")
+    cache_actions = cache_parser.add_subparsers(dest="action", required=True)
+    c_clear = cache_actions.add_parser("clear", help="Clear similarity search cache")
+    c_clear.add_argument("-c", "--collection", help="Optional collection name filter")
+
     # --- UPLOAD ---
     upload_parser = subparsers.add_parser(
         "upload", help="Upload binaries to redis/kvrocks"
@@ -273,6 +280,8 @@ def main():
             bsimvis_upload.run_upload(None, None, args)
         elif args.subcommand == "batch":
             bsimvis_batch.run_batch(g_host, int(g_port), args)
+        elif args.subcommand == "cache":
+            bsimvis_cache.run_cache(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

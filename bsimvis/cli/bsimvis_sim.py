@@ -150,14 +150,24 @@ for i = 1, limit_val do
         }
         redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
 
-        -- 6.1 Secondary Indexing (Kvrocks-optimized)
+        -- 6.1 Secondary Indexing (Kvrocks-optimized ZSETs)
         local all_key = 'idx:' .. collection .. ':all_similarities'
-        redis.call('SADD', all_key, sim_meta_key)
+        local all_type = redis.call('TYPE', all_key)
+        if type(all_type) == 'table' then all_type = all_type['ok'] or all_type[1] end
+        if all_type == 'set' then redis.call('DEL', all_key) end
+        redis.call('ZADD', all_key, 0, sim_meta_key)
         
-        -- Index individual fields for filtering
+        -- Index individual fields for filtering (using ZSETs with score 0) and maintain a key registry
         local function index_tag(field, value)
             if value and value ~= "" then
-                redis.call('SADD', 'idx:' .. collection .. ':sim:' .. field .. ':' .. string.lower(tostring(value)), sim_meta_key)
+                local k = 'idx:' .. collection .. ':sim:' .. field .. ':' .. string.lower(tostring(value))
+                local kt = redis.call('TYPE', k)
+                if type(kt) == 'table' then kt = kt['ok'] or kt[1] end
+                if kt == 'set' then redis.call('DEL', k) end
+                redis.call('ZADD', k, 0, sim_meta_key)
+                
+                -- ADD TO REGISTRY for fast SSCAN
+                redis.call('SADD', 'idx:' .. collection .. ':reg:' .. field, k)
             end
         end
 
@@ -169,6 +179,7 @@ for i = 1, limit_val do
         index_tag('batch_uuid2', sim_doc.batch_uuid2)
         index_tag('language_id1', sim_doc.language_id1)
         index_tag('language_id2', sim_doc.language_id2)
+        index_tag('is_cross_binary', sim_doc.is_cross_binary)
         
         -- Special handling for IDs (which are md5:addr)
         index_tag('id1', target_md5 .. ':' .. target_addr)
@@ -185,7 +196,7 @@ for i = 1, limit_val do
             redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
         end
 
-        -- Tags (split by comma if needed, though they come as comma-string here)
+        -- Tags (split by comma if needed)
         if target_meta["tags"] then
             for _, t in ipairs(target_meta["tags"]) do
                 index_tag('tags1', t)
@@ -376,6 +387,8 @@ def sim_clear(collection, r=None):
         f"{collection}:sim_meta:*",
         f"{collection}:function:*:sim:*",
         f"idx:{collection}:baked:functions:*",
+        f"idx:{collection}:sim:*",
+        f"idx:{collection}:all_similarities",
     ]
     for pattern in patterns:
         cursor = 0

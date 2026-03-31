@@ -136,7 +136,7 @@ def main():
             dp.add_argument(
                 "-k", "--top-k", type=int, default=20, help="Top K matches per function"
             )
-            dp.add_argument("--threshold", type=float, default=0.1)
+            dp.add_argument("--min-score", type=float, default=0.1)
             dp.add_argument("--delay", type=float, default=0.0)
             dp.add_argument(
                 "--batch-size", type=int, default=100, help="Internal SCAN batch size"

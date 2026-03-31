@@ -156,14 +156,40 @@
         }
 
         /* Syntax Highlighting */
-        .token-instruction { color: #f92672; font-weight: bold; }
-        .token-register { color: #66d9ef; }
-        .token-address { color: #ae81ff; }
-        .token-constant { color: #ae81ff; }
-        .token-symbol { color: #a6e22e; }
-        .token-comment { color: #75715e; font-style: italic; }
-        .token-label { color: #a6e22e; font-weight: bold; }
-        .token-operand { color: #f8f8f2; }
+        .token-instruction {
+            color: #f92672;
+            font-weight: bold;
+        }
+
+        .token-register {
+            color: #66d9ef;
+        }
+
+        .token-address {
+            color: #ae81ff;
+        }
+
+        .token-constant {
+            color: #ae81ff;
+        }
+
+        .token-symbol {
+            color: #a6e22e;
+        }
+
+        .token-comment {
+            color: #75715e;
+            font-style: italic;
+        }
+
+        .token-label {
+            color: #a6e22e;
+            font-weight: bold;
+        }
+
+        .token-operand {
+            color: #f8f8f2;
+        }
 
         /* Code Preview Tooltip Wrapper */
         #code-preview-tooltip {
@@ -207,7 +233,7 @@
             display: flex;
             flex-direction: column;
         }
-        
+
         #code-preview-tooltip .preview-card {
             padding: 10px;
             border-width: 1px;
@@ -484,25 +510,76 @@
         }
 
         /* --- Similarity Graph Styles --- */
-        #bk-similarity-plot { flex: 1; min-height: 500px; position: relative; }
-        .graph-controls { position:absolute; bottom:15px; right:15px; z-index:100; display:flex; gap:10px; }
-        .btn-graph { 
-            background:var(--success); color:#121212; border:none; padding:8px 15px; border-radius:4px; 
-            font-size:12px; font-weight:bold; cursor:pointer; text-transform:uppercase; 
-            transition: all 0.2s; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        #bk-similarity-plot {
+            flex: 1;
+            min-height: 500px;
+            position: relative;
         }
-        .btn-graph:hover { background: #bfef45; transform: translateY(-2px); }
-        .btn-graph.stop { background:var(--accent); color:#fff; }
-        .btn-graph.stop:hover { background:#ff4d8d; }
-        
+
+        .graph-controls {
+            position: absolute;
+            bottom: 15px;
+            right: 15px;
+            z-index: 100;
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-graph {
+            background: var(--success);
+            color: #121212;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .btn-graph:hover {
+            background: #bfef45;
+            transform: translateY(-2px);
+        }
+
+        .btn-graph.stop {
+            background: var(--accent);
+            color: #fff;
+        }
+
+        .btn-graph.stop:hover {
+            background: #ff4d8d;
+        }
+
         #graph-loading-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(18, 18, 18, 0.9); z-index: 9999; display: none;
-            justify-content: center; align-items: center; flex-direction: column;
-            color: var(--info); font-family: "Segoe UI", monospace; font-size: 18px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(18, 18, 18, 0.9);
+            z-index: 9999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: var(--info);
+            font-family: "Segoe UI", monospace;
+            font-size: 18px;
             backdrop-filter: blur(5px);
         }
-        .spinner-graph { border: 4px solid #333; border-top: 4px solid var(--info); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+
+        .spinner-graph {
+            border: 4px solid #333;
+            border-top: 4px solid var(--info);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
     </style>
 
 <body>
@@ -522,8 +599,8 @@
         <a href="#files" id="nav-files" style="color:var(--text); display:none">Files</a>
         <a href="#functions" id="nav-functions" style="color:var(--text); display:none">Functions</a>
         <a href="#features-global" id="nav-features-global" style="color:var(--text); display:none">Global Features</a>
-        <a href="#top-correlations" id="nav-top-correlations" style="color:var(--text); display:none">Top
-            Correlations</a>
+        <a href="#function-similarity" id="nav-function-similarity" style="color:var(--text); display:none">Function
+            Similarities</a>
 
         <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
             <div class="dim" style="padding: 0 20px 10px 20px; font-size: 0.6rem; text-transform: uppercase;">Tools
@@ -614,8 +691,8 @@
                 headers: ['Feature Hash', 'Type / Op', 'PCode Context', 'C Code Context', 'Total TF', 'Funcs', 'Actions'],
                 renderer: renderGlobalFeatures
             },
-            '#top-correlations': {
-                title: 'Top Correlations',
+            '#function-similarity': {
+                title: 'Function similarities',
                 api: '/api/similarity/search',
                 headers: [
                     { label: 'Function Pair', width: '25%' },
@@ -653,7 +730,7 @@
             let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
             updateUI(hashPath, params, route);
 
-            if (params.get('view') === 'graph' && hashPath === '#top-correlations') {
+            if (params.get('view') === 'graph' && hashPath === '#function-similarity') {
                 document.getElementById('loader').style.display = 'none';
                 return;
             }
@@ -671,7 +748,7 @@
                 const limitIcon = document.getElementById('limit-warn-icon');
                 const poolInput = document.getElementById('sim-pool-limit');
                 const limitInput = document.getElementById('sim-limit');
-                
+
                 if (totalEl) {
                     totalEl.style.display = 'inline-block';
                     totalEl.innerText = `${total.toLocaleString()} total`;
@@ -686,10 +763,10 @@
                             if (poolInput) poolInput.style.borderColor = 'var(--accent)';
                         }
                     }
-                    
+
                     if (limitIcon) {
                         const currentLimit = parseInt(params.get('limit')) || 20;
-                        if (total >= currentLimit && hashPath === '#top-correlations') {
+                        if (total >= currentLimit && hashPath === '#function-similarity') {
                             limitIcon.style.display = 'inline-block';
                             limitIcon.title = `ℹ️ Result Limit Reached (${currentLimit.toLocaleString()}). Not all pairs are shown.`;
                             if (limitInput) limitInput.style.borderColor = '#60a5fa';
@@ -740,7 +817,7 @@
                 document.getElementById('nav-files').href = `#files?collection=${col}`;
                 document.getElementById('nav-functions').href = `#functions?collection=${col}`;
                 document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
-                document.getElementById('nav-top-correlations').href = `#top-correlations?collection=${col}`;
+                document.getElementById('nav-function-similarity').href = `#function-similarity?collection=${col}`;
             }
 
             // Table Head
@@ -766,7 +843,7 @@
 
             // Similarity-specific UI (Toggle, Pool Limit, View Handling)
             const settingsEl = document.getElementById('search-settings-container');
-            if (path === '#top-correlations') {
+            if (path === '#function-similarity') {
                 settingsEl.style.display = 'flex';
                 const viewMode = params.get('view') || 'table';
                 const currentLimit = params.get('pool_limit') || '1000000';
@@ -816,7 +893,7 @@
                     <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
                     <th style="vertical-align: middle;">
                         <div style="display:flex; align-items:center; gap:2px;">
-                            <input type="number" id="sim-threshold" value="${p.get('threshold') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
+                            <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                             <span class="dim" style="font-size:0.6rem">-</span>
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
@@ -879,7 +956,7 @@
                         <label for="sort-tf" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Sort by Total TF</label>
                     </div>
                 </div>`;
-            } else if (path === '#top-correlations') {
+            } else if (path === '#function-similarity') {
                 const p = new URLSearchParams(params);
                 searchArea.innerHTML = `<div class="filter-bar">
                     <input type="text" id="sim-search-input" placeholder="Search by Keywords (space-separated)..." value="${p.get('q') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()">
@@ -955,7 +1032,7 @@
         function switchSimView(mode) {
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
             params.set('view', mode);
-            window.location.hash = `#top-correlations?${params.toString()}`;
+            window.location.hash = `#function-similarity?${params.toString()}`;
         }
 
         function loadGraphView(params) {
@@ -975,7 +1052,7 @@
             const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
             const params = new URLSearchParams(queryString);
 
-            const threshold = document.getElementById('sim-threshold')?.value;
+            const minScore = document.getElementById('sim-min-score')?.value;
             const maxScore = document.getElementById('sim-max-score')?.value;
             const algo = document.getElementById('sim-algo')?.value;
             const minFeatures = document.getElementById('sim-min-features')?.value;
@@ -986,7 +1063,7 @@
 
             // ALWAY set params for canonical URL state (Perfect Match)
             params.set('q', globalQ || '');
-            params.set('threshold', threshold || '0.95');
+            params.set('min_score', minScore || '0.95');
             params.set('max_score', maxScore || '1.0');
             params.set('algo', algo || 'unweighted_cosine');
             params.set('min_features', minFeatures || '0');
@@ -1315,13 +1392,13 @@
                 this.binary_md5s = new Set();
                 this.plot = null;
                 window.graphInstance = this;
-                
+
                 // 1. Initialize Data Sources
                 this.seg_source = new Bokeh.ColumnDataSource({ data: { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] } });
                 this.hit_source = new Bokeh.ColumnDataSource({ data: { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], s1: [], s2: [], id1: [], id2: [] } });
                 this.node_source = new Bokeh.ColumnDataSource({ data: { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], snippet: [] } });
                 this.ring_source = new Bokeh.ColumnDataSource({ data: { start: [], end: [], color: [], name: [], md5: [], inner_r: [], outer_r: [], count: [] } });
-                
+
                 this.initPlot();
             }
 
@@ -1339,10 +1416,10 @@
                 this.plot.grid.grid_line_color = null;
 
                 // Glyphs
-                const r_ring = this.plot.annular_wedge({ x: 0, y: 0, inner_radius: {field: 'inner_r'}, outer_radius: {field: 'outer_r'}, start_angle: {field: 'start'}, end_angle: {field: 'end'}, color: {field: 'color'}, alpha: 0.3, source: this.ring_source });
-                this.plot.segment({ x0: {field: 'x0'}, y0: {field: 'y0'}, x1: {field: 'x1'}, y1: {field: 'y1'}, color: {field: 'color'}, line_alpha: {field: 'alpha'}, line_width: {field: 'width'}, source: this.seg_source });
-                const r_links = this.plot.multi_line({ xs: {field: 'xs'}, ys: {field: 'ys'}, line_width: 15, line_alpha: 0, hover_line_alpha: 0.6, hover_line_color: "white", source: this.hit_source });
-                const r_nodes = this.plot.circle({ x: {field: 'x'}, y: {field: 'y'}, size: 11, color: {field: 'color'}, line_color: "white", source: this.node_source });
+                const r_ring = this.plot.annular_wedge({ x: 0, y: 0, inner_radius: { field: 'inner_r' }, outer_radius: { field: 'outer_r' }, start_angle: { field: 'start' }, end_angle: { field: 'end' }, color: { field: 'color' }, alpha: 0.3, source: this.ring_source });
+                this.plot.segment({ x0: { field: 'x0' }, y0: { field: 'y0' }, x1: { field: 'x1' }, y1: { field: 'y1' }, color: { field: 'color' }, line_alpha: { field: 'alpha' }, line_width: { field: 'width' }, source: this.seg_source });
+                const r_links = this.plot.multi_line({ xs: { field: 'xs' }, ys: { field: 'ys' }, line_width: 15, line_alpha: 0, hover_line_alpha: 0.6, hover_line_color: "white", source: this.hit_source });
+                const r_nodes = this.plot.circle({ x: { field: 'x' }, y: { field: 'y' }, size: 11, color: { field: 'color' }, line_color: "white", source: this.node_source });
 
                 // Hover Tools (No native tooltips)
                 const h_bin = new Bokeh.HoverTool({ renderers: [r_ring], tooltips: null });
@@ -1451,15 +1528,12 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <span style="color:#A6E22E; font-weight:bold; font-size:16px;">@score MATCH</span>
                         <span style="font-size:10px; color:#777;">Pair Summary</span>
-                    </div>
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                         <div style="background:#1A1A1A; padding:6px; border-radius:4px; border-left:3px solid @c1;">
                             <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">@f1</div>
-                            <div style="font-size:9px; font-family:monospace; color:#666; margin-top:4px; height:40px; overflow:hidden;">@s1</div>
                         </div>
                         <div style="background:#1A1A1A; padding:6px; border-radius:4px; border-left:3px solid @c2;">
                             <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">@f2</div>
-                            <div style="font-size:9px; font-family:monospace; color:#666; margin-top:4px; height:40px; overflow:hidden;">@s2</div>
                         </div>
                     </div>
                 </div>`;
@@ -1469,9 +1543,6 @@
                 return `<div style="padding:12px; background:#1A1A1A; color:#D4D4D4; border:2px solid @color; border-radius:8px; width:280px;">
                     <div style="font-size:13px; font-weight:bold; margin-bottom:2px; color:@color;">@name</div>
                     <div style="font-size:10px; color:#AAA; margin-bottom:8px;">Addr: @addr | Features: @v_size</div>
-                    <div style="background:#000; padding:8px; font-family:'Consolas','Courier New',monospace; font-size:11px; border-radius:4px; border:1px solid #333; line-height:1.4; color:#A6E22E; overflow:hidden;">
-                        @snippet
-                    </div>
                 </div>`;
             }
 
@@ -1483,13 +1554,13 @@
                 const signal = this.abortController.signal;
 
                 this.all_pairs = []; this.nodes_map.clear(); this.unique_nodes = []; this.binary_md5s.clear();
-                
+
                 const overlay = document.getElementById('graph-loading-overlay');
                 const streamInfo = document.getElementById('graph-stream-info');
                 const loadingText = document.getElementById('graph-loading-text');
                 const stopBtn = document.getElementById('graph-stop-btn');
                 const MAX_TOTAL = parseInt(params.get('limit')) || 1000;
-                
+
                 overlay.style.display = 'flex';
                 loadingText.innerText = "Building Similarity Map...";
                 streamInfo.innerText = "";
@@ -1501,18 +1572,18 @@
                 cleanParams.delete('offset');
                 const base_url = `/api/similarity/search?${cleanParams.toString()}`;
                 let currentOffset = 0;
-                
+
                 // Clear the graph immediately
                 this.updateSources(params);
-                
+
                 try {
                     while (currentOffset < MAX_TOTAL && !signal.aborted) {
                         const BATCH_SIZE = Math.min(MAX_TOTAL - this.all_pairs.length, 500);
                         if (BATCH_SIZE <= 0) break;
-                        
+
                         const res = await fetch(`${base_url}&limit=${BATCH_SIZE}&offset=${currentOffset}`, { signal });
                         const data = await res.json();
-                        
+
                         // Handle truncation and limit alerts next to inputs
                         const poolIcon = document.getElementById('pool-warn-icon');
                         const limitIcon = document.getElementById('limit-warn-icon');
@@ -1533,9 +1604,9 @@
 
                         const pairs = data.pairs || [];
                         if (pairs.length === 0) break;
-                        
+
                         this.all_pairs = this.all_pairs.concat(pairs);
-                        
+
                         if (limitIcon) {
                             if (this.all_pairs.length >= MAX_TOTAL) {
                                 limitIcon.style.display = 'inline-block';
@@ -1552,35 +1623,35 @@
                             totalEl.innerText = `${this.all_pairs.length.toLocaleString()} matches`;
                         }
                         pairs.forEach(p => {
-                            [ {id: p.id1, name: p.name1, meta: p.meta1, snippet: p.snippet1}, {id: p.id2, name: p.name2, meta: p.meta2, snippet: p.snippet2} ].forEach(n => {
+                            [{ id: p.id1, name: p.name1, meta: p.meta1 }, { id: p.id2, name: p.name2, meta: p.meta2 }].forEach(n => {
                                 if (!this.nodes_map.has(n.id)) {
-                                    const node_obj = { id: n.id, name: n.name, md5: n.meta.file_md5, addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count, snippet: n.snippet };
+                                    const node_obj = { id: n.id, name: n.name, md5: n.meta.file_md5, addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count };
                                     this.nodes_map.set(n.id, node_obj); this.unique_nodes.push(node_obj); this.binary_md5s.add(n.meta.file_md5);
                                 }
                             });
                         });
-                        
+
                         this.updateSources(params);
                         streamInfo.innerText = `Streamed ${this.all_pairs.length} matches...`;
                         currentOffset += BATCH_SIZE;
                         if (pairs.length < BATCH_SIZE) break;
                     }
                 } catch (e) { if (e.name !== 'AbortError') console.error(e); }
-                finally { 
-                    overlay.style.display = 'none'; 
+                finally {
+                    overlay.style.display = 'none';
                     stopBtn.style.display = 'none';
                 }
             }
 
             updateSources(params) {
                 if (this.all_pairs.length === 0) {
-                    this.node_source.data = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], snippet: [] };
+                    this.node_source.data = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [] };
                     this.seg_source.data = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
-                    this.hit_source.data = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], s1: [], s2: [], id1: [], id2: [] };
+                    this.hit_source.data = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [] };
                     this.ring_source.data = { start: [], end: [], color: [], name: [], md5: [], inner_r: [], outer_r: [], count: [] };
                     return;
                 }
-                
+
                 this.unique_nodes.sort((a, b) => a.md5.localeCompare(b.md5) || a.name.localeCompare(b.name));
                 const n_active = this.unique_nodes.length;
                 const theta_step = (2 * Math.PI) / n_active;
@@ -1597,36 +1668,36 @@
                 const bin_list = Array.from(this.binary_md5s).sort();
                 const bin_colors = new Map(bin_list.map((md5, i) => [md5, palette[i % 20]]));
 
-                const ns = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], snippet: [] };
+                const ns = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [] };
                 this.unique_nodes.forEach(n => {
                     const info = id_to_info.get(n.id);
                     ns.x.push(info.x); ns.y.push(info.y); ns.name.push(n.name); ns.addr.push(n.addr);
                     ns.bin.push(n.md5.slice(0, 8)); ns.color.push(bin_colors.get(n.md5));
-                    ns.v_size.push(n.v_size); ns.id.push(n.id); ns.snippet.push(n.snippet || "");
+                    ns.v_size.push(n.v_size); ns.id.push(n.id);
                 });
 
                 const ss = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
-                const hs = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], s1: [], s2: [], id1: [], id2: [] };
-                const threshold = parseFloat(params.get('threshold')) || 0.95;
+                const hs = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [] };
+                const minScore = parseFloat(params.get('min_score')) || 0.95;
 
                 this.all_pairs.forEach(p => {
                     const n1 = id_to_info.get(p.id1); const n2 = id_to_info.get(p.id2);
                     if (!n1 || !n2) return;
-                    const t_vals = []; for(let i=0; i<=1; i+=1/15) t_vals.push(i);
+                    const t_vals = []; for (let i = 0; i <= 1; i += 1 / 15) t_vals.push(i);
                     const curve = t_vals.map(t => {
                         const it = 1 - t;
-                        return { x: it*it * n1.x + 2*it*t * 0 + t*t * n2.x, y: it*it * n1.y + 2*it*t * 0 + t*t * n2.y };
+                        return { x: it * it * n1.x + 2 * it * t * 0 + t * t * n2.x, y: it * it * n1.y + 2 * it * t * 0 + t * t * n2.y };
                     });
                     const col1 = bin_colors.get(n1.md5); const col2 = bin_colors.get(n2.md5);
-                    const norm = (p.score - threshold) / (1.0 - threshold + 0.0001);
-                    for (let k=0; k < curve.length - 1; k++) {
-                        ss.x0.push(curve[k].x); ss.y0.push(curve[k].y); ss.x1.push(curve[k+1].x); ss.y1.push(curve[k+1].y);
+                    const norm = (p.score - minScore) / (1.0 - minScore + 0.0001);
+                    for (let k = 0; k < curve.length - 1; k++) {
+                        ss.x0.push(curve[k].x); ss.y0.push(curve[k].y); ss.x1.push(curve[k + 1].x); ss.y1.push(curve[k + 1].y);
                         ss.color.push(this.blendHex(col1, col2, t_vals[k])); ss.alpha.push(0.1 + (norm * 0.7)); ss.width.push(0.5 + (norm * 6));
                     }
                     hs.xs.push(curve.map(v => v.x)); hs.ys.push(curve.map(v => v.y));
-                    hs.f1.push(p.name1); hs.f2.push(p.name2); hs.b1.push(n1.md5.slice(0,8)); hs.b2.push(n2.md5.slice(0,8));
+                    hs.f1.push(p.name1); hs.f2.push(p.name2); hs.b1.push(n1.md5.slice(0, 8)); hs.b2.push(n2.md5.slice(0, 8));
                     hs.score.push(p.score.toFixed(4)); hs.c1.push(col1); hs.c2.push(col2); hs.id1.push(p.id1); hs.id2.push(p.id2);
-                    hs.s1.push(p.snippet1 || ""); hs.s2.push(p.snippet2 || "");
+
                 });
 
                 const rs = { start: [], end: [], color: [], name: [], md5: [], inner_r: [], outer_r: [], count: [] };
@@ -1635,7 +1706,7 @@
                     if (md5_nodes.length > 0) {
                         const start_idx = md5_nodes[0].i; const end_idx = md5_nodes[md5_nodes.length - 1].i;
                         const col = bin_colors.get(md5);
-                        rs.start.push(start_idx * theta_step - theta_step/2); rs.end.push(end_idx * theta_step + theta_step/2);
+                        rs.start.push(start_idx * theta_step - theta_step / 2); rs.end.push(end_idx * theta_step + theta_step / 2);
                         rs.color.push(col); rs.name.push(md5.slice(0, 8)); rs.md5.push(md5);
                         rs.inner_r.push(ring_inner); rs.outer_r.push(ring_outer);
                         rs.count.push(md5_nodes.length);
@@ -1646,8 +1717,8 @@
             }
 
             blendHex(c1, c2, t) {
-                const rgb1 = [parseInt(c1.slice(1,3), 16), parseInt(c1.slice(3,5), 16), parseInt(c1.slice(5,7), 16)];
-                const rgb2 = [parseInt(c2.slice(1,3), 16), parseInt(c2.slice(3,5), 16), parseInt(c2.slice(5,7), 16)];
+                const rgb1 = [parseInt(c1.slice(1, 3), 16), parseInt(c1.slice(3, 5), 16), parseInt(c1.slice(5, 7), 16)];
+                const rgb2 = [parseInt(c2.slice(1, 3), 16), parseInt(c2.slice(3, 5), 16), parseInt(c2.slice(5, 7), 16)];
                 const res = rgb1.map((v, i) => Math.round(v * (1 - t) + rgb2[i] * t));
                 return "#" + res.map(v => v.toString(16).padStart(2, '0')).join('');
             }
@@ -1963,7 +2034,7 @@
         }
 
         function updateNavVisibility(collection) {
-            const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-top-correlations'];
+            const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity'];
             navItems.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.display = collection ? 'block' : 'none';
@@ -2163,7 +2234,7 @@
             const nodeIndices = window.lastGraphNodeIndices || [];
 
             if (linkIndices.length === 0 && nodeIndices.length === 0) return;
-            
+
             e.preventDefault();
             e.stopPropagation();
 
@@ -2182,7 +2253,7 @@
             }
 
             let html = '';
-            
+
             if (linkIndices.length > 0) {
                 html += `<div class="context-menu-header">Similarity Comparisons (${linkIndices.length})</div>`;
                 linkIndices.forEach(idx => {
@@ -2225,7 +2296,7 @@
             const onMenuClick = (me) => {
                 const compareItem = me.target.closest('.graph-compare-item');
                 const nodeItem = me.target.closest('.graph-node-item');
-                
+
                 if (compareItem) {
                     const { id1, id2, f1, f2 } = compareItem.dataset;
                     window.openDiffDirectly(id1, f1, id2, f2); // Fixed name
@@ -2250,7 +2321,7 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             tooltip = document.getElementById('code-preview-tooltip');
-            
+
             // Attach graph context menu (global to ensure it's not swallowed by Bokeh canvas)
             window.addEventListener('contextmenu', showGraphContextMenu);
         });
@@ -2356,9 +2427,9 @@
             tooltip.style.display = 'flex';
             tooltip.classList.add('showing');
             moveCodePreview(e);
-            
+
             const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
-            
+
             tooltip.innerHTML = `
                 <div class="preview-card">
                     <div class="preview-header">Quick Preview: ${name || id.split(':').pop()}</div>
@@ -2403,7 +2474,7 @@
             if (!tooltip) return;
             const rows = data.rows.slice(0, 18);
             const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
-            
+
             let html = `
                 <div class="preview-card">
                     <div class="preview-header">Quick Preview: ${name || data.rows[0]?.tokens[0]?.text || 'Function'}</div>
@@ -2467,7 +2538,7 @@
             tooltip.style.display = 'flex';
             tooltip.classList.add('showing');
             moveCodePreview(e);
-            
+
             const extraHtml = extra > 0 ? `<div class="others-count-card" style="width:100%; box-sizing:border-box;"><span>⚡</span> And ${extra} other matches...</div>` : '';
 
             tooltip.innerHTML = `
@@ -2590,7 +2661,7 @@
 
             bTooltip.style.display = 'block';
             bTooltip.classList.add('showing');
-            
+
             // Move it
             const offset = 15;
             let x = e.clientX + offset;

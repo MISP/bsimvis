@@ -145,6 +145,7 @@ for i = 1, limit_val do
             decompiler2 = meta["decompiler_id"] or "",
             feat_count1 = target_meta["bsim_features_count"] or 0,
             feat_count2 = meta["bsim_features_count"] or 0,
+            min_features = math.min(target_meta["bsim_features_count"] or 0, meta["bsim_features_count"] or 0),
             is_cross_binary = (target_md5 ~= meta["file_md5"]) and "true" or "false"
         }
         redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
@@ -179,6 +180,9 @@ for i = 1, limit_val do
         end
         if sim_doc.feat_count2 then
             redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count2', sim_doc.feat_count2, sim_meta_key)
+        end
+        if sim_doc.min_features then
+            redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
         end
 
         -- Tags (split by comma if needed, though they come as comma-string here)
@@ -248,10 +252,10 @@ def bake_enhanced_similarities(args, r=None):
     collection = args.collection
     algo = args.algo
     top_k = args.top_k
-    threshold = args.threshold
+    min_score = args.min_score
 
     print(
-        f"[*] Enhanced Sim Bake | Collection: {collection} | Algo: {algo} | Threshold: {threshold}"
+        f"[*] Enhanced Sim Bake | Collection: {collection} | Algo: {algo} | Min Score: {min_score}"
     )
 
     # Selecting targets based on filters
@@ -284,7 +288,7 @@ def bake_enhanced_similarities(args, r=None):
         print(f"[*] Found {len(unique_keys)} keys in batch")
         for key in unique_keys:
             if process_single_key(
-                r, sim_script, key, collection, algo, top_k, threshold
+                r, sim_script, key, collection, algo, top_k, min_score
             ):
                 processed += 1
             if processed % 10 == 0:
@@ -302,7 +306,7 @@ def bake_enhanced_similarities(args, r=None):
             print(f"[*] Found {len(keys)} keys in batch")
             for key in keys:
                 if process_single_key(
-                    r, sim_script, key, collection, algo, top_k, threshold
+                    r, sim_script, key, collection, algo, top_k, min_score
                 ):
                     processed += 1
                 if processed % 50 == 0:
@@ -315,7 +319,7 @@ def bake_enhanced_similarities(args, r=None):
     print(f"[+] DONE: {processed} functions baked in {time.time() - start_time:.2f}s")
 
 
-def process_single_key(r, script, key, collection, algo, top_k, threshold):
+def process_single_key(r, script, key, collection, algo, top_k, min_score):
     parts = key.split(":")
     if len(parts) < 4:
         return
@@ -327,7 +331,7 @@ def process_single_key(r, script, key, collection, algo, top_k, threshold):
         return
 
     # Lua ARGV: [id, collection, algo, top_k, md5, addr, threshold, features...]
-    lua_args = [base_id, collection, algo, top_k, md5, addr, threshold] + features
+    lua_args = [base_id, collection, algo, top_k, md5, addr, min_score] + features
 
     try:
         script(args=lua_args)
@@ -483,7 +487,7 @@ def main():
         "-k", "--top-k", type=int, default=20, help="Top K matches per function"
     )
     parser.add_argument(
-        "--threshold",
+        "--min-score",
         type=float,
         default=0.1,
         help="Minimum similarity score (e.g., 0.1)",

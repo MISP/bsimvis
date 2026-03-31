@@ -11,7 +11,7 @@ search_similarity_bp = Blueprint("search_similarity", __name__)
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
 MAX_POOL_LIMIT = 1000000
-CACHE_TIME_THRESHOLD = 0.5  # Only cache requests that take more than X seconds
+CACHE_TIME_THRESHOLD = 50000 # Only cache requests that take more than X seconds
 
 
 @search_similarity_bp.route("/api/similarity/search", methods=["GET"])
@@ -20,7 +20,7 @@ def similarity_search():
     algo = request.args.get("algo", "unweighted_cosine")
 
     try:
-        threshold = float(request.args.get("threshold", 0.95))
+        min_score = float(request.args.get("min_score", 0.95))
         max_score = float(request.args.get("max_score", 1.0))
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
@@ -56,16 +56,16 @@ def similarity_search():
         candidate_list = []
         total = 0
 
+        has_min_features = min_features > 0
         has_set_filters = any(
             [name_filter, tag_filter, lang_filter, md5_filters, search_q]
         )
-        has_min_features = min_features > 0
 
         # --- CACHING LOGIC ---
         cache_params = {
             "col": col,
             "algo": algo,
-            "threshold": threshold,
+            "min_score": min_score,
             "max_score": max_score,
             "min_features": min_features,
             "q": search_q,
@@ -90,7 +90,7 @@ def similarity_search():
             try:
                 final_list, truncated, total = json.loads(cached_res)
                 cache_hit = True
-                r.expire(cache_key, 60)
+                r.expire(cache_key, 60) # Refresh TTL because it was queried again
             except (ValueError, TypeError):
                 logging.warning(f"Failed to load cache for key {cache_key}")
                 final_list = []
@@ -223,6 +223,24 @@ def similarity_search():
                                 r.expire(q_key, 60)
                                 filter_keys.append(q_key)
                                 temp_keys.append(q_key)
+                        
+                        # 4.5 Min Features (Intersection with other filters)
+                        if has_min_features:
+                            mf_key = f"tmp:{col}:filter:{session_id}:min_feat"
+                            sim_ids = r.zrangebyscore(f"idx:{col}:sim:min_features", min_features, float("inf"))
+                            if sim_ids:
+                                batch_size = 500
+                                for i in range(0, len(sim_ids), batch_size):
+                                    batch = sim_ids[i : i + batch_size]
+                                    if i == 0:
+                                        r.sadd(mf_key, *batch)
+                                    else:
+                                        r.sadd(mf_key, *batch)
+                                r.expire(mf_key, 60)
+                                filter_keys.append(mf_key)
+                                temp_keys.append(mf_key)
+                            else:
+                                return jsonify({"total": 0, "pairs": [], "algo": algo, "truncated": False})
 
                     # 5. Final Intersection
                     if filter_keys:
@@ -253,24 +271,14 @@ def similarity_search():
                         pipe.execute()
 
             elif has_min_features:
-                # Optimized path for ONLY min_features filter: Use ZSET range with LIMIT
-                ids1 = r.zrangebyscore(
-                    f"idx:{col}:sim:feat_count1",
+                # Optimized path: Use the single pre-computed min_features ZSET
+                candidate_list = r.zrangebyscore(
+                    f"idx:{col}:sim:min_features",
                     min_features,
                     float("inf"),
                     start=0,
                     num=pool_limit,
                 )
-                ids2 = r.zrangebyscore(
-                    f"idx:{col}:sim:feat_count2",
-                    min_features,
-                    float("inf"),
-                    start=0,
-                    num=pool_limit,
-                )
-                candidate_list = list(set(ids1) | set(ids2))[:pool_limit]
-                # Since we can't easily get the true total of the Union without fetching, we estimate
-                # Or just check if we hit the limit
                 if len(candidate_list) >= pool_limit:
                     truncated = True
 
@@ -301,12 +309,7 @@ def similarity_search():
 
                     if sc is not None:
                         s_val = float(sc)
-                        if threshold <= s_val <= max_score:
-                            if (
-                                has_min_features
-                                and max(f1_count, f2_count) < min_features
-                            ):
-                                continue
+                        if min_score <= s_val <= max_score:
                             if is_cross_binary:
                                 parts = sid.split(":")
                                 if len(parts) >= 11 and parts[5] == parts[9]:
@@ -318,7 +321,7 @@ def similarity_search():
                 score_tuples = r.zrevrangebyscore(
                     algo_zset,
                     max_score,
-                    threshold,
+                    min_score,
                     withscores=True,
                     start=0,
                     num=pool_limit,
@@ -376,30 +379,7 @@ def similarity_search():
                 pipe.json().get(sid, "$")
             page_raw = pipe.execute()
 
-            # --- Code Snippets Fetch (for rich tooltips) ---
-            func_ids = set()
-            for (sid, score, feat_count), raw in zip(page_ids, page_raw):
-                if raw:
-                    data = raw[0] if isinstance(raw, list) else raw
-                    if isinstance(data, str):
-                        data = json.loads(data)
-                    if data.get("id1"):
-                        func_ids.add(data.get("id1"))
-                    if data.get("id2"):
-                        func_ids.add(data.get("id2"))
 
-            code_snippets = {}
-            if func_ids:
-                snippet_pipe = r.pipeline()
-                sorted_fids = sorted(list(func_ids))
-                for fid in sorted_fids:
-                    snippet_pipe.json().get(fid, "$.code")
-                snippet_raw = snippet_pipe.execute()
-                for fid, raw_code in zip(sorted_fids, snippet_raw):
-                    if raw_code and isinstance(raw_code, list):
-                        code_snippets[fid] = (raw_code[0] or "")[:120].strip().replace(
-                            "\n", " "
-                        ) + "..."
 
             for (sid, score, feat_count), raw in zip(page_ids, page_raw):
                 if not raw:
@@ -420,8 +400,7 @@ def similarity_search():
                         "name1": data.get("name1", (id1 or ":").split(":")[-1]),
                         "name2": data.get("name2", (id2 or ":").split(":")[-1]),
                         "score": score,
-                        "snippet1": code_snippets.get(id1, ""),
-                        "snippet2": code_snippets.get(id2, ""),
+
                         "meta1": {
                             "file_md5": data.get("md5_1"),
                             "tags": tags1,
@@ -441,16 +420,11 @@ def similarity_search():
                     }
                 )
 
-        if sort_by == "name":
-            enriched_pairs.sort(
-                key=lambda x: x["name1"].lower(), reverse=(sort_order == "desc")
-            )
-
         resp = jsonify(
             {
                 "collection": col,
                 "algo": algo,
-                "threshold": threshold,
+                "min_score": min_score,
                 "total": total,
                 "offset": offset,
                 "limit": limit,

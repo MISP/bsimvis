@@ -7,9 +7,9 @@ Binary analysis is done using Ghidra's decompiler thanks to Pyghidra scripting.
 
 - Upload decompiled functions and BSIM vectors from Ghidra to a redis/kvrocks server
 - API / web interface for :
-    - Correlation of decompiled funciton and BSIM features
+    - Similarity of decompiled function and BSIM features
     - Function diffing based on BSIM features
-    - Feature correlation decompiled C tokens
+    - Feature correlation with decompiled C tokens
 
 
 - In the future we plan to add:

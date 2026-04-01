@@ -1426,7 +1426,8 @@
                 this.plot = Bokeh.Plotting.figure({
                     width: width, height: height,
                     match_aspect: true, toolbar_location: "above",
-                    background_fill_color: "#121212", border_fill_color: "#121212"
+                    background_fill_color: "#121212", border_fill_color: "#121212",
+                    active_scroll: "wheel_zoom"
                 });
                 this.plot.axis.visible = false;
                 this.plot.grid.grid_line_color = null;

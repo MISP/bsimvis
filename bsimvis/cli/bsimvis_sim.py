@@ -5,6 +5,7 @@ import math
 import argparse
 import logging
 import datetime
+from bsimvis.app.services.similarity_service import SimilarityService
 
 _r = None
 
@@ -16,300 +17,7 @@ def get_redis(host="localhost", port=6666):
     return _r
 
 
-# --- Turbo Similarity Bake Lua Script (Resource Optimized) ---
-# Supports Jaccard and Unweighted Cosine algorithms.
-# Stores results in per-function keys and a global collection-wide ZSET.
-# Thresholding is applied early to prevent memory and CPU bloat.
-LUA_ENHANCED_SIM_SCRIPT = """
-local target_id = ARGV[1]
-local collection = ARGV[2]
-local algo = ARGV[3]
-local limit = tonumber(ARGV[4])
-local target_md5 = ARGV[5]
-local target_addr = ARGV[6]
-local threshold = tonumber(ARGV[7])
-local baked_set_key = ARGV[8]
-
-local target_meta_raw = redis.call('JSON.GET', target_id .. ':meta')
-local target_meta = {}
-if target_meta_raw then target_meta = cjson.decode(target_meta_raw) end
-
--- ARGV[9...] are feature hashes
-local target_features = {}
-for i = 9, #ARGV do
-    target_features[#target_features + 1] = ARGV[i]
-end
-
-local target_count = #target_features
-local intersection_counts = {}
-local candidates_seen = {}
-
--- 1. Identify all candidates and count intersections
-for _, f_hash in ipairs(target_features) do
-    local functions = redis.call('ZRANGE', 'idx:' .. collection .. ':feature:' .. f_hash .. ':functions', 0, -1)
-    for _, func_id in ipairs(functions) do
-        if func_id ~= target_id then
-            if not candidates_seen[func_id] then
-                candidates_seen[func_id] = true
-                intersection_counts[func_id] = 0
-            end
-            intersection_counts[func_id] = intersection_counts[func_id] + 1
-        end
-    end
-end
-
--- 2. Scored Candidates (Filtered by Threshold)
-local candidate_list = {}
-for id, intersect in pairs(intersection_counts) do
-    local cand_count = redis.call('ZCARD', id .. ':vec:tf')
-    if cand_count and cand_count > 0 then
-        local score = 0
-        if algo == 'jaccard' then
-            score = intersect / (target_count + cand_count - intersect)
-        elseif algo == 'unweighted_cosine' then
-            score = intersect / math.sqrt(target_count * cand_count)
-        end
-        
-        -- ONLY keep if above threshold
-        if score >= threshold then
-            table.insert(candidate_list, {id = id, score = score})
-        end
-    end
-end
-
--- 3. Sort by score
-table.sort(candidate_list, function(a, b) return a.score > b.score end)
-
--- 4. Enrich Top K and Prepare for Storage
-local matches = {}
-local limit_val = math.min(limit, #candidate_list)
-local global_zset_key = collection .. ':all_sim:' .. algo
-
-for i = 1, limit_val do
-    local item = candidate_list[i]
-    
-    -- --- Robust Canonical Order (Incremental-Safe) ---
-    local id_a, id_b
-    local meta_a, meta_b
-    local md5_a, md5_b
-    local addr_a, addr_b
-    
-    local is_target_greater = (target_id > item.id)
-    local is_item_baked = (redis.call('SISMEMBER', baked_set_key, item.id) == 1)
-    
-    local should_store = false
-    if is_target_greater then
-        should_store = true
-    elseif is_item_baked then
-        should_store = true
-    end
-    
-    if should_store then
-        local item_meta_raw = redis.call('JSON.GET', item.id .. ':meta')
-        local item_meta = {}
-        if item_meta_raw then item_meta = cjson.decode(item_meta_raw) end
-        
-        -- Parse item parts for indexing
-        local parts2 = {}
-        for p in string.gmatch(item.id, "([^:]+)") do table.insert(parts2, p) end
-        local item_md5 = parts2[3] or ""
-        local item_addr = parts2[4] or "0"
-
-        if is_target_greater then
-            id_a, id_b = target_id, item.id
-            meta_a, meta_b = target_meta, item_meta
-            md5_a, md5_b = target_md5, item_md5
-            addr_a, addr_b = target_addr, item_addr
-        else
-            id_a, id_b = item.id, target_id
-            meta_a, meta_b = item_meta, target_meta
-            md5_a, md5_b = item_md5, target_md5
-            addr_a, addr_b = item_addr, target_addr
-        end
-
-        local score_rounded = math.floor(item.score * 10000 + 0.5) / 10000
-        
-        -- 5. Store similarity metadata for RediSearch
-        local sim_meta_key = collection .. ':sim_meta:' .. algo .. ':' .. id_a .. ':' .. id_b
-        
-        -- 6. Add to collection-wide similarity scoreboard (ZSET)
-        redis.call('ZADD', global_zset_key, score_rounded, sim_meta_key)
-        local sim_doc = {
-            type = "sim",
-            collection = collection,
-            algo = algo,
-            score = score_rounded,
-            id1 = id_a,
-            id2 = id_b,
-            name1 = meta_a["function_name"] or id_a,
-            name2 = meta_b["function_name"] or id_b,
-            md5_1 = md5_a,
-            md5_2 = md5_b,
-            tags1 = table.concat(meta_a["tags"] or {}, ","),
-            tags2 = table.concat(meta_b["tags"] or {}, ","),
-            batch_uuid1 = meta_a["batch_uuid"] or "",
-            batch_uuid2 = meta_b["batch_uuid"] or "",
-            language_id1 = meta_a["language_id"] or "",
-            language_id2 = meta_b["language_id"] or "",
-            return_type1 = meta_a["return_type"] or "",
-            return_type2 = meta_b["return_type"] or "",
-            decompiler1 = meta_a["decompiler_id"] or "",
-            decompiler2 = meta_b["decompiler_id"] or "",
-            feat_count1 = meta_a["bsim_features_count"] or 0,
-            feat_count2 = meta_b["bsim_features_count"] or 0,
-            min_features = math.min(meta_a["bsim_features_count"] or 0, meta_b["bsim_features_count"] or 0),
-            is_cross_binary = (md5_a ~= md5_b) and "true" or "false"
-        }
-        redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
-
-        -- 6.1 Secondary Indexing (Kvrocks-optimized ZSETs)
-        local all_key = 'idx:' .. collection .. ':all_similarities'
-        local all_type = redis.call('TYPE', all_key)
-        if type(all_type) == 'table' then all_type = all_type['ok'] or all_type[1] end
-        if all_type == 'set' then redis.call('DEL', all_key) end
-        redis.call('ZADD', all_key, 0, sim_meta_key)
-        
-        -- Unified indexing helper
-        local function index_tag(field, value)
-            if value and value ~= "" then
-                local k = 'idx:' .. collection .. ':sim:' .. field .. ':' .. string.lower(tostring(value))
-                local kt = redis.call('TYPE', k)
-                if type(kt) == 'table' then kt = kt['ok'] or kt[1] end
-                if kt == 'set' then redis.call('DEL', k) end
-                redis.call('ZADD', k, 0, sim_meta_key)
-                redis.call('SADD', 'idx:' .. collection .. ':reg:' .. field, k)
-            end
-        end
-
-        index_tag('name1', sim_doc.name1)
-        index_tag('name2', sim_doc.name2)
-        index_tag('md5_1', sim_doc.md5_1)
-        index_tag('md5_2', sim_doc.md5_2)
-        index_tag('batch_uuid1', sim_doc.batch_uuid1)
-        index_tag('batch_uuid2', sim_doc.batch_uuid2)
-        index_tag('language_id1', sim_doc.language_id1)
-        index_tag('language_id2', sim_doc.language_id2)
-        index_tag('is_cross_binary', sim_doc.is_cross_binary)
-        index_tag('id1', md5_a .. ':' .. addr_a)
-        index_tag('id2', md5_b .. ':' .. addr_b)
-
-        if sim_doc.feat_count1 then redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count1', sim_doc.feat_count1, sim_meta_key) end
-        if sim_doc.feat_count2 then redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count2', sim_doc.feat_count2, sim_meta_key) end
-        if sim_doc.min_features then redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key) end
-
-        if meta_a["tags"] then for _, t in ipairs(meta_a["tags"]) do index_tag('tags1', t) end end
-        if meta_b["tags"] then for _, t in ipairs(meta_b["tags"]) do index_tag('tags2', t) end end
-    end
-end
-
-return 1
-"""
-
-
-LUA_CLEAR_FILTERED_SIM_SCRIPT = """
-local collection = ARGV[1]
-local filter_field = ARGV[2] -- 'batch_uuid' or 'md5'
-local filter_value = ARGV[3]
-
-local function get_items(k)
-    local t_raw = redis.call('TYPE', k)
-    local t = (type(t_raw) == 'table') and (t_raw['ok'] or t_raw[1]) or t_raw
-    if t == 'zset' then return redis.call('ZRANGE', k, 0, -1) end
-    if t == 'set' then return redis.call('SMEMBERS', k) end
-    return {}
-end
-
-local function rem_item(k, m)
-    local t_raw = redis.call('TYPE', k)
-    local t = (type(t_raw) == 'table') and (t_raw['ok'] or t_raw[1]) or t_raw
-    if t == 'zset' then redis.call('ZREM', k, m) end
-    if t == 'set' then redis.call('SREM', k, m) end
-end
-
-local function cleanup_key(sm_key)
-    local doc_raw = redis.call('JSON.GET', sm_key)
-    if not doc_raw then return end
-    local doc = cjson.decode(doc_raw)
-    
-    -- 1. Remove from global ZSETs
-    local algo = doc.algo or "unweighted_cosine"
-    rem_item(collection .. ':all_sim:' .. algo, sm_key)
-    rem_item('idx:' .. collection .. ':all_similarities', sm_key)
-    
-    -- 2. Remove from field indexes
-    local fields = {"name1", "name2", "md5_1", "md5_2", "batch_uuid1", "batch_uuid2", "language_id1", "language_id2", "is_cross_binary", "id1", "id2"}
-    for _, f in ipairs(fields) do
-        if doc[f] then
-            local val = string.lower(tostring(doc[f]))
-            rem_item('idx:' .. collection .. ':sim:' .. f .. ':' .. val, sm_key)
-        end
-    end
-    
-    -- 3. Numeric Indexes
-    rem_item('idx:' .. collection .. ':sim:feat_count1', sm_key)
-    rem_item('idx:' .. collection .. ':sim:feat_count2', sm_key)
-    rem_item('idx:' .. collection .. ':sim:min_features', sm_key)
-    
-    -- 4. Tags
-    if doc.tags1 then
-        for t in string.gmatch(doc.tags1, "([^,]+)") do
-            rem_item('idx:' .. collection .. ':sim:tags1:' .. string.lower(t), sm_key)
-        end
-    end
-    if doc.tags2 then
-        for t in string.gmatch(doc.tags2, "([^,]+)") do
-            rem_item('idx:' .. collection .. ':sim:tags2:' .. string.lower(t), sm_key)
-        end
-    end
-    
-    -- 5. Delete the doc itself
-    redis.call('DEL', sm_key)
-end
-
--- Find keys via filter indexes
-local sep = (filter_field == 'md5') and '_' or ''
-local keys1 = get_items('idx:' .. collection .. ':sim:' .. filter_field .. sep .. '1:' .. filter_value)
-local keys2 = get_items('idx:' .. collection .. ':sim:' .. filter_field .. sep .. '2:' .. filter_value)
-
-local seen = {}
-for _, k in ipairs(keys1) do
-    if not seen[k] then
-        cleanup_key(k)
-        seen[k] = true
-    end
-end
-for _, k in ipairs(keys2) do
-    if not seen[k] then
-        cleanup_key(k)
-        seen[k] = true
-    end
-end
-
--- Cleanup the filter indexes themselves
-redis.call('DEL', 'idx:' .. collection .. ':sim:' .. filter_field .. sep .. '1:' .. filter_value)
-redis.call('DEL', 'idx:' .. collection .. ':sim:' .. filter_field .. sep .. '2:' .. filter_value)
-
--- Also un-bake the functions associated with this filter
-local target_funcs = {}
-if filter_field == 'batch_uuid' then
-    target_funcs = redis.call('SMEMBERS', collection .. ':batch:' .. filter_value .. ':functions')
-elseif filter_field == 'md5' then
-    local p = collection .. ':function:' .. filter_value .. ':*:vec:tf'
-    local k_raw = redis.call('KEYS', p)
-    for i, k in ipairs(k_raw) do
-        target_funcs[i] = string.gsub(k, ":vec:tf", "")
-    end
-end
-
-local algos = {"jaccard", "unweighted_cosine"}
-for _, f_id in ipairs(target_funcs) do
-    for _, algo in ipairs(algos) do
-        rem_item('idx:' .. collection .. ':baked:functions:' .. algo, f_id)
-    end
-end
-
-return 1
-"""
+# Refactored: Lua scripts moved to SimilarityService
 
 
 def is_fully_indexed(collection, r):
@@ -338,7 +46,7 @@ def is_fully_indexed(collection, r):
     return indexed == total, indexed, total
 
 
-def bake_enhanced_similarities(args, r=None):
+def bake_similarities(args, r=None):
     r = r or get_redis()
 
     # --- Index Status Check ---
@@ -356,7 +64,7 @@ def bake_enhanced_similarities(args, r=None):
                 )
             return
 
-    sim_script = r.register_script(LUA_ENHANCED_SIM_SCRIPT)
+    service = SimilarityService(r)
 
     collection = args.collection
     algo = args.algo
@@ -365,7 +73,7 @@ def bake_enhanced_similarities(args, r=None):
     baked_set_key = f"idx:{collection}:baked:functions:{algo}"
 
     print(
-        f"[*] Enhanced Sim Bake | Collection: {collection} | Algo: {algo} | Min Score: {min_score}"
+        f"[*] Sim Bake | Collection: {collection} | Algo: {algo} | Min Score: {min_score}"
     )
 
     # Selecting targets based on filters
@@ -406,7 +114,7 @@ def bake_enhanced_similarities(args, r=None):
         print(f"[*] Found {len(unique_keys)} keys in batch")
         for key in unique_keys:
             if process_single_key(
-                r, sim_script, key, collection, algo, top_k, min_score, baked_set_key
+                service, key, collection, algo, top_k, min_score, baked_set_key
             ):
                 processed += 1
             else:
@@ -425,7 +133,7 @@ def bake_enhanced_similarities(args, r=None):
             )
             for key in keys:
                 if process_single_key(
-                    r, sim_script, key, collection, algo, top_k, min_score, baked_set_key
+                    service, key, collection, algo, top_k, min_score, baked_set_key
                 ):
                     processed += 1
                 else:
@@ -442,31 +150,10 @@ def bake_enhanced_similarities(args, r=None):
     )
 
 
-def process_single_key(r, script, key, collection, algo, top_k, min_score, baked_set_key):
-    parts = key.split(":")
-    if len(parts) < 4:
-        return False
-    md5, addr = parts[2], parts[3]
-    base_id = f"{collection}:function:{md5}:{addr}"
-
-    # Incremental Skip: Check if already baked
-    if r.sismember(baked_set_key, base_id):
-        return False
-
-    features = r.zrange(key, 0, -1)
-    if not features:
-        return False
-
-    # Lua ARGV: [id, collection, algo, top_k, md5, addr, threshold, baked_set, features...]
-    lua_args = [base_id, collection, algo, top_k, md5, addr, min_score, baked_set_key] + features
-
-    try:
-        script(args=lua_args)
-        r.sadd(baked_set_key, base_id)
-        return True
-    except Exception as e:
-        logging.error(f"Lua Error for {base_id}: {e}")
-        return False
+def process_single_key(service, key, collection, algo, top_k, min_score, baked_set_key):
+    # key: coll:function:md5:addr:vec:tf
+    base_id = key.replace(":vec:tf", "")
+    return service.bake_function(collection, base_id, algo, top_k, min_score)
 
 
 def print_progress(count, start, collection, skipped=0):
@@ -487,28 +174,29 @@ def run_sim(host, port, args):
     elif args.action == "list":
         list_sim_batches(coll, batch_filter=args.batch, r=r)
     elif args.action == "build":
-        bake_enhanced_similarities(args, r=r)
+        bake_similarities(args, r=r)
 
     elif args.action == "rebuild":
         print(f"[*] Clearing and rebuilding similarities for: {coll}")
-        sim_clear(coll, batch=args.batch, md5s=args.md5, r=r)
-        bake_enhanced_similarities(args, r=r)
+        sim_clear(coll, batch=args.batch, md5s=args.md5, algo=args.algo, r=r)
+        bake_similarities(args, r=r)
 
     elif args.action == "clear":
-        sim_clear(coll, batch=args.batch, md5s=args.md5, r=r)
+        sim_clear(coll, batch=args.batch, md5s=args.md5, algo=args.algo, r=r)
 
 
-def sim_clear(collection, batch=None, md5s=None, r=None):
+def sim_clear(collection, batch=None, md5s=None, algo=None, r=None):
     r = r or get_redis()
-    clear_script = r.register_script(LUA_CLEAR_FILTERED_SIM_SCRIPT)
+    service = SimilarityService(r)
+    algo_str = f", algorithm: {algo}" if algo else ""
 
     # 1. Clear by Batch
     if batch:
         print(
-            f"[*] Clearing similarity data for collection: {collection}, batch: {batch}..."
+            f"[*] Clearing similarity data for collection: {collection}, batch: {batch}{algo_str}..."
         )
         try:
-            clear_script(args=[collection, "batch_uuid", batch])
+            service.clear_filtered(collection, "batch_uuid", batch, algo=algo)
             print(f"[+] Similarity data for batch '{batch}' cleared.")
         except Exception as e:
             print(f"[!] Error clearing batch similarity: {e}")
@@ -519,25 +207,33 @@ def sim_clear(collection, batch=None, md5s=None, r=None):
     if md5s:
         for md5 in md5s:
             print(
-                f"[*] Clearing similarity data for collection: {collection}, md5: {md5}..."
+                f"[*] Clearing similarity data for collection: {collection}, md5: {md5}{algo_str}..."
             )
             try:
-                clear_script(args=[collection, "md5", md5])
+                service.clear_filtered(collection, "md5", md5, algo=algo)
                 print(f"[+] Similarity data for md5 '{md5}' cleared.")
             except Exception as e:
                 print(f"[!] Error clearing md5 similarity: {e}")
         return
 
     # 3. Global Clear
-    print(f"[*] Clearing ALL similarity data for: {collection}...")
-    patterns = [
-        f"{collection}:all_sim:*",
-        f"{collection}:sim_meta:*",
-        f"{collection}:function:*:sim:*",
-        f"idx:{collection}:baked:functions:*",
-        f"idx:{collection}:sim:*",
-        f"idx:{collection}:all_similarities",
-    ]
+    if algo:
+        print(f"[*] Clearing {algo} similarity data for: {collection}...")
+        patterns = [
+            f"{collection}:all_sim:{algo}",
+            f"{collection}:sim_meta:{algo}:*",
+            f"idx:{collection}:baked:functions:{algo}",
+        ]
+    else:
+        print(f"[*] Clearing ALL similarity data for: {collection}...")
+        patterns = [
+            f"{collection}:all_sim:*",
+            f"{collection}:sim_meta:*",
+            f"{collection}:function:*:sim:*",
+            f"idx:{collection}:baked:functions:*",
+            f"idx:{collection}:sim:*",
+            f"idx:{collection}:all_similarities",
+        ]
     for pattern in patterns:
         cursor = 0
         while True:
@@ -668,7 +364,7 @@ def main():
     )
 
     args = parser.parse_args()
-    bake_enhanced_similarities(args)
+    bake_similarities(args)
 
 
 if __name__ == "__main__":

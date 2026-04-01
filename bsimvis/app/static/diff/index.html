@@ -134,6 +134,58 @@
             min-width: 0;
             /* Allow shrinking */
         }
+
+        #similarity-bar {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px 15px;
+            margin-bottom: 10px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.9rem;
+        }
+
+        .sim-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sim-label {
+            color: var(--subtle);
+            text-transform: uppercase;
+            font-size: 0.75rem;
+            font-weight: bold;
+            letter-spacing: 0.05em;
+        }
+
+        .sim-score {
+            color: var(--accent);
+            font-family: 'Consolas', monospace;
+            font-weight: bold;
+            font-size: 1.1rem;
+            min-width: 60px;
+            text-align: center;
+        }
+
+        .sim-select {
+            background: #000;
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .sim-select:hover {
+            border-color: var(--accent);
+        }
     </style>
 </head>
 
@@ -141,6 +193,17 @@
 
     <div id="meta-container">
         <!-- Injected via JS -->
+    </div>
+
+    <div id="similarity-bar">
+        <div class="sim-info">
+            <span class="sim-label">Similarity:</span>
+            <span id="sim-score-val" class="sim-score">---</span>
+            <select id="sim-algo-select" class="sim-select" onchange="updateSimDisplay()">
+                <option value="unweighted_cosine">Cosine</option>
+                <option value="jaccard">Jaccard</option>
+            </select>
+        </div>
     </div>
 
     <div id="loader">Fetching Diff Data...</div>
@@ -638,6 +701,39 @@
         `;
         }
 
+        window.currentScores = {};
+
+        async function fetchSimilarity(id1, id2) {
+            const bar = document.getElementById('similarity-bar');
+            try {
+                const res = await fetch(`/api/similarity?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+                if (!res.ok) throw new Error("Failed to fetch similarity");
+                const data = await res.json();
+                window.currentScores = data.scores || {};
+                bar.style.display = 'flex';
+                updateSimDisplay();
+            } catch (e) {
+                console.error("Similarity fetch error:", e);
+                bar.style.display = 'none';
+            }
+        }
+
+        window.updateSimDisplay = function () {
+            const algo = document.getElementById('sim-algo-select').value;
+            const scoreVal = document.getElementById('sim-score-val');
+            const score = window.currentScores?.[algo];
+
+            if (score === null || score === undefined) {
+                scoreVal.innerText = "N/A";
+                scoreVal.style.color = "var(--subtle)";
+            } else {
+                scoreVal.innerText = (score * 100).toFixed(1) + "%";
+                if (score > 0.8) scoreVal.style.color = "var(--success)";
+                else if (score > 0.5) scoreVal.style.color = "var(--accent)";
+                else scoreVal.style.color = "#fd971f";
+            }
+        }
+
         async function fetchData() {
             const urlParams = new URLSearchParams(window.location.search);
             let id1 = urlParams.get('id1');
@@ -647,11 +743,13 @@
             const scrollContainer = document.getElementById('bsim-scroll');
             const metaContainer = document.getElementById('meta-container');
             const selectionTool = document.getElementById('selection-tool');
+            const simBar = document.getElementById('similarity-bar');
 
             if (!id1 || !id2) {
                 loader.style.display = 'none';
                 scrollContainer.style.display = 'none';
                 metaContainer.style.display = 'none';
+                simBar.style.display = 'none';
                 selectionTool.style.display = 'flex';
                 initSelectionTool();
                 return;
@@ -668,6 +766,7 @@
                 const data = await response.json();
 
                 metaContainer.innerHTML = formatMetaCard(data.meta1, id1, true) + formatMetaCard(data.meta2, id2, false);
+                fetchSimilarity(id1, id2);
 
                 window.bsimRows = data.rows;
                 window.tokenTipsL = data.left_tips || {};

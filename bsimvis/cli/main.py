@@ -128,12 +128,15 @@ def main():
             "--func", action="append", help="Filter by specific function ID/pattern"
         )
 
+        dp.add_argument(
+            "--algo",
+            choices=["jaccard", "unweighted_cosine"],
+            help="Algorithm to target (default: both for clear/list, unweighted_cosine for build)",
+        )
+
         if action in ["build", "rebuild"]:
-            dp.add_argument(
-                "--algo",
-                default="unweighted_cosine",
-                choices=["jaccard", "unweighted_cosine"],
-            )
+            # Set default for build/rebuild if not provided
+            dp.set_defaults(algo="unweighted_cosine")
             dp.add_argument(
                 "-k", "--top-k", type=int, default=20, help="Top K matches per function"
             )

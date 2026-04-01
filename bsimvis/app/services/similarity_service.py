@@ -9,19 +9,20 @@ LUA_SIM_SCRIPT = """
 local target_id = ARGV[1]
 local collection = ARGV[2]
 local algo = ARGV[3]
-local limit = tonumber(ARGV[4])
-local target_md5 = ARGV[5]
-local target_addr = ARGV[6]
-local threshold = tonumber(ARGV[7])
-local baked_set_key = ARGV[8]
+local timestamp = tonumber(ARGV[4])
+local limit = tonumber(ARGV[5])
+local target_md5 = ARGV[6]
+local target_addr = ARGV[7]
+local threshold = tonumber(ARGV[8])
+local baked_set_key = ARGV[9]
 
 local target_meta_raw = redis.call('JSON.GET', target_id .. ':meta')
 local target_meta = {}
 if target_meta_raw then target_meta = cjson.decode(target_meta_raw) end
 
--- ARGV[9...] are feature hashes
+-- ARGV[10...] are feature hashes
 local target_features = {}
-for i = 9, #ARGV do
+for i = 10, #ARGV do
     target_features[#target_features + 1] = ARGV[i]
 end
 
@@ -143,6 +144,7 @@ for i = 1, limit_val do
             feat_count1 = meta_a["bsim_features_count"] or 0,
             feat_count2 = meta_b["bsim_features_count"] or 0,
             min_features = math.min(meta_a["bsim_features_count"] or 0, meta_b["bsim_features_count"] or 0),
+            entry_date = timestamp,
             is_cross_binary = (md5_a ~= md5_b) and "true" or "false"
         }
         redis.call('JSON.SET', sim_meta_key, '$', cjson.encode(sim_doc))
@@ -181,6 +183,7 @@ for i = 1, limit_val do
         if sim_doc.feat_count1 then redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count1', sim_doc.feat_count1, sim_meta_key) end
         if sim_doc.feat_count2 then redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count2', sim_doc.feat_count2, sim_meta_key) end
         if sim_doc.min_features then redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key) end
+        if sim_doc.entry_date then redis.call('ZADD', 'idx:' .. collection .. ':sim:entry_date', sim_doc.entry_date, sim_meta_key) end
 
         if meta_a["tags"] then for _, t in ipairs(meta_a["tags"]) do index_tag('tags1', t) end end
         if meta_b["tags"] then for _, t in ipairs(meta_b["tags"]) do index_tag('tags2', t) end end
@@ -236,6 +239,7 @@ local function cleanup_key(sm_key)
     rem_item('idx:' .. collection .. ':sim:feat_count1', sm_key)
     rem_item('idx:' .. collection .. ':sim:feat_count2', sm_key)
     rem_item('idx:' .. collection .. ':sim:min_features', sm_key)
+    rem_item('idx:' .. collection .. ':sim:entry_date', sm_key)
     
     -- 4. Tags
     if doc.tags1 then
@@ -332,8 +336,18 @@ class SimilarityService:
         if not features:
             return False
 
-        # Lua ARGV: [id, collection, algo, top_k, md5, addr, threshold, baked_set, features...]
-        lua_args = [base_id, collection, algo, top_k, md5, addr, min_score, baked_set_key] + features
+        # Lua ARGV: [id, collection, algo, timestamp, top_k, md5, addr, threshold, baked_set, features...]
+        lua_args = [
+            base_id,
+            collection,
+            algo,
+            int(time.time() * 1000),
+            top_k,
+            md5,
+            addr,
+            min_score,
+            baked_set_key,
+        ] + features
 
         try:
             self._sim_script(args=lua_args)

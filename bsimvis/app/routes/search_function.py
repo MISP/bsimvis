@@ -3,7 +3,7 @@ import logging
 
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import query_ids
+from bsimvis.app.services.index_service import query_ids, parse_timestamp
 
 search_function_bp = Blueprint("search_function", __name__)
 
@@ -95,6 +95,12 @@ def search_functions():
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 
         normalize_tags(data)
+
+        # Enforce Unix timestamps for UI
+        for field in ["entry_date", "file_date"]:
+            if field in data:
+                data[field] = parse_timestamp(data[field])
+
         functions_list.append(data)
 
     # Fall back to global counter if index not built yet

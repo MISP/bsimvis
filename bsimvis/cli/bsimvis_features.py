@@ -105,6 +105,7 @@ def update_functions_incremental(collection, function_ids, label=None, r=None):
                 "line_idx": feat_item.get("line_idx"),
                 "addr_to_token_idx": feat_item.get("addr_to_token_idx"),
                 "pcode_block": feat_item.get("pcode_block"),
+                "entry_date": int(time.time() * 1000),
             }
             pipe.hset(
                 f"idx:{collection}:feature:{f_hash}:meta",

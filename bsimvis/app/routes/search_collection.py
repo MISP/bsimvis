@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_service import parse_timestamp
 import json
 
 search_collection_bp = Blueprint("search_collection", __name__)
@@ -31,7 +32,7 @@ def search_collections():
                 "name": name,
                 "total_files": int(meta.get("total_files", 0)),
                 "total_functions": int(meta.get("total_functions", 0)),
-                "last_updated": meta.get("last_updated", "N/A"),
+                "last_updated": parse_timestamp(meta.get("last_updated")),
             }
         )
 
@@ -71,9 +72,15 @@ def search_batches():
         b_uuid = data.get("batch_uuid")
         if col and b_uuid and "batch_id" not in data:
             data["batch_id"] = f"{col}:batch:{b_uuid}"
+        
+        # Ensure Unix timestamps for UI
+        for field in ["last_updated", "created_at", "entry_date", "file_date"]:
+            if field in data:
+                data[field] = parse_timestamp(data[field])
+
         all_results.append(data)
 
-    all_results.sort(key=lambda x: x.get("last_updated", ""), reverse=True)
+    all_results.sort(key=lambda x: x.get("last_updated", 0), reverse=True)
 
     total = len(all_results)
     page = all_results[offset : offset + limit]

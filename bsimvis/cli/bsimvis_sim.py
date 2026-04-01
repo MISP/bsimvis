@@ -60,7 +60,7 @@ def bake_similarities(args, r=None):
                     f"[!] ERROR: Collection '{args.collection}' is not fully indexed ({indexed}/{total})."
                 )
                 print(
-                    f"    Please run 'bsimvis index build -c {args.collection}' first, or use --ignore-indexing."
+                    f"    Please run 'bsimvis features build -c {args.collection}' first, or use --ignore-indexing."
                 )
             return
 
@@ -345,8 +345,8 @@ def main():
     parser.add_argument(
         "--min-score",
         type=float,
-        default=0.1,
-        help="Minimum similarity score (e.g., 0.1)",
+        default=0,
+        help="Minimum similarity score (default: 0)",
     )
     parser.add_argument(
         "--delay",

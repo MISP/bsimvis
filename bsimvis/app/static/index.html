@@ -1742,7 +1742,16 @@
         }
 
         function formatDate(iso) {
-            return (iso && iso !== 'N/A') ? new Date(iso).toLocaleString() : '---';
+            if (!iso || iso === 'N/A') return '---';
+            
+            // If it's a string that consists only of digits, convert to number
+            if (typeof iso === 'string' && /^\d+$/.test(iso)) {
+                iso = parseInt(iso, 10);
+            }
+            
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            return d.toLocaleString();
         }
 
         function normalizeFuncId(id) {

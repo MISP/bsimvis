@@ -38,7 +38,7 @@ def upload_bsim_data(data, args, config):
 
     num_files = 1
     num_functions = len(functions_data)
-    timestamp = datetime.datetime.now().isoformat()
+    timestamp = int(time.time() * 1000)
     batch_uuid = file_meta.get("batch_uuid", "unknown_batch_uuid")
     batch_name = file_meta.get("batch_name", "unknown_batch_name")
 
@@ -501,10 +501,10 @@ def get_bsim_data(program, args, config, batch_order):
 
     from ghidra.app.decompiler import DecompInterface, DecompileOptions
     from ghidra.util.task import ConsoleTaskMonitor
-    import datetime, uuid, logging
+    import uuid, logging
 
     monitor = ConsoleTaskMonitor()
-    now_iso = datetime.datetime.now().isoformat() + "Z"
+    now_unix = int(time.time() * 1000)
 
     batch_uuid = args.batch_uuid
     batch_name = args.batch_name
@@ -517,8 +517,8 @@ def get_bsim_data(program, args, config, batch_order):
     file_id = f"{file_md5}:#{file_md5}"
 
     file_metadata = {
-        "entry_date": now_iso,
-        "file_date": str(program.getCreationDate().toInstant().toString()),
+        "entry_date": now_unix,
+        "file_date": int(program.getCreationDate().getTime()),
         "file_md5": file_md5,
         "file_name": file_name,
         "batch_uuid": batch_uuid,
@@ -626,7 +626,7 @@ def get_bsim_data(program, args, config, batch_order):
             "function_name": func.getName(),
             "calling_convention": call_conv,
             "decompiler_id": decompiler_id,
-            "entry_date": now_iso,
+            "entry_date": now_unix,
             "file_date": file_metadata["file_date"],
             "file_md5": file_md5,
             "file_name": file_name,

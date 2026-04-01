@@ -297,6 +297,16 @@
         window.bsimRows = [];
         window.tokenTipsL = {};
         window.tokenTipsR = {};
+        
+        function formatDate(iso) {
+            if (!iso || iso === 'N/A') return '---';
+            if (typeof iso === 'string' && /^\d+$/.test(iso)) {
+                iso = parseInt(iso, 10);
+            }
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            return d.toLocaleString();
+        }
 
         function ensureTooltip() {
             if (!tooltipEl) tooltipEl = document.getElementById("bsim-tooltip");
@@ -667,8 +677,14 @@
             Object.keys(m).sort().forEach(k => {
                 if (!skipKeys.includes(k)) {
                     let val = m[k];
+                    
+                    // Format dates if the key implies it
+                    if (k.endsWith('_date') || k === 'created_at' || k === 'last_updated') {
+                        val = formatDate(val);
+                    }
+
                     if (Array.isArray(val)) {
-                        val = val.map(t => `<span class="tag-card">${t}</span>`).join('');
+                        val = val.length > 0 ? val.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
                     } else if (typeof val === 'object' && val !== null) {
                         val = JSON.stringify(val);
                     }

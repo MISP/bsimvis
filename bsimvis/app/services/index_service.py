@@ -8,6 +8,30 @@ Key naming conventions:
 """
 
 import json
+import datetime
+
+
+def parse_timestamp(val):
+    """Normalize mixed UTC ISO strings and Unix integers to Unix Milliseconds."""
+    if not val:
+        return 0
+    if isinstance(val, (int, float)):
+        # If it's already a high number (likely already ms), return as is.
+        # 1e12 is approx year 2001 in milliseconds, while it's year 33658 in seconds.
+        if val > 1e12:
+            return int(val)
+        # Otherwise convert seconds to ms
+        return int(val * 1000)
+    if isinstance(val, str):
+        try:
+            # Handle ISO 8601: 2026-03-26T11:48:07.851317Z or 2026-03-26T10:48:02.623Z
+            return int(
+                datetime.datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()
+                * 1000
+            )
+        except (ValueError, TypeError):
+            return 0
+    return 0
 
 # ---------------------------------------------------------------------------
 # TAG fields that get a Set per value
@@ -55,9 +79,15 @@ SIM_TAG_FIELDS = [
 ]
 
 # NUMERIC fields stored in a ZSET (member=doc_id, score=value)
-FILE_NUM_FIELDS = ["batch_order"]
-FUNC_NUM_FIELDS = ["batch_order", "instruction_count", "bsim_features_count"]
-SIM_NUM_FIELDS = ["score", "feat_count1", "feat_count2"]
+FILE_NUM_FIELDS = ["batch_order", "entry_date", "file_date"]
+FUNC_NUM_FIELDS = [
+    "batch_order",
+    "instruction_count",
+    "bsim_features_count",
+    "entry_date",
+    "file_date",
+]
+SIM_NUM_FIELDS = ["score", "feat_count1", "feat_count2", "min_features", "entry_date"]
 
 
 # ---------------------------------------------------------------------------

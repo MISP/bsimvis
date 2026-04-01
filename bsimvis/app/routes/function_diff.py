@@ -4,6 +4,7 @@ from flask_cors import CORS
 import difflib
 
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 
 function_diff_bp = Blueprint("function_diff", __name__)
@@ -302,6 +303,10 @@ def diff_api():
             meta1["file_id"] = f"{collection1}:file:{md5_1}"
         if "batch_id" not in meta1 and meta1.get("batch_uuid"):
             meta1["batch_id"] = f"{collection1}:batch:{meta1['batch_uuid']}"
+        if "entry_date" in meta1:
+            meta1["entry_date"] = parse_timestamp(meta1["entry_date"])
+        if "file_date" in meta1:
+            meta1["file_date"] = parse_timestamp(meta1["file_date"])
 
     if meta2:
         if "function_id" not in meta2:
@@ -310,6 +315,10 @@ def diff_api():
             meta2["file_id"] = f"{collection2}:file:{md5_2}"
         if "batch_id" not in meta2 and meta2.get("batch_uuid"):
             meta2["batch_id"] = f"{collection2}:batch:{meta2['batch_uuid']}"
+        if "entry_date" in meta2:
+            meta2["entry_date"] = parse_timestamp(meta2["entry_date"])
+        if "file_date" in meta2:
+            meta2["file_date"] = parse_timestamp(meta2["file_date"])
 
     # Flask's jsonify handles the dictionary to JSON conversion
     return jsonify(

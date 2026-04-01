@@ -3,6 +3,7 @@ import logging
 
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_service import parse_timestamp
 
 search_feature_bp = Blueprint("search_feature", __name__)
 
@@ -244,7 +245,13 @@ def get_feature_details(f_hash):
 
     func_ids = r.zrange(f"idx:{collection}:feature:{f_hash}:functions", 0, -1)
     raw_meta_vals = r.hvals(f"idx:{collection}:feature:{f_hash}:meta")
-    meta_data = [json.loads(v) for v in raw_meta_vals] if raw_meta_vals else []
+    meta_data = []
+    if raw_meta_vals:
+        for v in raw_meta_vals:
+            m = json.loads(v)
+            if "entry_date" in m:
+                m["entry_date"] = parse_timestamp(m["entry_date"])
+            meta_data.append(m)
 
     total_occurrences = len(meta_data)
     paginated_meta = meta_data[offset : offset + limit]

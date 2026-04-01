@@ -4,7 +4,7 @@ import hashlib
 
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import query_ids
+from bsimvis.app.services.index_service import query_ids, parse_timestamp
 
 search_similarity_bp = Blueprint("search_similarity", __name__)
 
@@ -492,6 +492,7 @@ def similarity_search():
                         "score": sim_score,
                         "feat_count": int(feat_count),
                         "sid": sid,
+                        "entry_date": parse_timestamp(data.get("entry_date")),
 
                         "meta1": {
                             "file_md5": data.get("md5_1"),

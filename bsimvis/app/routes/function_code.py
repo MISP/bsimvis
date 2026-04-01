@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
+from bsimvis.app.services.index_service import parse_timestamp
 import traceback
 
 function_code_bp = Blueprint("function_code", __name__)
@@ -107,6 +108,10 @@ def get_function_code():
                 meta["file_id"] = f"{collection}:file:{md5}"
             if "batch_id" not in meta and meta.get("batch_uuid"):
                 meta["batch_id"] = f"{collection}:batch:{meta['batch_uuid']}"
+            if "entry_date" in meta:
+                meta["entry_date"] = parse_timestamp(meta["entry_date"])
+            if "file_date" in meta:
+                meta["file_date"] = parse_timestamp(meta["file_date"])
 
         return jsonify({"rows": rows, "tips": tips, "meta": meta or {}})
     except Exception as e:

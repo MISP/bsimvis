@@ -12,7 +12,7 @@ DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
 MAX_POOL_LIMIT = 1000000
 CACHE_TIME_THRESHOLD = 0.1 # Only cache requests that take more than X seconds
-MAX_CACHED_RESULTS = 1000
+MAX_CACHED_RESULTS = 10000
 
 @search_similarity_bp.route("/api/similarity/search", methods=["GET"])
 def similarity_search():

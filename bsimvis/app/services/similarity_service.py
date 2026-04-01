@@ -366,27 +366,29 @@ class SimilarityService:
 
     def get_pair_score(self, id1, id2, algo="unweighted_cosine"):
         """
-        Returns the score for a specific pair, triggering a bake if missing.
-        Fallbacks to direct calculation if missing from cache (e.g. below threshold).
+        Returns the score for a specific pair.
+        Uses cache if already baked, otherwise performs direct calculation in Python.
+        Ensures no on-demand baking occurs to prevent index pollution.
         """
         try:
-            coll = id1.split(":")[0]
+            parts1 = id1.split(":")
+            parts2 = id2.split(":")
+            if len(parts1) < 1 or len(parts2) < 1:
+                return None
+            
+            coll1 = parts1[0]
+            coll2 = parts2[0]
 
-            # 1. Check Cache
-            score = self.check_cache(id1, id2, coll, algo)
+            # 1. Cross-collection diff: Always direct calculation (No Cache, No Bake)
+            if coll1 != coll2:
+                return self.calculate_exact_score(id1, id2, algo=algo)
+
+            # 2. Same collection: Check Cache first
+            score = self.check_cache(id1, id2, coll1, algo)
             if score is not None:
                 return score
 
-            # 2. Trigger on-demand bake
-            self.bake_function(coll, id1, algo=algo)
-            self.bake_function(coll, id2, algo=algo)
-
-            # 3. Re-check Cache
-            score = self.check_cache(id1, id2, coll, algo)
-            if score is not None:
-                return score
-
-            # 4. Final Fallback: Direct Calculation (Sub-threshold or out of Top-K)
+            # 3. Fallback: Direct Calculation (No on-demand baking)
             return self.calculate_exact_score(id1, id2, algo=algo)
 
         except Exception as e:

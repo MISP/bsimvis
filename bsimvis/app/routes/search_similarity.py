@@ -1,7 +1,7 @@
 import json
 import logging
 import hashlib
-
+import os
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import query_ids, parse_timestamp
@@ -30,6 +30,7 @@ def similarity_search():
         "prep_time": 0,
         "inter_time": 0,
         "mask_time": 0,
+        "cache_write": 0,
         "enrich_time": 0
     }
     session_id = str(uuid.uuid4())[:8]
@@ -140,307 +141,143 @@ def similarity_search():
             metrics["cache_lookup"] = m_cache_lookup_time
 
             try:
-                # 1. Resolve categorical filters (Substrings/Tags/MD5s)
-                def resolve_to_temp_zset(tag_fields_and_vals):
-                    """
-                    Resolves multiple tag fields/values into a single temp ZSET.
-                    Returns (temp_key_name or None)
-                    """
-                    nonlocal pool_truncated
-                    found_keys = []
-                    for field_prefix, val in tag_fields_and_vals:
-                        if not val:
-                            continue
-                        
-                        # Determine resolution strategy: use registry SSCAN if available
-                        registry_key = f"idx:{col}:reg:{field_prefix}"
-                        # For compound prefixes like tags1, we might need to check multiple or handle wildcards
-                        # but typically we have specific registries: name1, name2, tags1, tags2
-                        has_registry = r.exists(registry_key)
-                        
-                        target_sub = val if "*" in val else f"*{val}*"
-                        patterns = [f"idx:{col}:sim:{field_prefix}*:{target_sub}"]
-                        if val.lower() != val:
-                            patterns.append(f"idx:{col}:sim:{field_prefix}*:{val.lower() if '*' in val else f'*{val.lower()}*'}")
+                # 1. Load and Register Lua Search Engine
+                lua_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "lua", "search_similarity.lua")
+                with open(lua_path, 'r') as f:
+                    lua_script_content = f.read()
+                
+                search_script = r.register_script(lua_script_content)
 
-                        for pat in patterns:
-                            cursor = 0
-                            # Respect pool_limit by adjusting scan batch size
-                            scan_count = min(5000, pool_limit)
-                            while True:
-                                if has_registry:
-                                    # FAST PATH: Scan the registry Set
-                                    cursor, sub_keys = r.sscan(registry_key, cursor=cursor, match=pat, count=scan_count)
-                                else:
-                                    # SLOW FALLBACK: Global Scan
-                                    cursor, sub_keys = r.scan(cursor=cursor, match=pat, count=scan_count)
-                                    
-                                if sub_keys:
-                                    found_keys.extend(sub_keys)
-                                if cursor == 0 or len(found_keys) >= pool_limit:
-                                    break
-                            
-                            if len(found_keys) >= pool_limit:
-                                found_keys = found_keys[:pool_limit]
-                                break
-                    
-                    if found_keys:
-                        nonlocal filter_keys_found
-                        # Only count the unique keys we actually accepted
-                        unique_final = list(set(found_keys))
-                        filter_keys_found += len(unique_final)
-                        if len(unique_final) >= pool_limit:
-                            pool_truncated = True
-                            
-                        found_keys = unique_final
-                        friendly_f = tag_fields_and_vals[0][0] # use first field for the name
-                        u_key = f"tmp:{col}:filter:{session_id}:union:{friendly_f}"
-                        
-                        # Process each found key
-                        batch_size = 500
-                        for i in range(0, len(found_keys), batch_size):
-                            batch = found_keys[i: i + batch_size]
-                            if i == 0:
-                                r.zunionstore(u_key, batch)
-                            else:
-                                r.zunionstore(u_key, [u_key] + batch)
-                        
-                        # CRITICAL: Truncate the resulting UNION of IDs to the pool_limit.
-                        # Even if we only have 'pool_limit' keys, each key might have multiple documents.
-                        if r.zcard(u_key) > pool_limit:
-                            if sort_order == "desc":
-                                r.zremrangebyrank(u_key, 0, -(pool_limit + 1))
-                            else:
-                                r.zremrangebyrank(u_key, pool_limit, -1)
-                            pool_truncated = True
-                        
-                        r.expire(u_key, 60)
-                        temp_keys.append(u_key)
-                        return u_key
-                    return None
+                t_lua_prep = time.perf_counter()
+                bucket_keys = []
+                groups = []
 
-                t_cat_start = time.perf_counter()
+                def get_bucket_idx(prefix, val):
+                    # Helper to find buckets and return their index in the bucket_keys list
+                    # We check both suffix 1 and 2 for categorical fields
+                    prefixes = [f"{prefix}1", f"{prefix}2"] if prefix in ["name", "tags", "id", "batch_uuid", "language_id", "md5"] else [prefix]
+                    found_for_filter = []
+                    target_lower = val.lower().replace("*", "") # Treat wildcards as substrings for simplicity if they exist
 
-                # 1.1 Apply explicit filters
-                for f_p, val in [
-                    ("language_id", lang_filter),
-                    ("name", name_filter),
-                    ("tags", tag_filter),
-                ]:
-                    if val:
-                        sk = resolve_to_temp_zset([(f_p, val)])
-                        if sk:
-                            intersection_configs.append((sk, 0))
-                        else:
-                            return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    for p in prefixes:
+                        registry_key = f"idx:{col}:reg:{p}"
+                        if not r.exists(registry_key): continue
+                        
+                        all_buckets = r.smembers(registry_key)
+                        for b_key in all_buckets:
+                            b_key_str = b_key.decode() if isinstance(b_key, bytes) else str(b_key)
+                            # BsimVis bucket format: idx:coll:sim:p:VALUE
+                            # We check if target_lower is in VALUE
+                            if target_lower in b_key_str.lower():
+                                if b_key_str not in bucket_keys:
+                                    bucket_keys.append(b_key_str)
+                                found_for_filter.append(bucket_keys.index(b_key_str) + 1) # 1-indexed for Lua
+                                if len(found_for_filter) >= 1000: break
+                        if len(found_for_filter) >= 1000: break
+                    return found_for_filter
 
-                # 1.2 MD5 Filters
+                # Build Logical AND Groups
+                # Each group is an OR-collection of buckets
+                
+                # Group: Language
+                if lang_filter:
+                    g = get_bucket_idx("language_id", lang_filter)
+                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    groups.append(g)
+
+                # Group: Name
+                if name_filter:
+                    g = get_bucket_idx("name", name_filter)
+                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    groups.append(g)
+
+                # Group: Tag
+                if tag_filter:
+                    g = get_bucket_idx("tags", tag_filter)
+                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    groups.append(g)
+
+                # Group: MD5s (Unions of all MD5s)
                 if md5_filters:
-                    md5_pairs = [("md5_1", m) for m in md5_filters] + [("md5_2", m) for m in md5_filters]
-                    mk = resolve_to_temp_zset(md5_pairs)
-                    if mk:
-                        intersection_configs.append((mk, 0))
-                    else:
-                        return jsonify({"total": 0, "pairs": [], "algo": algo, "truncated": False})
+                    g = []
+                    for m in md5_filters:
+                        g.extend(get_bucket_idx("md5", m))
+                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    groups.append(g)
 
-                # 1.3 Global Search Query
+                # Group: Search Query (Each word is an AND group containing multiple OR buckets)
                 if search_q:
-                    words = [w for w in search_q.split() if w.strip()]
-                    for word in words:
-                        wk = resolve_to_temp_zset([("name", word), ("tags", word), ("id", word), ("language_id", word)])
-                        if wk:
-                            intersection_configs.append((wk, 0))
-                        else:
-                            return jsonify({"total": 0, "pairs": [], "algo": algo, "truncated": False})
+                    for word in [w for w in search_q.split() if w.strip()]:
+                        g = []
+                        for p in ["name", "tags", "id", "language_id"]:
+                            g.extend(get_bucket_idx(p, word))
+                        if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                        groups.append(g)
 
-                # 1.4 Cross Binary
+                # Group: Cross Binary
                 if is_cross_binary:
                     cb_key = f"idx:{col}:sim:is_cross_binary:true"
                     if r.exists(cb_key):
-                        intersection_configs.append((cb_key, 0))
-                    else:
-                        return jsonify({"total": 0, "pairs": [], "algo": algo, "truncated": False})
+                        if cb_key not in bucket_keys: bucket_keys.append(cb_key)
+                        groups.append([bucket_keys.index(cb_key) + 1])
+                    else: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
 
-                metrics["filter_resolve"] = time.perf_counter() - t_cat_start
+                # Sort groups by estimated size (smallest first) to optimize Lua iteration
+                # This is a crude optimization but helps
+                groups.sort(key=lambda x: len(x))
+
+                lua_config = {
+                    "groups": groups,
+                    "pool_limit": pool_limit,
+                    "min_score": min_score,
+                    "max_score": max_score,
+                    "min_features": min_features,
+                    "offset": offset,
+                    "limit": limit,
+                    "sort_by": sort_by,
+                    "sort_order": sort_order
+                }
+
+                logging.info(f"SIM SEARCH | {session_id} | Buckets: {len(bucket_keys)}, Groups: {len(groups)}")
                 
-                # 2. Add Sort/Range ZSETs
-                sim_weight = 1 if sort_by == "score" else 0
-                feat_weight = 1 if sort_by == "feat_count" else 0
+                metrics["filter_resolve"] = time.perf_counter() - t_lua_prep
                 
-                # LAZY CANDIDATE RESOLUTION: If we have filters (names, tags), use them as the base.
-                # Only use the pool_limit (algo_cap_key) if we don't have any other filters!
-                algo_cap_key = None
-                if not [c for c in intersection_configs if c[0] != f"idx:{col}:sim:is_cross_binary:true"]:
-                    t_prep_start = time.perf_counter()
-                    algo_cap_key = f"tmp:{col}:filter:{session_id}:algo_cap"
+                # 2. Execute Lua Search
+                t_lua_start = time.perf_counter()
+                keys = [algo_zset, f"idx:{col}:sim:feat_count1" if sort_by == "feat_count" else f"idx:{col}:sim:min_features"] + bucket_keys
+                try:
+                    # Execute pre-registered script
+                    res = search_script(keys=keys, args=[json.dumps(lua_config)])
+                    total = res[0]
+                    pool_truncated = bool(res[1])
+                    all_ids = res[2]
+                    all_scores = res[3]
                     
-                    # ALWAYS take only the top-scoring similarity matches up to pool_limit from the start
-                    top_n = r.zrevrange(algo_zset, 0, pool_limit - 1, withscores=True)
-                    if not top_n:
-                        return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    
-                    # Store only the limited set in our temporary cap ZSET
-                    # For huge pools, this is much faster/leaner than ZINTERSTORE in Kvrocks
-                    r.zadd(algo_cap_key, {p[0]: p[1] for p in top_n})
-                    
-                    if r.zcard(algo_zset) > pool_limit:
-                        pool_truncated = True
+                    # 3. Cache results (Top-1000)
+                    t_cache_write_start = time.perf_counter()
+                    if use_cache and (all_ids or total == 0):
+                        cache_data = {
+                            "total": total,
+                            "pool_truncated": pool_truncated,
+                            "ids": all_ids,
+                            "scores": all_scores
+                        }
+                        r.setex(cache_key, 3600, json.dumps(cache_data))
+                    metrics["cache_write"] = time.perf_counter() - t_cache_write_start
 
-                    r.expire(algo_cap_key, 60)
-                    temp_keys.append(algo_cap_key)
-                    intersection_configs.append((algo_cap_key, sim_weight))
-                    metrics["prep_time"] = time.perf_counter() - t_prep_start
-                else:
-                    # We have restrictive categorical filters! Join them with the FULL similarity index.
-                    intersection_configs.append((algo_zset, sim_weight))
-                    metrics["prep_time"] = 0
+                    # 4. Slice for current page
+                    page_results = list(zip(all_ids[offset : offset + limit], all_scores[offset : offset + limit]))
 
-                if sort_by == "feat_count" or has_min_features:
-                    f_idx = f"idx:{col}:sim:feat_count1" if sort_by == "feat_count" else f"idx:{col}:sim:min_features"
-                    if r.exists(f_idx):
-                        intersection_configs.append((f_idx, feat_weight))
+                except Exception as lua_err:
+                    logging.error(f"LUA SEARCH CRASH: {lua_err}")
+                    return jsonify({"detail": f"Search engine error: {lua_err}"}), 500
 
-                # 3. Perform Intersection
-                inter_key = f"tmp:{col}:filter:{session_id}:inter"
-                t_inter_start = time.perf_counter()
+                metrics["inter_time"] = time.perf_counter() - t_lua_start
+                metrics["prep_time"] = 0
+                metrics["mask_time"] = 0
                 
-                # OPTIMIZATION: If we only have the similarity index (no filters), avoid the ZINTERSTORE entirely.
-                if len(intersection_configs) == 1 and intersection_configs[0][0] == algo_cap_key:
-                    inter_key = algo_cap_key
-                    metrics["inter_time"] = 0
-                else:
-                    if len(intersection_configs) > 1:
-                        pipe = r.pipeline()
-                        for k, _ in intersection_configs:
-                            pipe.zcard(k)
-                        sizes = pipe.execute()
-                        sorted_plan = sorted(zip(intersection_configs, sizes), key=lambda x: x[1])
-                        intersection_configs = [item[0] for item in sorted_plan]
-                        
-                        # New Debug Log: Show the optimized intersection order and sizes
-                        plan_str = ", ".join([f"{c[0].split(':')[-1]} ({sz})" for c, sz in sorted_plan])
-                        logging.info(f"SIM SEARCH | {session_id} | Intersection Plan (Sorted): {plan_str}")
-
-                    configs = {k: w for k, w in intersection_configs}
-                    r.zinterstore(inter_key, configs)
-                    metrics["inter_time"] = time.perf_counter() - t_inter_start
-                
-                # FINAL TRUNCATION: Re-add truncation for the final result set.
-                # This catches any cases where the intersection of massive sets (like cross_binary) 
-                # still exceeds the pool_limit.
-                if inter_key != algo_cap_key and r.zcard(inter_key) > pool_limit:
-                    if sort_order == "desc":
-                        r.zremrangebyrank(inter_key, 0, -(pool_limit + 1))
-                    else:
-                        r.zremrangebyrank(inter_key, pool_limit, -1)
-                    pool_truncated = True
-                
-                r.expire(inter_key, 60)
-                temp_keys.append(inter_key)
-
-                # 4. Apply Ranges (min_score / max_score)
-                if sort_by == "score":
-                    # Scores in inter_key are similarity scores, can filter directly
-                    r.zremrangebyscore(inter_key, "-inf", f"({min_score}")
-                    r.zremrangebyscore(inter_key, f"({max_score}", "inf")
-                else:
-                    # SCORE-RANGE MASK: Scores in inter_key are not similarity scores (e.g., feat_count)
-                    if min_score > 0 or max_score < 1.0:
-                        s_mask = f"tmp:{col}:filter:{session_id}:score_mask"
-                        # Fast intersection with the full algo_zset because inter_key is small
-                        r.zinterstore(s_mask, {inter_key: 0, algo_zset: 1})
-                        r.zremrangebyscore(s_mask, "-inf", f"({min_score}")
-                        r.zremrangebyscore(s_mask, f"({max_score}", "inf")
-                        r.expire(s_mask, 60)
-                        temp_keys.append(s_mask)
-                        # Re-intersect to apply the similarity-range mask
-                        r.zinterstore(inter_key, {inter_key: 1, s_mask: 0})
-
-                if has_min_features:
-                    # OPTIMIZED RANGE FILTER: Avoid 8M-intersection if result set is small
-                    t_mask_start = time.perf_counter()
-                    inter_size = r.zcard(inter_key)
-                    lean_mask = False
-                    
-                    if inter_size < 10000:
-                        # LEAN MASKING: Fetch feature counts only for candidates
-                        lean_mask = True
-                        ids_to_check = r.zrange(inter_key, 0, -1)
-                        if ids_to_check:
-                            # Use pipeline to fetch feature scores efficiently
-                            pipe = r.pipeline()
-                            for sid in ids_to_check:
-                                pipe.zscore(f"idx:{col}:sim:min_features", sid)
-                            f_scores = pipe.execute()
-                            
-                            to_remove = []
-                            for i, fs in enumerate(f_scores):
-                                if fs is None or float(fs) < min_features:
-                                    to_remove.append(ids_to_check[i])
-                            
-                            if to_remove:
-                                r.zrem(inter_key, *to_remove)
-                    else:
-                        # STANDARD MASKING: Full database intersection
-                        mf_mask = f"tmp:{col}:filter:{session_id}:mf_mask"
-                        r.zinterstore(mf_mask, {f"idx:{col}:sim:min_features": 1, inter_key: 0})
-                        r.zremrangebyscore(mf_mask, "-inf", f"({min_features}")
-                        r.expire(mf_mask, 60)
-                        temp_keys.append(mf_mask)
-                        r.zinterstore(inter_key, {inter_key: 1, mf_mask: 0})
-                        
-                    metrics["mask_time"] = time.perf_counter() - t_mask_start
-                    if lean_mask:
-                        metrics["mask_time"] = -(metrics["mask_time"]) # Mark Negative for Lean path in logs
-
-                # 5. Handle Final Sorting (Sorting is now handled by ZINTERSTORE weights)
-                final_zset = inter_key
-
-                # 6. Fetch Total
-                total = r.zcard(final_zset)
-                
-                # Top-K Caching
-                cache_count = min(total, MAX_CACHED_RESULTS)
-                if sort_order == "desc":
-                    top_k = r.zrevrange(final_zset, 0, cache_count - 1, withscores=True)
-                else:
-                    top_k = r.zrange(final_zset, 0, cache_count - 1, withscores=True)
-                
-                if offset + limit <= len(top_k):
-                    page_results = top_k[offset : offset + limit]
-                else:
-                    if sort_order == "desc":
-                        page_results = r.zrevrange(final_zset, offset, offset + limit - 1, withscores=True)
-                    else:
-                        page_results = r.zrange(final_zset, offset, offset + limit - 1, withscores=True)
-
-                elapsed_time = time.perf_counter() - start_time
-                if elapsed_time >= CACHE_TIME_THRESHOLD and top_k:
-                    # Async Top-K caching to avoid blocking the response
-                    def save_cache_task(key, data_map):
-                        try:
-                            t_cw_start = time.perf_counter()
-                            r.setex(key, 300, json.dumps(data_map))
-                            cw_time = time.perf_counter() - t_cw_start
-                            logging.info(f"Top-K Cache saved ASYNC (write={cw_time:.3f}s, {len(data_map['ids'])} items): {key}")
-                        except Exception as exc:
-                            logging.error(f"Async cache save failed: {exc}")
-
-                    cache_payload = {
-                        "total": total,
-                        "ids": [p[0] for p in top_k],
-                        "scores": [p[1] for p in top_k],
-                        "pool_truncated": pool_truncated,
-                        "collection": col,
-                    }
-                    import threading
-                    threading.Thread(target=save_cache_task, args=(cache_key, cache_payload), daemon=True).start()
-                
-                # (No immediate breakdown logging here as we consolidate to the end)
-
             finally:
-                if temp_keys:
-                    r.delete(*temp_keys)
+                pass
 
         # --- PER-PAGE ENRICHMENT ---
         t_enrich_start = time.perf_counter()
@@ -525,6 +362,7 @@ def similarity_search():
             f"Total: {total} | Filters: {filter_keys_found} (in {metrics['filter_resolve']:.3f}s) | "
             f"Inter: {len(intersection_configs)} (in {metrics['inter_time']:.3f}s) | "
             f"Prep: {metrics['prep_time']:.3f}s | "
+            f"CW: {metrics.get('cache_write', 0):.3f}s | "
             f"Mask: {abs(metrics['mask_time']):.3f}s {'[Lean]' if metrics['mask_time'] < 0 else '[Full]'} | "
             f"Enrich: {metrics['enrich_time']:.3f}s | Total: {total_time:.3f}s"
         )

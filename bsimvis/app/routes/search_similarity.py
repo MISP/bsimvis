@@ -82,6 +82,7 @@ def similarity_search():
             "min_score": min_score,
             "max_score": max_score,
             "min_features": min_features,
+            "pool_limit": pool_limit, # CRITICAL: Include pool_limit in cache hash
             "cross_binary": is_cross_binary,
             "q": (request.args.get("q") or "").strip().lower(),
             "name": (request.args.get("name") or "").strip().lower(),
@@ -92,7 +93,6 @@ def similarity_search():
             "batch_uuid": (request.args.get("batch_uuid") or "").strip().lower(),
             "sort_by": (request.args.get("sort_by") or "").strip().lower(),
             "sort_order": (request.args.get("sort_order") or "").strip().lower(),
-            
         }
         # Include all other filters
         for f in ["md5_", "id", "language_id", "batch_uuid"]:
@@ -165,29 +165,34 @@ def similarity_search():
 
                         for pat in patterns:
                             cursor = 0
+                            # Respect pool_limit by adjusting scan batch size
+                            scan_count = min(5000, pool_limit)
                             while True:
                                 if has_registry:
                                     # FAST PATH: Scan the registry Set
-                                    cursor, sub_keys = r.sscan(registry_key, cursor=cursor, match=pat, count=5000)
+                                    cursor, sub_keys = r.sscan(registry_key, cursor=cursor, match=pat, count=scan_count)
                                 else:
                                     # SLOW FALLBACK: Global Scan
-                                    cursor, sub_keys = r.scan(cursor=cursor, match=pat, count=5000)
+                                    cursor, sub_keys = r.scan(cursor=cursor, match=pat, count=scan_count)
                                     
                                 if sub_keys:
                                     found_keys.extend(sub_keys)
                                 if cursor == 0 or len(found_keys) >= pool_limit:
                                     break
+                            
                             if len(found_keys) >= pool_limit:
+                                found_keys = found_keys[:pool_limit]
                                 break
                     
                     if found_keys:
                         nonlocal filter_keys_found
-                        filter_keys_found += len(found_keys)
-                        if len(found_keys) >= pool_limit:
-                            found_keys = found_keys[:pool_limit]
+                        # Only count the unique keys we actually accepted
+                        unique_final = list(set(found_keys))
+                        filter_keys_found += len(unique_final)
+                        if len(unique_final) >= pool_limit:
                             pool_truncated = True
                             
-                        found_keys = list(set(found_keys))
+                        found_keys = unique_final
                         friendly_f = tag_fields_and_vals[0][0] # use first field for the name
                         u_key = f"tmp:{col}:filter:{session_id}:union:{friendly_f}"
                         
@@ -200,6 +205,8 @@ def similarity_search():
                             else:
                                 r.zunionstore(u_key, [u_key] + batch)
                         
+                        # CRITICAL: Truncate the resulting UNION of IDs to the pool_limit.
+                        # Even if we only have 'pool_limit' keys, each key might have multiple documents.
                         if r.zcard(u_key) > pool_limit:
                             if sort_order == "desc":
                                 r.zremrangebyrank(u_key, 0, -(pool_limit + 1))
@@ -267,26 +274,17 @@ def similarity_search():
                     t_prep_start = time.perf_counter()
                     algo_cap_key = f"tmp:{col}:filter:{session_id}:algo_cap"
                     
-                    # ALWAYS take the top-scoring similarity matches, regardless of final sort_order
-                    if pool_limit <= 100000:
-                        top_n = r.zrevrange(algo_zset, 0, pool_limit - 1, withscores=True)
-                        
-                        if not top_n:
-                            return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                        
-                        r.zadd(algo_cap_key, {p[0]: p[1] for p in top_n})
-                        if r.zcard(algo_zset) > pool_limit:
-                            pool_truncated = True
-                    else:
-                        # For huge pools (>100k), server-side ZINTERSTORE avoids massive data round-trips
-                        r.zinterstore(algo_cap_key, {algo_zset: 1})
-                        # ALWAYS keep the highest scores (rank 0 is lowest, so remove from 0 up to card - limit - 1)
-                        # r.zremrangebyrank(algo_cap_key, 0, -(pool_limit + 1)) correctly keeps TOP pool_limit
-                        r.zremrangebyrank(algo_cap_key, 0, -(pool_limit + 1))
-                        
-                        # Already knows it's truncated if we're here and zcard > limit
-                        if r.zcard(algo_zset) > pool_limit:
-                            pool_truncated = True
+                    # ALWAYS take only the top-scoring similarity matches up to pool_limit from the start
+                    top_n = r.zrevrange(algo_zset, 0, pool_limit - 1, withscores=True)
+                    if not top_n:
+                        return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    
+                    # Store only the limited set in our temporary cap ZSET
+                    # For huge pools, this is much faster/leaner than ZINTERSTORE in Kvrocks
+                    r.zadd(algo_cap_key, {p[0]: p[1] for p in top_n})
+                    
+                    if r.zcard(algo_zset) > pool_limit:
+                        pool_truncated = True
 
                     r.expire(algo_cap_key, 60)
                     temp_keys.append(algo_cap_key)
@@ -327,7 +325,9 @@ def similarity_search():
                     r.zinterstore(inter_key, configs)
                     metrics["inter_time"] = time.perf_counter() - t_inter_start
                 
-                # Result is already capped by prep and filters, final check if needed
+                # FINAL TRUNCATION: Re-add truncation for the final result set.
+                # This catches any cases where the intersection of massive sets (like cross_binary) 
+                # still exceeds the pool_limit.
                 if inter_key != algo_cap_key and r.zcard(inter_key) > pool_limit:
                     if sort_order == "desc":
                         r.zremrangebyrank(inter_key, 0, -(pool_limit + 1))

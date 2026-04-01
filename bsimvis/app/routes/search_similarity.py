@@ -157,7 +157,7 @@ def similarity_search():
                     # We check both suffix 1 and 2 for categorical fields
                     prefixes = [f"{prefix}1", f"{prefix}2"] if prefix in ["name", "tags", "id", "batch_uuid", "language_id", "md5"] else [prefix]
                     found_for_filter = []
-                    target_lower = val.lower().replace("*", "") # Treat wildcards as substrings for simplicity if they exist
+                    target_lower = val.lower().replace("*", "")
 
                     for p in prefixes:
                         registry_key = f"idx:{col}:reg:{p}"
@@ -166,14 +166,22 @@ def similarity_search():
                         all_buckets = r.smembers(registry_key)
                         for b_key in all_buckets:
                             b_key_str = b_key.decode() if isinstance(b_key, bytes) else str(b_key)
-                            # BsimVis bucket format: idx:coll:sim:p:VALUE
-                            # We check if target_lower is in VALUE
-                            if target_lower in b_key_str.lower():
+                            b_key_lower = b_key_str.lower()
+                            
+                            # Match against original target
+                            if target_lower in b_key_lower:
                                 if b_key_str not in bucket_keys:
                                     bucket_keys.append(b_key_str)
-                                found_for_filter.append(bucket_keys.index(b_key_str) + 1) # 1-indexed for Lua
+                                
+                                b_idx = bucket_keys.index(b_key_str) + 1
+                                if b_idx not in found_for_filter:
+                                    found_for_filter.append(b_idx) # 1-indexed for Lua
+                                
                                 if len(found_for_filter) >= 1000: break
                         if len(found_for_filter) >= 1000: break
+                    
+                    if found_for_filter:
+                        logging.info(f"SIM SEARCH | {session_id} | Resolved {len(found_for_filter)} buckets for '{val}'")
                     return found_for_filter
 
                 # Build Logical AND Groups

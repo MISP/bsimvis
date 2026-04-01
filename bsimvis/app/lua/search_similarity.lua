@@ -19,19 +19,29 @@ local total_found = 0
 local pool_count = 0
 local pool_truncated = false
 
--- 1. Pre-build Lookup Tables for Secondary Groups
+-- Helper: Get Union of Multiple Buckets in Safe Chunks (max 500 keys per ZUNION)
+local function get_union_lookup(group_indices)
+    local lookup = {}
+    local b_keys = {}
+    for _, idx in ipairs(group_indices) do table.insert(b_keys, buckets[idx]) end
+    
+    for i=1, #b_keys, 500 do
+        local chunk = {}
+        for j=i, math.min(i+499, #b_keys) do table.insert(chunk, b_keys[j]) end
+        -- native ZUNION is much faster than ZRANGE loop in Lua
+        local ids = redis.call('ZUNION', #chunk, unpack(chunk))
+        for _, id in ipairs(ids) do
+            lookup[id] = true
+        end
+    end
+    return lookup
+end
+
+-- 1. Pre-build Lookup Tables for Secondary Groups (i >= 2)
 local group_lookups = {}
 if #groups > 1 then
     for i=2, #groups do
-        local lookup = {}
-        for _, b_idx in ipairs(groups[i]) do
-            local b_key = buckets[b_idx]
-            local b_ids = redis.call('ZRANGE', b_key, 0, -1)
-            for _, sid in ipairs(b_ids) do
-                lookup[sid] = true
-            end
-        end
-        group_lookups[i] = lookup
+        group_lookups[i] = get_union_lookup(groups[i])
     end
 end
 
@@ -61,13 +71,16 @@ if use_algo_base then
     end
     if #raw / 2 >= pool_limit then pool_truncated = true end
 else
+    -- Filtered search: Fetch Base Group candidates (Group 1)
     for _, b_idx in ipairs(groups[1]) do
         local b_key = buckets[b_idx]
-        local b_ids = redis.call('ZRANGE', b_key, 0, -1)
+        local b_ids = redis.call('ZRANGE', b_key, 0, -1) -- Still one-by-one to allow early exit on pool_limit
         for _, sid in ipairs(b_ids) do
             if not seen[sid] then
                 seen[sid] = true
                 pool_count = pool_count + 1
+                
+                -- Intersection check against secondary lookup tables
                 local match = true
                 for i=2, #groups do
                     if not group_lookups[i][sid] then
@@ -75,6 +88,7 @@ else
                         break
                     end
                 end
+                
                 if match then
                     local score = redis.call('ZSCORE', algo_zset, sid)
                     if score then
@@ -95,6 +109,7 @@ else
                         end
                     end
                 end
+                
                 if pool_count >= pool_limit then 
                     pool_truncated = true
                     break 
@@ -110,11 +125,10 @@ table.sort(refined, function(a, b)
     if sort_order == "desc" then return a[2] > b[2] else return a[2] < b[2] end
 end)
 
--- 4. Return Top-1000 for caching + global metadata
-local cache_limit = 1000
+-- 4. Return Top-1000 for caching + global total
 local result_ids = {}
 local result_scores = {}
-for i=1, math.min(#refined, cache_limit) do
+for i=1, math.min(#refined, 1000) do
     table.insert(result_ids, refined[i][1])
     table.insert(result_scores, tostring(refined[i][2]))
 end

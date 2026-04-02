@@ -776,7 +776,24 @@ def process_target(target, args, config, batch_order) -> int:
 
             try:
                 t0 = time.time()
-                program = project.importProgram(target_path, readOnly=True)
+                if args.processor:
+                    from ghidra.program.model.lang import LanguageID, CompilerSpecID
+                    from ghidra.program.util import DefaultLanguageService
+
+                    lang_service = DefaultLanguageService.getLanguageService()
+                    lang_id = LanguageID(args.processor)
+                    lang = lang_service.getLanguage(lang_id)
+
+                    if args.cspec:
+                        cspec_id = CompilerSpecID(args.cspec)
+                        cspec = lang.getCompilerSpecByID(cspec_id)
+                    else:
+                        cspec = lang.getDefaultCompilerSpec()
+
+                    logging.info(f"[i] Importing {target_path.name} with forced language: {lang_id}")
+                    program = project.importProgram(target_path, lang, cspec)
+                else:
+                    program = project.importProgram(target_path, readOnly=True)
 
                 run_profile_analysis(program, args.profile, config)
 
@@ -993,6 +1010,20 @@ def cli_main():
         help="Minimum function length to be considered",
         type=int,
         default=10,
+    )
+
+    ghidra_import = parser.add_argument_group("Ghidra Import Options")
+    ghidra_import.add_argument(
+        "--processor",
+        dest="processor",
+        help="Force a specific Ghidra Language ID (e.g., 'x86:LE:64:default')",
+        default=None,
+    )
+    ghidra_import.add_argument(
+        "--cspec",
+        dest="cspec",
+        help="Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
+        default=None,
     )
 
     jvm_options = parser.add_argument_group("JVM Options")

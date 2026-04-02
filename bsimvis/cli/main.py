@@ -242,6 +242,18 @@ def main():
         help="Profile for ghidra analysis options",
     )
     decomp_args.add_argument("--min-func-len", type=int, default=10)
+    decomp_args.add_argument(
+        "--processor",
+        dest="processor",
+        help="Force a specific Ghidra Language ID (e.g., 'x86:LE:64:default')",
+        default=None,
+    )
+    decomp_args.add_argument(
+        "--cspec",
+        dest="cspec",
+        help="Force a specific Ghidra Compiler Spec ID (e.g., 'gcc')",
+        default=None,
+    )
 
     jvm_options = upload_parser.add_argument_group("JVM Options")
     jvm_options.add_argument("--max-ram-percent", type=float, default=60.0)

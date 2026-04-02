@@ -496,6 +496,7 @@ def similarity_search():
 
                         "meta1": {
                             "file_md5": data.get("md5_1"),
+                            "file_name": data.get("file_name1"),
                             "tags": tags1,
                             "batch_uuid": data.get("batch_uuid1"),
                             "language_id": data.get("language_id1"),
@@ -504,6 +505,7 @@ def similarity_search():
                         },
                         "meta2": {
                             "file_md5": data.get("md5_2"),
+                            "file_name": data.get("file_name2"),
                             "tags": tags2,
                             "batch_uuid": data.get("batch_uuid2"),
                             "language_id": data.get("language_id2"),
@@ -512,7 +514,7 @@ def similarity_search():
                         },
                     }
                 )
-        
+
         metrics["enrich_time"] = time.perf_counter() - t_enrich_start
         total_time = time.perf_counter() - t_req_all_start
 

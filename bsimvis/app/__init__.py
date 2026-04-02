@@ -15,6 +15,10 @@ def create_app():
         level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
     )
 
+    # 1. Initialize Lua Scripts
+    from .services.lua_manager import lua_manager
+    lua_manager.init_app(app)
+
     # 2. Performance Hooks
     @app.before_request
     def start_timer():
@@ -42,6 +46,11 @@ def create_app():
     from .routes.search_feature import search_feature_bp
     from .routes.search_similarity import search_similarity_bp
     from .routes.function_similarity import function_similarity_bp
+    from .routes.jobs import jobs_bp
+    from .routes.file import file_bp
+    from .routes.similarity import similarity_bp
+    from .routes.features import features_bp
+    from .routes.index import index_bp
 
     app.register_blueprint(function_diff_bp)
     app.register_blueprint(function_code_bp)
@@ -52,6 +61,11 @@ def create_app():
     app.register_blueprint(search_feature_bp)
     app.register_blueprint(search_similarity_bp)
     app.register_blueprint(function_similarity_bp)
+    app.register_blueprint(jobs_bp)
+    app.register_blueprint(file_bp)
+    app.register_blueprint(similarity_bp)
+    app.register_blueprint(features_bp)
+    app.register_blueprint(index_bp)
 
     # Serve the Bare JS frontend
     @app.route("/")

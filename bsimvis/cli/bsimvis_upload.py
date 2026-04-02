@@ -1,4 +1,3 @@
-import redis
 
 import tomllib, json, uuid
 
@@ -12,8 +11,7 @@ from collections import Counter
 import concurrent.futures, threading
 
 from tqdm import tqdm
-from bsimvis.app.services.redis_client import get_redis, init_redis
-from bsimvis.app.services.index_service import save_file, save_function
+import requests
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
@@ -27,133 +25,42 @@ GHIDRA_DECOMP_MAX_TIMEOUT = 10
 
 
 def upload_bsim_data(data, args, config):
+    """
+    Submits analyzed BSim data to the BSimVis API instead of direct Redis writes.
+    This triggers the background job pipeline.
+    """
     if not data or not data.get("functions"):
+        logging.warning("[!] No data to upload.")
         return
 
-    # 1. Grab file-level metadata
     file_meta = data.get("file_metadata", {})
     file_md5 = file_meta.get("file_md5", "unknown_md5")
+    
+    # Ensure collection is at the root for the API
+    collections = args.collections if args.collections else ["main"]
+    
+    # We trigger the API for each collection
+    for collection in collections:
+        # Prepare the payload for the API
+        payload = {
+            "collection": collection,
+            "file_md5": file_md5,
+            **data
+        }
 
-    functions_data = data.get("functions", [])
-
-    num_files = 1
-    num_functions = len(functions_data)
-    timestamp = int(time.time() * 1000)
-    batch_uuid = file_meta.get("batch_uuid", "unknown_batch_uuid")
-    batch_name = file_meta.get("batch_name", "unknown_batch_name")
-
-    for h, host in enumerate(args.hosts):
-        dest = host.split(":")[0]
-        port = int(host.split(":")[1]) if ":" in host else 6379
+        # Submit to API
+        api_host = getattr(args, 'host', 'localhost:5000')
+        api_url = f"http://{api_host}/api/file/upload/file_data"
+        
         try:
-            # Connect to Redis
-            r = redis.Redis(host=dest, port=port, decode_responses=True)
-            pipe = r.pipeline()
-
-            # --- Global Batch Metadata ---
-            pipe.sadd("global:batches", batch_uuid)
-            global_batch_key = f"global:batch:{batch_uuid}"
-            initial_global_batch = {
-                "name": batch_name,
-                "batch_uuid": batch_uuid,
-                "batch_id": global_batch_key,
-                "created_at": timestamp,
-                "last_updated": timestamp,
-                "collections": {},
-            }
-            if not r.exists(global_batch_key):
-                r.json().set(global_batch_key, "$", initial_global_batch)
-            pipe.json().set(global_batch_key, '$["last_updated"]', timestamp)
-
-            for c, collection in enumerate(args.collections):
-                pipe.sadd("global:collections", collection)
-                pipe.json().set(
-                    global_batch_key, f'$["collections"]["{collection}"]', True
-                )
-
-                # --- Collection Stats ---
-                coll_meta_key = f"global:collection:{collection}:meta"
-                pipe.hincrby(coll_meta_key, "total_files", num_files)
-                pipe.hincrby(coll_meta_key, "total_functions", num_functions)
-                pipe.hset(coll_meta_key, "last_updated", timestamp)
-
-                # --- Collection Batch Metadata ---
-                batch_key = f"{collection}:batch:{batch_uuid}"
-                initial_batch_data = {
-                    "name": batch_name,
-                    "batch_uuid": batch_uuid,
-                    "batch_id": batch_key,
-                    "created_at": timestamp,
-                    "last_updated": timestamp,
-                    "total_files": 0,
-                    "total_functions": 0,
-                    "collection": collection,
-                }
-                if not r.exists(batch_key):
-                    r.json().set(batch_key, "$", initial_batch_data)
-                pipe.json().numincrby(batch_key, '$["total_files"]', num_files)
-                pipe.json().numincrby(batch_key, '$["total_functions"]', num_functions)
-                pipe.json().set(batch_key, '$["last_updated"]', timestamp)
-                # Keep fields as requested
-                pipe.json().set(batch_key, f'$["collections"]["{collection}"]', True)
-
-                # --- 1. File Metadata ---
-                file_meta_key = f"{collection}:file:{file_md5}:meta"
-                coll_file_meta = dict(file_meta)
-                coll_file_meta["collection"] = collection
-                coll_file_meta["type"] = "file"
-                coll_file_meta["file_id"] = f"{collection}:file:{file_md5}"
-                pipe.json().set(file_meta_key, "$", coll_file_meta)
-                # Populate secondary index
-                save_file(pipe, collection, file_md5, coll_file_meta)
-
-                # --- 2. Function Data ---
-                for func_data in functions_data:
-                    func_meta = dict(func_data.get("function_metadata", {}))
-                    func_meta["collection"] = collection
-                    func_features = func_data.get("function_features", {})
-                    func_source = func_data.get("function_source", {})
-
-                    full_id = func_meta.get("full_id", "")
-                    addr = (
-                        full_id.split(":@")[-1] if ":@" in full_id else "unknown_addr"
-                    )
-
-                    base_func_key = f"{collection}:function:{file_md5}:{addr}"
-                    func_meta["function_id"] = base_func_key
-
-                    pipe.json().set(f"{base_func_key}:meta", "$", func_meta)
-                    pipe.json().set(f"{base_func_key}:source", "$", func_source)
-                    # Populate secondary index
-                    save_function(pipe, collection, file_md5, addr, func_meta)
-
-                    vec_meta = func_features.get("bsim_features_meta", [])
-                    pipe.json().set(f"{base_func_key}:vec:meta", "$", vec_meta)
-
-                    vec_raw = func_features.get("bsim_features_raw", [])
-                    pipe.json().set(f"{base_func_key}:vec:raw", "$", vec_raw)
-                    # Add to batch-to-functions mapping SET for instant status reporting
-                    pipe.sadd(
-                        f"{collection}:batch:{batch_uuid}:functions", base_func_key
-                    )
-
-                    vec_tf_list = func_features.get("bsim_features_tf", [])
-                    if vec_tf_list:
-                        zset_mapping = {
-                            item["hash"]: item["tf"] for item in vec_tf_list
-                        }
-                        pipe.zadd(f"{base_func_key}:vec:tf", zset_mapping)
-
-            # Execute the entire pipeline batch at once
-            t_pipe_start = time.time()
-            results = pipe.execute()
-            t_pipe_end = time.time()
-            logging.info(
-                f"[+] Pushed {len(results)} keys to Redis host {host} in {t_pipe_end - t_pipe_start:.3f}s"
-            )
-
+            logging.info(f"[*] Submitting {file_md5} to API at {api_url} (collection: {collection})...")
+            resp = requests.post(api_url, json=payload, timeout=300)
+            resp.raise_for_status()
+            
+            result = resp.json()
+            logging.info(f"[+] Upload Success! Pipeline ID: {result.get('pipeline_id')}")
         except Exception as e:
-            logging.error(f"[!] Failed to upload to Redis host {host}: {e}")
+            logging.error(f"[!] API Submission failed for {api_url}: {e}")
 
 
 def get_token_type(clazz):
@@ -828,16 +735,6 @@ def worker(target, args, config, batch_order):
 
 
 def run_upload(host, port, args):
-    if host:
-        init_redis(host, port)
-
-    # Ensure hosts list exists
-    if not hasattr(args, "hosts") or not args.hosts:
-        if host:
-            args.hosts = [f"{host}:{port}"]
-        else:
-            args.hosts = ["localhost:6666"]
-
     if args.verbose == 0:
         level = logging.WARNING
     elif args.verbose == 1:

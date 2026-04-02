@@ -141,12 +141,9 @@ def similarity_search():
             metrics["cache_lookup"] = m_cache_lookup_time
 
             try:
-                # 1. Load and Register Lua Search Engine
-                lua_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "lua", "search_similarity.lua")
-                with open(lua_path, 'r') as f:
-                    lua_script_content = f.read()
-                
-                search_script = r.register_script(lua_script_content)
+                # 1. Get Pre-Registered Lua Search Engine
+                from bsimvis.app.services.lua_manager import lua_manager
+                search_script = lua_manager.get_script("search_similarity")
 
                 t_lua_prep = time.perf_counter()
                 bucket_keys = []

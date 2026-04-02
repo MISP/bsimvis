@@ -2,6 +2,8 @@ import argparse
 import sys
 import logging
 import time
+import tomllib
+import os
 from bsimvis.cli import (
     bsimvis_setup,
     bsimvis_index,
@@ -10,6 +12,7 @@ from bsimvis.cli import (
     bsimvis_batch,
     bsimvis_features,
     bsimvis_cache,
+    bsimvis_job,
 )
 
 
@@ -18,8 +21,8 @@ def main():
     parser.add_argument(
         "-H",
         "--host",
-        default="localhost:6666",
-        help="Default Redis/Kvrocks host:port (default: localhost:6666)",
+        default=None,
+        help="API host:port (default: localhost:5000 or from bsimvis_config.toml)",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -51,11 +54,13 @@ def main():
         "-c", "--collection", required=True, help="Collection name"
     )
     feat_status.add_argument("--batch", help="Filter by batch UUID")
+    feat_status.add_argument("--md5", help="Filter by binary MD5")
 
     # features list
     feat_list = features_actions.add_parser("list", help="Show batch table and ratios")
     feat_list.add_argument("-c", "--collection", required=True, help="Collection name")
     feat_list.add_argument("--batch", help="Filter by batch UUID")
+    feat_list.add_argument("--md5", action="store_true", help="List status by file (MD5)")
 
     # features build
     feat_build = features_actions.add_parser("build", help="Index missing functions")
@@ -117,7 +122,7 @@ def main():
     sim_parser = subparsers.add_parser("sim", help="Similarity management")
     sim_actions = sim_parser.add_subparsers(dest="action", required=True)
 
-    for action in ["status", "list", "build", "rebuild", "clear"]:
+    for action in ["status", "scores", "build", "rebuild", "clear"]:
         dp = sim_actions.add_parser(
             action, help=f"{action.capitalize()} similarity scores"
         )
@@ -127,20 +132,19 @@ def main():
         dp.add_argument(
             "--func", action="append", help="Filter by specific function ID/pattern"
         )
-
         dp.add_argument(
             "--algo",
             choices=["jaccard", "unweighted_cosine"],
-            help="Algorithm to target (default: both for clear/list, unweighted_cosine for build)",
+            help="Algorithm to target",
         )
 
         if action in ["build", "rebuild"]:
             # Set default for build/rebuild if not provided
             dp.set_defaults(algo="unweighted_cosine")
             dp.add_argument(
-                "-k", "--top-k", type=int, default=20, help="Top K matches per function"
+                "-k", "--top-k", type=int, default=1000, help="Top K matches per function"
             )
-            dp.add_argument("--min-score", type=float, default=0.1)
+            dp.add_argument("--min-score", type=float, default=0)
             dp.add_argument("--delay", type=float, default=0.0)
             dp.add_argument(
                 "--batch-size", type=int, default=100, help="Internal SCAN batch size"
@@ -148,10 +152,33 @@ def main():
             dp.add_argument(
                 "--ignore-indexing",
                 action="store_true",
-                help="Skip the full-index check before baking",
+                help="Build even for functions not in indexed:functions set",
             )
 
-    # --- BATCH ---
+    # sim list
+    sim_list = sim_actions.add_parser("list", help="List similarity builds")
+    sim_list.add_argument("-c", "--collection", required=True, help="Collection name")
+    sim_list.add_argument("--batch", help="Target specific batch UUID")
+    sim_list.add_argument("--md5", action="store_true", help="List status by file (MD5)")
+    sim_list.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine"],
+        help="Algorithm to filter",
+    )
+    # --- JOB ---
+    job_parser = subparsers.add_parser("job", help="Job & Pipeline management")
+    job_actions = job_parser.add_subparsers(dest="action", required=True)
+    
+    j_list = job_actions.add_parser("list", help="List recent jobs")
+    j_list.add_argument("--limit", type=int, default=20)
+    
+    j_status = job_actions.add_parser("status", help="Get job status & logs")
+    j_status.add_argument("job_id", help="Job or Pipeline ID")
+    j_status.add_argument("--watch", action="store_true", help="Watch progress")
+    j_status.add_argument("--logs", action="store_true", help="Show logs")
+    
+    j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
+    j_cancel.add_argument("job_id", help="Job or Pipeline ID")
     batch_parser = subparsers.add_parser("batch", help="Batch management")
     batch_actions = batch_parser.add_subparsers(dest="action", required=True)
 
@@ -268,14 +295,32 @@ def main():
         "--batch-name", help="Batch name", default="Ghidra Batch"
     )
 
-    # Parse and Dispatch
+    # Parse and Resolve Host
     args = parser.parse_args()
+    
+    def resolve_api_host(cli_host):
+        if cli_host:
+            return cli_host
+        
+        config_path = "bsimvis_config.toml"
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "rb") as f:
+                    config = tomllib.load(f)
+                    return config.get("bsimvis", {}).get("host", "localhost:5000")
+            except Exception:
+                pass
+        return "localhost:5000"
 
-    # Global Redis config extraction
-    if ":" in args.host:
-        g_host, g_port = args.host.split(":")
+    api_host_str = resolve_api_host(args.host)
+    if ":" in api_host_str:
+        g_host, g_port = api_host_str.split(":")
     else:
-        g_host, g_port = args.host, 6666
+        g_host, g_port = api_host_str, 5000
+    
+    # For backward compatibility with things that still talk directly to Redis/Kvrocks (like setup)
+    # we reuse the same host but we might need a different port if redirected.
+    # For now, we assume the API host is what we use.
 
     try:
         if args.subcommand == "setup":
@@ -288,15 +333,17 @@ def main():
         elif args.subcommand == "sim":
             bsimvis_sim.run_sim(g_host, int(g_port), args)
         elif args.subcommand == "upload":
-            # If no hosts provided in subcommand, use the global one
+            # Pass the resolved API host to upload
+            args.host = api_host_str
             if not args.hosts:
-                args.hosts = [args.host]
-            # No need to inject g_host/g_port to run_upload because it uses args.hosts
+                args.hosts = [api_host_str]
             bsimvis_upload.run_upload(None, None, args)
         elif args.subcommand == "batch":
             bsimvis_batch.run_batch(g_host, int(g_port), args)
         elif args.subcommand == "cache":
             bsimvis_cache.run_cache(g_host, int(g_port), args)
+        elif args.subcommand == "job":
+            bsimvis_job.run_job(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

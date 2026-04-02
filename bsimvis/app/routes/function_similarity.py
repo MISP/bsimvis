@@ -18,7 +18,7 @@ def similarity_api():
         scores = {}
 
         for algo in algorithms:
-            # Use service to get score, which triggers on-demand bake if missing
+            # Use service to get score, which triggers on-demand build if missing
             score = service.get_pair_score(id1, id2, algo=algo)
             scores[algo] = score
 

@@ -61,7 +61,7 @@ def search_files():
     # Fetch full JSON for the page
     pipe = r.pipeline()
     for doc_id in doc_ids:
-        pipe.json().get(doc_id, "$")
+        pipe.json().get(f"{doc_id}:meta", "$")
     raw_results = pipe.execute()
 
     files_list = []

@@ -141,25 +141,27 @@ def _unindex_num(pipe, coll, field, doc_id):
 
 def save_file(pipe, coll, file_md5, data):
     """Index all fields for a file doc. Must be called with an active pipeline."""
-    doc_id = f"{coll}:file:{file_md5}:meta"
+    base_id = f"{coll}:file:{file_md5}"
+    doc_id = f"{base_id}:meta"
     for f in FILE_TAG_FIELDS:
-        _index_tag(pipe, coll, f"file:{f}", data.get(f), doc_id)
+        _index_tag(pipe, coll, f"file:{f}", data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
-        _index_num(pipe, coll, f"file:{f}", data.get(f), doc_id)
+        _index_num(pipe, coll, f"file:{f}", data.get(f), base_id)
     # Track count
-    pipe.sadd(f"idx:{coll}:all_files", doc_id)
+    pipe.sadd(f"idx:{coll}:all_files", base_id)
 
 
 def save_function(pipe, coll, md5, addr, data):
     """Index all fields for a function doc."""
-    doc_id = f"{coll}:function:{md5}:{addr}:meta"
+    base_id = f"{coll}:function:{md5}:{addr}"
+    doc_id = f"{base_id}:meta"
     for f in FUNC_TAG_FIELDS:
-        _index_tag(pipe, coll, f"function:{f}", data.get(f), doc_id)
+        _index_tag(pipe, coll, f"function:{f}", data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
-        _index_num(pipe, coll, f"function:{f}", data.get(f), doc_id)
+        _index_num(pipe, coll, f"function:{f}", data.get(f), base_id)
     # file->function relationship
-    pipe.sadd(f"idx:{coll}:file_funcs:{md5}", doc_id)
-    pipe.sadd(f"idx:{coll}:all_functions", doc_id)
+    pipe.sadd(f"idx:{coll}:file_funcs:{md5}", base_id)
+    pipe.sadd(f"idx:{coll}:all_functions", base_id)
 
 
 def save_similarity(pipe, coll, sim_id, data):
@@ -192,7 +194,8 @@ def save_similarity(pipe, coll, sim_id, data):
 
 def delete_file(r, coll, file_md5):
     """Remove a file from all indexes. Reads current data first."""
-    doc_id = f"{coll}:file:{file_md5}:meta"
+    base_id = f"{coll}:file:{file_md5}"
+    doc_id = f"{base_id}:meta"
     data = r.json().get(doc_id, "$")
     if isinstance(data, list) and data:
         data = data[0]
@@ -203,13 +206,14 @@ def delete_file(r, coll, file_md5):
         _unindex_tag(pipe, coll, f"file:{f}", data.get(f), doc_id)
     for f in FILE_NUM_FIELDS:
         _unindex_num(pipe, coll, f"file:{f}", doc_id)
-    pipe.srem(f"idx:{coll}:all_files", doc_id)
+    pipe.srem(f"idx:{coll}:all_files", base_id)
     pipe.execute()
 
 
 def delete_function(r, coll, md5, addr):
     """Remove a function from all indexes. Reads current data first."""
-    doc_id = f"{coll}:function:{md5}:{addr}:meta"
+    base_id = f"{coll}:function:{md5}:{addr}"
+    doc_id = f"{base_id}:meta"
     data = r.json().get(doc_id, "$")
     if isinstance(data, list) and data:
         data = data[0]
@@ -220,8 +224,8 @@ def delete_function(r, coll, md5, addr):
         _unindex_tag(pipe, coll, f"function:{f}", data.get(f), doc_id)
     for f in FUNC_NUM_FIELDS:
         _unindex_num(pipe, coll, f"function:{f}", doc_id)
-    pipe.srem(f"idx:{coll}:file_funcs:{md5}", doc_id)
-    pipe.srem(f"idx:{coll}:all_functions", doc_id)
+    pipe.srem(f"idx:{coll}:file_funcs:{md5}", base_id)
+    pipe.srem(f"idx:{coll}:all_functions", base_id)
     pipe.execute()
 
 
@@ -294,3 +298,180 @@ def query_ids(
     page = all_ids_sorted[offset : offset + limit]
 
     return page, total
+
+
+class IndexStatsService:
+    def __init__(self, r=None):
+        from .redis_client import get_redis
+        self.r = r or get_redis()
+
+    def get_key_count(self, k):
+        """Unified cardinality check."""
+        r = self.r
+        try:
+            rtype = r.type(k).lower()
+            if "zset" in rtype:
+                return r.zcard(k)
+            if "set" in rtype:
+                return r.scard(k)
+            if "list" in rtype:
+                return r.llen(k)
+            if "hash" in rtype:
+                return r.hlen(k)
+        except:
+            pass
+        return 0
+
+    def get_key_size(self, k):
+        """Unified size estimator for different redis types in Kvrocks."""
+        r = self.r
+        try:
+            # 1. Try MEMORY USAGE (Best)
+            size = r.execute_command("MEMORY", "USAGE", k)
+            if size:
+                return size
+        except:
+            pass
+
+        try:
+            # 2. Fallback to Type-specific estimation
+            rtype = r.type(k).lower()
+            if rtype == "string":
+                return r.strlen(k)
+            if rtype == "list":
+                return r.llen(k) * 100  # Approx
+            if rtype == "set":
+                return r.scard(k) * 40  # Approx
+            if rtype == "zset":
+                return r.zcard(k) * 50  # Approx
+            if rtype == "hash":
+                return r.hlen(k) * 150  # Approx
+            if "rejson" in rtype or "json" in rtype:
+                val = r.execute_command("JSON.GET", k)
+                return len(str(val)) if val is not None else 0
+        except Exception:
+            pass
+        return 0
+
+    def estimate_total_keys(self, pattern, num_files, num_funcs, num_unique_features):
+        r = self.r
+        # We try to avoid a full SCAN if possible.
+        if "file:*:meta" in pattern:
+            return num_files
+        if "function:*:*:meta" in pattern:
+            return num_funcs
+        if "function:*:*:source" in pattern:
+            return num_funcs
+        if "function:*:*:vec:tf" in pattern:
+            return num_funcs
+        if "feature:*:functions" in pattern:
+            return num_unique_features
+        if "feature:*:meta" in pattern:
+            return num_unique_features
+
+        # For sim_meta and tags, we might need a quick scan to estimate.
+        cursor = 0
+        count_acc = 0
+        for _ in range(100):
+            cursor, keys = r.scan(cursor, match=pattern, count=5000)
+            count_acc += len(keys)
+            if cursor == 0:
+                break
+        return count_acc
+
+    def estimate_group_size(self, pattern, count_total, tracking_set=None, key_formatter=None):
+        r = self.r
+        sample_size = 10
+        if count_total == 0:
+            return 0
+
+        found_keys = []
+        if tracking_set:
+            try:
+                tset_type = r.type(tracking_set).lower()
+                if "zset" in tset_type:
+                    items = r.zrandmember(tracking_set, sample_size)
+                else:
+                    items = r.srandmember(tracking_set, sample_size)
+
+                if items:
+                    if key_formatter:
+                        found_keys = [key_formatter(i) for i in items]
+                    else:
+                        found_keys = items
+            except Exception:
+                pass
+
+        if not found_keys:
+            cursor = 0
+            for _ in range(30):
+                cursor, keys = r.scan(cursor, match=pattern, count=2000)
+                found_keys.extend([k for k in keys if k not in found_keys])
+                if len(found_keys) >= sample_size or cursor == 0:
+                    break
+
+        if not found_keys:
+            return 0
+        sample = found_keys[:sample_size]
+        total_size = 0
+        actual_samples = 0
+        for k in sample:
+            sz = self.get_key_size(k)
+            if sz > 0:
+                total_size += sz
+                actual_samples += 1
+        return (total_size / actual_samples) if actual_samples > 0 else 0
+
+    def get_collection_stats(self, collection, details=False):
+        """Returns comprehensive index statistics for a collection."""
+        r = self.r
+        coll = collection
+
+        # 1. Core Counts
+        num_files = r.scard(f"idx:{coll}:all_files")
+        num_funcs = r.scard(f"idx:{coll}:all_functions")
+        num_indexed = r.scard(f"idx:{coll}:indexed:functions")
+        num_unique_features = r.zcard(f"idx:{coll}:features:by_tf")
+        num_sim_meta = self.estimate_total_keys(f"{coll}:sim_meta:*:*:*", num_files, num_funcs, num_unique_features)
+
+        summary = {
+            "num_files": num_files,
+            "num_functions": num_funcs,
+            "num_indexed": num_indexed,
+            "num_missing": max(0, num_funcs - num_indexed),
+            "num_features": num_unique_features,
+            "num_sim_meta": num_sim_meta,
+            "indexing_ratio": (num_indexed / num_funcs * 100) if num_funcs > 0 else 0
+        }
+
+        if not details:
+            return summary
+
+        # 2. Detailed Breakdown
+        components = []
+        patterns = [
+            ("File Meta", f"{coll}:file:*:meta"),
+            ("Func Meta", f"{coll}:function:*:*:meta"),
+            ("Func Source", f"{coll}:function:*:*:source"),
+            ("Func Vector (TF)", f"{coll}:function:*:*:vec:tf"),
+            ("Sim Meta", f"{coll}:sim_meta:*:*:*"),
+            ("Inverted Index", f"idx:{coll}:feature:*:functions"),
+            ("Feature Meta", f"idx:{coll}:feature:*:meta"),
+        ]
+
+        for name, pat in patterns:
+            count = self.estimate_total_keys(pat, num_files, num_funcs, num_unique_features)
+            if count > 0:
+                avg_size = self.estimate_group_size(pat, count)
+                components.append({
+                    "name": name,
+                    "pattern": pat,
+                    "count": count,
+                    "avg_size": avg_size,
+                    "total_size": avg_size * count
+                })
+
+        return {
+            "summary": summary,
+            "components": components
+        }

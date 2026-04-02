@@ -27,6 +27,9 @@
     [profiles.full.decompilation]
 
 
+[bsimvis]
+    host = "localhost:5000"
+
 [profiles.no-analysis]
     description = "Decompile only"
     no_analysis = true

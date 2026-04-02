@@ -320,7 +320,7 @@ def list_sim_batches(collection, batch_filter=None, r=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="BSim Turbo Similarity Baker with Resource Guards"
+        description="BSim Similarity Baker"
     )
     parser.add_argument("-c", "--collection", required=True, help="Collection name")
     parser.add_argument(

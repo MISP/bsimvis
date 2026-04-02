@@ -1,17 +1,28 @@
 import redis
 
-# Hardcoded for your POC, but easy to move to env vars later
-REDIS_CONFIG = {"host": "localhost", "port": 6666, "decode_responses": True}
+# Kvrocks is on 6666 for data
+KV_CONFIG = {"host": "localhost", "port": 6666, "decode_responses": True}
+# Standard Redis is on 6379 for jobs
+REDIS_CONFIG = {"host": "localhost", "port": 6379, "decode_responses": True}
 
 
-def init_redis(host=None, port=None):
+def init_redis(host=None, kv_port=None, redis_port=None):
     if host:
+        KV_CONFIG["host"] = host
         REDIS_CONFIG["host"] = host
-    if port:
-        REDIS_CONFIG["port"] = port
+    if kv_port:
+        KV_CONFIG["port"] = kv_port
+    if redis_port:
+        REDIS_CONFIG["port"] = redis_port
 
 
 def get_redis():
+    """Returns the Kvrocks connection for data."""
+    return redis.Redis(**KV_CONFIG)
+
+
+def get_queue_redis():
+    """Returns the standard Redis connection for job queue."""
     return redis.Redis(**REDIS_CONFIG)
 
 

@@ -1,4 +1,11 @@
 services:
+  redis:
+    image: redis:latest
+    container_name: bsimvis_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
   kvrocks:
     image: apache/kvrocks:2.15.0
     container_name: bsimvis_kvrocks

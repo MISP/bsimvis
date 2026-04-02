@@ -1378,8 +1378,8 @@
                         </div>
                     </td>
                     <td>
-                        <div class="dim" style="font-size:0.7rem; margin-bottom:4px; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${m1}">L: <span class="mono">${m1}</span></div>
-                        <div class="dim" style="font-size:0.7rem; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${m2}">R: <span class="mono">${m2}</span></div>
+                        <div class="dim" style="font-size:0.7rem; margin-bottom:4px; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${p.meta1?.file_name || m1}">L: <span class="mono">${p.meta1?.file_name || m1}</span></div>
+                        <div class="dim" style="font-size:0.7rem; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${p.meta2?.file_name || m2}">R: <span class="mono">${p.meta2?.file_name || m2}</span></div>
                     </td>
                     <td>
                         <button class="btn-diff-action" onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="font-size:0.7rem; padding:4px 8px;">
@@ -1411,9 +1411,9 @@
 
                 // 1. Initialize Data Sources
                 this.seg_source = new Bokeh.ColumnDataSource({ data: { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] } });
-                this.hit_source = new Bokeh.ColumnDataSource({ data: { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], s1: [], s2: [], id1: [], id2: [] } });
-                this.node_source = new Bokeh.ColumnDataSource({ data: { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], snippet: [] } });
-                this.ring_source = new Bokeh.ColumnDataSource({ data: { start: [], end: [], color: [], name: [], md5: [], inner_r: [], outer_r: [], count: [] } });
+                this.hit_source = new Bokeh.ColumnDataSource({ data: { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], s1: [], s2: [], id1: [], id2: [], fn1: [], fn2: [] } });
+                this.node_source = new Bokeh.ColumnDataSource({ data: { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], snippet: [], file_name: [], return_type: [], tags: [] } });
+                this.ring_source = new Bokeh.ColumnDataSource({ data: { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [] } });
 
                 this.initPlot();
             }
@@ -1449,10 +1449,11 @@
                         if (indices.length > 0 && !window.graphContextMenuOpen) {
                             const name = source.data.name[indices[0]];
                             const md5 = source.data.md5[indices[0]];
+                            const file_name = source.data.file_name[indices[0]];
                             const count = source.data.count[indices[0]];
                             const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
                             const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                            if (window.showBinaryPreview) window.showBinaryPreview(md5, name, count, e);
+                            if (window.showBinaryPreview) window.showBinaryPreview(md5, file_name || name, count, e);
                         } else {
                             if (window.hideBinaryPreview) window.hideBinaryPreview();
                         }
@@ -1491,11 +1492,12 @@
                             const name = source.data.name[indices[0]];
                             const addr = source.data.addr[indices[0]];
                             const bin = source.data.bin[indices[0]];
+                            const file_name = source.data.file_name[indices[0]];
                             const v_size = source.data.v_size[indices[0]];
                             const extra = indices.length - 1;
                             const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
                             const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                            if (window.showCodePreview) window.showCodePreview(id, name, addr, bin, v_size, e, extra);
+                            if (window.showCodePreview) window.showCodePreview(id, name, addr, bin, v_size, e, extra, file_name);
                         } else {
                             window.graphNodeHovered = false;
                             if (window.hideCodePreview) window.hideCodePreview();
@@ -1531,7 +1533,7 @@
 
             getRingTooltip() {
                 return `<div style="padding:12px; background:#1A1A1A; color:#FFF; border:2px solid @color; border-radius:8px; min-width:200px;">
-                    <div style="font-size:14px; font-weight:bold; margin-bottom:4px; color:@color;">@name (BINARY)</div>
+                    <div style="font-size:14px; font-weight:bold; margin-bottom:4px; color:@color;">@file_name (BINARY)</div>
                     <div style="font-size:11px; color:#AAA; margin-bottom:8px;">MD5: @md5</div>
                     <div style="display:flex; justify-content:space-between; font-size:12px; border-top:1px solid #333; padding-top:8px;">
                         <span>Functions in Graph:</span>
@@ -1547,10 +1549,12 @@
                         <span style="font-size:10px; color:#777;">Pair Summary</span>
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                         <div style="background:#1A1A1A; padding:6px; border-radius:4px; border-left:3px solid @c1;">
-                            <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">@f1</div>
+                            <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" title="@fn1">@f1</div>
+                            <div style="font-size:8px; color:#777; overflow:hidden; text-overflow:ellipsis;">@fn1</div>
                         </div>
                         <div style="background:#1A1A1A; padding:6px; border-radius:4px; border-left:3px solid @c2;">
-                            <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">@f2</div>
+                            <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" title="@fn2">@f2</div>
+                            <div style="font-size:8px; color:#777; overflow:hidden; text-overflow:ellipsis;">@fn2</div>
                         </div>
                     </div>
                 </div>`;
@@ -1559,7 +1563,8 @@
             getNodeTooltip() {
                 return `<div style="padding:12px; background:#1A1A1A; color:#D4D4D4; border:2px solid @color; border-radius:8px; width:280px;">
                     <div style="font-size:13px; font-weight:bold; margin-bottom:2px; color:@color;">@name</div>
-                    <div style="font-size:10px; color:#AAA; margin-bottom:8px;">Addr: @addr | Features: @v_size</div>
+                    <div style="font-size:11px; color:#AAA; margin-bottom:4px; font-style:italic;">@file_name</div>
+                    <div style="font-size:10px; color:#AAA; margin-bottom:8px;">Addr: @addr | Features: @v_size | @return_type</div>
                 </div>`;
             }
 
@@ -1642,7 +1647,11 @@
                         pairs.forEach(p => {
                             [{ id: p.id1, name: p.name1, meta: p.meta1 }, { id: p.id2, name: p.name2, meta: p.meta2 }].forEach(n => {
                                 if (!this.nodes_map.has(n.id)) {
-                                    const node_obj = { id: n.id, name: n.name, md5: n.meta.file_md5, addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count };
+                                    const node_obj = { 
+                                        id: n.id, name: n.name, md5: n.meta.file_md5, 
+                                        file_name: n.meta.file_name, return_type: n.meta.return_type,
+                                        addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count 
+                                    };
                                     this.nodes_map.set(n.id, node_obj); this.unique_nodes.push(node_obj); this.binary_md5s.add(n.meta.file_md5);
                                 }
                             });
@@ -1662,10 +1671,10 @@
 
             updateSources(params) {
                 if (this.all_pairs.length === 0) {
-                    this.node_source.data = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [] };
+                    this.node_source.data = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], file_name: [], return_type: [], tags: [] };
                     this.seg_source.data = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
-                    this.hit_source.data = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [] };
-                    this.ring_source.data = { start: [], end: [], color: [], name: [], md5: [], inner_r: [], outer_r: [], count: [] };
+                    this.hit_source.data = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [], fn1: [], fn2: [] };
+                    this.ring_source.data = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [] };
                     return;
                 }
 
@@ -1685,16 +1694,17 @@
                 const bin_list = Array.from(this.binary_md5s).sort();
                 const bin_colors = new Map(bin_list.map((md5, i) => [md5, palette[i % 20]]));
 
-                const ns = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [] };
+                const ns = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], file_name: [], return_type: [] };
                 this.unique_nodes.forEach(n => {
                     const info = id_to_info.get(n.id);
                     ns.x.push(info.x); ns.y.push(info.y); ns.name.push(n.name); ns.addr.push(n.addr);
                     ns.bin.push(n.md5.slice(0, 8)); ns.color.push(bin_colors.get(n.md5));
                     ns.v_size.push(n.v_size); ns.id.push(n.id);
+                    ns.file_name.push(n.file_name || ''); ns.return_type.push(n.return_type || 'N/A');
                 });
 
                 const ss = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
-                const hs = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [] };
+                const hs = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [], fn1: [], fn2: [] };
                 const minScore = parseFloat(params.get('min_score')) || 0.95;
 
                 this.all_pairs.forEach(p => {
@@ -1714,17 +1724,19 @@
                     hs.xs.push(curve.map(v => v.x)); hs.ys.push(curve.map(v => v.y));
                     hs.f1.push(p.name1); hs.f2.push(p.name2); hs.b1.push(n1.md5.slice(0, 8)); hs.b2.push(n2.md5.slice(0, 8));
                     hs.score.push(p.score.toFixed(4)); hs.c1.push(col1); hs.c2.push(col2); hs.id1.push(p.id1); hs.id2.push(p.id2);
+                    hs.fn1.push(n1.file_name || n1.md5.slice(0, 8)); hs.fn2.push(n2.file_name || n2.md5.slice(0, 8));
 
                 });
 
-                const rs = { start: [], end: [], color: [], name: [], md5: [], inner_r: [], outer_r: [], count: [] };
+                const rs = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [] };
                 bin_list.forEach(md5 => {
                     const md5_nodes = this.unique_nodes.map((n, i) => ({ n, i })).filter(item => item.n.md5 === md5);
                     if (md5_nodes.length > 0) {
                         const start_idx = md5_nodes[0].i; const end_idx = md5_nodes[md5_nodes.length - 1].i;
                         const col = bin_colors.get(md5);
                         rs.start.push(start_idx * theta_step - theta_step / 2); rs.end.push(end_idx * theta_step + theta_step / 2);
-                        rs.color.push(col); rs.name.push(md5.slice(0, 8)); rs.md5.push(md5);
+                        rs.color.push(col); rs.name.push(md5.slice(0, 8)); rs.md5.push(md5); 
+                        rs.file_name.push(md5_nodes[0].n.file_name || md5.slice(0, 8));
                         rs.inner_r.push(ring_inner); rs.outer_r.push(ring_outer);
                         rs.count.push(md5_nodes.length);
                     }
@@ -2439,7 +2451,7 @@
             }
         }
 
-        async function showCodePreview(id, name, addr, bin, v_size, e, extra = 0) {
+        async function showCodePreview(id, name, addr, bin, v_size, e, extra = 0, file_name = '') {
             if (id === activePreviewId) {
                 moveCodePreview(e);
                 return;
@@ -2460,7 +2472,7 @@
                 <div class="preview-card">
                     <div class="preview-header">Quick Preview: ${name || id.split(':').pop()}</div>
                     <div style="font-size:0.65rem; color:var(--accent); font-family:monospace; padding:0 8px; margin-bottom:5px;">
-                        Addr: ${addr || '---'} | Bin: ${bin || '---'} | Feat: ${v_size || 0}
+                        Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
                     </div>
                     <div style="font-size:0.55rem; color:var(--subtle); padding:0 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">ID: ${id}</div>
                     <div class="preview-header" style="border:none; margin-top:10px;">Loading Code...</div>
@@ -2478,7 +2490,7 @@
                     const cached = previewCache.get(id);
                     window.previewTips = cached.tips;
                     window.previewCollection = collection;
-                    renderPreview(cached, name, addr, bin, v_size, extra);
+                    renderPreview(data, name, addr, bin, v_size, extra, file_name);
                     return;
                 }
 
@@ -2489,14 +2501,14 @@
                     window.previewTips = data.tips;
                     window.previewCollection = collection;
                     previewCache.set(id, data);
-                    renderPreview(data, name, addr, bin, v_size, extra);
+                    renderPreview(data, name, addr, bin, v_size, extra, file_name);
                 } catch (err) {
                     tooltip.innerHTML = `<div class="preview-header" style="color:#ff5555">Error loading preview</div>`;
                 }
             }, 50);
         }
 
-        function renderPreview(data, name, addr, bin, v_size, extra = 0) {
+        function renderPreview(data, name, addr, bin, v_size, extra = 0, file_name = '') {
             if (!tooltip) return;
             const rows = data.rows.slice(0, 18);
             const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
@@ -2505,7 +2517,7 @@
                 <div class="preview-card">
                     <div class="preview-header">Quick Preview: ${name || data.rows[0]?.tokens[0]?.text || 'Function'}</div>
                     <div style="font-size:0.65rem; color:var(--accent); font-family:monospace; padding:0 8px; margin-bottom:5px;">
-                        Addr: ${addr || '---'} | Bin: ${bin || '---'} | Feat: ${v_size || 0}
+                        Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
                     </div>
                     <div class="c-code-container" style="border:none; margin:0; padding:0; background:transparent;">`;
 

@@ -278,3 +278,119 @@ class SimilarityService:
             })
             
         return results
+
+    def _canonicalize_sid(self, collection: str, id1: str, id2: str, algo: str) -> str:
+        """Returns the canonical key for a similarity pair."""
+        if id1 > id2:
+            return f"{collection}:sim_meta:{algo}:{id1}:{id2}"
+        else:
+            return f"{collection}:sim_meta:{algo}:{id2}:{id1}"
+
+    def tag_similarity(self, collection: str, id1: str, id2: str, algo: str, tag: str) -> bool:
+        """Adds a tag to a similarity pair and updates the global tag index."""
+        sid = self._canonicalize_sid(collection, id1, id2, algo)
+        r = self.r
+        try:
+            # Update similarity metadata
+            doc = r.json().get(sid, "$")
+            if not doc:
+                return False
+            doc = doc[0] if isinstance(doc, list) else doc
+            
+            tags = doc.get("tags", [])
+            if tag not in tags:
+                tags.append(tag)
+                r.json().set(sid, "$.tags", tags)
+                
+                # Update secondary index for searching
+                index_key = f"idx:{collection}:sim:tags:{tag}"
+                r.sadd(index_key, sid)
+                
+                # Update global tag index with color
+                self._ensure_tag_metadata(collection, tag)
+
+                # Add to registry for search SELECTIVE
+                r.sadd(f"idx:{collection}:reg:tags", index_key)
+            
+            return True
+        except Exception as e:
+            print(f"Error tagging similarity: {e}")
+            return False
+
+    def _ensure_tag_metadata(self, collection: str, tag: str):
+        """Ensures a tag has metadata (color) in the global index."""
+        r = self.r
+        meta_key = f"idx:{collection}:tags_metadata"
+        if not r.hexists(meta_key, tag):
+            palette = [
+                "#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", 
+                "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF"
+            ]
+            import random
+            color = random.choice(palette)
+            import json
+            r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
+
+    def get_tags(self, collection: str) -> dict:
+        """Returns all tags and their metadata for a collection."""
+        r = self.r
+        meta_key = f"idx:{collection}:tags_metadata"
+        raw_tags = r.hgetall(meta_key)
+        import json
+        
+        results = {}
+        for k, v in raw_tags.items():
+            k_str = k.decode() if isinstance(k, bytes) else k
+            meta = json.loads(v)
+            # Add count of similarities
+            count = r.scard(f"idx:{collection}:sim:tags:{k_str}")
+            meta["count"] = count
+            results[k_str] = meta
+        return results
+
+    def set_tag_color(self, collection: str, tag: str, color: str) -> bool:
+        """Updates the color for a tag."""
+        r = self.r
+        meta_key = f"idx:{collection}:tags_metadata"
+        import json
+        raw = r.hget(meta_key, tag)
+        meta = json.loads(raw) if raw else {"priority": 0}
+        meta["color"] = color
+        r.hset(meta_key, tag, json.dumps(meta))
+        return True
+
+    def set_tag_priority(self, collection: str, tag: str, priority: int) -> bool:
+        """Updates the priority for a tag."""
+        r = self.r
+        meta_key = f"idx:{collection}:tags_metadata"
+        import json
+        raw = r.hget(meta_key, tag)
+        meta = json.loads(raw) if raw else {"color": "#66d9ef"}
+        meta["priority"] = int(priority)
+        r.hset(meta_key, tag, json.dumps(meta))
+        return True
+
+    def untag_similarity(self, collection: str, id1: str, id2: str, algo: str, tag: str) -> bool:
+        """Removes a tag from a similarity pair."""
+        r = self.r
+        sid = self._canonicalize_sid(collection, id1, id2, algo)
+        
+        try:
+            doc = r.json().get(sid, "$")
+            if not doc:
+                return False
+            doc = doc[0] if isinstance(doc, list) else doc
+            
+            tags = doc.get("tags", [])
+            tag = tag.strip()
+            if tag in tags:
+                tags.remove(tag)
+                r.json().set(sid, "$.tags", tags)
+                
+                # Update Index
+                index_key = f"idx:{collection}:sim:tags:{tag}"
+                r.srem(index_key, sid)
+            return True
+        except Exception as e:
+            print(f"Error untagging similarity {sid}: {e}")
+            return False

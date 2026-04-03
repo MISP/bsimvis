@@ -155,6 +155,104 @@
             margin: 2px;
         }
 
+        .sim-tag-card {
+            background: rgba(166, 226, 46, 0.1);
+            color: var(--success);
+            border: 1px solid rgba(166, 226, 46, 0.3);
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px 2px 8px;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            margin: 2px;
+        }
+
+        .remove-tag-btn {
+            cursor: pointer;
+            width: 14px;
+            height: 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 10px;
+            transition: all 0.2s;
+        }
+
+        .remove-tag-btn:hover {
+            background: var(--accent);
+            color: #000;
+        }
+
+        .add-tag-btn {
+            background: none;
+            border: 1px dashed var(--accent);
+            color: var(--accent);
+            border-radius: 12px;
+            padding: 1px 8px;
+            font-size: 0.7rem;
+            cursor: pointer;
+            margin: 2px;
+            transition: all 0.2s;
+        }
+
+        .add-tag-btn:hover {
+            background: var(--accent);
+            color: #000;
+            border-style: solid;
+        }
+
+        .tag-input-field {
+            background: #000;
+            border: 1px solid var(--accent);
+            color: #fff;
+            border-radius: 4px;
+            padding: 2px 5px;
+            font-size: 0.7rem;
+            width: 80px;
+            outline: none;
+        }
+
+        .tag-autocomplete-dropdown {
+            position: absolute;
+            background: #1A1A1A;
+            border: 1px solid var(--accent);
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 10001;
+            min-width: 150px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8);
+            display: none;
+            left: 0;
+            top: 100%;
+        }
+
+        .tag-suggestion-item {
+            padding: 6px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.75rem;
+            color: #eee;
+            transition: all 0.2s;
+        }
+
+        .tag-suggestion-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--accent);
+        }
+
+        .tag-color-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
         /* Syntax Highlighting */
         .token-instruction {
             color: #f92672;
@@ -659,6 +757,19 @@
         const PAGE_SIZE = 20;
         let isEndOfResults = false;
         let lastHashPath = '';
+        let tagMetadata = {}; // Cache for tag metadata: { tag: { color: "#..." } }
+
+        async function fetchTagMetadata(collection) {
+            if (!collection) return;
+            try {
+                const res = await fetch(`/api/tags?collection=${collection}`);
+                if (res.ok) {
+                    tagMetadata = await res.json();
+                }
+            } catch (err) {
+                console.error("Failed to fetch tag metadata", err);
+            }
+        }
 
         const routes = {
             '#collections': {
@@ -722,6 +833,11 @@
             lastHashPath = full_hash;
 
             const params = new URLSearchParams(queryString);
+            const collection = params.get('collection') || 'main';
+            if (hashPath === '#function-similarity') {
+                await fetchTagMetadata(collection);
+            }
+
             // Standard pagination for all search routes
             const countLimit = params.get('limit') || (params.get('view') === 'graph' ? '1000' : '20');
             params.set('offset', currentOffset);
@@ -906,7 +1022,9 @@
                         </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
-                    <th><input type="text" id="flt-sim-tag" placeholder="Tag" value="${p.get('tag') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th style="position:relative">
+                        <input type="text" id="flt-sim-tag" placeholder="Tag" value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()">
+                    </th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
                     <th style="font-size: 0.65rem;">
                         <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
@@ -976,6 +1094,10 @@
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="sim-use-cache" ${p.get('use_cache') !== 'false' ? 'checked' : ''} onchange="applySimSearch()">
                         <label for="sim-use-cache" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Use Cache</label>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="sim-color-by-tag" ${localStorage.getItem('sim-color-by-tag') === 'true' ? 'checked' : ''} onchange="localStorage.setItem('sim-color-by-tag', this.checked); refreshAllRowColors()">
+                        <label for="sim-color-by-tag" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Color by Tag</label>
                     </div>
                 </div>`;
             } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
@@ -1331,6 +1453,33 @@
             `}).join('');
         }
 
+        function getRowTagColor(tags) {
+            if (localStorage.getItem('sim-color-by-tag') !== 'true' || !tags || tags.length === 0) return "";
+            let bestTag = null;
+            let maxPrio = -1;
+            tags.forEach(t => {
+                const meta = tagMetadata[t];
+                if (meta && (meta.priority || 0) > maxPrio) {
+                    maxPrio = meta.priority || 0;
+                    bestTag = t;
+                }
+            });
+            if (bestTag) {
+                const color = tagMetadata[bestTag].color;
+                return `linear-gradient(90deg, ${color}22 0%, transparent 100%)`;
+            }
+            return "";
+        }
+
+        function refreshAllRowColors() {
+            const rows = document.querySelectorAll('tr.sim-row');
+            rows.forEach(tr => {
+                const tagCards = tr.querySelectorAll('.sim-tag-card');
+                const tags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
+                tr.style.background = getRowTagColor(tags);
+            });
+        }
+
         function renderTopCorrelations(items) {
             if (!items || !items.length) return '<tr><td colspan="6" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
 
@@ -1348,8 +1497,22 @@
                 const name1 = (p.name1 || '---').replace(/'/g, "\\'");
                 const name2 = (p.name2 || '---').replace(/'/g, "\\'");
 
+                const renderSimTag = (tag) => {
+                    const meta = tagMetadata[tag] || { color: '#66d9ef' };
+                    const color = meta.color;
+                    return `
+                        <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11;">
+                            ${tag} 
+                            <span class="remove-tag-btn" onclick="removeSimTag(event, '${p.id1}', '${p.id2}', '${p.algo}', '${tag}')" style="background:${color}22">×</span>
+                        </span>`;
+                };
+
+                const tags = p.tags || [];
+                const rowStyle = getRowTagColor(tags);
+
                 return `
-                <tr onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
+                <tr class="sim-row" style="background: ${rowStyle}"
+                    onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
                     onmousemove="moveCodePreview(event)"
                     onmouseleave="hideDiffPreview(event)">
                     <td>
@@ -1368,7 +1531,11 @@
                     </td>
                     <td>
                         <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                        <div class="dim" style="font-size:0.6rem;">SIMILARITY</div>
+                        <div class="dim" style="font-size:0.6rem; margin-bottom:5px;">SIMILARITY</div>
+                        <div class="sim-tags-editor" style="display:flex; flex-wrap:wrap; gap:2px; max-width:180px;">
+                            ${(p.tags || []).map(renderSimTag).join('')}
+                            <button class="add-tag-btn" onclick="startAddSimTag(event, '${p.id1}', '${p.id2}', '${p.algo}')">+</button>
+                        </div>
                     </td>
                     <td>
                         <span class="badge" style="background:#000; border:1px solid #333;">L: ${p.meta1?.bsim_features_count || 0}</span><br>
@@ -2750,6 +2917,187 @@
             if (bTooltip) {
                 bTooltip.style.display = 'none';
                 bTooltip.classList.remove('showing');
+            }
+        }
+
+        // --- Similarity Tagging Logic ---
+        function attachTagAutocomplete(input, onSelect) {
+            if (input._acAttached) return;
+            input._acAttached = true;
+            
+            const parent = input.parentElement;
+            const dropdown = document.createElement('div');
+            dropdown.className = 'tag-autocomplete-dropdown';
+            parent.appendChild(dropdown);
+            
+            const renderSuggestions = (tags) => {
+                dropdown.innerHTML = '';
+                tags.forEach(t => {
+                    const item = document.createElement('div');
+                    item.className = 'tag-suggestion-item';
+                    const meta = tagMetadata[t] || { color: '#66d9ef', count: 0, priority: 0 };
+                    item.innerHTML = `
+                        <div class="tag-color-dot" style="background:${meta.color}"></div>
+                        <span style="flex:1">${t}</span>
+                        <span class="dim" style="font-size:0.6rem; margin-left:10px;">Prio: ${meta.priority || 0}</span>
+                        <span class="dim" style="font-size:0.6rem; margin-left:10px;">${meta.count || 0}</span>
+                    `;
+                    item.onmousedown = (e) => {
+                        e.preventDefault();
+                        onSelect(t);
+                        dropdown.style.display = 'none';
+                    };
+                    dropdown.appendChild(item);
+                });
+                dropdown.style.display = 'block';
+            };
+
+            const showSuggestions = (filter = '') => {
+                const query = filter.toLowerCase().trim();
+                const tags = Object.keys(tagMetadata).filter(t => t.toLowerCase().includes(query));
+                if (tags.length > 0) {
+                    renderSuggestions(tags);
+                } else {
+                    dropdown.style.display = 'none';
+                }
+            };
+
+            input.onfocus = () => showSuggestions(input.value);
+            input.oninput = () => showSuggestions(input.value);
+            input.onblur = () => {
+                setTimeout(() => { dropdown.style.display = 'none'; }, 200);
+            };
+
+            // Trigger immediately if already focused (e.g. attached via onfocus)
+            if (document.activeElement === input) showSuggestions(input.value);
+        }
+
+        async function startAddSimTag(event, id1, id2, algo) {
+            event.stopPropagation();
+            const btn = event.target;
+            const parent = btn.parentElement;
+            
+            const wrapper = document.createElement('div');
+            wrapper.style.position = 'relative';
+            wrapper.style.display = 'inline-block';
+            
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'tag-input-field';
+            input.placeholder = 'Tag...';
+            
+            wrapper.appendChild(input);
+            parent.replaceChild(wrapper, btn);
+            
+            attachTagAutocomplete(input, async (tag) => {
+                await confirmAddSimTag(id1, id2, algo, tag, parent);
+                cleanup();
+            });
+            input.focus();
+
+            let isClosing = false;
+            const cleanup = () => {
+                if (isClosing) return;
+                isClosing = true;
+                if (wrapper.parentNode === parent) parent.replaceChild(btn, wrapper);
+            };
+            
+            input.onblur = () => {
+                setTimeout(cleanup, 200);
+            };
+            
+            input.onkeyup = async (e) => {
+                if (e.key === 'Enter') {
+                    const tag = input.value.trim();
+                    if (tag) await confirmAddSimTag(id1, id2, algo, tag, parent);
+                    cleanup();
+                } else if (e.key === 'Escape') {
+                    cleanup();
+                }
+            };
+        }
+
+        async function confirmAddSimTag(id1, id2, algo, tag, container) {
+            try {
+                const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                const col = params.get('collection') || 'main';
+                
+                const res = await fetch('/api/similarity/tag', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ collection: col, id1, id2, algo, tag })
+                });
+                
+                if (res.ok) {
+                    // Update cache if new tag
+                    if (!tagMetadata[tag]) {
+                        await fetchTagMetadata(col);
+                    }
+                    
+                    const meta = tagMetadata[tag] || { color: '#66d9ef' };
+                    const color = meta.color;
+                    
+                    const card = document.createElement('span');
+                    card.className = 'sim-tag-card';
+                    card.style.borderColor = color + '44';
+                    card.style.color = color;
+                    card.style.background = color + '11';
+                    card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="removeSimTag(event, '${id1}', '${id2}', '${algo}', '${tag}')" style="background:${color}22">×</span>`;
+                    container.insertBefore(card, container.lastElementChild);
+                    
+                    // Update row color immediately
+                    const row = container.closest('tr.sim-row');
+                    if (row) {
+                        const tagCards = row.querySelectorAll('.sim-tag-card');
+                        const updatedTags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
+                        row.style.background = getRowTagColor(updatedTags);
+                    }
+                    return true;
+                } else {
+                    const err = await res.json();
+                    alert("Failed to add tag: " + (err.message || err.error));
+                    return false;
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Failed to add tag");
+                return false;
+            }
+        }
+
+        async function removeSimTag(event, id1, id2, algo, tag) {
+            event.stopPropagation();
+            
+            const btn = event.target;
+            const card = btn.parentElement;
+            
+            try {
+                const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                const col = params.get('collection') || 'main';
+                
+                const res = await fetch('/api/similarity/untag', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ collection: col, id1, id2, algo, tag })
+                });
+                
+                if (res.ok) {
+                    const row = btn.closest('tr.sim-row');
+                    card.remove();
+                    
+                    // Update row color immediately
+                    if (row) {
+                        const tagCards = row.querySelectorAll('.sim-tag-card');
+                        const updatedTags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
+                        row.style.background = getRowTagColor(updatedTags);
+                    }
+                } else {
+                    const err = await res.json();
+                    alert("Failed to remove tag: " + (err.message || err.error));
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Failed to remove tag");
             }
         }
 

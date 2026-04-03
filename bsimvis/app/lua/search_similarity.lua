@@ -16,17 +16,16 @@ local total_found = 0
 local pool_count = 0
 local pool_truncated = false
 
--- Helper: Get Union of Multiple Buckets in Safe Chunks (max 500 keys per ZUNION)
+-- Helper: Get Union of Multiple Buckets in Safe Chunks
 local function get_union_lookup(group_indices)
     local lookup = {}
-    local b_keys = {}
-    for _, idx in ipairs(group_indices) do table.insert(b_keys, buckets[idx]) end
-    
-    for i=1, #b_keys, 500 do
-        local chunk = {}
-        for j=i, math.min(i+499, #b_keys) do table.insert(chunk, b_keys[j]) end
-        -- native ZUNION is much faster than ZRANGE loop in Lua
-        local ids = redis.call('ZUNION', #chunk, unpack(chunk))
+    for _, idx in ipairs(group_indices) do
+        local b_key = buckets[idx]
+        -- Robustly handle both ZSET and SET
+        local ids = redis.pcall('ZRANGE', b_key, 0, -1)
+        if type(ids) == 'table' and ids.err then
+            ids = redis.call('SMEMBERS', b_key)
+        end
         for _, id in ipairs(ids) do
             lookup[id] = true
         end
@@ -74,8 +73,13 @@ local function verify_match(sid, score_in, f_sc_in)
             if g.is_large then
                 local bucket_found = false
                 for _, b_idx in ipairs(g.buckets) do
-                    if redis.call('ZSCORE', buckets[b_idx], sid) then
-                        bucket_found = true; break
+                    local b_key = buckets[b_idx]
+                    local score = redis.pcall('ZSCORE', b_key, sid)
+                    if type(score) == 'number' or (type(score) == 'string' and tonumber(score)) then
+                        bucket_found = true; break 
+                    elseif type(score) == 'table' and score.err then
+                        -- Check if SET
+                        if redis.call('SISMEMBER', b_key, sid) == 1 then bucket_found = true; break end
                     end
                 end
                 if not bucket_found then match = false; break end
@@ -141,8 +145,13 @@ if target_group then
             local fetch_max = pool_limit - pool_count - 1
             if fetch_max < 0 then break end
             
-            local b_ids = redis.call('ZRANGE', b_key, 0, fetch_max) 
-            for _, sid in ipairs(b_ids) do
+        local ids = redis.pcall('ZRANGE', b_key, 0, fetch_max) 
+        if type(ids) == 'table' and ids.err then
+            -- Fallback to SET (SMEMBERS doesn't support limit natively here, but we apply it in the loop)
+            ids = redis.call('SMEMBERS', b_key)
+        end
+
+        for _, sid in ipairs(ids) do
                 if not seen[sid] then
                     seen[sid] = true
                     pool_count = pool_count + 1

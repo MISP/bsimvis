@@ -1,5 +1,6 @@
 import json
 import logging
+import redis
 import hashlib
 import os
 from flask import Blueprint, jsonify, request
@@ -157,7 +158,7 @@ def similarity_search():
                     if prefix == "md5":
                         prefixes = ["md5_1", "md5_2"]
                     elif prefix in ["name", "tags", "id", "batch_uuid", "language_id"]:
-                        prefixes = [f"{prefix}1", f"{prefix}2"]
+                        prefixes = [f"{prefix}1", f"{prefix}2", prefix]
                     else:
                         prefixes = [prefix]
                     found_for_filter = []
@@ -195,7 +196,12 @@ def similarity_search():
                     names = []
                     for b_idx in bucket_indices:
                         b_key = bucket_keys[b_idx-1]
-                        weight += r.zcard(b_key)
+                        # Support both SET (manual tags) and ZSET (classic index)
+                        try:
+                            w = r.zcard(b_key)
+                        except redis.exceptions.ResponseError:
+                            w = r.scard(b_key)
+                        weight += w
                         # Extract the human-readable part of the bucket key
                         names.append(b_key.split(":")[-1])
                     
@@ -428,6 +434,8 @@ def similarity_search():
                             "return_type": data.get("return_type2", "N/A"),
                             "bsim_features_count": data.get("feat_count2"),
                         },
+                        "tags": data.get("tags", []),
+                        "algo": algo,
                     }
                 )
 

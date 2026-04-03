@@ -70,6 +70,7 @@ SIM_TAG_FIELDS = [
     "id2",
     "name1",
     "name2",
+    "tags",
     "tags1",
     "tags2",
     "batch_uuid1",

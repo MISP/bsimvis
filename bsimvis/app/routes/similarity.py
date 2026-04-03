@@ -143,3 +143,80 @@ def clear_similarity():
         "collection": collection, "md5": md5, "batch_uuid": batch_uuid, "algo": algo
     })
     return jsonify({"job_id": job_id, "status": "enqueued"})
+
+@similarity_bp.route("/api/similarity/tag", methods=["POST"])
+def tag_similarity():
+    """Adds a tag to a similarity pair."""
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    id1 = data.get("id1")
+    id2 = data.get("id2")
+    algo = data.get("algo", "unweighted_cosine")
+    tag = data.get("tag")
+    
+    if not id1 or not id2 or not tag:
+        return jsonify({"error": "id1, id2, and tag required"}), 400
+    
+    success = similarity_service.tag_similarity(collection, id1, id2, algo, tag)
+    if success:
+        return jsonify({"status": "success", "message": f"Tagged similarity with {tag}"})
+    else:
+        return jsonify({"status": "error", "message": "Failed to tag similarity"}), 500
+
+@similarity_bp.route("/api/similarity/untag", methods=["POST"])
+def untag_similarity():
+    """Removes a tag from a similarity pair."""
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    id1 = data.get("id1")
+    id2 = data.get("id2")
+    algo = data.get("algo", "unweighted_cosine")
+    tag = data.get("tag")
+    
+    if not id1 or not id2 or not tag:
+        return jsonify({"error": "id1, id2, and tag required"}), 400
+    
+    success = similarity_service.untag_similarity(collection, id1, id2, algo, tag)
+    if success:
+        return jsonify({"status": "success", "message": f"Untagged similarity from {tag}"})
+    else:
+        return jsonify({"status": "error", "message": "Failed to untag similarity"}), 500
+
+@similarity_bp.route("/api/tags", methods=["GET"])
+def get_tags():
+    """Returns the global tag index for a collection."""
+    collection = request.args.get("collection", "main")
+    tags = similarity_service.get_tags(collection)
+    return jsonify(tags)
+
+@similarity_bp.route("/api/tags/color", methods=["POST"])
+def set_tag_color():
+    """Updates the color for a tag."""
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    tag = data.get("tag")
+    color = data.get("color")
+    
+    if not tag or not color:
+        return jsonify({"error": "tag and color required"}), 400
+    
+    success = similarity_service.set_tag_color(collection, tag, color)
+    if success:
+        return jsonify({"status": "success", "message": f"Updated color for {tag}"})
+    else:
+        return jsonify({"status": "error", "message": "Failed to update color"}), 500
+
+@similarity_bp.route("/api/tags/priority", methods=["POST"])
+def update_tag_priority():
+    data = request.json or {}
+    col = data.get("collection", "main")
+    tag = data.get("tag")
+    priority = data.get("priority")
+    if col is None or tag is None or priority is None:
+        return jsonify({"error": "Missing parameters"}), 400
+    
+    try:
+        similarity_service.set_tag_priority(col, tag, int(priority))
+        return jsonify({"status": "ok"})
+    except ValueError:
+        return jsonify({"error": "Priority must be an integer"}), 400

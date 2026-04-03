@@ -752,7 +752,7 @@
                 if (totalEl) {
                     totalEl.style.display = 'inline-block';
                     // Let the end of function update the text to include shown count
-                    
+
                     if (poolIcon) {
                         if (data.pool_truncated) {
                             document.getElementById('pool-warn-icon').style.display = 'inline-block';
@@ -786,13 +786,13 @@
 
                 currentOffset += (items.length || 0);
                 isEndOfResults = currentOffset >= total;
-                
+
                 // Update total display with "Shown / Total" format
                 if (totalEl) {
                     totalEl.style.display = 'inline-block';
                     totalEl.innerText = `${currentOffset.toLocaleString()} / ${total.toLocaleString()}`;
                 }
-                
+
                 renderPagination(hashPath);
             } catch (err) {
                 console.error(err);
@@ -906,7 +906,7 @@
                         </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
-                    <th><input type="text" id="flt-sim-tag" placeholder="Tag/Lang..." value="${p.get('tag') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th><input type="text" id="flt-sim-tag" placeholder="Tag" value="${p.get('tag') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
                     <th style="font-size: 0.65rem;">
                         <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
@@ -1083,12 +1083,12 @@
             params.set('max_score', maxScore || '1.0');
             params.set('algo', algo || 'unweighted_cosine');
             params.set('min_features', minFeatures || '0');
-            
+
             if (crossBinary) params.set('cross_binary', crossBinary);
             else params.delete('cross_binary');
             params.set('pool_limit', poolLimit || '1000000');
             params.set('limit', countLimit || (params.get('view') === 'graph' ? '1000' : '20'));
-            
+
             const useCache = document.getElementById('sim-use-cache')?.checked;
             params.set('use_cache', useCache !== false ? 'true' : 'false');
 
@@ -1383,8 +1383,20 @@
                         </div>
                     </td>
                     <td>
-                        <div class="dim" style="font-size:0.7rem; margin-bottom:4px; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${p.meta1?.file_name || m1}">L: <span class="mono">${p.meta1?.file_name || m1}</span></div>
-                        <div class="dim" style="font-size:0.7rem; max-width:140px; overflow:hidden; text-overflow:ellipsis;" title="${p.meta2?.file_name || m2}">R: <span class="mono">${p.meta2?.file_name || m2}</span></div>
+                        <div style="margin-bottom:8px;">
+                            <div style="display:flex; align-items:center; gap:5px;">
+                                <span class="dim" style="font-size:0.65rem; min-width:12px;">L:</span>
+                                <span class="mono" style="color:var(--success); font-size:0.65rem;">${m1}</span>
+                            </div>
+                            <div style="color:#aaa; font-size:0.75rem; margin-top:2px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
+                        </div>
+                        <div>
+                            <div style="display:flex; align-items:center; gap:5px;">
+                                <span class="dim" style="font-size:0.65rem; min-width:12px;">R:</span>
+                                <span class="mono" style="color:var(--success); font-size:0.65rem;">${m2}</span>
+                            </div>
+                            <div style="color:#aaa; font-size:0.75rem; margin-top:2px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                        </div>
                     </td>
                     <td>
                         <button class="btn-diff-action" onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="font-size:0.7rem; padding:4px 8px;">
@@ -1654,8 +1666,8 @@
                         pairs.forEach(p => {
                             [{ id: p.id1, name: p.name1, meta: p.meta1 }, { id: p.id2, name: p.name2, meta: p.meta2 }].forEach(n => {
                                 if (!this.nodes_map.has(n.id)) {
-                                    const node_obj = { 
-                                        id: n.id, name: n.name, md5: n.meta.file_md5, 
+                                    const node_obj = {
+                                        id: n.id, name: n.name, md5: n.meta.file_md5,
                                         file_name: n.meta.file_name, return_type: n.meta.return_type,
                                         addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count,
                                         language_id: n.meta.language_id || 'N/A',
@@ -1744,7 +1756,7 @@
                         const start_idx = md5_nodes[0].i; const end_idx = md5_nodes[md5_nodes.length - 1].i;
                         const col = bin_colors.get(md5);
                         rs.start.push(start_idx * theta_step - theta_step / 2); rs.end.push(end_idx * theta_step + theta_step / 2);
-                        rs.color.push(col); rs.name.push(md5.slice(0, 8)); rs.md5.push(md5); 
+                        rs.color.push(col); rs.name.push(md5.slice(0, 8)); rs.md5.push(md5);
                         rs.file_name.push(md5_nodes[0].n.file_name || md5.slice(0, 8));
                         rs.inner_r.push(ring_inner); rs.outer_r.push(ring_outer);
                         rs.count.push(md5_nodes.length);
@@ -1768,12 +1780,12 @@
 
         function formatDate(iso) {
             if (!iso || iso === 'N/A') return '---';
-            
+
             // If it's a string that consists only of digits, convert to number
             if (typeof iso === 'string' && /^\d+$/.test(iso)) {
                 iso = parseInt(iso, 10);
             }
-            
+
             const d = new Date(iso);
             if (isNaN(d.getTime())) return iso;
             return d.toLocaleString();

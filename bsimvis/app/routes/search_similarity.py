@@ -152,7 +152,14 @@ def similarity_search():
                 def get_bucket_idx(prefix, val):
                     # Helper to find buckets and return their index in the bucket_keys list
                     # We check both suffix 1 and 2 for categorical fields
-                    prefixes = [f"{prefix}1", f"{prefix}2"] if prefix in ["name", "tags", "id", "batch_uuid", "language_id", "md5"] else [prefix]
+                    # Prefix Mapping: similarity metadata uses 'field1' and 'field2' 
+                    # CRITICAL: 'md5' uses underscores ('md5_1', 'md5_2') unlike others
+                    if prefix == "md5":
+                        prefixes = ["md5_1", "md5_2"]
+                    elif prefix in ["name", "tags", "id", "batch_uuid", "language_id"]:
+                        prefixes = [f"{prefix}1", f"{prefix}2"]
+                    else:
+                        prefixes = [prefix]
                     found_for_filter = []
                     target_lower = val.lower().replace("*", "")
 
@@ -165,8 +172,8 @@ def similarity_search():
                             b_key_str = b_key.decode() if isinstance(b_key, bytes) else str(b_key)
                             b_key_lower = b_key_str.lower()
                             
-                            # Match against original target
-                            if target_lower in b_key_lower:
+                            # Only match against the actual value part (last segment)
+                            if target_lower in b_key_lower.split(":")[-1]:
                                 if b_key_str not in bucket_keys:
                                     bucket_keys.append(b_key_str)
                                 
@@ -181,27 +188,42 @@ def similarity_search():
                         logging.info(f"SIM SEARCH | {session_id} | Resolved {len(found_for_filter)} buckets for '{val}'")
                     return found_for_filter
 
-                # Build Logical AND Groups
-                # Each group is an OR-collection of buckets
-                raw_groups = []
-                
+                # Helper to add a group and calculate its weight
+                groups_raw = []
+                def add_group(bucket_indices, field=None):
+                    weight = 0
+                    names = []
+                    for b_idx in bucket_indices:
+                        b_key = bucket_keys[b_idx-1]
+                        weight += r.zcard(b_key)
+                        # Extract the human-readable part of the bucket key
+                        names.append(b_key.split(":")[-1])
+                    
+                    groups_raw.append({
+                        "type": "metadata",
+                        "field": field,
+                        "buckets": bucket_indices,
+                        "bucket_names": names,
+                        "weight": weight
+                    })
+
                 # Group: Language
                 if lang_filter:
                     g = get_bucket_idx("language_id", lang_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    raw_groups.append(g)
+                    add_group(g, field="language")
 
                 # Group: Name
                 if name_filter:
                     g = get_bucket_idx("name", name_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    raw_groups.append(g)
+                    add_group(g, field="name")
 
                 # Group: Tag
                 if tag_filter:
                     g = get_bucket_idx("tags", tag_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    raw_groups.append(g)
+                    add_group(g, field="tag")
 
                 # Group: MD5s (Unions of all MD5s)
                 if md5_filters:
@@ -209,7 +231,7 @@ def similarity_search():
                     for m in md5_filters:
                         g.extend(get_bucket_idx("md5", m))
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    raw_groups.append(g)
+                    add_group(g, field="md5")
 
                 # Group: Search Query (Each word is an AND group containing multiple OR buckets)
                 if search_q:
@@ -218,7 +240,7 @@ def similarity_search():
                         for p in ["name", "tags", "id", "language_id"]:
                             g.extend(get_bucket_idx(p, word))
                         if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                        raw_groups.append(g)
+                        add_group(g, field=f"q({word})")
 
                 # Group: Cross Binary (Tri-state: true/false/None)
                 if cross_binary_val is not None:
@@ -226,39 +248,76 @@ def similarity_search():
                     cb_key = f"idx:{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
                     if r.exists(cb_key):
                         if cb_key not in bucket_keys: bucket_keys.append(cb_key)
-                        raw_groups.append([bucket_keys.index(cb_key) + 1])
+                        add_group([bucket_keys.index(cb_key) + 1], field="cross_binary")
                     else: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
 
-                # Sort groups by estimated cardinality (smallest first) to optimize Lua iteration
-                # We also flag "large" groups to let Lua use ZSCORE instead of table lookup
-                groups = []
-                for bucket_indices in raw_groups:
-                    weight = 0
-                    for b_idx in bucket_indices:
-                        b_key = bucket_keys[b_idx - 1]
-                        weight += r.zcard(b_key)
+                # 1. Similarity Score Group
+                # Optimization: use ZCARD for full range to avoid slow Kvrocks ZCOUNT
+                if min_score <= 0.0 and max_score >= 1.0:
+                    sim_weight = r.zcard(algo_zset)
+                else:
+                    sim_weight = r.zcount(algo_zset, min_score, max_score)
+
+                groups_raw.append({
+                    "type": "score_range",
+                    "field": "similarity",
+                    "weight": sim_weight,
+                    "min": min_score,
+                    "max": max_score,
+                    "key": algo_zset
+                })
+
+                # 2. Feature Count Group
+                if min_features > 0 or sort_by == "feat_count":
+                    feat_key = f"idx:{col}:sim:min_features"
+                    # Optimization: use ZCARD for full range
+                    if min_features <= 0:
+                        feat_weight = r.zcard(feat_key)
+                    else:
+                        feat_weight = r.zcount(feat_key, min_features, "+inf")
                     
-                    groups.append({
-                        "buckets": bucket_indices,
-                        "weight": weight,
-                        "is_large": weight > 100000 # Threshold for ZSCORE optimization
+                    groups_raw.append({
+                        "type": "feature_range",
+                        "field": "feat_count",
+                        "weight": feat_weight,
+                        "min": min_features,
+                        "key": feat_key
                     })
 
-                groups.sort(key=lambda x: x["weight"])
+                # 3. Sort all groups by weight (Smallest First)
+                # This ensures Lua starts with the most selective producer
+                groups = sorted(groups_raw, key=lambda x: x["weight"])
+
+                # Log the Intersection Plan for Debugging
+                for i, g in enumerate(groups):
+                    tp = g.get("type", "unknown")
+                    field = g.get("field", "N/A")
+                    wt = g.get("weight", 0)
+                    details = ""
+                    if tp == "metadata":
+                        details = f"Values={g.get('bucket_names', [])[:10]} "
+                    elif tp == "score_range":
+                        details = f"Range=[{g.get('min')}, {g.get('max')}]"
+                    elif tp == "feature_range":
+                        details = f"Min={g.get('min')}"
+                    logging.info(f"SIM SEARCH | {session_id} | Plan Layer {i+1}: Field={field:14} | Weight={wt:8} | {details}")
+
+
+                # Flag "large" metadata groups for ZSCORE optimization in Lua
+                for g in groups:
+                    if g.get("type") == "metadata_buckets":
+                        g["is_large"] = g["weight"] > 100000
 
                 lua_config = {
                     "groups": groups,
                     "pool_limit": pool_limit,
-                    "min_score": min_score,
-                    "max_score": max_score,
-                    "min_features": min_features,
                     "offset": offset,
                     "limit": limit,
                     "sort_by": sort_by,
                     "sort_order": sort_order
                 }
 
-                logging.info(f"SIM SEARCH | {session_id} | Buckets: {len(bucket_keys)}, Groups: {len(groups)}")
+                logging.info(f"SIM SEARCH | {session_id} | Buckets: {len(bucket_keys)}, Total Filters: {len(groups)}")
                 
                 metrics["filter_resolve"] = time.perf_counter() - t_lua_prep
                 

@@ -913,9 +913,12 @@
                             <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
                             <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                         </select>
-                        <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
-                            <input type="checkbox" id="sim-cross-binary" ${p.get('cross_binary') === 'true' ? 'checked' : ''} onchange="applySimSearch()">
-                            <label for="sim-cross-binary" class="dim" style="font-size:0.6rem; white-space:nowrap;">No Cross-Binary</label>
+                        <div style="margin-top:4px;">
+                            <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                                <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
+                                <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
+                                <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
+                            </select>
                         </div>
                     </th>
                 </tr>`;
@@ -1069,7 +1072,7 @@
             const maxScore = document.getElementById('sim-max-score')?.value;
             const algo = document.getElementById('sim-algo')?.value;
             const minFeatures = document.getElementById('sim-min-features')?.value;
-            const crossBinary = document.getElementById('sim-cross-binary')?.checked;
+            const crossBinary = document.getElementById('sim-cross-binary')?.value;
             const globalQ = document.getElementById('sim-search-input')?.value;
             const poolLimit = document.getElementById('sim-pool-limit')?.value;
             const countLimit = document.getElementById('sim-limit')?.value;
@@ -1080,7 +1083,9 @@
             params.set('max_score', maxScore || '1.0');
             params.set('algo', algo || 'unweighted_cosine');
             params.set('min_features', minFeatures || '0');
-            params.set('cross_binary', crossBinary ? 'true' : 'false');
+            
+            if (crossBinary) params.set('cross_binary', crossBinary);
+            else params.delete('cross_binary');
             params.set('pool_limit', poolLimit || '1000000');
             params.set('limit', countLimit || (params.get('view') === 'graph' ? '1000' : '20'));
             
@@ -1451,9 +1456,11 @@
                             const md5 = source.data.md5[indices[0]];
                             const file_name = source.data.file_name[indices[0]];
                             const count = source.data.count[indices[0]];
+                            const language = source.data.language[indices[0]];
+                            const tags = source.data.tags[indices[0]];
                             const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
                             const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                            if (window.showBinaryPreview) window.showBinaryPreview(md5, file_name || name, count, e);
+                            if (window.showBinaryPreview) window.showBinaryPreview(md5, file_name || name, count, language, tags, e);
                         } else {
                             if (window.hideBinaryPreview) window.hideBinaryPreview();
                         }
@@ -1650,7 +1657,9 @@
                                     const node_obj = { 
                                         id: n.id, name: n.name, md5: n.meta.file_md5, 
                                         file_name: n.meta.file_name, return_type: n.meta.return_type,
-                                        addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count 
+                                        addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count,
+                                        language_id: n.meta.language_id || 'N/A',
+                                        tags: n.meta.tags || []
                                     };
                                     this.nodes_map.set(n.id, node_obj); this.unique_nodes.push(node_obj); this.binary_md5s.add(n.meta.file_md5);
                                 }
@@ -1728,7 +1737,7 @@
 
                 });
 
-                const rs = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [] };
+                const rs = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [], language: [], tags: [] };
                 bin_list.forEach(md5 => {
                     const md5_nodes = this.unique_nodes.map((n, i) => ({ n, i })).filter(item => item.n.md5 === md5);
                     if (md5_nodes.length > 0) {
@@ -1739,6 +1748,10 @@
                         rs.file_name.push(md5_nodes[0].n.file_name || md5.slice(0, 8));
                         rs.inner_r.push(ring_inner); rs.outer_r.push(ring_outer);
                         rs.count.push(md5_nodes.length);
+                        rs.language.push(md5_nodes[0].n.language_id);
+                        const all_tags = new Set();
+                        md5_nodes.forEach(item => { (item.n.tags || []).forEach(t => all_tags.add(t)); });
+                        rs.tags.push(Array.from(all_tags).join(', '));
                     }
                 });
 
@@ -2680,7 +2693,7 @@
         }
 
         // --- Binary Preview Logic ---
-        function showBinaryPreview(md5, name, count, e) {
+        function showBinaryPreview(md5, name, count, language, tags, e) {
             let bTooltip = document.getElementById('binary-preview-tooltip');
             if (!bTooltip) {
                 bTooltip = document.createElement('div');
@@ -2693,7 +2706,7 @@
                 bTooltip.style.border = '1px solid #333';
                 bTooltip.style.borderRadius = '8px';
                 bTooltip.style.padding = '12px';
-                bTooltip.style.minWidth = '220px';
+                bTooltip.style.minWidth = '250px';
                 document.body.appendChild(bTooltip);
             }
 
@@ -2704,13 +2717,15 @@
             const offset = 15;
             let x = e.clientX + offset;
             let y = e.clientY + offset;
-            if (x + 250 > window.innerWidth) x = e.clientX - 250 - offset;
+            if (x + 280 > window.innerWidth) x = e.clientX - 280 - offset;
             bTooltip.style.left = x + 'px';
             bTooltip.style.top = y + 'px';
 
             bTooltip.innerHTML = `
                 <div style="font-size:14px; font-weight:bold; margin-bottom:4px; color:var(--accent);">${name} (BINARY)</div>
                 <div style="font-size:10px; color:#AAA; margin-bottom:8px; word-break:break-all;">MD5: ${md5}</div>
+                <div style="font-size:11px; margin-bottom:4px;"><span style="color:#75715e">Language:</span> <b style="color:#66d9ef">${language}</b></div>
+                <div style="font-size:11px; margin-bottom:8px;"><span style="color:#75715e">Tags:</span> <span style="color:#a6e22e">${tags || 'None'}</span></div>
                 <div style="display:flex; justify-content:space-between; font-size:12px; border-top:1px solid #333; padding-top:8px;">
                     <span>Functions in Graph:</span>
                     <b style="color:#ff79c6;">${count}</b>

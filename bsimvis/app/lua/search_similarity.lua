@@ -38,10 +38,14 @@ local function get_union_lookup(group_indices)
 end
 
 -- 1. Pre-build Lookup Tables for Secondary Groups (i >= 2)
+-- Optimization: If a group is "large", we use ZSCORE in the loop instead of a Lua table
 local group_lookups = {}
 if #groups > 1 then
     for i=2, #groups do
-        group_lookups[i] = get_union_lookup(groups[i])
+        local g = groups[i]
+        if not g.is_large then
+            group_lookups[i] = get_union_lookup(g.buckets)
+        end
     end
 end
 
@@ -72,20 +76,38 @@ if use_algo_base then
     if #raw / 2 >= pool_limit then pool_truncated = true end
 else
     -- Filtered search: Fetch Base Group candidates (Group 1)
-    for _, b_idx in ipairs(groups[1]) do
+    for _, b_idx in ipairs(groups[1].buckets) do
         local b_key = buckets[b_idx]
-        local b_ids = redis.call('ZRANGE', b_key, 0, -1) -- Still one-by-one to allow early exit on pool_limit
+        -- Optimization: only fetch what we need from the bucket
+        local fetch_max = pool_limit - pool_count - 1
+        if fetch_max < 0 then break end
+        
+        local b_ids = redis.call('ZRANGE', b_key, 0, fetch_max) 
         for _, sid in ipairs(b_ids) do
             if not seen[sid] then
                 seen[sid] = true
                 pool_count = pool_count + 1
                 
-                -- Intersection check against secondary lookup tables
+                -- Intersection check against secondary lookup tables or via ZSCORE
                 local match = true
                 for i=2, #groups do
-                    if not group_lookups[i][sid] then
-                        match = false
-                        break
+                    local g = groups[i]
+                    if g.is_large then
+                        -- Large group: check each bucket with ZSCORE (usually just one bucket)
+                        local bucket_found = false
+                        for _, sub_b_idx in ipairs(g.buckets) do
+                            if redis.call('ZSCORE', buckets[sub_b_idx], sid) then
+                                bucket_found = true
+                                break
+                            end
+                        end
+                        if not bucket_found then match = false; break end
+                    else
+                        -- Small group: use pre-built lookup table
+                        if not group_lookups[i][sid] then
+                            match = false
+                            break
+                        end
                     end
                 end
                 

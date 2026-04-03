@@ -183,24 +183,25 @@ def similarity_search():
 
                 # Build Logical AND Groups
                 # Each group is an OR-collection of buckets
+                raw_groups = []
                 
                 # Group: Language
                 if lang_filter:
                     g = get_bucket_idx("language_id", lang_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    groups.append(g)
+                    raw_groups.append(g)
 
                 # Group: Name
                 if name_filter:
                     g = get_bucket_idx("name", name_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    groups.append(g)
+                    raw_groups.append(g)
 
                 # Group: Tag
                 if tag_filter:
                     g = get_bucket_idx("tags", tag_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    groups.append(g)
+                    raw_groups.append(g)
 
                 # Group: MD5s (Unions of all MD5s)
                 if md5_filters:
@@ -208,7 +209,7 @@ def similarity_search():
                     for m in md5_filters:
                         g.extend(get_bucket_idx("md5", m))
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    groups.append(g)
+                    raw_groups.append(g)
 
                 # Group: Search Query (Each word is an AND group containing multiple OR buckets)
                 if search_q:
@@ -217,19 +218,34 @@ def similarity_search():
                         for p in ["name", "tags", "id", "language_id"]:
                             g.extend(get_bucket_idx(p, word))
                         if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                        groups.append(g)
+                        raw_groups.append(g)
 
-                # Group: Cross Binary
-                if is_cross_binary:
-                    cb_key = f"idx:{col}:sim:is_cross_binary:true"
+                # Group: Cross Binary (Tri-state: true/false/None)
+                cross_binary_param = request.args.get("cross_binary")
+                if cross_binary_param is not None:
+                    cb_bool = cross_binary_param.lower() == "true"
+                    cb_key = f"idx:{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
                     if r.exists(cb_key):
                         if cb_key not in bucket_keys: bucket_keys.append(cb_key)
-                        groups.append([bucket_keys.index(cb_key) + 1])
+                        raw_groups.append([bucket_keys.index(cb_key) + 1])
                     else: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
 
-                # Sort groups by estimated size (smallest first) to optimize Lua iteration
-                # This is a crude optimization but helps
-                groups.sort(key=lambda x: len(x))
+                # Sort groups by estimated cardinality (smallest first) to optimize Lua iteration
+                # We also flag "large" groups to let Lua use ZSCORE instead of table lookup
+                groups = []
+                for bucket_indices in raw_groups:
+                    weight = 0
+                    for b_idx in bucket_indices:
+                        b_key = bucket_keys[b_idx - 1]
+                        weight += r.zcard(b_key)
+                    
+                    groups.append({
+                        "buckets": bucket_indices,
+                        "weight": weight,
+                        "is_large": weight > 100000 # Threshold for ZSCORE optimization
+                    })
+
+                groups.sort(key=lambda x: x["weight"])
 
                 lua_config = {
                     "groups": groups,

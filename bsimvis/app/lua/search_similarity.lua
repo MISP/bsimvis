@@ -54,23 +54,33 @@ local seen = {}
 local use_algo_base = (#groups == 0)
 
 if use_algo_base then
-    local raw = redis.call('ZREVRANGE', algo_zset, 0, pool_limit - 1, 'WITHSCORES')
+    local range_cmd, first, second
+    if sort_order == "asc" then
+        range_cmd = "ZRANGEBYSCORE"
+        first = min_sc
+        second = max_sc
+    else
+        range_cmd = "ZREVRANGEBYSCORE"
+        first = max_sc
+        second = min_sc
+    end
+    -- Debug: return {range_cmd, algo_zset, first, second, pool_limit}
+    local raw = redis.call(range_cmd, algo_zset, first, second, 'WITHSCORES', 'LIMIT', 0, pool_limit)
     for i=1, #raw, 2 do
         local sid = raw[i]
         local score = tonumber(raw[i+1])
-        if score >= min_sc and score <= max_sc then
-            local pass_feat = true
-            local f_sc = 0
-            if min_feat > 0 or sort_by == "feat_count" then
-                f_sc = redis.call('ZSCORE', feat_zset, sid)
-                if f_sc then f_sc = tonumber(f_sc) else f_sc = 0 end
-                if f_sc < min_feat then pass_feat = false end
-            end
-            if pass_feat then
-                total_found = total_found + 1
-                local sort_val = (sort_by == "score") and score or f_sc
-                table.insert(refined, {sid, sort_val})
-            end
+        -- Keep the additional filter for feature counts if needed
+        local pass_feat = true
+        local f_sc = 0
+        if min_feat > 0 or sort_by == "feat_count" then
+            f_sc = redis.call('ZSCORE', feat_zset, sid)
+            if f_sc then f_sc = tonumber(f_sc) else f_sc = 0 end
+            if f_sc < min_feat then pass_feat = false end
+        end
+        if pass_feat then
+            total_found = total_found + 1
+            local sort_val = (sort_by == "score") and score or f_sc
+            table.insert(refined, {sid, sort_val})
         end
     end
     if #raw / 2 >= pool_limit then pool_truncated = true end

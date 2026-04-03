@@ -52,7 +52,7 @@ def similarity_search():
     tag_filter = request.args.get("tag", "").lower()
     lang_filter = request.args.get("language", "").lower()
     md5_filters = request.args.getlist("md5")
-    is_cross_binary = request.args.get("cross_binary", "false").lower() == "true"
+    cross_binary_val = request.args.get("cross_binary")
 
     try:
         pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
@@ -84,7 +84,7 @@ def similarity_search():
             "max_score": max_score,
             "min_features": min_features,
             "pool_limit": pool_limit, # CRITICAL: Include pool_limit in cache hash
-            "cross_binary": is_cross_binary,
+            "cross_binary": cross_binary_val,
             "q": (request.args.get("q") or "").strip().lower(),
             "name": (request.args.get("name") or "").strip().lower(),
             "tag": (request.args.get("tag") or "").strip().lower(),
@@ -221,9 +221,8 @@ def similarity_search():
                         raw_groups.append(g)
 
                 # Group: Cross Binary (Tri-state: true/false/None)
-                cross_binary_param = request.args.get("cross_binary")
-                if cross_binary_param is not None:
-                    cb_bool = cross_binary_param.lower() == "true"
+                if cross_binary_val is not None:
+                    cb_bool = cross_binary_val.lower() == "true"
                     cb_key = f"idx:{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
                     if r.exists(cb_key):
                         if cb_key not in bucket_keys: bucket_keys.append(cb_key)
@@ -265,7 +264,7 @@ def similarity_search():
                 
                 # 2. Execute Lua Search
                 t_lua_start = time.perf_counter()
-                keys = [algo_zset, f"idx:{col}:sim:feat_count1" if sort_by == "feat_count" else f"idx:{col}:sim:min_features"] + bucket_keys
+                keys = [algo_zset, f"idx:{col}:sim:min_features"] + bucket_keys
                 try:
                     # Execute pre-registered script
                     res = search_script(keys=keys, args=[json.dumps(lua_config)])
@@ -402,7 +401,7 @@ def similarity_search():
                 "tag": request.args.get("tag", ""),
                 "language": request.args.get("language", ""),
                 "md5": md5_filters,
-                "cross_binary": is_cross_binary,
+                "cross_binary": cross_binary_val,
                 "total": total,
                 "offset": offset,
                 "limit": limit,

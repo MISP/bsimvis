@@ -18,9 +18,10 @@ class SimilarityService:
         self._sim_script = lua_manager.get_script("build_similarity")
         self._clear_script = lua_manager.get_script("clear_similarity")
 
-    def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0, job_service=None, job_id=None):
+    def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0, job_service=None, job_id=None, sleep_time=0.05):
         """
         Builds similarities for all functions in a batch or for a specific file.
+        Uses chunked pipelining for O(N/100) performance and throttling.
         """
         r = self.r
         function_ids = []
@@ -30,11 +31,9 @@ class SimilarityService:
             function_ids = list(r.smembers(batch_func_set))
         elif md5:
             # Find all functions for this MD5
-            # Assuming idx:{coll}:file_funcs:{md5} exists (it should after INDEX_FUNCTIONS)
             raw_ids = list(r.smembers(f"idx:{collection}:file_funcs:{md5}"))
             function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
             if not function_ids:
-                # Fallback to key scanning (slower)
                 pattern = f"{collection}:function:{md5}:*:vec:tf"
                 keys = r.keys(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
@@ -44,19 +43,98 @@ class SimilarityService:
             logging.warning(f"No functions found to build similarities for {batch_uuid or md5}")
             return True
 
-        logging.info(f"[*] Building similarities for {total} functions in {batch_uuid or md5}...")
+        logging.info(f"[*] Building similarities for {total} functions in {batch_uuid or md5} (chunk_size=20, yield={sleep_time}s)...")
         
-        for i, func_id in enumerate(function_ids):
-            # Update job progress
-            if job_service and job_id and (i % 10 == 0 or i == total - 1):
-                pct = int((i + 1) / total * 100)
-                job_service.update_progress(job_id, pct, f"Building similarities: {i+1}/{total}")
+        start_time = time.time()
+        chunk_size = 20
+        
+        for i in range(0, total, chunk_size):
+            chunk = function_ids[i:i + chunk_size]
             
-            self.build_function(collection, func_id, algo=algo, top_k=top_k, min_score=min_score)
+            # 1. Update Progress & Metrics
+            if job_service and job_id:
+                elapsed = time.time() - start_time
+                done = i
+                speed = done / elapsed if elapsed > 0 else 0
+                remaining = total - done
+                eta = remaining / speed if speed > 0 else 0
+                
+                pct = int((i) / total * 100)
+                job_service.update_progress(job_id, pct, f"Building similarities: {i}/{total} ({speed:.1f} fn/s, ETA: {int(eta)}s)")
+                
+                # Store metrics in job hash for global visibility
+                r_queue = job_service.r
+                r_queue.hset(f"job:{job_id}", mapping={
+                    "speed": f"{speed:.2f}",
+                    "eta": str(int(eta)),
+                    "total_items": str(total),
+                    "processed_items": str(i)
+                })
+
+            # 2. Process Chunk with Pipelining
+            self._process_chunk(collection, chunk, algo, top_k, min_score)
+            
+            # 3. Dashboard Protection: Yield
+            if sleep_time > 0 and i + chunk_size < total:
+                time.sleep(sleep_time)
         
+        # Final update
+        if job_service and job_id:
+            job_service.update_progress(job_id, 100, f"Completed building {total} similarities.")
+
         return True
 
-    def build_function(self, collection, base_id, algo="unweighted_cosine", top_k=20, min_score=0.1):
+    def _process_chunk(self, collection, chunk, algo, top_k, min_score):
+        """Processes a chunk of functions using Redis pipelining."""
+        r = self.r
+        built_set_key = f"idx:{collection}:built:functions:{algo}"
+        
+        # Phase 1: Bulk fetch built status and feature vectors
+        pipe = r.pipeline()
+        for fid in chunk:
+            pipe.sismember(built_set_key, fid)
+            pipe.zrange(f"{fid}:vec:tf", 0, -1)
+        
+        results = pipe.execute()
+        
+        # Phase 2: Filter and prepare Lua bursts
+        targets_to_build = []
+        for idx, fid in enumerate(chunk):
+            is_built = results[idx * 2]
+            features = results[idx * 2 + 1]
+            
+            if is_built:
+                continue
+            
+            if not features:
+                # Shortcut: Zero features = Mark as built immediately
+                r.sadd(built_set_key, fid)
+                continue
+            
+            targets_to_build.append((fid, features))
+            
+        if not targets_to_build:
+            return
+
+        # Phase 3: Execute Lua script bursts
+        pipe = r.pipeline()
+        for fid, features in targets_to_build:
+            parts = fid.split(":")
+            if len(parts) < 4: continue
+            md5, addr = parts[2], parts[3]
+            
+            lua_args = [
+                fid, collection, algo, int(time.time() * 1000),
+                top_k, md5, addr, min_score, built_set_key
+            ] + features
+            
+            # Call Lua script within the pipeline
+            self._sim_script(args=lua_args, client=pipe)
+            pipe.sadd(built_set_key, fid)
+            
+        pipe.execute()
+
+    def build_function(self, collection, base_id, algo="unweighted_cosine", top_k=20, min_score=0.1, sleep_time=0):
         """
         Builds similarities for a single function against the collection.
         base_id: coll:function:md5:addr

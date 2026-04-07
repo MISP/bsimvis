@@ -11,6 +11,12 @@ def list_jobs():
     jobs = job_service.list_jobs(limit=limit)
     return jsonify(jobs)
 
+@jobs_bp.route("/api/jobs/stats", methods=["GET"])
+def get_global_stats():
+    """Returns aggregate metrics across all jobs."""
+    stats = job_service.get_global_stats()
+    return jsonify(stats)
+
 @jobs_bp.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
     """Returns detailed status and logs for a job or pipeline."""

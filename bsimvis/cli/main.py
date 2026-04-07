@@ -13,6 +13,7 @@ from bsimvis.cli import (
     bsimvis_features,
     bsimvis_cache,
     bsimvis_job,
+    bsimvis_worker,
 )
 
 
@@ -173,12 +174,18 @@ def main():
     j_list.add_argument("--limit", type=int, default=20)
     
     j_status = job_actions.add_parser("status", help="Get job status & logs")
-    j_status.add_argument("job_id", help="Job or Pipeline ID")
+    j_status.add_argument("job_id", nargs="?", help="Job or Pipeline ID (optional for global stats)")
     j_status.add_argument("--watch", action="store_true", help="Watch progress")
     j_status.add_argument("--logs", action="store_true", help="Show logs")
     
     j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
     j_cancel.add_argument("job_id", help="Job or Pipeline ID")
+
+    # --- WORKER ---
+    worker_parser = subparsers.add_parser("worker", help="Worker management")
+    worker_actions = worker_parser.add_subparsers(dest="action", required=True)
+    w_start = worker_actions.add_parser("start", help="Start background workers")
+    w_start.add_argument("-n", "--count", type=int, default=1, help="Number of workers to start")
     batch_parser = subparsers.add_parser("batch", help="Batch management")
     batch_actions = batch_parser.add_subparsers(dest="action", required=True)
 
@@ -344,6 +351,8 @@ def main():
             bsimvis_cache.run_cache(g_host, int(g_port), args)
         elif args.subcommand == "job":
             bsimvis_job.run_job(g_host, int(g_port), args)
+        elif args.subcommand == "worker":
+            bsimvis_worker.run_worker(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

@@ -53,6 +53,9 @@ class FeatureService:
                 # Update function mapping for this feature
                 pipe.zadd(f"idx:{collection}:feature:{f_hash}:functions", {func_id: new_tf})
                 
+                # Update global TF counter for this feature
+                pipe.zincrby(f"idx:{collection}:features:by_tf", float(new_tf), f_hash)
+                
                 # Store feature metadata as a JSON string in a HASH keyed by function_id
                 # This allows the API to pick any function's context for a feature.
                 meta_entry = dict(feat_item)

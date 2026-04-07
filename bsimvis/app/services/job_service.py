@@ -183,6 +183,42 @@ class JobService:
         self.r.hset(f"job:{pipeline_id}", "progress", agg_progress)
         self.r.hset(f"job:{pipeline_id}", "updated_at", int(time.time() * 1000))
 
+    def get_global_stats(self):
+        """Returns aggregate stats across all active and pending jobs."""
+        processing_ids = self.r.lrange("jobs:processing", 0, -1)
+        pending_count = self.r.llen("jobs:pending")
+        
+        total_speed = 0.0
+        active_jobs_count = 0
+        remaining_items = 0
+        
+        for jid in processing_ids:
+            job = self.r.hgetall(f"job:{jid}")
+            if not job: continue
+            
+            speed = float(job.get("speed", 0))
+            if speed > 0:
+                total_speed += speed
+                active_jobs_count += 1
+            
+            total = int(job.get("total_items", 0))
+            done = int(job.get("processed_items", 0))
+            remaining_items += max(0, total - done)
+
+        # Average speed (weighted by number of workers if we have them)
+        avg_speed = total_speed / active_jobs_count if active_jobs_count > 0 else 0
+        
+        global_eta = remaining_items / total_speed if total_speed > 0 else 0
+        
+        return {
+            "active_workers": len(processing_ids),
+            "pending_jobs": pending_count,
+            "avg_speed": round(avg_speed, 2),
+            "total_speed": round(total_speed, 2),
+            "remaining_items": remaining_items,
+            "global_eta": int(global_eta)
+        }
+
     def list_jobs(self, limit=50):
         """Returns a list of the most recent jobs."""
         job_ids = self.r.lrange("jobs:global", 0, limit - 1)

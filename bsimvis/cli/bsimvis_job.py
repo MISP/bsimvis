@@ -30,6 +30,28 @@ def list_jobs(limit):
 def job_status(job_id, watch, logs):
     try:
         while True:
+            if not job_id:
+                # GLOBAL STATS MODE
+                resp = requests.get(f"{API_BASE}/jobs/stats")
+                resp.raise_for_status()
+                stats = resp.json()
+                
+                print("\033[H\033[J", end="") # Clear screen
+                print("=== GLOBAL JOB STATUS ===")
+                print(f"Active Workers: {stats['active_workers']}")
+                print(f"Pending Jobs:   {stats['pending_jobs']}")
+                print(f"Total Speed:    {stats['total_speed']} fn/s")
+                print(f"Avg Speed:      {stats['avg_speed']} fn/s")
+                print(f"Items Left:     {stats['remaining_items']}")
+                print(f"Est. Global Time: {stats['global_eta']}s")
+                print("-" * 30)
+                
+                if not watch:
+                    return
+                time.sleep(2)
+                continue
+
+            # INDIVIDUAL JOB MODE
             resp = requests.get(f"{API_BASE}/jobs/{job_id}")
             resp.raise_for_status()
             job = resp.json()
@@ -43,6 +65,12 @@ def job_status(job_id, watch, logs):
             print(f"Job: {job['id']} ({job['type']})")
             print(f"Status: {job['status']}")
             print(f"Progress: {job['progress']}%")
+            
+            if "speed" in job:
+                print(f"Speed: {job['speed']} fn/s")
+            if "eta" in job:
+                print(f"ETA: {job['eta']}s")
+            
             print("-" * 40)
             
             if "sub_tasks" in job:

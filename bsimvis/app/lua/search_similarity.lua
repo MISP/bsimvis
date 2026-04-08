@@ -12,6 +12,17 @@ local limit = tonumber(config.limit or 100)
 local buckets = {}
 for i=3, #KEYS do buckets[i-2] = KEYS[i] end
 
+-- Preprocess metadata groups for O(1) Lua-local matching
+for _, g in ipairs(groups) do
+    if g.type == "metadata" and g.members then
+        local lookup = {}
+        for _, m in ipairs(g.members) do
+            lookup[m] = true
+        end
+        g.lookup = lookup
+    end
+end
+
 -- Helper: Robust Token Splitter
 local function g_split(inputstr, sep)
     if sep == nil then sep = ":" end
@@ -82,12 +93,20 @@ if producer.type == "score_range" or producer.type == "feature_range" then
                 if not id1 then match = false; break end
                 
                 local found = false
-                for _, b_idx in ipairs(g.buckets) do
-                    local b_key = buckets[b_idx]
-                    if b_key and (redis.call('SISMEMBER', b_key, id1) == 1 or 
-                                  redis.call('SISMEMBER', b_key, id2) == 1 or
-                                  redis.call('SISMEMBER', b_key, sid) == 1) then
-                        found = true; break
+                if g.lookup then
+                    -- High-performance Lua local match
+                    if g.lookup[id1] or g.lookup[id2] or g.lookup[sid] then
+                        found = true
+                    end
+                else
+                    -- Fallback: Regular SISMEMBER check
+                    for _, b_idx in ipairs(g.buckets) do
+                        local b_key = buckets[b_idx]
+                        if b_key and (redis.call('SISMEMBER', b_key, id1) == 1 or 
+                                      redis.call('SISMEMBER', b_key, id2) == 1 or
+                                      redis.call('SISMEMBER', b_key, sid) == 1) then
+                            found = true; break
+                        end
                     end
                 end
                 if not found then match = false; break end

@@ -286,12 +286,22 @@ def similarity_search():
                         else:
                             names.append(parts[-1])
                     
+                    # NEW: Perform SUNION to get all matching function IDs for this group
+                    # This avoids millions of SISMEMBER calls in Lua
+                    all_members = []
+                    if bucket_indices:
+                        b_keys = [bucket_keys[bi-1] for bi in bucket_indices]
+                        # Use SUNION to get unique members from all buckets in one go
+                        raw_members = r.sunion(*b_keys)
+                        all_members = [m.decode() if isinstance(m, bytes) else str(m) for m in raw_members]
+                        
                     groups_raw.append({
                         "type": "metadata",
                         "field": field,
                         "buckets": bucket_indices,
                         "bucket_names": names,
                         "weight": weight,
+                        "members": all_members, # Optimized member list
                         "is_large": True # Deep Selection: Always use the robust verification path
                     })
 

@@ -9,6 +9,7 @@ from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
 from bsimvis.app.services.similarity_service import SimilarityService
 from bsimvis.app.services.lua_manager import lua_manager
+from bsimvis.app.services.timer_service import job_timer
 
 # Setup Logging
 logging.basicConfig(
@@ -84,34 +85,43 @@ class Worker:
         self.job_service.add_log(job_id, f"Worker {self.name} started processing {jtype}.")
         self.r_queue.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
         
-        try:
-            # Dispatch
-            success = self._dispatch(jtype, payload, job_id)
-            
-            if success:
-                self.job_service.add_log(job_id, f"Job {jtype} completed successfully.")
-                self.job_service.update_progress(job_id, 100)
-                self.r_queue.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
+        # Execute Job within a timer context
+        with job_timer(job_id) as timer:
+            try:
+                # Dispatch
+                success = self._dispatch(jtype, payload, job_id)
                 
-                # Pipeline Chaining: Check if we need to enqueue the next task
-                if parent_id:
-                    self._handle_pipeline_next(parent_id, job_id)
-            else:
+                if success:
+                    self.job_service.add_log(job_id, f"Job {jtype} completed successfully.")
+                    self.job_service.update_progress(job_id, 100)
+                    self.r_queue.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
+                    
+                    # Pipeline Chaining: Check if we need to enqueue the next task
+                    if parent_id:
+                        self._handle_pipeline_next(parent_id, job_id)
+                else:
+                    self.r_queue.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
+                    self.job_service.add_log(job_id, "Job failed (returned False from dispatcher).")
+                    
+            except Exception as e:
+                logging.error(f"[!] Job {job_id} failed with error: {e}")
+                import traceback
+                traceback.print_exc()
                 self.r_queue.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
-                self.job_service.add_log(job_id, "Job failed (returned False from dispatcher).")
+                self.r_queue.hset(f"job:{job_id}", "error", str(e))
+                self.job_service.add_log(job_id, f"Execution error: {e}")
                 
-        except Exception as e:
-            logging.error(f"[!] Job {job_id} failed with error: {e}")
-            import traceback
-            traceback.print_exc()
-            self.r_queue.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
-            self.r_queue.hset(f"job:{job_id}", "error", str(e))
-            self.job_service.add_log(job_id, f"Execution error: {e}")
-            
-            # If sub-task fails, mark parent pipeline as failed
-            if parent_id:
-                self.r_queue.hset(f"job:{parent_id}", "status", JobStatus.FAILED.value)
-                self.job_service.add_log(parent_id, f"Pipeline failed because sub-task {job_id} failed.")
+                # If sub-task fails, mark parent pipeline as failed
+                if parent_id:
+                    self.r_queue.hset(f"job:{parent_id}", "status", JobStatus.FAILED.value)
+                    self.job_service.add_log(parent_id, f"Pipeline failed because sub-task {job_id} failed.")
+            finally:
+                # Finalize and save performance stats
+                stats = timer.finalize()
+                self.job_service.save_performance_stats(job_id, stats)
+                perf_summary = f"Perf: Total {stats['total_time']}s | Python {stats['python_time']}s | DB {stats['db_time']}s | Lua {stats['lua_time']}s"
+                self.job_service.add_log(job_id, perf_summary)
+                logging.info(f"[#] Job {job_id} {perf_summary}")
 
     def _dispatch(self, jtype, payload, job_id):
         """Dispatcher for background jobs."""

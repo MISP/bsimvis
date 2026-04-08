@@ -178,6 +178,10 @@ def main():
     j_status.add_argument("--watch", action="store_true", help="Watch progress")
     j_status.add_argument("--logs", action="store_true", help="Show logs")
     
+    j_perf = job_actions.add_parser("perf", help="Display performance statistics for a job or pipeline")
+    j_perf.add_argument("job_id", help="Job or Pipeline ID")
+    j_perf.add_argument("--top", type=int, default=10, help="Show top N most demanding DB commands (default: 10)")
+    
     j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
     j_cancel.add_argument("job_id", help="Job or Pipeline ID")
 

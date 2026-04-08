@@ -116,7 +116,11 @@ class JobService:
                         "id": tid,
                         "type": st.get("type"),
                         "status": st.get("status"),
-                        "progress": int(st.get("progress", 0))
+                        "progress": int(st.get("progress", 0)),
+                        "perf_total": float(st.get("perf_total", 0)),
+                        "perf_python": float(st.get("perf_python", 0)),
+                        "perf_db": float(st.get("perf_db", 0)),
+                        "perf_lua": float(st.get("perf_lua", 0)),
                     })
             data["sub_tasks"] = sub_tasks
 
@@ -124,7 +128,31 @@ class JobService:
         logs = self.r.lrange(f"job_log:{job_id}", 0, -1)
         data["logs"] = [log for log in logs]
         
+        # Fetch performance details if available
+        perf_details = self.r.get(f"job_perf_details:{job_id}")
+        if perf_details:
+            data["perf_details"] = json.loads(perf_details)
+        
         return data
+
+    def save_performance_stats(self, job_id, stats):
+        """Saves performance stats for a job."""
+        # Update main job hash with core metrics
+        self.r.hset(f"job:{job_id}", mapping={
+            "perf_total": str(stats["total_time"]),
+            "perf_python": str(stats["python_time"]),
+            "perf_db": str(stats["db_time"]),
+            "perf_lua": str(stats["lua_time"]),
+            "perf_ops": str(stats["ops_count"]),
+        })
+        
+        # Store full details separately to avoid hash bloat
+        details = stats["details"]
+        # Limit to last 500 ops for detail view if it's huge
+        if len(details) > 500:
+            details = details[:200] + [{"op": "...", "time": 0, "cat": "skipped", "ts": 0}] + details[-300:]
+            
+        self.r.set(f"job_perf_details:{job_id}", json.dumps(details), ex=86400) # 24h retention
 
     def cancel_job(self, job_id):
         """Marks a job or pipeline as cancelled."""

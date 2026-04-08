@@ -205,6 +205,37 @@
             border-style: solid;
         }
 
+        .bookmark-btn {
+            background: none;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #75715e;
+            border-radius: 12px;
+            padding: 1px 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin: 2px;
+            transition: all 0.2s;
+            vertical-align: middle;
+        }
+
+        .bookmark-btn:hover {
+            color: #66d9ef;
+            border-color: #66d9ef;
+            transform: scale(1.05);
+        }
+
+        .bookmark-btn.active {
+            color: #66d9ef;
+            border-color: #66d9ef;
+            background: rgba(102, 217, 239, 0.1);
+        }
+
+        .bookmark-btn.active svg {
+            fill: #66d9ef;
+        }
+
         .tag-input-field {
             background: #000;
             border: 1px solid var(--accent);
@@ -765,6 +796,10 @@
                 const res = await fetch(`/api/tags?collection=${collection}`);
                 if (res.ok) {
                     tagMetadata = await res.json();
+                }
+                // Ensure bookmark has a default look if not set on server
+                if (!tagMetadata['bookmark']) {
+                    tagMetadata['bookmark'] = { color: '#66d9ef', priority: 100, count: 0 };
                 }
             } catch (err) {
                 console.error("Failed to fetch tag metadata", err);
@@ -1455,18 +1490,21 @@
 
         function getRowTagColor(tags) {
             if (localStorage.getItem('sim-color-by-tag') !== 'true' || !tags || tags.length === 0) return "";
-            let bestTag = null;
+            let bestColor = null;
             let maxPrio = -1;
             tags.forEach(t => {
-                const meta = tagMetadata[t];
+                let meta = tagMetadata[t];
+                // Enforce fixed light blue for bookmark with high priority
+                if (t === 'bookmark') {
+                    meta = { color: '#66d9ef', priority: 1000 };
+                }
                 if (meta && (meta.priority || 0) > maxPrio) {
                     maxPrio = meta.priority || 0;
-                    bestTag = t;
+                    bestColor = meta.color;
                 }
             });
-            if (bestTag) {
-                const color = tagMetadata[bestTag].color;
-                return `linear-gradient(90deg, ${color}22 0%, transparent 100%)`;
+            if (bestColor) {
+                return `linear-gradient(90deg, ${bestColor}22 0%, transparent 100%)`;
             }
             return "";
         }
@@ -1476,6 +1514,13 @@
             rows.forEach(tr => {
                 const tagCards = tr.querySelectorAll('.sim-tag-card');
                 const tags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
+                
+                // Also check bookmark button
+                const bookmarkBtn = tr.querySelector('.bookmark-btn');
+                if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
+                    tags.push('bookmark');
+                }
+                
                 tr.style.background = getRowTagColor(tags);
             });
         }
@@ -1497,18 +1542,21 @@
                 const name1 = (p.name1 || '---').replace(/'/g, "\\'");
                 const name2 = (p.name2 || '---').replace(/'/g, "\\'");
 
+                const tags = p.tags || [];
+                const isBookmarked = tags.includes('bookmark');
+                const rowStyle = getRowTagColor(tags);
+
                 const renderSimTag = (tag) => {
                     const meta = tagMetadata[tag] || { color: '#66d9ef' };
                     const color = meta.color;
+                    // Don't show 'bookmark' as a separate card since it has a dedicated button
+                    if (tag === 'bookmark') return '';
                     return `
                         <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11;">
                             ${tag} 
                             <span class="remove-tag-btn" onclick="removeSimTag(event, '${p.id1}', '${p.id2}', '${p.algo}', '${tag}')" style="background:${color}22">×</span>
                         </span>`;
                 };
-
-                const tags = p.tags || [];
-                const rowStyle = getRowTagColor(tags);
 
                 return `
                 <tr class="sim-row" style="background: ${rowStyle}"
@@ -1532,8 +1580,13 @@
                     <td>
                         <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
                         <div class="dim" style="font-size:0.6rem; margin-bottom:5px;">SIMILARITY</div>
-                        <div class="sim-tags-editor" style="display:flex; flex-wrap:wrap; gap:2px; max-width:180px;">
-                            ${(p.tags || []).map(renderSimTag).join('')}
+                        <div class="sim-tags-editor" style="display:flex; flex-wrap:wrap; gap:2px; max-width:180px; align-items:center;">
+                            <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" 
+                                    title="${isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}"
+                                    onclick="toggleBookmark(event, '${p.id1}', '${p.id2}', '${p.algo}')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+                            </button>
+                            ${tags.map(renderSimTag).join('')}
                             <button class="add-tag-btn" onclick="startAddSimTag(event, '${p.id1}', '${p.id2}', '${p.algo}')">+</button>
                         </div>
                     </td>
@@ -2936,8 +2989,10 @@
                     const item = document.createElement('div');
                     item.className = 'tag-suggestion-item';
                     const meta = tagMetadata[t] || { color: '#66d9ef', count: 0, priority: 0 };
+                    const isBookmark = (t === 'bookmark');
                     item.innerHTML = `
-                        <div class="tag-color-dot" style="background:${meta.color}"></div>
+                        <div class="tag-color-dot" style="background:${meta.color}; display:${isBookmark ? 'none' : 'block'};"></div>
+                        ${isBookmark ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="#66d9ef" stroke="#66d9ef" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>' : ''}
                         <span style="flex:1">${t}</span>
                         <span class="dim" style="font-size:0.6rem; margin-left:10px;">Prio: ${meta.priority || 0}</span>
                         <span class="dim" style="font-size:0.6rem; margin-left:10px;">${meta.count || 0}</span>
@@ -2970,6 +3025,38 @@
 
             // Trigger immediately if already focused (e.g. attached via onfocus)
             if (document.activeElement === input) showSuggestions(input.value);
+        }
+
+        async function toggleBookmark(event, id1, id2, algo) {
+            event.stopPropagation();
+            const btn = event.currentTarget;
+            const isBookmarked = btn.classList.contains('active');
+            const container = btn.closest('.sim-tags-editor');
+            
+            if (isBookmarked) {
+                // Remove bookmark tag
+                // Note: removeSimTag will handle the UI removal of the card if it was there,
+                // but since we hide the 'bookmark' card in renderSimTag, we just need to update the button status
+                await removeSimTag(event, id1, id2, algo, 'bookmark');
+                btn.classList.remove('active');
+                btn.title = "Add Bookmark";
+                refreshAllRowColors();
+            } else {
+                // Add bookmark tag
+                const success = await confirmAddSimTag(id1, id2, algo, 'bookmark', container);
+                if (success) {
+                    btn.classList.add('active');
+                    btn.title = "Remove Bookmark";
+                    // Hide the bookmark tag card that was just added by confirmAddSimTag if it exists
+                    const cards = container.querySelectorAll('.sim-tag-card');
+                    cards.forEach(c => {
+                        if (c.textContent.trim().startsWith('bookmark')) {
+                            c.style.display = 'none';
+                        }
+                    });
+                    refreshAllRowColors();
+                }
+            }
         }
 
         async function startAddSimTag(event, id1, id2, algo) {
@@ -3037,19 +3124,34 @@
                     const meta = tagMetadata[tag] || { color: '#66d9ef' };
                     const color = meta.color;
                     
-                    const card = document.createElement('span');
-                    card.className = 'sim-tag-card';
-                    card.style.borderColor = color + '44';
-                    card.style.color = color;
-                    card.style.background = color + '11';
-                    card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="removeSimTag(event, '${id1}', '${id2}', '${algo}', '${tag}')" style="background:${color}22">×</span>`;
-                    container.insertBefore(card, container.lastElementChild);
+                    const row = container.closest('tr.sim-row');
+                    const isBookmark = (tag === 'bookmark');
+
+                    if (isBookmark) {
+                        const bookmarkBtn = row?.querySelector('.bookmark-btn');
+                        if (bookmarkBtn) {
+                            bookmarkBtn.classList.add('active');
+                            bookmarkBtn.title = "Remove Bookmark";
+                        }
+                    } else {
+                        const card = document.createElement('span');
+                        card.className = 'sim-tag-card';
+                        card.style.borderColor = color + '44';
+                        card.style.color = color;
+                        card.style.background = color + '11';
+                        card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="removeSimTag(event, '${id1}', '${id2}', '${algo}', '${tag}')" style="background:${color}22">×</span>`;
+                        container.insertBefore(card, container.lastElementChild);
+                    }
                     
                     // Update row color immediately
-                    const row = container.closest('tr.sim-row');
                     if (row) {
                         const tagCards = row.querySelectorAll('.sim-tag-card');
                         const updatedTags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
+                        
+                        const bookmarkBtn = row.querySelector('.bookmark-btn');
+                        if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
+                            updatedTags.push('bookmark');
+                        }
                         row.style.background = getRowTagColor(updatedTags);
                     }
                     return true;
@@ -3066,10 +3168,11 @@
         }
 
         async function removeSimTag(event, id1, id2, algo, tag) {
-            event.stopPropagation();
+            if (event) event.stopPropagation();
             
-            const btn = event.target;
-            const card = btn.parentElement;
+            const target = event ? event.target : null;
+            const isFromRemoveBtn = target && target.classList.contains('remove-tag-btn');
+            const card = isFromRemoveBtn ? target.parentElement : null;
             
             try {
                 const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
@@ -3082,13 +3185,20 @@
                 });
                 
                 if (res.ok) {
-                    const row = btn.closest('tr.sim-row');
-                    card.remove();
+                    const row = target ? target.closest('tr.sim-row') : null;
+                    if (card) card.remove();
                     
                     // Update row color immediately
                     if (row) {
                         const tagCards = row.querySelectorAll('.sim-tag-card');
                         const updatedTags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
+                        
+                        // Also check bookmark button in the row
+                        const bookmarkBtn = row.querySelector('.bookmark-btn');
+                        if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
+                            updatedTags.push('bookmark');
+                        }
+                        
                         row.style.background = getRowTagColor(updatedTags);
                     }
                 } else {

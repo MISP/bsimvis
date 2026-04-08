@@ -123,9 +123,13 @@ class SimilarityService:
             if len(parts) < 4: continue
             md5, addr = parts[2], parts[3]
             
+            # Use pre-calculated length for target
+            target_feat_count = len(features)
+            
             lua_args = [
                 fid, collection, algo, int(time.time() * 1000),
-                top_k, md5, addr, min_score, built_set_key
+                top_k, md5, addr, min_score, built_set_key,
+                target_feat_count
             ] + features
             
             # Call Lua script within the pipeline

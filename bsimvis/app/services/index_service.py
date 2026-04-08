@@ -106,7 +106,10 @@ def _index_tag(pipe, coll, field, value, doc_id):
         if v is None or v == "":
             continue
         # Store tags lower-cased for case-insensitive search
-        pipe.sadd(f"idx:{coll}:{field}:{str(v).lower()}", doc_id)
+        bucket_key = f"idx:{coll}:{field}:{str(v).lower()}"
+        pipe.sadd(bucket_key, doc_id)
+        # Register the bucket key for safe lookups without using 'KEYS'
+        pipe.sadd(f"idx:{coll}:reg:{field}", bucket_key)
 
 
 def _unindex_tag(pipe, coll, field, value, doc_id):
@@ -117,7 +120,10 @@ def _unindex_tag(pipe, coll, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        pipe.srem(f"idx:{coll}:{field}:{str(v).lower()}", doc_id)
+        bucket_key = f"idx:{coll}:{field}:{str(v).lower()}"
+        pipe.srem(bucket_key, doc_id)
+        # We don't necessarily remove from registry on every unindex to avoid expensive scard checks,
+        # but the bucket key itself will eventually be empty if all docs are removed.
 
 
 def _index_num(pipe, coll, field, value, doc_id):

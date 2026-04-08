@@ -14,6 +14,10 @@ class LuaScriptManager:
 
     def init_app(self, app=None):
         """Initializes the manager and registers all scripts."""
+        self.register_all()
+
+    def register_all(self):
+        """Discovers and registers all .lua scripts from the lua directory."""
         r = get_redis()
         lua_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "lua")
         
@@ -21,6 +25,7 @@ class LuaScriptManager:
             logging.error(f"[!] Lua directory not found: {lua_dir}")
             return
 
+        count = 0
         for filename in os.listdir(lua_dir):
             if filename.endswith(".lua"):
                 script_name = filename[:-4]
@@ -29,11 +34,13 @@ class LuaScriptManager:
                     with open(path, 'r') as f:
                         content = f.read()
                     
-                    # Register the script and store the Script object
+                    # Register the script and store/overwrite the Script object
                     self._scripts[script_name] = r.register_script(content)
                     logging.info(f"[*] Registered Lua script: {script_name}")
+                    count += 1
                 except Exception as e:
                     logging.error(f"[!] Failed to register Lua script {filename}: {e}")
+        return count
 
     def get_script(self, name):
         """Returns the registered script object by name."""

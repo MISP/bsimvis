@@ -1,202 +1,114 @@
-local algo_zset = KEYS[1]
-local feat_zset = KEYS[2]
+-- BSimVis Search Similarity Core (Deep Selection Architecture)
+local config = cjson.decode(ARGV[1])
+local collection = config.collection
+local algo = config.algo
+local sort_by = config.sort_by or "score"
+local sort_order = config.sort_order or "desc"
+local pool_limit = tonumber(config.pool_limit or 1000000)
+local groups = config.groups or {}
+local offset = tonumber(config.offset or 0)
+local limit = tonumber(config.limit or 100)
+
 local buckets = {}
 for i=3, #KEYS do buckets[i-2] = KEYS[i] end
 
-local config = cjson.decode(ARGV[1])
-local groups = config.groups or {}
-local pool_limit = tonumber(config.pool_limit) or 1000000
-local offset = tonumber(config.offset) or 0
-local limit = tonumber(config.limit) or 100
-local sort_by = config.sort_by or "score"
-local sort_order = config.sort_order or "desc"
+-- Helper: Robust Token Splitter
+local function g_split(inputstr, sep)
+    if sep == nil then sep = ":" end
+    local t = {}
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+        table.insert(t, str)
+    end
+    return t
+end
+
+-- Helper: Reconstruct FIDs from Lean SID (coll:sim_meta:algo:md5_1:addr_1:md5_2:addr_2)
+local function extract_ids(sid)
+    local p = g_split(sid, ":")
+    if #p < 7 then return nil, nil end
+    local fid1 = collection .. ":function:" .. p[4] .. ":" .. p[5]
+    local fid2 = collection .. ":function:" .. p[6] .. ":" .. p[7]
+    return fid1, fid2
+end
+
+local producer = nil
+for _, g in ipairs(groups) do
+    if g.type == "score_range" or g.type == "feature_range" then producer = g; break end
+end
+if not producer then
+    producer = {type="score_range", key=KEYS[1], min="-inf", max="+inf"}
+end
 
 local refined = {}
 local total_found = 0
-local pool_count = 0
 local pool_truncated = false
 
--- Helper: Get Union of Multiple Buckets in Safe Chunks
-local function get_union_lookup(group_indices)
-    local lookup = {}
-    for _, idx in ipairs(group_indices) do
-        local b_key = buckets[idx]
-        -- Robustly handle both ZSET and SET
-        local ids = redis.pcall('ZRANGE', b_key, 0, -1)
-        if type(ids) == 'table' and ids.err then
-            ids = redis.call('SMEMBERS', b_key)
-        end
-        for _, id in ipairs(ids) do
-            lookup[id] = true
-        end
+local range_cmd, first, second
+if producer.type == "score_range" or producer.type == "feature_range" then
+    local prefix = producer.type:sub(1,5)
+    local sorting_on_producer = (sort_by == prefix or (sort_by == "feat_count" and producer.type == "feature_range"))
+    if sorting_on_producer then
+        if sort_order == "desc" then range_cmd = "ZREVRANGEBYSCORE"; first = "+inf"; second = producer.min or 0
+        else range_cmd = "ZRANGEBYSCORE"; first = producer.min or 0; second = "+inf" end
+    else
+        range_cmd = "ZRANGEBYSCORE"; first = producer.min or "-inf"; second = producer.max or "+inf"
     end
-    return lookup
-end
 
--- 1. Pre-build Lookup Tables for Metadata Groups
-local group_lookups = {}
-for i, g in ipairs(groups) do
-    if g.type == "metadata" and not g.is_large then
-        group_lookups[i] = get_union_lookup(g.buckets)
-    end
-end
+    local raw = redis.call(range_cmd, producer.key, first, second, 'WITHSCORES', 'LIMIT', 0, pool_limit)
+    if #raw / 2 >= pool_limit then pool_truncated = true end
 
--- 2. Unified Candidate Extraction & Filtering
-local seen = {}
-local target_group = groups[1]
-local consumers = {}
-for i=2, #groups do table.insert(consumers, {idx=i, g=groups[i]}) end
+    for i=1, #raw, 2 do
+        local sid = raw[i]
+        local score = tonumber(raw[i+1])
+        local id1, id2 = nil, nil
+        local match = true
 
--- Helper: Verify a candidate against all consumer groups
-local function verify_match(sid, score_in, f_sc_in)
-    local match = true
-    local current_score = score_in
-    local current_f_sc = f_sc_in
-    
-    for _, item in ipairs(consumers) do
-        local g = item.g
-        local g_idx = item.idx
-        
-        if g.type == "score_range" then
-            if not current_score then
-                current_score = tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
-            end
-            if current_score < g.min or current_score > g.max then match = false; break end
-            
-        elseif g.type == "feature_range" then
-            if not current_f_sc then
-                current_f_sc = tonumber(redis.call('ZSCORE', feat_zset, sid) or 0)
-            end
-            if current_f_sc < g.min then match = false; break end
-            
-        elseif g.type == "metadata" then
-            if g.is_large then
-                local bucket_found = false
+        for _, g in ipairs(groups) do
+            if g.type == "score_range" then
+                local s = (producer == g and score) or tonumber(redis.call('ZSCORE', g.key, sid) or 0)
+                if s < (g.min or -9999999) or s > (g.max or 9999999) then match = false; break end
+            elseif g.type == "feature_range" then
+                local f = (producer == g and score) or tonumber(redis.call('ZSCORE', g.key, sid) or 0)
+                if f < (g.min or 0) then match = false; break end
+            elseif g.type == "metadata" then
+                if not id1 then id1, id2 = extract_ids(sid) end
+                if not id1 then match = false; break end
+                
+                local found = false
                 for _, b_idx in ipairs(g.buckets) do
                     local b_key = buckets[b_idx]
-                    local score = redis.pcall('ZSCORE', b_key, sid)
-                    if type(score) == 'number' or (type(score) == 'string' and tonumber(score)) then
-                        bucket_found = true; break 
-                    elseif type(score) == 'table' and score.err then
-                        -- Check if SET
-                        if redis.call('SISMEMBER', b_key, sid) == 1 then bucket_found = true; break end
+                    if b_key and (redis.call('SISMEMBER', b_key, id1) == 1 or 
+                                  redis.call('SISMEMBER', b_key, id2) == 1 or
+                                  redis.call('SISMEMBER', b_key, sid) == 1) then
+                        found = true; break
                     end
                 end
-                if not bucket_found then match = false; break end
-            else
-                if not group_lookups[g_idx][sid] then
-                    match = false; break
+                if not found then match = false; break end
+            end
+        end
+
+        if match then
+            total_found = total_found + 1
+            if #refined < 1000 then
+                local final_score = score
+                if not sorting_on_producer then
+                    local skey = (sort_by == "score") and KEYS[1] or KEYS[2]
+                    final_score = tonumber(redis.call('ZSCORE', skey, sid) or 0)
                 end
+                table.insert(refined, {sid, final_score})
             end
-        end
-    end
-    return match, current_score, current_f_sc
-end
-
-if target_group then
-    if target_group.type == "score_range" or target_group.type == "feature_range" then
-        local range_cmd, first, second
-        local base_key = target_group.key
-        
-        -- Determine if we are sorting on the producer's field
-        local producer_prefix = target_group.type:sub(1,5)
-        local sorting_on_producer = (sort_by == producer_prefix or (sort_by == "feat_count" and producer_prefix == "featu"))
-        
-        if sorting_on_producer then
-            if sort_order == "desc" then
-                range_cmd = "ZREVRANGEBYSCORE"
-                first = "+inf"
-                second = target_group.min or 0
-            else
-                range_cmd = "ZRANGEBYSCORE"
-                first = target_group.min or 0
-                second = "+inf"
-            end
-        else
-            -- Producer is just a filter; use its full range efficiently
-            range_cmd = "ZRANGEBYSCORE"
-            first = target_group.min or 0
-            second = target_group.max or "+inf"
-        end
-
-        local raw = redis.call(range_cmd, base_key, first, second, 'WITHSCORES', 'LIMIT', 0, pool_limit)
-        for i=1, #raw, 2 do
-            local sid = raw[i]
-            local val = tonumber(raw[i+1])
-            local is_match, score, f_sc
-            if target_group.type == "score_range" then
-                is_match, score, f_sc = verify_match(sid, val, nil)
-            else
-                is_match, score, f_sc = verify_match(sid, nil, val)
-            end
-            
-            if is_match then
-                total_found = total_found + 1
-                -- Use available metrics to populate the sort value
-                local s_val = (sort_by == "score") and (score or val) or (f_sc or val)
-                table.insert(refined, {sid, s_val})
-            end
-        end
-        if #raw / 2 >= pool_limit then pool_truncated = true end
-
-    elseif target_group.type == "metadata" then
-        for _, b_idx in ipairs(target_group.buckets) do
-            local b_key = buckets[b_idx]
-            local fetch_max = pool_limit - pool_count - 1
-            if fetch_max < 0 then break end
-            
-        local ids = redis.pcall('ZRANGE', b_key, 0, fetch_max) 
-        if type(ids) == 'table' and ids.err then
-            -- Fallback to SET (SMEMBERS doesn't support limit natively here, but we apply it in the loop)
-            ids = redis.call('SMEMBERS', b_key)
-        end
-
-        for _, sid in ipairs(ids) do
-                if not seen[sid] then
-                    seen[sid] = true
-                    pool_count = pool_count + 1
-                    
-                    local is_match, score, f_sc = verify_match(sid, nil, nil)
-                    if is_match then
-                        total_found = total_found + 1
-                        -- Enforce score/feature lookup if they weren't checked in consumers
-                        if not score then score = tonumber(redis.call('ZSCORE', algo_zset, sid) or 0) end
-                        if not f_sc then f_sc = tonumber(redis.call('ZSCORE', feat_zset, sid) or 0) end
-                        
-                        local s_val = (sort_by == "score") and score or f_sc
-                        table.insert(refined, {sid, s_val})
-                    end
-                    
-                    if pool_count >= pool_limit then 
-                        pool_truncated = true; break 
-                    end
-                end
-            end
-            if pool_truncated then break end
         end
     end
 end
 
--- 3. Final Sort
--- Required if:
--- 1. There are multiple filters.
--- 2. We used metadata buckets (unordered).
--- 3. The producer field wasn't what we are sorting by.
-local producer_prefix = target_group and target_group.type:sub(1,5) or ""
-local sorted_on_producer = (sort_by == producer_prefix or (sort_by == "feat_count" and producer_prefix == "featu"))
+table.sort(refined, function(a, b)
+    if sort_order == "desc" then return a[2] > b[2] else return a[2] < b[2] end
+end)
 
-if #groups > 1 or (target_group and target_group.type == "metadata") or not sorted_on_producer then
-    table.sort(refined, function(a, b)
-        if sort_order == "desc" then return a[2] > b[2] else return a[2] < b[2] end
-    end)
+local res_ids, res_scores = {}, {}
+for i=1, #refined do
+    table.insert(res_ids, refined[i][1])
+    table.insert(res_scores, tostring(refined[i][2]))
 end
 
--- 4. Return Top-1000 for caching + global total
-local result_ids = {}
-local result_scores = {}
-for i=1, math.min(#refined, 1000) do
-    table.insert(result_ids, refined[i][1])
-    table.insert(result_scores, tostring(refined[i][2]))
-end
-
-return {total_found, pool_truncated and 1 or 0, result_ids, result_scores}
+return {total_found, pool_truncated and 1 or 0, res_ids, res_scores}

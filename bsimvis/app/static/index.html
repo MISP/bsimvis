@@ -1966,7 +1966,8 @@
 
                 const ss = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
                 const hs = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [], fn1: [], fn2: [] };
-                const minScore = parseFloat(params.get('min_score')) || 0.95;
+                const minScoreParam = params.get('min_score');
+                const minScore = (minScoreParam !== null && minScoreParam !== "") ? parseFloat(minScoreParam) : 0.95;
 
                 this.all_pairs.forEach(p => {
                     const n1 = id_to_info.get(p.id1); const n2 = id_to_info.get(p.id2);

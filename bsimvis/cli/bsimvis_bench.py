@@ -76,13 +76,16 @@ def get_collection_stats(collection):
         pass
     return {}
 
-def run_bench(data_dir, collection, clear_first=False):
+def run_bench(data_dir, collection, clear_first=False, limit=None):
     """Run benchmark by uploading all JSON files in a directory."""
     if not os.path.exists(data_dir):
         print(f"Error: Directory {data_dir} not found.")
         return
 
     json_files = sorted([f for f in os.listdir(data_dir) if f.endswith(".json")])
+    if limit:
+        json_files = json_files[:limit]
+
     if not json_files:
         print(f"No JSON files found in {data_dir}")
         return
@@ -172,10 +175,11 @@ def main():
     parser.add_argument("--dir", default=DEFAULT_TEST_DIR, help=f"Directory containing test JSONs (default: {DEFAULT_TEST_DIR})")
     parser.add_argument("-c", "--collection", default=DEFAULT_COLLECTION, help=f"Collection to use (default: {DEFAULT_COLLECTION})")
     parser.add_argument("--clear", action="store_true", help="Clear the collection before starting")
+    parser.add_argument("--limit", type=int, help="Limit number of binaries to process", default=None)
 
     args = parser.parse_args()
     
-    run_bench(args.dir, args.collection, args.clear)
+    run_bench(args.dir, args.collection, args.clear, args.limit)
 
 if __name__ == "__main__":
     main()

@@ -789,6 +789,7 @@
         let isEndOfResults = false;
         let lastHashPath = '';
         let tagMetadata = {}; // Cache for tag metadata: { tag: { color: "#..." } }
+        let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
 
         async function fetchTagMetadata(collection) {
             if (!collection) return;
@@ -958,6 +959,12 @@
             // Sidebar
             document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
             const navLink = document.getElementById('nav-' + path.substring(1));
+            
+            // Clear selection if navigating away from similarity view
+            if (path !== lastHashPath.split('?')[0] && path !== '#function-similarity') {
+                selectedSimilarityPairs.clear();
+            }
+            
             if (navLink) navLink.classList.add('active');
 
             // Titles
@@ -981,6 +988,9 @@
             // Table Head
             const thead = document.getElementById('table-head');
             let headHtml = '<tr>';
+            if (path === '#function-similarity') {
+                headHtml += `<th style="width:30px; text-align:center;"><input type="checkbox" id="select-all-sim" onchange="toggleAllSimilaritySelection(this)"></th>`;
+            }
             route.headers.forEach(h => {
                 const label = typeof h === 'string' ? h : h.label;
                 const sortKey = typeof h === 'object' ? h.sort : null;
@@ -1048,6 +1058,7 @@
 
                 const p = new URLSearchParams(params);
                 headHtml += `<tr class="filter-row">
+                    <th></th>
                     <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
                     <th style="vertical-align: middle;">
                         <div style="display:flex; align-items:center; gap:2px;">
@@ -1558,11 +1569,16 @@
                         </span>`;
                 };
 
+                const pairId = `${p.id1}|${p.id2}|${p.algo}`;
+
                 return `
-                <tr class="sim-row" style="background: ${rowStyle}"
-                    onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
-                    onmousemove="moveCodePreview(event)"
-                    onmouseleave="hideDiffPreview(event)">
+                <tr class="sim-row" style="background: ${rowStyle}">
+                    <td style="text-align:center; vertical-align:middle;">
+                        <input type="checkbox" class="row-selector" 
+                               data-pair-id="${pairId}"
+                               ${selectedSimilarityPairs.has(pairId) ? 'checked' : ''} 
+                               onchange="toggleSimilaritySelection(event, '${p.id1}', '${p.id2}', '${p.algo}')">
+                    </td>
                     <td>
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <div style="display:flex; align-items:center; gap:8px;">
@@ -1619,7 +1635,11 @@
                         </div>
                     </td>
                     <td>
-                        <button class="btn-diff-action" onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="font-size:0.7rem; padding:4px 8px;">
+                        <button class="btn-diff-action" 
+                            onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
+                            onmousemove="moveCodePreview(event)"
+                            onmouseleave="hideDiffPreview(event)"
+                            onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="font-size:0.7rem; padding:4px 8px;">
                             <span>↔</span> Run Diff
                         </button>
                     </td>
@@ -3027,36 +3047,89 @@
             if (document.activeElement === input) showSuggestions(input.value);
         }
 
+        function toggleSimilaritySelection(event, id1, id2, algo) {
+            const pairId = `${id1}|${id2}|${algo}`;
+            if (event.target.checked) {
+                selectedSimilarityPairs.add(pairId);
+            } else {
+                selectedSimilarityPairs.delete(pairId);
+            }
+            
+            // Update Select All checkbox state
+            const allChecked = Array.from(document.querySelectorAll('.row-selector')).every(cb => cb.checked);
+            const selectAllCb = document.getElementById('select-all-sim');
+            if (selectAllCb) {
+                selectAllCb.checked = allChecked;
+                selectAllCb.indeterminate = !allChecked && Array.from(document.querySelectorAll('.row-selector')).some(cb => cb.checked);
+            }
+        }
+
+        function toggleAllSimilaritySelection(selectAllCb) {
+            const isChecked = selectAllCb.checked;
+            const checkboxes = document.querySelectorAll('.row-selector');
+            checkboxes.forEach(cb => {
+                cb.checked = isChecked;
+                const pairId = cb.getAttribute('data-pair-id');
+                if (pairId) {
+                    if (isChecked) selectedSimilarityPairs.add(pairId);
+                    else selectedSimilarityPairs.delete(pairId);
+                }
+            });
+        }
+
+        function getSimilarityRowInfo(pairId) {
+            const cb = document.querySelector(`.row-selector[data-pair-id="${pairId}"]`);
+            if (!cb) return null;
+            const row = cb.closest('tr.sim-row');
+            const container = row.querySelector('.sim-tags-editor');
+            const parts = pairId.split('|');
+            return { row, container, id1: parts[0], id2: parts[1], algo: parts[2] };
+        }
+
         async function toggleBookmark(event, id1, id2, algo) {
             event.stopPropagation();
             const btn = event.currentTarget;
             const isBookmarked = btn.classList.contains('active');
-            const container = btn.closest('.sim-tags-editor');
+            const pairId = `${id1}|${id2}|${algo}`;
             
-            if (isBookmarked) {
-                // Remove bookmark tag
-                // Note: removeSimTag will handle the UI removal of the card if it was there,
-                // but since we hide the 'bookmark' card in renderSimTag, we just need to update the button status
-                await removeSimTag(event, id1, id2, algo, 'bookmark');
-                btn.classList.remove('active');
-                btn.title = "Add Bookmark";
-                refreshAllRowColors();
-            } else {
-                // Add bookmark tag
-                const success = await confirmAddSimTag(id1, id2, algo, 'bookmark', container);
-                if (success) {
-                    btn.classList.add('active');
-                    btn.title = "Remove Bookmark";
-                    // Hide the bookmark tag card that was just added by confirmAddSimTag if it exists
-                    const cards = container.querySelectorAll('.sim-tag-card');
-                    cards.forEach(c => {
-                        if (c.textContent.trim().startsWith('bookmark')) {
-                            c.style.display = 'none';
+            // Check if we are doing a batch operation
+            let targets = [{ id1, id2, algo, btn }];
+            if (selectedSimilarityPairs.has(pairId)) {
+                targets = Array.from(selectedSimilarityPairs).map(pid => {
+                    const info = getSimilarityRowInfo(pid);
+                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, btn: info.container.querySelector('.bookmark-btn') } : null;
+                }).filter(t => t !== null);
+            }
+
+            const action = isBookmarked ? 'remove' : 'add';
+            
+            for (const t of targets) {
+                if (action === 'remove') {
+                    await removeSimTag(null, t.id1, t.id2, t.algo, 'bookmark');
+                    if (t.btn) {
+                        t.btn.classList.remove('active');
+                        t.btn.title = "Add Bookmark";
+                    }
+                } else {
+                    // confirmAddSimTag logic simplified for bookmarking
+                    try {
+                        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                        const col = params.get('collection') || 'main';
+                        const res = await fetch('/api/similarity/tag', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ collection: col, id1: t.id1, id2: t.id2, algo: t.algo, tag: 'bookmark' })
+                        });
+                        if (res.ok) {
+                            if (t.btn) {
+                                t.btn.classList.add('active');
+                                t.btn.title = "Remove Bookmark";
+                            }
                         }
-                    });
-                    refreshAllRowColors();
+                    } catch (e) { console.error(e); }
                 }
             }
+            refreshAllRowColors();
         }
 
         async function startAddSimTag(event, id1, id2, algo) {
@@ -3105,110 +3178,105 @@
         }
 
         async function confirmAddSimTag(id1, id2, algo, tag, container) {
-            try {
-                const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-                const col = params.get('collection') || 'main';
-                
-                const res = await fetch('/api/similarity/tag', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ collection: col, id1, id2, algo, tag })
-                });
-                
-                if (res.ok) {
-                    // Update cache if new tag
-                    if (!tagMetadata[tag]) {
-                        await fetchTagMetadata(col);
-                    }
-                    
-                    const meta = tagMetadata[tag] || { color: '#66d9ef' };
-                    const color = meta.color;
-                    
-                    const row = container.closest('tr.sim-row');
-                    const isBookmark = (tag === 'bookmark');
-
-                    if (isBookmark) {
-                        const bookmarkBtn = row?.querySelector('.bookmark-btn');
-                        if (bookmarkBtn) {
-                            bookmarkBtn.classList.add('active');
-                            bookmarkBtn.title = "Remove Bookmark";
-                        }
-                    } else {
-                        const card = document.createElement('span');
-                        card.className = 'sim-tag-card';
-                        card.style.borderColor = color + '44';
-                        card.style.color = color;
-                        card.style.background = color + '11';
-                        card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="removeSimTag(event, '${id1}', '${id2}', '${algo}', '${tag}')" style="background:${color}22">×</span>`;
-                        container.insertBefore(card, container.lastElementChild);
-                    }
-                    
-                    // Update row color immediately
-                    if (row) {
-                        const tagCards = row.querySelectorAll('.sim-tag-card');
-                        const updatedTags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
-                        
-                        const bookmarkBtn = row.querySelector('.bookmark-btn');
-                        if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
-                            updatedTags.push('bookmark');
-                        }
-                        row.style.background = getRowTagColor(updatedTags);
-                    }
-                    return true;
-                } else {
-                    const err = await res.json();
-                    alert("Failed to add tag: " + (err.message || err.error));
-                    return false;
-                }
-            } catch (err) {
-                console.error(err);
-                alert("Failed to add tag");
-                return false;
+            const pairId = `${id1}|${id2}|${algo}`;
+            
+            // Determine targets: either the single row or the entire selection
+            let targets = [{ id1, id2, algo, container }];
+            if (selectedSimilarityPairs.has(pairId)) {
+                targets = Array.from(selectedSimilarityPairs).map(pid => {
+                    const info = getSimilarityRowInfo(pid);
+                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, container: info.container } : null;
+                }).filter(t => t !== null);
             }
+
+            let mainSuccess = false;
+            for (const t of targets) {
+                try {
+                    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                    const col = params.get('collection') || 'main';
+                    
+                    const res = await fetch('/api/similarity/tag', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ collection: col, id1: t.id1, id2: t.id2, algo: t.algo, tag })
+                    });
+                    
+                    if (res.ok) {
+                        // Update cache if new tag (only need to do this once effectively)
+                        if (!tagMetadata[tag]) await fetchTagMetadata(col);
+                        
+                        const meta = tagMetadata[tag] || { color: '#66d9ef' };
+                        const color = meta.color;
+                        const row = t.container.closest('tr.sim-row');
+                        const isBookmark = (tag === 'bookmark');
+
+                        if (isBookmark) {
+                            const bookmarkBtn = row?.querySelector('.bookmark-btn');
+                            if (bookmarkBtn) {
+                                bookmarkBtn.classList.add('active');
+                                bookmarkBtn.title = "Remove Bookmark";
+                            }
+                        } else {
+                            // Avoid duplicates in UI
+                            const existing = Array.from(t.container.querySelectorAll('.sim-tag-card')).find(c => c.textContent.trim().startsWith(tag));
+                            if (!existing) {
+                                const card = document.createElement('span');
+                                card.className = 'sim-tag-card';
+                                card.style.borderColor = color + '44';
+                                card.style.color = color;
+                                card.style.background = color + '11';
+                                card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="removeSimTag(event, '${t.id1}', '${t.id2}', '${t.algo}', '${tag}')" style="background:${color}22">×</span>`;
+                                t.container.insertBefore(card, t.container.lastElementChild);
+                            }
+                        }
+                        
+                        if (t.id1 === id1 && t.id2 === id2) mainSuccess = true;
+                    }
+                } catch (err) { console.error(err); }
+            }
+            
+            refreshAllRowColors();
+            return mainSuccess;
         }
 
         async function removeSimTag(event, id1, id2, algo, tag) {
             if (event) event.stopPropagation();
             
-            const target = event ? event.target : null;
-            const isFromRemoveBtn = target && target.classList.contains('remove-tag-btn');
-            const card = isFromRemoveBtn ? target.parentElement : null;
+            const pairId = `${id1}|${id2}|${algo}`;
             
-            try {
-                const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-                const col = params.get('collection') || 'main';
-                
-                const res = await fetch('/api/similarity/untag', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ collection: col, id1, id2, algo, tag })
-                });
-                
-                if (res.ok) {
-                    const row = target ? target.closest('tr.sim-row') : null;
-                    if (card) card.remove();
-                    
-                    // Update row color immediately
-                    if (row) {
-                        const tagCards = row.querySelectorAll('.sim-tag-card');
-                        const updatedTags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
-                        
-                        // Also check bookmark button in the row
-                        const bookmarkBtn = row.querySelector('.bookmark-btn');
-                        if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
-                            updatedTags.push('bookmark');
-                        }
-                        
-                        row.style.background = getRowTagColor(updatedTags);
-                    }
-                } else {
-                    const err = await res.json();
-                    alert("Failed to remove tag: " + (err.message || err.error));
-                }
-            } catch (err) {
-                console.error(err);
-                alert("Failed to remove tag");
+            // Determine targets
+            let targets = [{ id1, id2, algo }];
+            if (selectedSimilarityPairs.has(pairId)) {
+                targets = Array.from(selectedSimilarityPairs).map(pid => {
+                    const info = getSimilarityRowInfo(pid);
+                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, container: info.container } : null;
+                }).filter(t => t !== null);
             }
+
+            for (const t of targets) {
+                try {
+                    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                    const col = params.get('collection') || 'main';
+                    
+                    const res = await fetch('/api/similarity/untag', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ collection: col, id1: t.id1, id2: t.id2, algo: t.algo, tag })
+                    });
+                    
+                    if (res.ok) {
+                        const rowInfo = getSimilarityRowInfo(`${t.id1}|${t.id2}|${t.algo}`);
+                        if (rowInfo && rowInfo.container) {
+                            // Find and remove the tag card
+                            const cards = rowInfo.container.querySelectorAll('.sim-tag-card');
+                            cards.forEach(c => {
+                                if (c.textContent.trim().startsWith(tag)) c.remove();
+                            });
+                        }
+                    }
+                } catch (err) { console.error(err); }
+            }
+            refreshAllRowColors();
         }
 
         initResize('code-panel');

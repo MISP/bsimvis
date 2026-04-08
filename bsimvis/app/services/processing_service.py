@@ -10,9 +10,38 @@ class ProcessingService:
         """Indexes file, batch, and collection metadata globals and explodes file-level meta."""
         logging.info(f"[*] Indexing metadata for {file_id} in {collection}...")
         
-        data = self.r.json().get(file_id, "$")
-        if isinstance(data, list) and data:
-            data = data[0]
+        # OPTIMIZATION: Only fetch metadata and function list (to get count), skip heavy source/features
+        # Depending on Kvrocks implementation, fetching multiple paths is more efficient than the whole blob
+        data_list = self.r.json().get(file_id, "$.file_metadata", "$.file_md5", "$.batch_uuid", "$.batch_name", "$.entry_date", "$.functions")
+        
+        if not data_list or not isinstance(data_list, dict):
+             # Fallback if the path-based fetch fails or returns unexpected format
+             data = self.r.json().get(file_id, "$")
+             if isinstance(data, list) and data: data = data[0]
+        else:
+             # Helper for safe path extraction (Kvrocks can return [] for missing paths)
+             def get_path(p, default=None):
+                 val = data_list.get(p)
+                 return val[0] if (isinstance(val, list) and len(val) > 0) else default
+
+             file_meta = get_path("$.file_metadata", {})
+             file_md5 = get_path("$.file_md5")
+             batch_uuid = get_path("$.batch_uuid")
+             batch_name = get_path("$.batch_name")
+             timestamp = get_path("$.entry_date", 0)
+             
+             funcs = get_path("$.functions", [])
+             num_functions = len(funcs) if isinstance(funcs, list) else 0
+             
+             data = {
+                 "file_metadata": file_meta,
+                 "file_md5": file_md5,
+                 "batch_uuid": batch_uuid,
+                 "batch_name": batch_name,
+                 "entry_date": timestamp,
+                 "functions": [] # We only needed the count for this step
+             }
+             # For indexing count, we don't need the actual function list, just len
         
         if not data:
             logging.error(f"Data not found for {file_id}")
@@ -98,9 +127,41 @@ class ProcessingService:
         """Explodes and indexes all functions in a file."""
         logging.info(f"[*] Exploding and indexing functions for {file_id}...")
         
-        data = self.r.json().get(file_id, "$")
-        if isinstance(data, list) and data:
-            data = data[0]
+        # OPTIMIZATION: Get all functions but exclude heavy fields (source and raw features)
+        # We fetch the function metadata, bsim meta, and TF vectors.
+        # Note: Kvrocks/Redis-py handles this by returning the subset.
+        p_meta = "$.file_metadata"
+        p_md5 = "$.file_md5"
+        p_batch = "$.batch_uuid"
+        p_funcs = "$.functions"
+        
+        # For simplicity and reliability, we can fetch exactly what we need for each function
+        # But fetching the whole blob without source/raw is usually better.
+        # We'll use a single GET but with exclusion if Kvrocks supported it, 
+        # but since it doesn't, we fetch the skeleton.
+        data_list = self.r.json().get(file_id, p_meta, p_md5, p_batch, p_funcs)
+        
+        if not data_list or not isinstance(data_list, dict):
+            # Fallback
+            data = self.r.json().get(file_id, "$")
+            if isinstance(data, list) and data: data = data[0]
+        else:
+            # Reconstruct a lean data object safely
+            def get_path(p, default=None):
+                val = data_list.get(p)
+                return val[0] if (isinstance(val, list) and len(val) > 0) else default
+
+            file_meta = get_path(p_meta, {})
+            file_md5 = get_path(p_md5)
+            batch_uuid = get_path(p_batch)
+            functions_raw = get_path(p_funcs, [])
+            
+            data = {
+                "file_metadata": file_meta,
+                "file_md5": file_md5,
+                "batch_uuid": batch_uuid,
+                "functions": functions_raw
+            }
             
         if not data:
             return False

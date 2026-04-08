@@ -39,6 +39,35 @@ def upload_bsim_data(data, args, config):
     # Ensure collection is at the root for the API
     collections = args.collections if args.collections else ["main"]
     
+    # NEW: Handle saving JSON to file
+    save_path = getattr(args, 'save_json', None)
+    if save_path:
+        # If multiple collections, we still only need to save the data once
+        # (collection field will be set by the bench script during replay)
+        dump_data = {
+            "collection": collections[0],
+            "file_md5": file_md5,
+            **data
+        }
+        
+        target_file = save_path
+        # If it's an existing dir, or ends in slash, or doesn't have .json extension, treat as dir
+        if os.path.isdir(save_path) or save_path.endswith(("/", "\\")) or not save_path.lower().endswith(".json"):
+            os.makedirs(save_path, exist_ok=True)
+            target_file = os.path.join(save_path, f"{file_md5}.json")
+            
+        try:
+            # For pure file paths, ensure parent exists
+            parent_dir = os.path.dirname(os.path.abspath(target_file))
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+                
+            with open(target_file, 'w') as f:
+                json.dump(dump_data, f, indent=2)
+            logging.info(f"[+] Data saved to {target_file}")
+        except Exception as e:
+            logging.error(f"[!] Failed to save JSON to {target_file}: {e}")
+
     # We trigger the API for each collection
     for collection in collections:
         # Prepare the payload for the API

@@ -33,11 +33,12 @@ def upload_file_data():
         
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake
+        # Optimization: Pass md5 directly to all tasks to avoid re-fetching monolith
         pipeline_tasks = [
-            (JobType.INDEX_META, {"collection": collection, "file_id": file_id}),
-            (JobType.INDEX_FUNCTIONS, {"collection": collection, "file_id": file_id}),
-            (JobType.INDEX_FEATURES, {"collection": collection, "file_id": file_id}),
-            (JobType.BUILD_SIM, {"collection": collection, "file_id": file_id, "algo": "unweighted_cosine"}),
+            (JobType.INDEX_META, {"collection": collection, "file_id": file_id, "md5": file_md5}),
+            (JobType.INDEX_FUNCTIONS, {"collection": collection, "file_id": file_id, "md5": file_md5}),
+            (JobType.INDEX_FEATURES, {"collection": collection, "file_id": file_id, "md5": file_md5}),
+            (JobType.BUILD_SIM, {"collection": collection, "file_id": file_id, "md5": file_md5, "algo": "unweighted_cosine"}),
         ]
         
         pipeline_id = job_service.create_pipeline(pipeline_tasks)

@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 bsimvis = "bsimvis.cli.main:main"
+bsimvis-bench = "bsimvis.cli.bsimvis_bench:main"
 
 [tool.uv]
 package = true

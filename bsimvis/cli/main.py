@@ -213,6 +213,11 @@ def main():
 
     # Mirroring EXACT arguments from bsimvis_upload.py
     upload_parser.add_argument(
+        "--save-json",
+        metavar="PATH",
+        help="Save analyzed JSON data to a file instead of (or in addition to) uploading",
+    )
+    upload_parser.add_argument(
         "targets",
         nargs="+",
         help="Path to Ghidra project (.gpr), a specific binary, or a directory/*",

@@ -138,13 +138,17 @@ class Worker:
             
         elif jtype == JobType.INDEX_FEATURES.value:
             # For INDEX_FEATURES, we need a list of function IDs
-            if file_id:
-                # Get function IDs from file metadata
+            if md5:
+                # OPTIMIZATION: Use md5 from payload directly to find functions
+                batch_func_set = f"idx:{collection}:file_funcs:{md5}"
+                raw_ids = list(self.r_data.smembers(batch_func_set))
+                function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
+            elif file_id:
+                # Fallback: Fetch monolith if MD5 is missing (legacy/direct call)
                 data = self.r_data.json().get(file_id, "$")
                 if isinstance(data, list) and data: data = data[0]
                 md5 = data.get("file_md5")
                 batch_func_set = f"idx:{collection}:file_funcs:{md5}"
-                # Normalize: Strip :meta suffix if present
                 raw_ids = list(self.r_data.smembers(batch_func_set))
                 function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
             elif batch_uuid:
@@ -160,7 +164,8 @@ class Worker:
             top_k = payload.get("top_k", 1000)
             min_score = payload.get("min_score", 0)
             
-            if file_id:
+            if not md5 and file_id:
+                # Fallback: Fetch monolith if MD5 is missing
                 data = self.r_data.json().get(file_id, "$")
                 if isinstance(data, list) and data: data = data[0]
                 md5 = data.get("file_md5")

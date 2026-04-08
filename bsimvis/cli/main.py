@@ -5,13 +5,10 @@ import time
 import tomllib
 import os
 from bsimvis.cli import (
-    bsimvis_setup,
     bsimvis_index,
     bsimvis_sim,
     bsimvis_upload,
-    bsimvis_batch,
     bsimvis_features,
-    bsimvis_cache,
     bsimvis_job,
     bsimvis_worker,
 )
@@ -27,19 +24,6 @@ def main():
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
-
-    # --- SETUP ---
-    setup_parser = subparsers.add_parser("setup", help="System setup")
-    setup_actions = setup_parser.add_subparsers(dest="action", required=True)
-    ft_parser = setup_actions.add_parser("ftsearch", help="Setup search indexes")
-    ft_parser.add_argument("-c", "--collection", required=True, help="Collection name")
-    ft_parser.add_argument(
-        "-i",
-        "--index",
-        nargs="+",
-        default=["functions", "files", "similarities"],
-        help="Index types (default: all)",
-    )
 
     # --- FEATURES (formerly Index) ---
     features_parser = subparsers.add_parser(
@@ -190,21 +174,6 @@ def main():
     worker_actions = worker_parser.add_subparsers(dest="action", required=True)
     w_start = worker_actions.add_parser("start", help="Start background workers")
     w_start.add_argument("-n", "--count", type=int, default=1, help="Number of workers to start")
-    batch_parser = subparsers.add_parser("batch", help="Batch management")
-    batch_actions = batch_parser.add_subparsers(dest="action", required=True)
-
-    b_list = batch_actions.add_parser("list", help="List all batches")
-    b_list.add_argument("-c", "--collection", required=True, help="Collection name")
-
-    b_remove = batch_actions.add_parser("remove", help="Remove a batch and its data")
-    b_remove.add_argument("-c", "--collection", required=True, help="Collection name")
-    b_remove.add_argument("--batch", required=True, help="Batch UUID to remove")
-
-    # --- CACHE ---
-    cache_parser = subparsers.add_parser("cache", help="Cache management")
-    cache_actions = cache_parser.add_subparsers(dest="action", required=True)
-    c_clear = cache_actions.add_parser("clear", help="Clear similarity search cache")
-    c_clear.add_argument("-c", "--collection", help="Optional collection name filter")
 
     # --- UPLOAD ---
     upload_parser = subparsers.add_parser(
@@ -339,9 +308,7 @@ def main():
     # For now, we assume the API host is what we use.
 
     try:
-        if args.subcommand == "setup":
-            bsimvis_setup.run_setup(g_host, int(g_port), args)
-        elif args.subcommand == "features":
+        if args.subcommand == "features":
             bsimvis_features.run_features(g_host, int(g_port), args)
         elif args.subcommand == "index":
             if args.action == "status":
@@ -354,10 +321,6 @@ def main():
             if not args.hosts:
                 args.hosts = [api_host_str]
             bsimvis_upload.run_upload(None, None, args)
-        elif args.subcommand == "batch":
-            bsimvis_batch.run_batch(g_host, int(g_port), args)
-        elif args.subcommand == "cache":
-            bsimvis_cache.run_cache(g_host, int(g_port), args)
         elif args.subcommand == "job":
             bsimvis_job.run_job(g_host, int(g_port), args)
         elif args.subcommand == "worker":

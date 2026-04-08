@@ -59,26 +59,6 @@ FUNC_TAG_FIELDS = [
     "calling_convention",
     "entrypoint_address",
 ]
-SIM_TAG_FIELDS = [
-    "type",
-    "collection",
-    "algo",
-    "md5_1",
-    "md5_2",
-    "is_cross_binary",
-    "id1",
-    "id2",
-    "name1",
-    "name2",
-    "tags",
-    "tags1",
-    "tags2",
-    "batch_uuid1",
-    "batch_uuid2",
-    "language_id1",
-    "language_id2",
-]
-
 # NUMERIC fields stored in a ZSET (member=doc_id, score=value)
 FILE_NUM_FIELDS = ["batch_order", "entry_date", "file_date"]
 FUNC_NUM_FIELDS = [
@@ -88,7 +68,6 @@ FUNC_NUM_FIELDS = [
     "entry_date",
     "file_date",
 ]
-SIM_NUM_FIELDS = ["score", "feat_count1", "feat_count2", "min_features", "entry_date"]
 
 
 # ---------------------------------------------------------------------------
@@ -171,27 +150,7 @@ def save_function(pipe, coll, md5, addr, data):
     pipe.sadd(f"idx:{coll}:all_functions", base_id)
 
 
-def save_similarity(pipe, coll, sim_id, data):
-    """Index all fields for a similarity doc."""
-    doc_id = f"{coll}:sim_meta:{sim_id}"
-    for f in SIM_TAG_FIELDS:
-        _index_tag(pipe, coll, f"sim:{f}", data.get(f), doc_id)
-    for f in SIM_NUM_FIELDS:
-        _index_num(pipe, coll, f"sim:{f}", data.get(f), doc_id)
-    # Fast lookup by md5 pair
-    md5_1 = data.get("md5_1")
-    score = data.get("score", 0)
-    md5_2 = data.get("md5_2")
-    if md5_1 and md5_2:
-        pipe.zadd(f"idx:{coll}:sim:{md5_1}", {doc_id: float(score)})
 
-    # Global scoreboard for the algorithm
-    parts = sim_id.split(":")
-    if parts:
-        algo = parts[0]
-        pipe.zadd(f"{coll}:all_sim:{algo}", {doc_id: float(score)})
-
-    pipe.sadd(f"idx:{coll}:all_similarities", doc_id)
 
 
 # ---------------------------------------------------------------------------

@@ -399,6 +399,8 @@ def similarity_search():
                     pool_truncated = bool(res[1])
                     all_ids = res[2]
                     all_scores = res[3]
+                    if all_ids:
+                        logging.info(f"SIM SEARCH | {session_id} | Lua First Result: {all_ids[0]} -> {all_scores[0]}")
                     
                     if use_cache and (all_ids or total == 0):
                         cache_data = {"total": total, "pool_truncated": pool_truncated, "ids": all_ids, "scores": all_scores}
@@ -455,7 +457,7 @@ def similarity_search():
                     id1, id2 = extract_from_sid(sid)
                 
                 if id1 and id2:
-                    f_id_map[sid] = (id1, id2, data, enrichment_raw[i*2 + 1])
+                    f_id_map[sid] = (id1, id2, data, enrichment_raw[i*2 + 1], sort_sc)
                     meta_pipe.json().get(f"{id1}:meta", "$")
                     meta_pipe.json().get(f"{id2}:meta", "$")
             
@@ -463,7 +465,7 @@ def similarity_search():
             
             # Map meta results back
             for i, sid in enumerate(f_id_map.keys()):
-                id1, id2, sim_data, other_metric = f_id_map[sid]
+                id1, id2, sim_data, other_metric, sid_sort_sc = f_id_map[sid]
                 m1_json = meta_results[i*2]
                 m2_json = meta_results[i*2 + 1]
                 
@@ -472,8 +474,8 @@ def similarity_search():
                 if isinstance(m1, str): m1 = json.loads(m1)
                 if isinstance(m2, str): m2 = json.loads(m2)
 
-                sim_score = float(sort_sc) if sort_by == "score" else float(other_metric or 0)
-                feat_count = float(sort_sc) if sort_by == "feat_count" else float(other_metric or 0)
+                sim_score = float(sid_sort_sc) if sort_by == "score" else float(other_metric or 0)
+                feat_count = float(sid_sort_sc) if sort_by == "feat_count" else float(other_metric or 0)
 
                 enriched_pairs.append({
                     "id1": id1,

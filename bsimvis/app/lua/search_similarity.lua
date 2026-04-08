@@ -66,10 +66,19 @@ if producer.type == "score_range" or producer.type == "feature_range" then
     local prefix = producer.type:sub(1,5)
     local sorting_on_producer = (sort_by == prefix or (sort_by == "feat_count" and producer.type == "feature_range"))
     if sorting_on_producer then
-        if sort_order == "desc" then range_cmd = "ZREVRANGEBYSCORE"; first = "+inf"; second = producer.min or 0
-        else range_cmd = "ZRANGEBYSCORE"; first = producer.min or 0; second = "+inf" end
+        if sort_order == "desc" then 
+            range_cmd = "ZREVRANGEBYSCORE"; 
+            first = producer.max or "+inf"; 
+            second = producer.min or "-inf"
+        else 
+            range_cmd = "ZRANGEBYSCORE"; 
+            first = producer.min or "-inf"; 
+            second = producer.max or "+inf"
+        end
     else
-        range_cmd = "ZRANGEBYSCORE"; first = producer.min or "-inf"; second = producer.max or "+inf"
+        range_cmd = "ZRANGEBYSCORE"; 
+        first = producer.min or "-inf"; 
+        second = producer.max or "+inf"
     end
 
     local raw = redis.call(range_cmd, producer.key, first, second, 'WITHSCORES', 'LIMIT', 0, pool_limit)
@@ -83,10 +92,10 @@ if producer.type == "score_range" or producer.type == "feature_range" then
 
         for _, g in ipairs(groups) do
             if g.type == "score_range" then
-                local s = (producer == g and score) or tonumber(redis.call('ZSCORE', g.key, sid) or 0)
+                local s = ((producer.type == g.type and producer.key == g.key) and score) or tonumber(redis.call('ZSCORE', g.key, sid) or 0)
                 if s < (g.min or -9999999) or s > (g.max or 9999999) then match = false; break end
             elseif g.type == "feature_range" then
-                local f = (producer == g and score) or tonumber(redis.call('ZSCORE', g.key, sid) or 0)
+                local f = ((producer.type == g.type and producer.key == g.key) and score) or tonumber(redis.call('ZSCORE', g.key, sid) or 0)
                 if f < (g.min or 0) then match = false; break end
             elseif g.type == "metadata" then
                 if not id1 then id1, id2 = extract_ids(sid) end
@@ -116,7 +125,9 @@ if producer.type == "score_range" or producer.type == "feature_range" then
         if match then
             total_found = total_found + 1
             if #refined < 1000 then
-                local final_score = score
+                local final_score = tonumber(score) or 0
+                local is_prod = (producer.type == "score_range" and producer.key == KEYS[1]) or (producer.type == "feature_range" and producer.key == KEYS[2])
+                
                 if not sorting_on_producer then
                     local skey = (sort_by == "score") and KEYS[1] or KEYS[2]
                     final_score = tonumber(redis.call('ZSCORE', skey, sid) or 0)
@@ -128,7 +139,12 @@ if producer.type == "score_range" or producer.type == "feature_range" then
 end
 
 table.sort(refined, function(a, b)
-    if sort_order == "desc" then return a[2] > b[2] else return a[2] < b[2] end
+    local s1, s2 = tonumber(a[2]) or 0, tonumber(b[2]) or 0
+    if s1 ~= s2 then
+        if sort_order == "desc" then return s1 > s2 else return s1 < s2 end
+    end
+    -- Fallback to stable sort on SID if scores are identical
+    return a[1] < b[1]
 end)
 
 local res_ids, res_scores = {}, {}

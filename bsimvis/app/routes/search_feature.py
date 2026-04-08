@@ -53,10 +53,18 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
             cursor, keys = r.scan(cursor=cursor, match=match_pattern, count=1000)
             for key in keys:
                 if current_idx >= offset and len(feature_list) < limit:
-                    parts = key.split(":")
-                    if len(parts) >= 4:
-                        fh = parts[3]
+                    # Key is idx:{collection}:feature:{hash}:functions
+                    prefix = f"idx:{collection}:feature:"
+                    suffix = ":functions"
+                    if key.startswith(prefix) and key.endswith(suffix):
+                        fh = key[len(prefix):-len(suffix)]
                         feature_list.append({"hash": fh, "frequency": r.zcard(key)})
+                    else:
+                        # Fallback for unexpected formats
+                        parts = key.split(":")
+                        if len(parts) >= 4:
+                            fh = parts[3]
+                            feature_list.append({"hash": fh, "frequency": r.zcard(key)})
                 current_idx += 1
                 total_found += 1
             if cursor == 0 or (
@@ -99,19 +107,26 @@ def _enrich_feature_context(r, collection, feature_list):
             fm = meta_pkg[0] if meta_pkg else None
             f = feature_list[i]
             if fm:
-                parts = fm.get("function_id", "").split(":")
+                fid = fm.get("function_id", "")
+                func_tag = f"{collection}:function:"
+                md5, addr = "N/A", "N/A"
+                if fid.startswith(func_tag):
+                    rest = fid[len(func_tag):]
+                    fid_parts = rest.split(":")
+                    if len(fid_parts) >= 2:
+                        md5 = fid_parts[0]
+                        addr = fid_parts[1]
+                
                 f["context"] = {
                     "type": fm.get("type", "N/A"),
                     "op": fm.get("pcode_op", "N/A"),
                     "pcode_full": fm.get("pcode_op_full"),
-                    "func_id": fm.get("function_id"),
+                    "func_id": fid,
                     "seq": fm.get("seq"),
                     "line_idxs": fm.get("line_idx", []),
-                    "md5": parts[2] if len(parts) >= 3 else "N/A",
-                    "addr": parts[3] if len(parts) >= 4 else "N/A",
-                    "name": fm.get(
-                        "function_name", parts[3] if len(parts) >= 4 else "N/A"
-                    ),
+                    "md5": md5,
+                    "addr": addr,
+                    "name": fm.get("function_name", addr),
                     "c_code": None,
                 }
                 func_id = fm.get("function_id")

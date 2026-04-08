@@ -22,13 +22,20 @@ local function g_split(inputstr, sep)
     return t
 end
 
--- Helper: Reconstruct FIDs from Lean SID (coll:sim_meta:algo:md5_1:addr_1:md5_2:addr_2)
+-- Helper: Reconstruct FIDs from Lean SID (coll:sim_meta:algo:id1:id2)
+-- where id is coll:function:md5:addr
 local function extract_ids(sid)
-    local p = g_split(sid, ":")
-    if #p < 7 then return nil, nil end
-    local fid1 = collection .. ":function:" .. p[4] .. ":" .. p[5]
-    local fid2 = collection .. ":function:" .. p[6] .. ":" .. p[7]
-    return fid1, fid2
+    local sim_prefix = collection .. ":sim_meta:" .. algo .. ":"
+    if sid:sub(1, #sim_prefix) ~= sim_prefix then return nil, nil end
+    local rest = sid:sub(#sim_prefix + 1)
+    
+    local func_prefix = ":" .. collection .. ":function:"
+    local pivot = rest:find(func_prefix, 2, true) -- Look for the second occurrence start
+    if not pivot then return nil, nil end
+    
+    local id1 = rest:sub(1, pivot - 1)
+    local id2 = rest:sub(pivot + 1)
+    return id1, id2
 end
 
 local producer = nil

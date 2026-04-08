@@ -197,17 +197,34 @@ def similarity_search():
                             if r.exists(direct_key):
                                 all_matching_buckets.append(direct_key)
                     
-                    # Wildcard support / Registry search
-                    if not all_matching_buckets or "*" in val:
+                    # Wildcard support / Registry search / Default 'contains' for tags & names
+                    if not all_matching_buckets or "*" in val or field in ["tags", "function_name"]:
+                        # Legacy Support: Check 'idx:{col}:reg:tags' for compatibility with older sim-tags
+                        if field == "tags":
+                            legacy_reg = f"idx:{col}:reg:tags"
+                            if r.exists(legacy_reg) and legacy_reg not in registries:
+                                registries.append(legacy_reg)
+
                         for registry_key in registries:
                             if r.exists(registry_key):
-                                target_lower = val.lower().replace("*", "")
-                                all_buckets = [b.decode() if isinstance(b, bytes) else str(b) 
-                                               for b in r.smembers(registry_key)]
-                                for b_key_str in all_buckets:
-                                    if target_lower in b_key_str.lower().split(":")[-1]:
-                                        if b_key_str not in all_matching_buckets:
-                                            all_matching_buckets.append(b_key_str)
+                                 target_lower = val.lower().replace("*", "")
+                                 all_buckets = [b.decode() if isinstance(b, bytes) else str(b) 
+                                                for b in r.smembers(registry_key)]
+                                 
+                                 # Robust extraction: bucket is 'idx:{col}:{type}:{field}:{value}' 
+                                 # registry is 'idx:{col}:reg:{type}:{field}'
+                                 prefix = registry_key.replace(":reg:", ":") + ":"
+                                 
+                                 # Special Case: Legacy sim tags used idx:col:reg:tags but buckets are idx:col:sim:tags
+                                 if "reg:tags" in registry_key and "sim:tags" not in registry_key and "function:tags" not in registry_key:
+                                     prefix = registry_key.replace(":reg:tags", ":sim:tags:")
+                                 
+                                 for b_key_str in all_buckets:
+                                     if b_key_str.startswith(prefix):
+                                         value = b_key_str[len(prefix):]
+                                         if target_lower in value.lower():
+                                             if b_key_str not in all_matching_buckets:
+                                                 all_matching_buckets.append(b_key_str)
                     
                     found_for_filter = []
                     for b_key_str in all_matching_buckets:
@@ -233,7 +250,41 @@ def similarity_search():
                             weight += r.zcard(b_key)
                         except redis.exceptions.ResponseError:
                             weight += r.scard(b_key)
-                        names.append(b_key.split(":")[-1])
+                        # Robust extraction: bucket is 'idx:{col}:{type}:{field}:{value}'
+                        # We want to extract '{value}'. 
+                        # A simple way that works for all our patterns:
+                        # Find ':reg:' in the registry key, it corresponds to ':' in the bucket key.
+                        # But we don't have registry_key here.
+                        # However, we know field is metadata if it's not a score/feature range.
+                        # We'll use a heuristic: the value is usually after the field name.
+                        # Since we have the field name (e.g. 'tag', 'name', 'md5'), 
+                        # but these are the user-facing names.
+                        
+                        # Let's use the colon count from the end if we can't do better.
+                        # Actually, we can just use the last part for now if we can't resolve it perfectly,
+                        # but we want to be robust.
+                        # Best: find the type ('function' or 'sim') and then the field.
+                        parts = b_key.split(":")
+                        if "function" in parts:
+                            f_idx = 0
+                            for i, p in enumerate(parts):
+                                if p == "function": f_idx = i; break
+                            # Key is idx:col:function:field:value
+                            # value starts at parts[f_idx+2]
+                            if len(parts) > f_idx + 2:
+                                names.append(":".join(parts[f_idx+2:]))
+                            else:
+                                names.append(parts[-1])
+                        elif "sim" in parts:
+                            s_idx = 0
+                            for i, p in enumerate(parts):
+                                if p == "sim": s_idx = i; break
+                            if len(parts) > s_idx + 2:
+                                names.append(":".join(parts[s_idx+2:]))
+                            else:
+                                names.append(parts[-1])
+                        else:
+                            names.append(parts[-1])
                     
                     groups_raw.append({
                         "type": "metadata",

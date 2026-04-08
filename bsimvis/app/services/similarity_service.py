@@ -391,8 +391,8 @@ class SimilarityService:
                 # Update global tag index with color
                 self._ensure_tag_metadata(collection, tag)
 
-                # Add to registry for search SELECTIVE
-                r.sadd(f"idx:{collection}:reg:tags", index_key)
+                # Add to registry for search SELECTIVE (Standardized)
+                r.sadd(f"idx:{collection}:reg:sim:tags", index_key)
             
             return True
         except Exception as e:

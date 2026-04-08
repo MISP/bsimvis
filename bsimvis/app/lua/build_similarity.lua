@@ -72,9 +72,10 @@ for i = 1, limit_val do
     -- Robust Canonical Order
     if is_target_greater or is_item_built then
         -- Parse item MD5 from ID (id is collection:function:md5:addr)
-        local parts = {}
-        for p in string.gmatch(item.id, "([^:]+)") do table.insert(parts, p) end
-        local item_md5 = parts[3] or ""
+        local func_tag = collection .. ":function:"
+        local rest = item.id:sub(#func_tag + 1)
+        local next_sep = rest:find(":")
+        local item_md5 = rest:sub(1, next_sep and (next_sep - 1) or #rest)
 
         if is_target_greater then
             id_a, id_b = target_id, item.id

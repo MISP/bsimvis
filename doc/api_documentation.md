@@ -8,7 +8,7 @@ This document describes the primary API endpoints for the BSimVis backend.
 **`GET /api/function/code`**
 Retrieves decompiled code and semantic tokens for a function.
 - **Parameters:**
-  - `id`: (string, required) Function ID (format: `coll:type:md5:addr`).
+  - `id`: (string, required) Function ID (format: `coll:function:md5:addr`).
 - **Returns:**
   - `rows`: List of line objects with tokens.
   - `tips`: Tooltip data (features associated with each tokens).
@@ -25,23 +25,6 @@ Computes an aligned diff between two functions.
   - `left_tips`, `right_tips`: Tooltip data for each side.
   - `meta1`, `meta2`: Metadata for both functions.
 
-### Function Features
-**`GET /api/function/features`**
-Retrieves raw features enriched with C-code context lines.
-- **Parameters:**
-  - `id`: (string, required) Function ID.
-- **Returns:**
-  - `features`: List of enriched feature objects.
-  - `tips`: Tooltip data.
-
-### Function Similarity
-**`GET /api/similarity`**
-Retrieves pre-calculated similarity scores between two functions.
-- **Parameters:**
-  - `id1`, `id2`: (string, required) Function IDs.
-- **Returns:**
-  - `scores`: Map of algorithms (e.g., `jaccard`, `unweighted_cosine`) to scores.
-
 ---
 
 ## Search APIs
@@ -52,14 +35,8 @@ Retrieves pre-calculated similarity scores between two functions.
 - **`GET /api/batch/search`**: Lists batches for a specific collection.
   - Params: `collection` (required), `offset`, `limit`.
 
-### Feature Search
-- **`GET /api/feature/search`**: Searches for features within a collection.
-  - Params: `collection` (required), `hash` (prefix match), `sort` (`tf` or `default`), `offset`, `limit`.
-- **`GET /api/feature/details/<f_hash>`**: Retrieves details and occurrences for a specific feature.
-  - Params: `collection` (required), `offset`, `limit`.
-
 ### File & Function Search
-- **`GET /api/file/search`**: Searches for files with filters (metadata, tags).
+- **`GET /api/file/search`**: Searches for files with filters.
   - Params: `collection` (required), `file_name`, `tag`, `file_md5`, `batch_uuid`, `offset`, `limit`.
 - **`GET /api/function/search`**: Searches for functions with comprehensive filters.
   - Params: `collection` (required), `function_name`, `file_name`, `tag`, `file_md5`, `batch_uuid`, `language_id`, `decompiler_id`, `return_type`, `calling_convention`, `entrypoint_address`, `offset`, `limit`.
@@ -68,9 +45,40 @@ Retrieves pre-calculated similarity scores between two functions.
 **`GET /api/similarity/search`**
 High-performance similarity search with advanced filtering.
 - **Parameters:**
-  - `collection` (required), `algo` (default: `unweighted_cosine`), `threshold` (default: `0.95`).
-  - Filters: `q` (keyword), `name`, `tag`, `language`, `md5` (list), `min_features`, `cross_binary` (boolean).
-  - Control: `offset`, `limit`, `pool_limit`, `sort_by` (`score`, `feat_count`, `name`), `sort_order` (`desc`, `asc`).
+  - `collection`: (required)
+  - `algo`: (default: `unweighted_cosine`)
+  - `min_score`: (default: `0.95`) Minimum similarity score (0.0 to 1.0).
+  - `max_score`: (default: `1.0`) Maximum similarity score.
+  - `min_features`: Filter by minimum number of BSim features.
+  - `q`: Global keyword search (searches name, tags, IDs).
+  - `name`, `tag`, `language`: Specific metadata filters.
+  - `md5`: Binary MD5 filter (can be specified multiple times).
+  - `cross_binary`: (boolean) Filter for similarities between different binaries.
+  - `pool_limit`: (default: 1,000,000) Maximum number of candidates to process in DB.
+  - `sort_by`: `score` or `feat_count`.
+  - `sort_order`: `desc` or `asc`.
 - **Returns:**
-  - `pairs`: List of similar function pairs with metadata summary.
-  - `total`, `truncated`: Search result statistics.
+  - `pairs`: List of similar function pairs with metadata.
+  - `total`, `pool_truncated`: Search result statistics.
+
+---
+
+## Job & Worker APIs
+
+### List Jobs
+**`GET /api/jobs`**
+Lists recent and active background jobs.
+- **Parameters:**
+  - `limit`: (default: 50) Max jobs to return.
+
+### Global Stats
+**`GET /api/jobs/stats`**
+Returns aggregate metrics across all jobs.
+
+### Job Status
+**`GET /api/jobs/<job_id>`**
+Returns detailed status and logs for a specific job or pipeline.
+
+### Cancel Job
+**`POST /api/jobs/<job_id>/cancel`**
+Cancels a pending or running job.

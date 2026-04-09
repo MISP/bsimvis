@@ -1,15 +1,16 @@
 # BSimVis
 
-BSimVis is a tool to upload large quantities of decompiled binaries from Ghidra to a redis/kvrocks server for analyzing similarity, clustering and diffing functions based on Ghidra BSIM feature vectors.
-Binary analysis is done using Ghidra's decompiler thanks to Pyghidra scripting. 
+BSimVis is a tool to analyze similarities across a collection of binaries, based on [Ghidra](https://github.com/nationalsecurityagency/ghidra) analyzers and the BSim (Behavioral Similarity) plugin. It provides an API and Web interface to upload large quantities of decompiled binaries and BSim feature vectors to a Kvrocks database for similarity analysis, function diffing, and family clustering.
+
+BSimVis uses a custom database because Ghidra's BSim databases don't store decompiled code and other metadata. This alternative BSim database and API provide filtering and visualization of this additional data across multiple binaries at once. It doesn't aim to replace Ghidra's BSim plugin, but to enable more advanced analysis and visualization of the similarities on a large scale (family clustering, etc.).
 
 # Features
 
-- Upload decompiled functions and BSIM vectors from Ghidra to a redis/kvrocks server
+- Upload decompiled functions and BSIM vectors from Ghidra to a kvrocks database
 - API / web interface for :
     - Similarity of decompiled function and BSIM features
     - Function diffing based on BSIM features
-    - Feature correlation with decompiled C tokens
+    - BSim Feature correlation with decompiled C tokens / Pcode blocks
 
 
 - In the future we plan to add:
@@ -25,90 +26,69 @@ Binary analysis is done using Ghidra's decompiler thanks to Pyghidra scripting.
 
 ![alt text](img/feature_usage.png)
 
+# Web UI Similarity Search Graph view
+
+![alt text](img/sim_view.png)
+
 # Requirements
 
 - Ghidra and pyghidra install
-- Redis/kvrocks server
+- Redis and kvrocks databases
 
 # Upload BSIM data from CLI tool
 
 ## Usage 
 
 ```bash
-usage: bsimvis [-h] [-H HOST] {setup,features,index,sim,batch,upload} ...
+usage: bsimvis [-h] [-H HOST] {features,index,sim,job,worker,upload} ...
 
 Unified BSimVis CLI
 
 positional arguments:
-  {setup,features,index,sim,batch,upload}
-    setup               System setup
+  {features,index,sim,job,worker,upload}
     features            BSim Feature management (Indexing)
     index               Index health and statistics
     sim                 Similarity management
-    batch               Batch management
-    upload              Upload binaries
+    job                 Job & Pipeline management
+    worker              Worker management
+    upload              Upload binaries to redis/kvrocks
 
 options:
   -h, --help            show this help message and exit
-  -H, --host HOST       Default Redis/Kvrocks host:port (default: localhost:6666)
+  -H, --host HOST       API host:port (default: localhost:5000)
 ```
-
-Assuming you have a redis/kvrocks server running on localhost:6666, you can upload data using the following command:
-
-```bash
-bsimvis upload <target1> <target2> ... <targetN> --host localhost:6666 -c <collection_name> -t <tag> -n <num_threads> --config <config_file> --profile <profile_name>
-```
-See bsimvis_config.toml for an example config file (default config file if none is provided)
-
-
 
 To launch the web App / API :
 ```bash
 uv run app.py
 ```
 
-Build inverted index using : 
-
+To start the workers (required for indexing and similarity processing)
 ```bash
-bsimvis features build -c <collection_name>
+uv run bsimvis worker start --count 5
 ```
 
-Build similarities index using : (inverted index is necessary)
+Assuming you have the API running, you can upload data using the following command:
 
 ```bash
-bsimvis sim build -c <collection_name>
+bsimvis upload <target1> <target2> ... <targetN> -c <collection_name> -t <tag> -n <num_threads> --config <config_file> --profile <profile_name>
+```
+See `bsimvis_config.toml` for an example config file.
+
+To see the indexing / similarity processing jobs status:
+
+```bash
+uv run bsimvis job list
 ```
 
-
-# Adding new binaries to existing collection
+To see the status / logs of a specific job:
 
 ```bash
-$ bsimvis features status <collection_name>
-
-[*] Indexing Status for Collection: main
-Batch UUID                               | Name                           | Src Funcs  | Indexed  | Ratio 
----------------------------------------------------------------------------------------------------------
-13964728-a0be-4075-b1a8-572fd8420b55     | Ghidra Batch                   | 3672       | 3670     |  99.9%
-2a5e9a96-90a3-45ca-8824-514091a9d079     | Ghidra Batch                   | 19138      | 12121    |  63.3%
-56a377ba-a3f8-4d7b-9080-b037c226bf90     | Ghidra Batch                   | 15         | 4        |  26.7%
-759f6529-d7a5-489b-b590-93b2120fe424     | Ghidra Batch                   | 2          | 2        | 100.0%
-bc847936-7bb5-4c6c-afa0-16cfeef500d6     | Ghidra Batch                   | 3          | 3        | 100.0%
+uv run bsimvis job status <job_id>
 ```
 
-Missing functions will be indexed with:
+To cancel a job:
 
 ```bash
-bsimvis features build <collection_name>
-```
-
-To index a specific batch:
-
-```bash
-bsimvis features build <collection_name> --batch <batch_uuid>
-```
-
-To rebuild a specific batch:
-
-```bash
-bsimvis features rebuild <collection_name> --batch <batch_uuid>
+uv run bsimvis job cancel <job_id>
 ```

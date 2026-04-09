@@ -168,6 +168,19 @@
             margin: 2px;
         }
 
+        .analysis-tag-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            margin: 2px;
+            border: 1px dashed rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.05);
+            color: #888;
+            opacity: 0.8;
+        }
+
         .remove-tag-btn {
             cursor: pointer;
             width: 14px;
@@ -842,11 +855,12 @@
                 title: 'Function similarities',
                 api: '/api/similarity/search',
                 headers: [
-                    { label: 'Function Pair', width: '25%' },
-                    { label: 'Similarity', sort: 'score', width: '15%' },
-                    { label: 'Features', sort: 'feat_count', width: '12%' },
-                    { label: 'Language / Tags', width: '23%' },
-                    { label: 'Binary MD5s', width: '15%' },
+                    { label: 'Similarity', sort: 'score', width: '9%' },
+                    { label: 'Function Pair', width: '20%' },
+                    { label: 'Function Tags', width: '18%' },
+                    { label: 'Feat', sort: 'feat_count', width: '5%' },
+                    { label: 'Language', width: '15%' },
+                    { label: 'Binary MD5s', width: '18%' },
                     { label: 'Actions / Algo', width: '10%' }
                 ],
                 renderer: renderTopCorrelations
@@ -959,12 +973,12 @@
             // Sidebar
             document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
             const navLink = document.getElementById('nav-' + path.substring(1));
-            
+
             // Clear selection if navigating away from similarity view
             if (path !== lastHashPath.split('?')[0] && path !== '#function-similarity') {
                 selectedSimilarityPairs.clear();
             }
-            
+
             if (navLink) navLink.classList.add('active');
 
             // Titles
@@ -1059,7 +1073,6 @@
                 const p = new URLSearchParams(params);
                 headHtml += `<tr class="filter-row">
                     <th></th>
-                    <th><input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
                     <th style="vertical-align: middle;">
                         <div style="display:flex; align-items:center; gap:2px;">
                             <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
@@ -1067,10 +1080,14 @@
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
                     </th>
-                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
-                    <th style="position:relative">
-                        <input type="text" id="flt-sim-tag" placeholder="Tag" value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()">
+                    <th>
+                        <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
                     </th>
+                    <th style="position:relative">
+                        <input type="text" id="flt-sim-tag" placeholder="Tag..." value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
+                    </th>
+                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
+                    <th></th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
                     <th style="font-size: 0.65rem;">
                         <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
@@ -1499,11 +1516,12 @@
             `}).join('');
         }
 
-        function getRowTagColor(tags) {
-            if (localStorage.getItem('sim-color-by-tag') !== 'true' || !tags || tags.length === 0) return "";
+        function getRowTagColor(tags, userTags = []) {
+            const allTags = [...(tags || []), ...(userTags || [])];
+            if (localStorage.getItem('sim-color-by-tag') !== 'true' || allTags.length === 0) return "";
             let bestColor = null;
             let maxPrio = -1;
-            tags.forEach(t => {
+            allTags.forEach(t => {
                 let meta = tagMetadata[t];
                 // Enforce fixed light blue for bookmark with high priority
                 if (t === 'bookmark') {
@@ -1523,16 +1541,21 @@
         function refreshAllRowColors() {
             const rows = document.querySelectorAll('tr.sim-row');
             rows.forEach(tr => {
-                const tagCards = tr.querySelectorAll('.sim-tag-card');
-                const tags = Array.from(tagCards).map(c => c.textContent.replace('×', '').trim());
-                
-                // Also check bookmark button
-                const bookmarkBtn = tr.querySelector('.bookmark-btn');
+                const simEditor = tr.querySelector('.sim-tags-editor');
+                if (!simEditor) return;
+
+                const analystCards = simEditor.querySelectorAll('.sim-tag-card');
+                const analysisCards = simEditor.querySelectorAll('.analysis-tag-badge');
+                const userTags = Array.from(analystCards).map(c => c.textContent.replace('×', '').trim());
+                const analysisTags = Array.from(analysisCards).map(c => c.textContent.trim());
+
+                // Only check the similarity-level bookmark button
+                const bookmarkBtn = simEditor.querySelector('.bookmark-btn');
                 if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
-                    tags.push('bookmark');
+                    if (!userTags.includes('bookmark')) userTags.push('bookmark');
                 }
-                
-                tr.style.background = getRowTagColor(tags);
+
+                tr.style.background = getRowTagColor(analysisTags, userTags);
             });
         }
 
@@ -1547,75 +1570,109 @@
                 const addr1 = s1[3] || '---';
                 const addr2 = s2[3] || '---';
 
-                const tags1 = (p.meta1?.tags || []).map(t => `<span class="tag-card" style="font-size:0.6rem">${t}</span>`).join('');
-                const tags2 = (p.meta2?.tags || []).map(t => `<span class="tag-card" style="font-size:0.6rem; border-color:rgba(166,226,46,0.3); color:#a6e22e; background:rgba(166,226,46,0.05);">${t}</span>`).join('');
+                const tags1 = [
+                    ...(p.meta1?.tags || []).map(t => `<span class="analysis-tag-badge" style="font-size:0.55rem; padding: 1px 5px; margin: 1px;">${t}</span>`),
+                    ...(p.meta1?.user_tags || []).map(t => `<span class="tag-card" style="font-size:0.55rem; padding: 1px 5px; margin: 1px; border-color:rgba(102, 217, 239, 0.3); color:#66d9ef; background:rgba(102, 217, 239, 0.05);">${t}</span>`)
+                ].join('');
+
+                const tags2 = [
+                    ...(p.meta2?.tags || []).map(t => `<span class="analysis-tag-badge" style="font-size:0.55rem; padding: 1px 5px; margin: 1px;">${t}</span>`),
+                    ...(p.meta2?.user_tags || []).map(t => `<span class="tag-card" style="font-size:0.55rem; padding: 1px 5px; margin: 1px; border-color:rgba(166,226,46,0.3); color:#a6e22e; background:rgba(166,226,46,0.05);">${t}</span>`)
+                ].join('');
 
                 const name1 = (p.name1 || '---').replace(/'/g, "\\'");
                 const name2 = (p.name2 || '---').replace(/'/g, "\\'");
 
                 const tags = p.tags || [];
-                const isBookmarked = tags.includes('bookmark');
-                const rowStyle = getRowTagColor(tags);
+                const user_tags = p.user_tags || [];
+                const isBookmarked = user_tags.includes('bookmark');
+                const rowStyle = getRowTagColor(tags, user_tags);
 
-                const renderSimTag = (tag) => {
-                    const meta = tagMetadata[tag] || { color: '#66d9ef' };
-                    const color = meta.color;
-                    // Don't show 'bookmark' as a separate card since it has a dedicated button
-                    if (tag === 'bookmark') return '';
-                    return `
+                const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
+                    const isBookmarked = userTagsList.includes('bookmark');
+                    const editorClass = etype === 'similarity' ? 'sim-tags-editor' : 'entity-tags-editor';
+                    const bookmarkOnClick = etype === 'similarity'
+                        ? `toggleBookmark(event, '${p.id1}', '${p.id2}', '${p.algo}')`
+                        : `toggleEntityBookmark(event, '${etype}', '${eid}')`;
+
+                    const addOnClick = etype === 'similarity'
+                        ? `startAddTag(event, 'similarity', '${p.id1}|${p.id2}|${p.algo}')`
+                        : `startAddTag(event, '${etype}', '${eid}')`;
+
+                    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${t}">${t}</span>`).join('');
+                    const userHtml = userTagsList.map(t => {
+                        if (t === 'bookmark') return '';
+                        const meta = tagMetadata[t] || { color: '#66d9ef' };
+                        const color = meta.color;
+                        const removeClick = etype === 'similarity'
+                            ? `removeTag(event, 'similarity', '${p.id1}|${p.id2}|${p.algo}', '${t}')`
+                            : `removeTag(event, '${etype}', '${eid}', '${t}')`;
+                        return `
                         <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11;">
-                            ${tag} 
-                            <span class="remove-tag-btn" onclick="removeSimTag(event, '${p.id1}', '${p.id2}', '${p.algo}', '${tag}')" style="background:${color}22">×</span>
+                            ${t} 
+                            <span class="remove-tag-btn" onclick="${removeClick}" style="background:${color}22">×</span>
                         </span>`;
+                    }).join('');
+
+                    return `
+                        <div class="${editorClass}" data-etype="${etype}" data-eid="${eid}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle;">
+                            <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" 
+                                    title="${isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}"
+                                    onclick="${bookmarkOnClick}">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+                            </button>
+                            ${analysisHtml}
+                            ${userHtml}
+                            <button class="add-tag-btn" onclick="${addOnClick}">+</button>
+                        </div>
+                    `;
                 };
 
                 const pairId = `${p.id1}|${p.id2}|${p.algo}`;
 
                 return `
-                <tr class="sim-row" style="background: ${rowStyle}">
+                <tr class="sim-row" style="background: ${rowStyle}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}">
                     <td style="text-align:center; vertical-align:middle;">
                         <input type="checkbox" class="row-selector" 
-                               data-pair-id="${pairId}"
-                               ${selectedSimilarityPairs.has(pairId) ? 'checked' : ''} 
-                               onchange="toggleSimilaritySelection(event, '${p.id1}', '${p.id2}', '${p.algo}')">
-                    </td>
-                    <td>
-                        <div style="display:flex; flex-direction:column; gap:6px;">
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center;">L</span>
-                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id1}', '${name1}')">${p.name1 || '---'}</b>
-                                <span class="dim" style="font-size:0.65rem;">@ ${addr1}</span>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center; background:var(--success); color:#000;">R</span>
-                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem;" onclick="showFunctionCodeById('${p.id2}', '${name2}')">${p.name2 || '---'}</b>
-                                <span class="dim" style="font-size:0.65rem;">@ ${addr2}</span>
-                            </div>
-                        </div>
+                                data-pair-id="${pairId}"
+                                ${selectedSimilarityPairs.has(pairId) ? 'checked' : ''} 
+                                onchange="toggleSimilaritySelection(event, '${p.id1}', '${p.id2}', '${p.algo}')">
                     </td>
                     <td>
                         <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
                         <div class="dim" style="font-size:0.6rem; margin-bottom:5px;">SIMILARITY</div>
-                        <div class="sim-tags-editor" style="display:flex; flex-wrap:wrap; gap:2px; max-width:180px; align-items:center;">
-                            <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" 
-                                    title="${isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}"
-                                    onclick="toggleBookmark(event, '${p.id1}', '${p.id2}', '${p.algo}')">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-                            </button>
-                            ${tags.map(renderSimTag).join('')}
-                            <button class="add-tag-btn" onclick="startAddSimTag(event, '${p.id1}', '${p.id2}', '${p.algo}')">+</button>
+                        ${renderTagEditor('similarity', pairId, tags, user_tags)}
+                    </td>
+                    <td>
+                        <div style="display:flex; flex-direction:column; justify-content: space-around; height: 100%; gap: 10px;">
+                            <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                                <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center; flex-shrink:0;">L</span>
+                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" onclick="showFunctionCodeById('${p.id1}', '${name1}')">${p.name1 || '---'}</b>
+                                <span class="dim" style="font-size:0.65rem; white-space:nowrap; flex-shrink:0;">@ ${addr1}</span>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                                <span class="badge" style="min-width:30px; font-size:0.6rem; text-align:center; background:var(--success); color:#000; flex-shrink:0;">R</span>
+                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" onclick="showFunctionCodeById('${p.id2}', '${name2}')">${p.name2 || '---'}</b>
+                                <span class="dim" style="font-size:0.65rem; white-space:nowrap; flex-shrink:0;">@ ${addr2}</span>
+                            </div>
                         </div>
                     </td>
                     <td>
-                        <span class="badge" style="background:#000; border:1px solid #333;">L: ${p.meta1?.bsim_features_count || 0}</span><br>
-                        <span class="badge" style="background:#000; border:1px solid #333; margin-top:2px; display:inline-block;">R: ${p.meta2?.bsim_features_count || 0}</span>
+                        <div style="display:flex; flex-direction:column; justify-content: space-around; height: 100%; gap: 10px;">
+                            <div>${renderTagEditor('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
+                            <div>${renderTagEditor('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
+                        </div>
+                    </td>
+                    <td style="text-align:center; vertical-align:middle;">
+                        <span class="mono" style="font-size:0.75rem; color:var(--accent); display:block;">${p.meta1?.bsim_features_count || 0}</span>
+                        <span class="mono" style="font-size:0.75rem; color:var(--success); display:block;">${p.meta2?.bsim_features_count || 0}</span>
                     </td>
                     <td>
                         <div style="margin-bottom:5px;">
-                            <span class="dim" style="font-size:0.65rem;">L:</span> <span class="mono" style="font-size:0.7rem; color:var(--accent)">${p.meta1?.language_id || '---'}</span> ${tags1}
+                            <span class="dim" style="font-size:0.65rem;">L:</span> <span class="mono" style="font-size:0.7rem; color:var(--accent)">${p.meta1?.language_id || '---'}</span>
                         </div>
                         <div>
-                            <span class="dim" style="font-size:0.65rem;">R:</span> <span class="mono" style="font-size:0.7rem; color:var(--success)">${p.meta2?.language_id || '---'}</span> ${tags2}
+                            <span class="dim" style="font-size:0.65rem;">R:</span> <span class="mono" style="font-size:0.7rem; color:var(--success)">${p.meta2?.language_id || '---'}</span>
                         </div>
                     </td>
                     <td>
@@ -2998,12 +3055,12 @@
         function attachTagAutocomplete(input, onSelect) {
             if (input._acAttached) return;
             input._acAttached = true;
-            
+
             const parent = input.parentElement;
             const dropdown = document.createElement('div');
             dropdown.className = 'tag-autocomplete-dropdown';
             parent.appendChild(dropdown);
-            
+
             const renderSuggestions = (tags) => {
                 dropdown.innerHTML = '';
                 tags.forEach(t => {
@@ -3055,7 +3112,7 @@
             } else {
                 selectedSimilarityPairs.delete(pairId);
             }
-            
+
             // Update Select All checkbox state
             const allChecked = Array.from(document.querySelectorAll('.row-selector')).every(cb => cb.checked);
             const selectAllCb = document.getElementById('select-all-sim');
@@ -3087,13 +3144,30 @@
             return { row, container, id1: parts[0], id2: parts[1], algo: parts[2] };
         }
 
+        async function toggleEntityBookmark(event, etype, eid) {
+            event.stopPropagation();
+            const btn = event.currentTarget;
+            const isBookmarked = btn.classList.contains('active');
+            const action = isBookmarked ? 'remove' : 'add';
+
+            if (action === 'remove') {
+                await removeTag(null, etype, eid, 'bookmark');
+                btn.classList.remove('active');
+                btn.title = "Add Bookmark";
+            } else {
+                await confirmAddTag(etype, eid, 'bookmark');
+                btn.classList.add('active');
+                btn.title = "Remove Bookmark";
+            }
+            refreshAllRowColors();
+        }
+
         async function toggleBookmark(event, id1, id2, algo) {
             event.stopPropagation();
             const btn = event.currentTarget;
             const isBookmarked = btn.classList.contains('active');
             const pairId = `${id1}|${id2}|${algo}`;
-            
-            // Check if we are doing a batch operation
+
             let targets = [{ id1, id2, algo, btn }];
             if (selectedSimilarityPairs.has(pairId)) {
                 targets = Array.from(selectedSimilarityPairs).map(pid => {
@@ -3103,55 +3177,45 @@
             }
 
             const action = isBookmarked ? 'remove' : 'add';
-            
+
             for (const t of targets) {
+                const eid = `${t.id1}|${t.id2}|${t.algo}`;
                 if (action === 'remove') {
-                    await removeSimTag(null, t.id1, t.id2, t.algo, 'bookmark');
+                    await removeTag(null, 'similarity', eid, 'bookmark');
                     if (t.btn) {
                         t.btn.classList.remove('active');
                         t.btn.title = "Add Bookmark";
                     }
                 } else {
-                    // confirmAddSimTag logic simplified for bookmarking
-                    try {
-                        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-                        const col = params.get('collection') || 'main';
-                        const res = await fetch('/api/similarity/tag', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ collection: col, id1: t.id1, id2: t.id2, algo: t.algo, tag: 'bookmark' })
-                        });
-                        if (res.ok) {
-                            if (t.btn) {
-                                t.btn.classList.add('active');
-                                t.btn.title = "Remove Bookmark";
-                            }
-                        }
-                    } catch (e) { console.error(e); }
+                    await confirmAddTag('similarity', eid, 'bookmark');
+                    if (t.btn) {
+                        t.btn.classList.add('active');
+                        t.btn.title = "Remove Bookmark";
+                    }
                 }
             }
             refreshAllRowColors();
         }
 
-        async function startAddSimTag(event, id1, id2, algo) {
+        async function startAddTag(event, etype, eid) {
             event.stopPropagation();
             const btn = event.target;
             const parent = btn.parentElement;
-            
+
             const wrapper = document.createElement('div');
             wrapper.style.position = 'relative';
             wrapper.style.display = 'inline-block';
-            
+
             const input = document.createElement('input');
             input.type = 'text';
             input.className = 'tag-input-field';
             input.placeholder = 'Tag...';
-            
+
             wrapper.appendChild(input);
             parent.replaceChild(wrapper, btn);
-            
+
             attachTagAutocomplete(input, async (tag) => {
-                await confirmAddSimTag(id1, id2, algo, tag, parent);
+                await confirmAddTag(etype, eid, tag, parent);
                 cleanup();
             });
             input.focus();
@@ -3162,118 +3226,137 @@
                 isClosing = true;
                 if (wrapper.parentNode === parent) parent.replaceChild(btn, wrapper);
             };
-            
+
             input.onblur = () => {
                 setTimeout(cleanup, 200);
             };
-            
+
             input.onkeyup = async (e) => {
                 if (e.key === 'Enter') {
                     const tag = input.value.trim();
-                    if (tag) await confirmAddSimTag(id1, id2, algo, tag, parent);
+                    if (tag) await confirmAddTag(etype, eid, tag, parent);
                     cleanup();
                 } else if (e.key === 'Escape') {
                     cleanup();
                 }
             };
         }
+        async function confirmAddTag(etype, eid, tag, container) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const col = params.get('collection') || 'main';
 
-        async function confirmAddSimTag(id1, id2, algo, tag, container) {
-            const pairId = `${id1}|${id2}|${algo}`;
-            
-            // Determine targets: either the single row or the entire selection
-            let targets = [{ id1, id2, algo, container }];
-            if (selectedSimilarityPairs.has(pairId)) {
+            // Handle batching for similarities
+            let targets = [{ etype, eid, container }];
+            if (etype === 'similarity' && selectedSimilarityPairs.has(eid)) {
                 targets = Array.from(selectedSimilarityPairs).map(pid => {
                     const info = getSimilarityRowInfo(pid);
-                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, container: info.container } : null;
+                    return info ? { etype: 'similarity', eid: pid, container: info.container } : null;
                 }).filter(t => t !== null);
+            }
+
+            // Identify targets for UI update (broadcast to all instances of this entity on the page)
+            let uiTargets = [container];
+            if (etype === 'function' || etype === 'file') {
+                const allEditors = document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`);
+                if (allEditors.length > 0) uiTargets = Array.from(allEditors);
+            } else if (etype === 'similarity' && selectedSimilarityPairs.has(eid)) {
+                uiTargets = targets.map(t => t.container).filter(c => !!c);
             }
 
             let mainSuccess = false;
             for (const t of targets) {
                 try {
-                    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-                    const col = params.get('collection') || 'main';
-                    
-                    const res = await fetch('/api/similarity/tag', {
+                    let url = '/api/tags/add';
+                    let body = { collection: col, entity_type: t.etype, entity_id: t.eid, tag };
+
+                    const res = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ collection: col, id1: t.id1, id2: t.id2, algo: t.algo, tag })
+                        body: JSON.stringify(body)
                     });
-                    
+
                     if (res.ok) {
-                        // Update cache if new tag (only need to do this once effectively)
                         if (!tagMetadata[tag]) await fetchTagMetadata(col);
-                        
                         const meta = tagMetadata[tag] || { color: '#66d9ef' };
                         const color = meta.color;
-                        const row = t.container.closest('tr.sim-row');
                         const isBookmark = (tag === 'bookmark');
 
-                        if (isBookmark) {
-                            const bookmarkBtn = row?.querySelector('.bookmark-btn');
-                            if (bookmarkBtn) {
-                                bookmarkBtn.classList.add('active');
-                                bookmarkBtn.title = "Remove Bookmark";
+                        // Update all UI instances for this entity
+                        const editorsToUpdate = (t.eid === eid) ? uiTargets : [t.container];
+
+                        editorsToUpdate.forEach(editor => {
+                            if (!editor) return;
+                            if (isBookmark) {
+                                const bookmarkBtn = editor.querySelector('.bookmark-btn');
+                                if (bookmarkBtn) {
+                                    bookmarkBtn.classList.add('active');
+                                    bookmarkBtn.title = "Remove Bookmark";
+                                }
+                            } else {
+                                const existing = Array.from(editor.querySelectorAll('.sim-tag-card')).find(c => c.textContent.trim().startsWith(tag));
+                                if (!existing) {
+                                    const card = document.createElement('span');
+                                    card.className = 'sim-tag-card';
+                                    card.style.borderColor = color + '44';
+                                    card.style.color = color;
+                                    card.style.background = color + '11';
+                                    const removeClick = `removeTag(event, '${t.etype}', '${t.eid}', '${tag}')`;
+                                    card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="${removeClick}" style="background:${color}22">×</span>`;
+                                    editor.insertBefore(card, editor.lastElementChild);
+                                }
                             }
-                        } else {
-                            // Avoid duplicates in UI
-                            const existing = Array.from(t.container.querySelectorAll('.sim-tag-card')).find(c => c.textContent.trim().startsWith(tag));
-                            if (!existing) {
-                                const card = document.createElement('span');
-                                card.className = 'sim-tag-card';
-                                card.style.borderColor = color + '44';
-                                card.style.color = color;
-                                card.style.background = color + '11';
-                                card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="removeSimTag(event, '${t.id1}', '${t.id2}', '${t.algo}', '${tag}')" style="background:${color}22">×</span>`;
-                                t.container.insertBefore(card, t.container.lastElementChild);
-                            }
-                        }
-                        
-                        if (t.id1 === id1 && t.id2 === id2) mainSuccess = true;
+                        });
+
+                        if (t.eid === eid) mainSuccess = true;
                     }
                 } catch (err) { console.error(err); }
             }
-            
             refreshAllRowColors();
             return mainSuccess;
         }
 
-        async function removeSimTag(event, id1, id2, algo, tag) {
+        async function removeTag(event, etype, eid, tag) {
             if (event) event.stopPropagation();
-            
-            const pairId = `${id1}|${id2}|${algo}`;
-            
-            // Determine targets
-            let targets = [{ id1, id2, algo }];
-            if (selectedSimilarityPairs.has(pairId)) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const col = params.get('collection') || 'main';
+
+            let targets = [{ etype, eid }];
+            if (etype === 'similarity' && selectedSimilarityPairs.has(eid)) {
                 targets = Array.from(selectedSimilarityPairs).map(pid => {
                     const info = getSimilarityRowInfo(pid);
-                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, container: info.container } : null;
+                    return info ? { etype: 'similarity', eid: pid, container: info.container } : null;
                 }).filter(t => t !== null);
             }
 
             for (const t of targets) {
                 try {
-                    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-                    const col = params.get('collection') || 'main';
-                    
-                    const res = await fetch('/api/similarity/untag', {
+                    const res = await fetch('/api/tags/remove', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ collection: col, id1: t.id1, id2: t.id2, algo: t.algo, tag })
+                        body: JSON.stringify({ collection: col, entity_type: t.etype, entity_id: t.eid, tag })
                     });
-                    
+
                     if (res.ok) {
-                        const rowInfo = getSimilarityRowInfo(`${t.id1}|${t.id2}|${t.algo}`);
-                        if (rowInfo && rowInfo.container) {
-                            // Find and remove the tag card
-                            const cards = rowInfo.container.querySelectorAll('.sim-tag-card');
-                            cards.forEach(c => {
-                                if (c.textContent.trim().startsWith(tag)) c.remove();
-                            });
-                        }
+                        // Broadast update to all instances of this entity
+                        const editorsToUpdate = (t.etype === 'function' || t.etype === 'file')
+                            ? document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`)
+                            : (t.container ? [t.container] : document.querySelectorAll(`[data-eid="${t.eid}"][data-etype="${t.etype}"]`));
+
+                        editorsToUpdate.forEach(container => {
+                            if (!container) return;
+                            if (tag === 'bookmark') {
+                                const btn = container.querySelector('.bookmark-btn');
+                                if (btn) {
+                                    btn.classList.remove('active');
+                                    btn.title = "Add Bookmark";
+                                }
+                            } else {
+                                const cards = container.querySelectorAll('.sim-tag-card');
+                                cards.forEach(c => {
+                                    if (c.textContent.trim().startsWith(tag)) c.remove();
+                                });
+                            }
+                        });
                     }
                 } catch (err) { console.error(err); }
             }

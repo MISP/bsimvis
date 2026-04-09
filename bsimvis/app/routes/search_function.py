@@ -11,11 +11,20 @@ DEFAULT_LIMIT = 100
 
 
 def normalize_tags(data):
+    # Normalize legacy analysis tags
     tags = data.get("tags")
     if isinstance(tags, str):
         data["tags"] = [t.strip() for t in tags.split(",")] if tags else []
     elif tags is None:
         data["tags"] = []
+
+    # Normalize new user tags
+    user_tags = data.get("user_tags")
+    if isinstance(user_tags, str):
+        data["user_tags"] = [t.strip() for t in user_tags.split(",")] if user_tags else []
+    elif user_tags is None:
+        data["user_tags"] = []
+
     return data
 
 
@@ -58,6 +67,10 @@ def search_functions():
     if tags:
         tag_filters["tags"] = tags[0]
 
+    user_tags = request.args.getlist("user_tag")
+    if user_tags:
+        tag_filters["user_tags"] = user_tags[0]
+
     doc_ids, total = query_ids(
         r, collection, "function", tag_filters=tag_filters, offset=offset, limit=limit
     )
@@ -76,9 +89,7 @@ def search_functions():
 
         # Extra tag filtering (multi-tag)
         if len(tags) > 1:
-            doc_tags = data.get("tags", [])
-            if isinstance(doc_tags, str):
-                doc_tags = [t.strip() for t in doc_tags.split(",")]
+            doc_tags = data.get("tags", []) + data.get("user_tags", [])
             if not all(t in doc_tags for t in tags):
                 continue
 

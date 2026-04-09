@@ -51,6 +51,7 @@ def similarity_search():
     search_q = request.args.get("q", "").lower()
     name_filter = request.args.get("name", "").lower()
     tag_filter = request.args.get("tag", "").lower()
+    user_tag_filter = request.args.get("user_tag", "").lower()
     lang_filter = request.args.get("language", "").lower()
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
@@ -89,6 +90,7 @@ def similarity_search():
             "q": (request.args.get("q") or "").strip().lower(),
             "name": (request.args.get("name") or "").strip().lower(),
             "tag": (request.args.get("tag") or "").strip().lower(),
+            "user_tag": (request.args.get("user_tag") or "").strip().lower(),
             "md5": (request.args.get("md5") or "").strip().lower(),
             "id": (request.args.get("id") or "").strip().lower(),
             "language_id": (request.args.get("language_id") or "").strip().lower(),
@@ -181,10 +183,12 @@ def similarity_search():
                     field = mapping.get(prefix, prefix)
                     
                     # Deep Selection: metadata filters resolve via the safe Metadata Registry
-                    # We check both function-level and sim-level tags if applicable
+                    # We check both function-level and sim-level tags (legacy & user)
                     registries = [f"idx:{col}:reg:function:{field}"]
                     if field == "tags":
-                         registries.append(f"idx:{col}:reg:sim:{field}")
+                         registries.append(f"idx:{col}:reg:sim:tags")
+                         registries.append(f"idx:{col}:reg:sim:user_tags")
+                         registries.append(f"idx:{col}:reg:function:user_tags")
 
                     all_matching_buckets = []
                     
@@ -319,7 +323,15 @@ def similarity_search():
                 if tag_filter:
                     g = get_bucket_idx("tags", tag_filter)
                     if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    # Also try user_tags if tags returned nothing? 
+                    # No, tags filter in query should check both registries (which we updated in get_bucket_idx)
                     add_group(g, field="tag")
+
+                if user_tag_filter:
+                    # Specific user_tag filter
+                    g = get_bucket_idx("user_tags", user_tag_filter)
+                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                    add_group(g, field="user_tag")
 
                 if md5_filters:
                     g = []
@@ -490,6 +502,7 @@ def similarity_search():
                         "file_md5": m1.get("file_md5"),
                         "file_name": m1.get("file_name"),
                         "tags": m1.get("tags", []),
+                        "user_tags": m1.get("user_tags", []),
                         "batch_uuid": m1.get("batch_uuid"),
                         "language_id": m1.get("language_id"),
                         "return_type": m1.get("return_type", "N/A"),
@@ -499,12 +512,14 @@ def similarity_search():
                         "file_md5": m2.get("file_md5"),
                         "file_name": m2.get("file_name"),
                         "tags": m2.get("tags", []),
+                        "user_tags": m2.get("user_tags", []),
                         "batch_uuid": m2.get("batch_uuid"),
                         "language_id": m2.get("language_id"),
                         "return_type": m2.get("return_type", "N/A"),
                         "bsim_features_count": m2.get("bsim_features_count"),
                     },
                     "tags": sim_data.get("tags", []),
+                    "user_tags": sim_data.get("user_tags", []),
                     "algo": algo,
                 })
 

@@ -43,6 +43,7 @@ FILE_TAG_FIELDS = [
     "file_md5",
     "language_id",
     "tags",
+    "user_tags",
     "file_name",
 ]
 FUNC_TAG_FIELDS = [
@@ -52,6 +53,7 @@ FUNC_TAG_FIELDS = [
     "file_md5",
     "language_id",
     "tags",
+    "user_tags",
     "file_name",
     "function_name",
     "decompiler_id",
@@ -89,6 +91,17 @@ def _index_tag(pipe, coll, field, value, doc_id):
         pipe.sadd(bucket_key, doc_id)
         # Register the bucket key for safe lookups without using 'KEYS'
         pipe.sadd(f"idx:{coll}:reg:{field}", bucket_key)
+
+        # AUTO-DISCOVERY: Ensure tags (Analysis or User) are registered in global metadata
+        if ":tags" in field or ":user_tags" in field:
+            meta_key = f"idx:{coll}:tags_metadata"
+            # Default metadata for discovered tags (HSETNX prevents overwriting existing colors/prio)
+            import random
+            palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF"]
+            # We use a fixed-ish default to avoid random colors in pipelines if possible, 
+            # but TagService uses random, so we match for consistency.
+            default_meta = json.dumps({"color": random.choice(palette), "priority": 0})
+            pipe.hsetnx(meta_key, str(v), default_meta)
 
 
 def _unindex_tag(pipe, coll, field, value, doc_id):
@@ -205,16 +218,8 @@ def query_ids(
 ):
     """
     Resolve filters to a list of doc IDs.
-
-    tag_filters:  {field: value}  – exact match (uses TAG sets)
-    num_filters:  {field: (min, max)}  – range (uses NUMERIC ZSETs)
-
-    Strategy (Kvrocks-compatible, no SINTER):
-      1. Pick the most specific key as base (smallest set wins).
-      2. SMEMBERS the base key.
-      3. For remaining keys, use a pipeline of SISMEMBER to filter.
-
-    Returns (ids_page, total_count).
+    Supports a special 'tags' filter that checks both legacy analysis 'tags' 
+    and the new 'user_tags' bucket.
     """
     tag_filters = tag_filters or {}
     num_filters = num_filters or {}
@@ -222,30 +227,72 @@ def query_ids(
     all_key = f"idx:{coll}:all_{doc_type}s"
 
     # Build filter keys (skip empty values)
-    filter_keys = []
+    # filter_keys will contain (is_union, keys_list)
+    filter_key_groups = []
+    
     for field, value in tag_filters.items():
         if value is None or value == "":
             continue
-        filter_keys.append(f"idx:{coll}:{doc_type}:{field}:{str(value).lower()}")
+        
+        # Standard filter key
+        base_prefix = f"idx:{coll}:{doc_type}:{field}:{str(value).lower()}"
+        
+        # SPECIAL CASE: 'tags' search should also check 'user_tags'
+        if field == "tags":
+            user_tags_prefix = f"idx:{coll}:{doc_type}:user_tags:{str(value).lower()}"
+            filter_key_groups.append((True, [base_prefix, user_tags_prefix]))
+        else:
+            filter_key_groups.append((False, [base_prefix]))
 
-    # Choose the base key: first specific filter if any, else all_key
-    if filter_keys:
-        base_key = filter_keys[0]
-        other_keys = filter_keys[1:]
+    # Choose the base group: smallest group wins (simple heuristic)
+    # For now, just pick the first group to keep it simple and compatible with existing logic
+    if filter_key_groups:
+        is_union, group_keys = filter_key_groups[0]
+        if is_union:
+            # Union of legacy and user tags (ensure results from either)
+            candidates = list(r.sunion(*group_keys))
+        else:
+            candidates = list(r.smembers(group_keys[0]))
+        
+        other_groups = filter_key_groups[1:]
     else:
-        base_key = all_key
-        other_keys = []
+        candidates = list(r.smembers(all_key))
+        other_groups = []
 
-    candidates = list(r.smembers(base_key))
-
-    # Filter candidates against remaining sets via pipeline SISMEMBER
-    if other_keys and candidates:
-        for check_key in other_keys:
+    # Filter candidates against remaining groups via pipeline SISMEMBER
+    if other_groups and candidates:
+        for is_union, group_keys in other_groups:
             pipe = r.pipeline()
             for cid in candidates:
-                pipe.sismember(check_key, cid)
-            results = pipe.execute()
-            candidates = [cid for cid, ok in zip(candidates, results) if ok]
+                if is_union:
+                    # For union groups, we need to check SISMEMBER for ANY of the keys
+                    # This is slightly more complex in a pipeline.
+                    # We'll just execute it and merge in Python for the UNION case
+                    pass 
+                else:
+                    pipe.sismember(group_keys[0], cid)
+            
+            if not is_union:
+                results = pipe.execute()
+                candidates = [cid for cid, ok in zip(candidates, results) if ok]
+            else:
+                # Union filtering: Check if in ANY key
+                # This is less common in secondary filters, but we support it
+                results_matrix = []
+                for gk in group_keys:
+                    p = r.pipeline()
+                    for cid in candidates:
+                        p.sismember(gk, cid)
+                    results_matrix.append(p.execute())
+                
+                new_candidates = []
+                for idx, cid in enumerate(candidates):
+                    if any(res[idx] for res in results_matrix):
+                        new_candidates.append(cid)
+                candidates = new_candidates
+
+            if not candidates:
+                break
 
     all_ids = candidates
 

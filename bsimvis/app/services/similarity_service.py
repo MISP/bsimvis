@@ -17,6 +17,9 @@ class SimilarityService:
         from bsimvis.app.services.lua_manager import lua_manager
         self._sim_script = lua_manager.get_script("build_similarity")
         self._clear_script = lua_manager.get_script("clear_similarity")
+        
+        from bsimvis.app.services.tag_service import tag_service
+        self.tag_service = tag_service
 
     def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0, job_service=None, job_id=None, sleep_time=0.05):
         """
@@ -369,35 +372,9 @@ class SimilarityService:
             return f"{collection}:sim_meta:{algo}:{id2}:{id1}"
 
     def tag_similarity(self, collection: str, id1: str, id2: str, algo: str, tag: str) -> bool:
-        """Adds a tag to a similarity pair and updates the global tag index."""
+        """Adds a user tag to a similarity pair (delegates to TagService)."""
         sid = self._canonicalize_sid(collection, id1, id2, algo)
-        r = self.r
-        try:
-            # Update similarity metadata
-            doc = r.json().get(sid, "$")
-            if not doc:
-                return False
-            doc = doc[0] if isinstance(doc, list) else doc
-            
-            tags = doc.get("tags", [])
-            if tag not in tags:
-                tags.append(tag)
-                r.json().set(sid, "$.tags", tags)
-                
-                # Update secondary index for searching
-                index_key = f"idx:{collection}:sim:tags:{tag}"
-                r.sadd(index_key, sid)
-                
-                # Update global tag index with color
-                self._ensure_tag_metadata(collection, tag)
-
-                # Add to registry for search SELECTIVE (Standardized)
-                r.sadd(f"idx:{collection}:reg:sim:tags", index_key)
-            
-            return True
-        except Exception as e:
-            print(f"Error tagging similarity: {e}")
-            return False
+        return self.tag_service.add_user_tag(collection, "similarity", sid, tag)
 
     def _ensure_tag_metadata(self, collection: str, tag: str):
         """Ensures a tag has metadata (color) in the global index."""
@@ -414,21 +391,8 @@ class SimilarityService:
             r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
 
     def get_tags(self, collection: str) -> dict:
-        """Returns all tags and their metadata for a collection."""
-        r = self.r
-        meta_key = f"idx:{collection}:tags_metadata"
-        raw_tags = r.hgetall(meta_key)
-        import json
-        
-        results = {}
-        for k, v in raw_tags.items():
-            k_str = k.decode() if isinstance(k, bytes) else k
-            meta = json.loads(v)
-            # Add count of similarities
-            count = r.scard(f"idx:{collection}:sim:tags:{k_str}")
-            meta["count"] = count
-            results[k_str] = meta
-        return results
+        """Returns all tags and their metadata for a collection (delegates to TagService)."""
+        return self.tag_service.get_collection_tags(collection)
 
     def set_tag_color(self, collection: str, tag: str, color: str) -> bool:
         """Updates the color for a tag."""
@@ -453,26 +417,6 @@ class SimilarityService:
         return True
 
     def untag_similarity(self, collection: str, id1: str, id2: str, algo: str, tag: str) -> bool:
-        """Removes a tag from a similarity pair."""
-        r = self.r
+        """Removes a user tag from a similarity pair (delegates to TagService)."""
         sid = self._canonicalize_sid(collection, id1, id2, algo)
-        
-        try:
-            doc = r.json().get(sid, "$")
-            if not doc:
-                return False
-            doc = doc[0] if isinstance(doc, list) else doc
-            
-            tags = doc.get("tags", [])
-            tag = tag.strip()
-            if tag in tags:
-                tags.remove(tag)
-                r.json().set(sid, "$.tags", tags)
-                
-                # Update Index
-                index_key = f"idx:{collection}:sim:tags:{tag}"
-                r.srem(index_key, sid)
-            return True
-        except Exception as e:
-            print(f"Error untagging similarity {sid}: {e}")
-            return False
+        return self.tag_service.remove_user_tag(collection, "similarity", sid, tag)

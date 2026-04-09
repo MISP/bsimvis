@@ -9,16 +9,14 @@ services:
   kvrocks:
     image: apache/kvrocks:2.15.0
     container_name: bsimvis_kvrocks
-    # 1. Run as root to bypass the PID/Log permission issues on your laptop
-    user: "0:0"
     ports:
       - "6666:6666"
     volumes:
       - ./kvrocks_data:/var/lib/kvrocks
       - ./kvrocks.conf:/var/lib/kvrocks/kvrocks.conf:ro
-    # 2. Force the config and log to stdout
-    entrypoint: [ "kvrocks", "-c", "/var/lib/kvrocks/kvrocks.conf", "--pidfile", "-1", "--log-dir", "stdout" ]
+    # No custom entrypoint/command needed if the config is in the right place
     deploy:
       resources:
         limits:
-          memory: 20G
+          memory: 8G
+    restart: always

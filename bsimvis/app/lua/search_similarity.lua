@@ -103,7 +103,7 @@ if producer.type == "score_range" or producer.type == "feature_range" then
                                redis.call('ZSCORE', b_key, sid) then
                                 found = true; break
                             end
-                        else
+                        else    
                             if redis.call('SISMEMBER', b_key, id1) == 1 or 
                                redis.call('SISMEMBER', b_key, id2) == 1 or
                                redis.call('SISMEMBER', b_key, sid) == 1 then

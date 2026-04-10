@@ -113,7 +113,6 @@ for i = 1, limit_val do
         redis.call('ZADD', all_key, 0, sim_meta_key)
         
         -- Similarity-Specific Range Filters
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count1', sim_doc.feat_count1, sim_meta_key)
         redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
         redis.call('ZADD', 'idx:' .. collection .. ':sim:is_cross_binary:' .. sim_doc.is_cross_binary, 0, sim_meta_key)
         

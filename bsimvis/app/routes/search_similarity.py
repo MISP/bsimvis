@@ -163,7 +163,7 @@ def similarity_search():
 
                     # Prefix mapping: user-facing filter to index_service FUNC_TAG_FIELDS
                     mapping = {"name": "function_name", "tags": "tags", "batch_uuid": "batch_uuid",
-                               "language_id": "language_id", "id": "id"}
+                               "language_id": "language_id", "id": "id", "md5": "file_md5"}
                     field = mapping.get(prefix, prefix)
                     
                     # Deep Selection: metadata filters resolve via the safe Metadata Registry
@@ -418,7 +418,7 @@ def similarity_search():
                 pipe.json().get(sid, "$")
                 # Fetch cross-metric (e.g. if sorting by score, fetch features count)
                 if sort_by == "score":
-                    pipe.zscore(f"idx:{col}:sim:feat_count1", sid)
+                    pipe.zscore(f"idx:{col}:sim:min_features", sid)
                 else:
                     pipe.zscore(algo_zset, sid)
             

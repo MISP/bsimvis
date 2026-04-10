@@ -94,13 +94,11 @@ def main():
     index_status.add_argument(
         "-c", "--collection", required=True, help="Collection name"
     )
-    index_status.add_argument(
-        "-v",
-        "--verbose",
-        "--details",
-        dest="details",
-        action="store_true",
-        help="Show comprehensive space and size analysis",
+    index_reg = index_actions.add_parser(
+        "reg", help="Show cardinality of all metadata registries"
+    )
+    index_reg.add_argument(
+        "-c", "--collection", required=False, help="Filter by specific collection"
     )
 
     # --- SIM ---
@@ -313,6 +311,8 @@ def main():
         elif args.subcommand == "index":
             if args.action == "status":
                 bsimvis_index.run_index_status(g_host, int(g_port), args)
+            elif args.action == "reg":
+                bsimvis_index.run_index_reg(g_host, int(g_port), args)
         elif args.subcommand == "sim":
             bsimvis_sim.run_sim(g_host, int(g_port), args)
         elif args.subcommand == "upload":

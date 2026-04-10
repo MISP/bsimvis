@@ -808,6 +808,10 @@ def main(args):
         f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}"
     )
 
+    if getattr(args, 'limit', 0) > 0:
+        args.targets = args.targets[:args.limit]
+        logging.info(f"[i] Capping upload targets to strictly {args.limit} binaries.")
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         future_to_target = {
             executor.submit(worker, target, args, config, batch_order): target
@@ -862,6 +866,10 @@ def cli_main():
         default=0,
         help="Increase output verbosity (e.g., -v, -vv, -vvv)",
         action="count",
+    )
+    
+    parser.add_argument(
+        "--limit", type=int, default=0, help="Limit the number of targets processed (useful with *)"
     )
 
     parser.add_argument(

@@ -193,6 +193,9 @@ def main():
         "-v", "--verbose", action="count", default=0, help="Increase output verbosity"
     )
     upload_parser.add_argument(
+        "--limit", type=int, default=0, help="Limit the number of targets processed (useful with *)"
+    )
+    upload_parser.add_argument(
         "-H",
         "--host",
         dest="hosts",

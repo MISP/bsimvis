@@ -19,7 +19,6 @@ MAX_CACHED_RESULTS = 10000
 def similarity_search():
     import time
     import uuid
-    import threading
     
     t_req_all_start = time.perf_counter()
     col = request.args.get("collection")
@@ -144,24 +143,9 @@ def similarity_search():
             metrics["cache_lookup"] = m_cache_lookup_time
 
             try:
-                # --- LUA SCRIPT SETUP (Hardened for Multi-worker Sync) ---
+                # --- LUA SCRIPT SETUP ---
                 from bsimvis.app.services.lua_manager import lua_manager
-                
-                # In development/debugging, we bypass the singleton to ensure all workers are synced
-                lua_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "lua", "search_similarity.lua")
-                with open(lua_path, 'r') as f:
-                    script_content = f.read()
-                
-                # Support dynamic reloading trigger locally
-                force_reload = request.args.get("force_reload", "").lower() == "true"
-                if force_reload:
-                    logging.warning(f"[*] FORCED LUA SCRIPT RELOAD for session {session_id}")
-                    # We also update the manager for other scripts
-                    lua_manager.register_all()
-
-                # Directly use EVAL to ensure the current worker is running our fresh script_content
-                def search_script(keys=(), args=()):
-                    return r.eval(script_content, len(keys), *(list(keys) + list(args)))
+                search_script = lua_manager.get_script("search_similarity")
 
                 t_lua_prep = time.perf_counter()
                 bucket_keys = []
@@ -248,12 +232,15 @@ def similarity_search():
                 def add_group(bucket_indices, field=None):
                     weight = 0
                     names = []
+                    key_types = {}
                     for b_idx in bucket_indices:
                         b_key = bucket_keys[b_idx-1]
                         try:
                             weight += r.zcard(b_key)
+                            key_types[b_key] = "zset"
                         except redis.exceptions.ResponseError:
                             weight += r.scard(b_key)
+                            key_types[b_key] = "set"
                         # Robust extraction: bucket is 'idx:{col}:{type}:{field}:{value}'
                         # We want to extract '{value}'. 
                         # A simple way that works for all our patterns:
@@ -290,22 +277,15 @@ def similarity_search():
                         else:
                             names.append(parts[-1])
                     
-                    # NEW: Perform SUNION to get all matching function IDs for this group
-                    # This avoids millions of SISMEMBER calls in Lua
-                    all_members = []
-                    if bucket_indices:
-                        b_keys = [bucket_keys[bi-1] for bi in bucket_indices]
-                        # Use SUNION to get unique members from all buckets in one go
-                        raw_members = r.sunion(*b_keys)
-                        all_members = [m.decode() if isinstance(m, bytes) else str(m) for m in raw_members]
+                    b_types = [key_types[bucket_keys[bi-1]] for bi in bucket_indices]
                         
                     groups_raw.append({
                         "type": "metadata",
                         "field": field,
                         "buckets": bucket_indices,
                         "bucket_names": names,
+                        "bucket_types": b_types,
                         "weight": weight,
-                        "members": all_members, # Optimized member list
                         "is_large": True # Deep Selection: Always use the robust verification path
                     })
 
@@ -343,7 +323,7 @@ def similarity_search():
                 if search_q:
                     for word in [w for w in search_q.split() if w.strip()]:
                         g = []
-                        for p in ["name", "tags", "id", "language_id"]:
+                        for p in ["name", "tags", "user_tags", "id", "language_id", "md5"]:
                             g.extend(get_bucket_idx(p, word))
                         if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
                         add_group(g, field=f"q({word})")

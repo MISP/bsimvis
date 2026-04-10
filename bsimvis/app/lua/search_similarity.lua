@@ -113,7 +113,7 @@ if producer.type == "metadata" then
     raw = unsorted_raw
     sorting_on_producer = (sort_by == "score")
 elseif producer.type == "score_range" or producer.type == "feature_range" or producer.type == "direct_zset" then
-    sorting_on_producer = (sort_by == "score" and producer.type == "score_range") or (sort_by == "feat_count" and producer.type == "feature_range")
+    sorting_on_producer = (sort_by == "score" and producer.type == "score_range") or ((sort_by == "min_features" or sort_by == "feat_count") and producer.type == "feature_range")
     local first, second, range_cmd
     if sorting_on_producer and sort_order == "desc" then
         range_cmd = "ZREVRANGEBYSCORE"; first = producer.max or "+inf"; second = producer.min or "-inf"
@@ -158,7 +158,7 @@ for i=1, #raw, 2 do
         total_found = total_found + 1
         if #refined < 1000 then
             local final_metric = score
-            if sort_by == "feat_count" then
+            if sort_by == "feat_count" or sort_by == "min_features" then
                 final_metric = tonumber(redis.call('ZSCORE', feat_zset, sid) or 0)
             end
             table.insert(refined, {sid, final_metric})

@@ -71,7 +71,7 @@ def similarity_search():
         r = get_redis()
 
         algo_zset = f"idx:{col}:sim:score:{algo}"
-        feat_count_zset = f"idx:{col}:sim:feat_count"
+        min_features_zset = f"idx:{col}:sim:min_features"
         pool_truncated = False
         total = 0
 
@@ -256,38 +256,25 @@ def similarity_search():
                 })
 
                 # Feature Count Group
-                if min_features > 0 or sort_by == "feat_count":
-                    feat_key = f"idx:{col}:sim:min_features"
-                    feat_weight = r.zcount(feat_key, min_features, "+inf") if min_features > 0 else r.zcard(feat_key)
+                if min_features > 0 or sort_by in ["feat_count", "min_features"]:
+                    feat_weight = r.zcount(min_features_zset, min_features, "+inf") if min_features > 0 else r.zcard(min_features_zset)
                     groups_raw.append({
                         "type": "feature_range",
-                        "field": "feat_count",
+                        "field": "min_feature_count",
                         "weight": feat_weight,
                         "min": min_features,
-                        "key": feat_key
+                        "key": min_features_zset
                     })
 
                 # Sort all groups by weight (Selective Order)
                 groups = sorted(groups_raw, key=lambda x: x["weight"])
 
-                lua_config = {
-                    "groups": groups,
-                    "pool_limit": pool_limit,
-                    "offset": offset,
-                    "limit": limit,
-                    "sort_by": sort_by,
-                    "sort_order": sort_order,
-                    "collection": col,
-                    "algo": algo,
-                    "min_score": min_score, # For Lua bulk score mapping optimization
-                    "max_score": max_score
-                }
                 # --- LUA CONFIG ---
                 lua_config = {
                     "collection": col,
                     "algo": algo,
                     "pool_limit": pool_limit,
-                    "groups": groups_raw,
+                    "groups": groups,  # Use the sorted groups
                     "offset": 0,    # Lua pool is offset-less; pagination happens in Python
                     "limit": pool_limit,
                     "min_score": min_score,
@@ -299,7 +286,7 @@ def similarity_search():
                 # Exec Lua Search (Unified Involves Architecture)
                 t_lua_start = time.perf_counter()
                 # We only pass keys that need direct ZSET access or global metric access
-                keys = [algo_zset, feat_count_zset]
+                keys = [algo_zset, min_features_zset]
                 for g in groups_raw:
                     if g["type"] == "direct_zset": keys.append(g["key"])
                 
@@ -336,7 +323,7 @@ def similarity_search():
                 pipe.json().get(sid, "$")
                 # Fetch cross-metric (e.g. if sorting by score, fetch features count)
                 if sort_by == "score":
-                    pipe.zscore(f"idx:{col}:sim:min_features", sid)
+                    pipe.zscore(min_features_zset, sid)
                 else:
                     pipe.zscore(algo_zset, sid)
             
@@ -400,7 +387,7 @@ def similarity_search():
                 if isinstance(m2, str): m2 = json.loads(m2)
 
                 sim_score = float(sid_sort_sc) if sort_by == "score" else float(other_metric or 0)
-                feat_count = float(sid_sort_sc) if sort_by == "feat_count" else float(other_metric or 0)
+                feat_count = float(sid_sort_sc) if sort_by in ["feat_count", "min_features"] else float(other_metric or 0)
 
                 enriched_pairs.append({
                     "id1": id1,

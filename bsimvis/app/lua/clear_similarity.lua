@@ -40,8 +40,7 @@ local function cleanup_key(sm_key)
     end
     
     -- 3. Numeric Indexes
-    rem_item('idx:' .. collection .. ':sim:feat_count1', sm_key)
-    rem_item('idx:' .. collection .. ':sim:feat_count2', sm_key)
+    rem_item('idx:' .. collection .. ':sim:feat_count', sm_key)
     rem_item('idx:' .. collection .. ':sim:min_features', sm_key)
     rem_item('idx:' .. collection .. ':sim:entry_date', sm_key)
     

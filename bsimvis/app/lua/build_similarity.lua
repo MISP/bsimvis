@@ -126,7 +126,7 @@ for i = 1, limit_val do
         redis.call('SADD', 'idx:' .. collection .. ':sim:involves:file:' .. file_id_b, sim_meta_key)
         
         -- Similarity-Specific Range Filters
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count', sim_doc.min_features, sim_meta_key)
+        redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
         redis.call('ZADD', 'idx:' .. collection .. ':sim:is_cross_binary:' .. sim_doc.is_cross_binary, 0, sim_meta_key)
         
         -- NOTE: name1, name2, tags1, tags2, etc. are NOT indexed here anymore.

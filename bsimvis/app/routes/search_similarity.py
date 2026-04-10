@@ -153,13 +153,6 @@ def similarity_search():
 
                 def get_bucket_idx(prefix, val):
                     # Deep Selection: metadata filters resolve directly to FUNCTION-level indices
-                    # Special Case: MD5 uses the file_funcs specialized index
-                    if prefix == "md5":
-                        b_key = f"idx:{col}:file_funcs:{val}"
-                        if r.exists(b_key):
-                            if b_key not in bucket_keys: bucket_keys.append(b_key)
-                            return [bucket_keys.index(b_key) + 1]
-                        return []
 
                     # Prefix mapping: user-facing filter to index_service FUNC_TAG_FIELDS
                     mapping = {"name": "function_name", "tags": "tags", "batch_uuid": "batch_uuid",
@@ -279,6 +272,7 @@ def similarity_search():
                     
                     b_types = [key_types[bucket_keys[bi-1]] for bi in bucket_indices]
                         
+                    is_function_level = any(":function:" in bucket_keys[b-1] for b in bucket_indices)
                     groups_raw.append({
                         "type": "metadata",
                         "field": field,

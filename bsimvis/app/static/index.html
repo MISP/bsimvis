@@ -1565,10 +1565,16 @@
             return items.map(p => {
                 const s1 = p.id1.split(':');
                 const s2 = p.id2.split(':');
-                const m1 = s1[2] || '---';
-                const m2 = s2[2] || '---';
-                const addr1 = s1[3] || '---';
-                const addr2 = s2[3] || '---';
+                
+                // New 5-part format: idx:coll:func:md5:addr
+                // Old 4-part format: coll:function:md5:addr
+                const offset1 = s1[0] === 'idx' ? 1 : 0;
+                const offset2 = s2[0] === 'idx' ? 1 : 0;
+
+                const m1 = s1[2 + offset1] || '---';
+                const m2 = s2[2 + offset2] || '---';
+                const addr1 = s1[3 + offset1] || '---';
+                const addr2 = s2[3 + offset2] || '---';
 
                 const tags1 = [
                     ...(p.meta1?.tags || []).map(t => `<span class="analysis-tag-badge" style="font-size:0.55rem; padding: 1px 5px; margin: 1px;">${t}</span>`),
@@ -2091,7 +2097,7 @@
 
         function normalizeFuncId(id) {
             if (!id || typeof id !== 'string') return id;
-            if (id.includes(':function:')) return id;
+            if (id.includes(':function:') || id.includes(':func:')) return id;
 
             // Pattern for raw BSim ID: collection:#md5::funcName:@addr
             const parts = id.split(':');
@@ -2105,7 +2111,8 @@
                 if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
                     const cleanAddr = addrPart.substring(1);
                     const cleanMd5 = md5Part.substring(1);
-                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
+                    // Standardize to new short 'func' format
+                    return `idx:${colPart}:func:${cleanMd5}:${cleanAddr}`;
                 }
             }
             return id;

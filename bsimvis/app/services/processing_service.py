@@ -55,11 +55,12 @@ class ProcessingService:
         timestamp = file_meta.get("entry_date") or data.get("entry_date") or 0
 
         # Create the standalone file metadata key (exploded from the main blob)
-        file_meta_key = f"{collection}:file:{file_md5}:meta"
+        file_base_id = f"idx:{collection}:file:{file_md5}"
+        file_meta_key = f"{file_base_id}:meta"
         coll_file_meta = dict(file_meta)
         coll_file_meta["collection"] = collection
         coll_file_meta["type"] = "file"
-        coll_file_meta["file_id"] = f"{collection}:file:{file_md5}"
+        coll_file_meta["file_id"] = file_base_id
         
         pipe = self.r.pipeline()
         
@@ -191,7 +192,7 @@ class ProcessingService:
                 full_id.split(":@")[-1] if ":@" in full_id else "unknown_addr"
             )
 
-            base_func_key = f"{collection}:function:{file_md5}:{addr}"
+            base_func_key = f"idx:{collection}:func:{file_md5}:{addr}"
             func_meta["function_id"] = base_func_key
 
             # --- Store exploded data ---
@@ -205,9 +206,9 @@ class ProcessingService:
             vec_raw = func_features.get("bsim_features_raw", [])
             pipe.json().set(f"{base_func_key}:vec:raw", "$", vec_raw)
             
-            # Add to batch-to-functions mapping SET
+            # Add to batch-to-functions mapping SET (using base key)
             if batch_uuid:
-                pipe.sadd(f"{collection}:batch:{batch_uuid}:functions", base_func_key)
+                pipe.sadd(f"idx:{collection}:batch:{batch_uuid}:functions", base_func_key)
 
             vec_tf_list = func_features.get("bsim_features_tf", [])
             if vec_tf_list:

@@ -9,11 +9,11 @@ def fetch_function_data(collection, md5, addr):
     try:
         r = get_redis()
         pipe = r.pipeline()
-        pipe.json().get(f"{collection}:function:{md5}:{addr}:source", "$")
-        pipe.json().get(f"{collection}:function:{md5}:{addr}:vec:meta", "$")
-        pipe.json().get(f"{collection}:function:{md5}:{addr}:meta", "$")
+        pipe.json().get(f"idx:{collection}:func:{md5}:{addr}:source", "$")
+        pipe.json().get(f"idx:{collection}:func:{md5}:{addr}:vec:meta", "$")
+        pipe.json().get(f"idx:{collection}:func:{md5}:{addr}:meta", "$")
 
-        tf_key = f"{collection}:function:{md5}:{addr}:vec:tf"
+        tf_key = f"idx:{collection}:func:{md5}:{addr}:vec:tf"
         pipe.zrange(tf_key, 0, -1, withscores=True)
 
         source, features, meta, tf_raw = pipe.execute()

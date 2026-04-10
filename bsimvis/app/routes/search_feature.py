@@ -108,14 +108,15 @@ def _enrich_feature_context(r, collection, feature_list):
             f = feature_list[i]
             if fm:
                 fid = fm.get("function_id", "")
-                func_tag = f"{collection}:function:"
+                parts = fid.split(":")
                 md5, addr = "N/A", "N/A"
-                if fid.startswith(func_tag):
-                    rest = fid[len(func_tag):]
-                    fid_parts = rest.split(":")
-                    if len(fid_parts) >= 2:
-                        md5 = fid_parts[0]
-                        addr = fid_parts[1]
+                if len(parts) >= 4:
+                    if parts[0] == "idx":
+                        md5 = parts[3]
+                        addr = parts[4]
+                    else:
+                        md5 = parts[2]
+                        addr = parts[3]
                 
                 f["context"] = {
                     "type": fm.get("type", "N/A"),
@@ -313,11 +314,11 @@ def get_feature_details(f_hash):
         addr = occ.get("entrypoint_address")
         b_uuid = occ.get("batch_uuid")
         if "function_id" not in occ and col and md5 and addr:
-            occ["function_id"] = f"{col}:function:{md5}:{addr}"
+            occ["function_id"] = f"idx:{col}:func:{md5}:{addr}"
         if "file_id" not in occ and col and md5:
-            occ["file_id"] = f"{col}:file:{md5}"
+            occ["file_id"] = f"idx:{col}:file:{md5}"
         if "batch_id" not in occ and col and b_uuid:
-            occ["batch_id"] = f"{col}:batch:{b_uuid}"
+            occ["batch_id"] = f"idx:{col}:batch:{b_uuid}"
 
     return jsonify(
         {

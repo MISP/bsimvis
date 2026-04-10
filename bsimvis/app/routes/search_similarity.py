@@ -70,7 +70,8 @@ def similarity_search():
     try:
         r = get_redis()
 
-        algo_zset = f"{col}:all_sim:{algo}"
+        algo_zset = f"idx:{col}:sim:score:{algo}"
+        feat_count_zset = f"idx:{col}:sim:feat_count"
         pool_truncated = False
         total = 0
 
@@ -148,195 +149,103 @@ def similarity_search():
                 search_script = lua_manager.get_script("search_similarity")
 
                 t_lua_prep = time.perf_counter()
-                bucket_keys = []
-                groups = []
-
-                def get_bucket_idx(prefix, val):
-                    # Deep Selection: metadata filters resolve directly to FUNCTION-level indices
-
-                    # Prefix mapping: user-facing filter to index_service FUNC_TAG_FIELDS
-                    mapping = {"name": "function_name", "tags": "tags", "batch_uuid": "batch_uuid",
-                               "language_id": "language_id", "id": "id", "md5": "file_md5"}
-                    field = mapping.get(prefix, prefix)
-                    
-                    # Deep Selection: metadata filters resolve via the safe Metadata Registry
-                    # We check both function-level and sim-level tags (legacy & user)
-                    registries = [f"idx:{col}:reg:function:{field}"]
-                    if field == "tags":
-                         registries.append(f"idx:{col}:reg:sim:tags")
-                         registries.append(f"idx:{col}:reg:sim:user_tags")
-                         registries.append(f"idx:{col}:reg:function:user_tags")
-
-                    all_matching_buckets = []
-                    
-                    # Robust Union Strategy: If no wildcard is present, check direct existence first
-                    # (This supports legacy data indexed before the Registry was added)
-                    if "*" not in val:
-                        prefixes = [f"idx:{col}:function:{field}", f"idx:{col}:sim:{field}"] if field == "tags" else [f"idx:{col}:function:{field}"]
-                        for p in prefixes:
-                            direct_key = f"{p}:{val.lower()}"
-                            if r.exists(direct_key):
-                                all_matching_buckets.append(direct_key)
-                    
-                    # Wildcard support / Registry search / Default 'contains' for tags & names
-                    if not all_matching_buckets or "*" in val or field in ["tags", "function_name"]:
-                        # Legacy Support: Check 'idx:{col}:reg:tags' for compatibility with older sim-tags
-                        if field == "tags":
-                            legacy_reg = f"idx:{col}:reg:tags"
-                            if r.exists(legacy_reg) and legacy_reg not in registries:
-                                registries.append(legacy_reg)
-
-                        for registry_key in registries:
-                            if r.exists(registry_key):
-                                 target_lower = val.lower().replace("*", "")
-                                 all_buckets = [b.decode() if isinstance(b, bytes) else str(b) 
-                                                for b in r.smembers(registry_key)]
-                                 
-                                 # Robust extraction: bucket is 'idx:{col}:{type}:{field}:{value}' 
-                                 # registry is 'idx:{col}:reg:{type}:{field}'
-                                 prefix = registry_key.replace(":reg:", ":") + ":"
-                                 
-                                 # Special Case: Legacy sim tags used idx:col:reg:tags but buckets are idx:col:sim:tags
-                                 if "reg:tags" in registry_key and "sim:tags" not in registry_key and "function:tags" not in registry_key:
-                                     prefix = registry_key.replace(":reg:tags", ":sim:tags:")
-                                 
-                                 for b_key_str in all_buckets:
-                                     if b_key_str.startswith(prefix):
-                                         value = b_key_str[len(prefix):]
-                                         if target_lower in value.lower():
-                                             if b_key_str not in all_matching_buckets:
-                                                 all_matching_buckets.append(b_key_str)
-                    
-                    found_for_filter = []
-                    for b_key_str in all_matching_buckets:
-                        if b_key_str not in bucket_keys:
-                            bucket_keys.append(b_key_str)
-                        b_idx = bucket_keys.index(b_key_str) + 1
-                        if b_idx not in found_for_filter:
-                            found_for_filter.append(b_idx)
-                        if len(found_for_filter) >= 1000: break
-                    
-                    if found_for_filter:
-                        logging.info(f"SIM SEARCH | {session_id} | Resolved {len(found_for_filter)} function-indices for '{field}:{val}'")
-                    return found_for_filter
-
-                # Helper to add a group and calculate its weight
                 groups_raw = []
-                def add_group(bucket_indices, field=None):
-                    weight = 0
-                    names = []
-                    key_types = {}
-                    for b_idx in bucket_indices:
-                        b_key = bucket_keys[b_idx-1]
-                        try:
-                            weight += r.zcard(b_key)
-                            key_types[b_key] = "zset"
-                        except redis.exceptions.ResponseError:
-                            weight += r.scard(b_key)
-                            key_types[b_key] = "set"
-                        # Robust extraction: bucket is 'idx:{col}:{type}:{field}:{value}'
-                        # We want to extract '{value}'. 
-                        # A simple way that works for all our patterns:
-                        # Find ':reg:' in the registry key, it corresponds to ':' in the bucket key.
-                        # But we don't have registry_key here.
-                        # However, we know field is metadata if it's not a score/feature range.
-                        # We'll use a heuristic: the value is usually after the field name.
-                        # Since we have the field name (e.g. 'tag', 'name', 'md5'), 
-                        # but these are the user-facing names.
-                        
-                        # Let's use the colon count from the end if we can't do better.
-                        # Actually, we can just use the last part for now if we can't resolve it perfectly,
-                        # but we want to be robust.
-                        # Best: find the type ('function' or 'sim') and then the field.
-                        parts = b_key.split(":")
-                        if "function" in parts:
-                            f_idx = 0
-                            for i, p in enumerate(parts):
-                                if p == "function": f_idx = i; break
-                            # Key is idx:col:function:field:value
-                            # value starts at parts[f_idx+2]
-                            if len(parts) > f_idx + 2:
-                                names.append(":".join(parts[f_idx+2:]))
-                            else:
-                                names.append(parts[-1])
-                        elif "sim" in parts:
-                            s_idx = 0
-                            for i, p in enumerate(parts):
-                                if p == "sim": s_idx = i; break
-                            if len(parts) > s_idx + 2:
-                                names.append(":".join(parts[s_idx+2:]))
-                            else:
-                                names.append(parts[-1])
-                        else:
-                            names.append(parts[-1])
+
+                def get_group_targets(lvl, val):
+                    """
+                    Resolves a filter into raw identity base-keys 
+                    using the standardized registry->bucket hierarchy.
+                    """
+                    # Standardized Bucket: idx:{col}:idx:{lvl}:{field}:{val}
+                    potential_fields = ["tags", "user_tags", "function_name", "file_name", "file_md5"]
                     
-                    b_types = [key_types[bucket_keys[bi-1]] for bi in bucket_indices]
-                        
-                    is_function_level = any(":function:" in bucket_keys[b-1] for b in bucket_indices)
+                    for field in potential_fields:
+                        exact_bucket_key = f"idx:{col}:idx:{lvl}:{field}:{val.lower()}"
+                        if r.exists(exact_bucket_key):
+                            targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_bucket_key)]
+                            logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} {lvl}-level targets for '{field}:{val}'")
+                            return lvl, targets
+                    return None, []
+
+                def add_group(level, targets, field=None):
+                    if not targets: return
+                    weight = 0
+                    prefix_map = {
+                        "binary": f"idx:{col}:sim:involves:file:",
+                        "function": f"idx:{col}:sim:involves:func:",
+                        "similarity": f"idx:{col}:sim:tags:"
+                    }
+                    p = prefix_map.get(level)
+                    if p:
+                        for t in targets:
+                            try:
+                                weight += r.scard(f"{p}{t}")
+                            except: pass
+                    
                     groups_raw.append({
                         "type": "metadata",
                         "field": field,
-                        "buckets": bucket_indices,
-                        "bucket_names": names,
-                        "bucket_types": b_types,
-                        "weight": weight,
-                        "is_large": True # Deep Selection: Always use the robust verification path
+                        "level": level,
+                        "targets": targets[:1000], # Cap expansion
+                        "weight": weight
                     })
 
-                # Group resolution (Simplified for Deep Selection)
-                if lang_filter:
-                    g = get_bucket_idx("language_id", lang_filter)
-                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    add_group(g, field="language")
-
-                if name_filter:
-                    g = get_bucket_idx("name", name_filter)
-                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    add_group(g, field="name")
-
-                if tag_filter:
-                    g = get_bucket_idx("tags", tag_filter)
-                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    # Also try user_tags if tags returned nothing? 
-                    # No, tags filter in query should check both registries (which we updated in get_bucket_idx)
-                    add_group(g, field="tag")
-
-                if user_tag_filter:
-                    # Specific user_tag filter
-                    g = get_bucket_idx("user_tags", user_tag_filter)
-                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    add_group(g, field="user_tag")
+                # Group resolution (Unified Involves Architecture)
+                for f_name, f_val in [
+                    ("language_id", lang_filter), 
+                    ("name", name_filter), 
+                    ("tags", tag_filter), 
+                    ("user_tags", user_tag_filter)
+                ]:
+                    if f_val:
+                        # Level priority: Binary -> Function -> Similarity
+                        targets = []
+                        resolved_lvl = None
+                        for lvl in ["file", "func", "sim"]:
+                            l, tgts = get_group_targets(lvl, f_val)
+                            if tgts:
+                                targets = tgts
+                                resolved_lvl = "binary" if lvl=="file" else "function" if lvl=="func" else "similarity"
+                                break
+                        
+                        if not targets: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                        add_group(resolved_lvl, targets, field=f_name)
 
                 if md5_filters:
-                    g = []
+                    all_md5_base_ids = []
                     for m in md5_filters:
-                        g.extend(get_bucket_idx("md5", m))
-                    if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                    add_group(g, field="md5")
+                        # Standardized binary ID for MD5 is the involves target
+                        all_md5_base_ids.append(f"idx:{col}:file:{m}")
+                    add_group("binary", all_md5_base_ids, field="md5")
 
                 if search_q:
                     for word in [w for w in search_q.split() if w.strip()]:
-                        g = []
-                        for p in ["name", "tags", "user_tags", "id", "language_id", "md5"]:
-                            g.extend(get_bucket_idx(p, word))
-                        if not g: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
-                        add_group(g, field=f"q({word})")
+                        # Try all levels for the query word
+                        targets = []
+                        resolved_lvl = None
+                        for lvl in ["file", "func", "sim"]:
+                            l, tgts = get_group_targets(lvl, word)
+                            if tgts:
+                                targets = tgts
+                                resolved_lvl = "binary" if lvl=="file" else "function" if lvl=="func" else "similarity"
+                                break
+                        
+                        if not targets: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                        add_group(resolved_lvl, targets, field=f"q({word})")
 
-                # Cross-binary filtering also uses function-level MD5s now?
-                # Actually, cross_binary is a PROPERTY of the similarity, so we keep using the sim-index.
                 if cross_binary_val is not None:
                     cb_bool = cross_binary_val.lower() == "true"
                     cb_key = f"idx:{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
                     if r.exists(cb_key):
-                        if cb_key not in bucket_keys: bucket_keys.append(cb_key)
-                        add_group([bucket_keys.index(cb_key) + 1], field="cross_binary")
+                        groups_raw.append({
+                            "type": "direct_zset",
+                            "field": "cross_binary",
+                            "key": cb_key,
+                            "weight": r.zcard(cb_key)
+                        })
 
                 # Similarity Score Group
-                if min_score <= 0.0 and max_score >= 1.0:
-                    sim_weight = r.zcard(algo_zset)
-                else:
-                    sim_weight = r.zcount(algo_zset, min_score, max_score)
-
+                sim_weight = r.zcount(algo_zset, min_score, max_score)
                 groups_raw.append({
                     "type": "score_range",
                     "field": "similarity",
@@ -349,11 +258,7 @@ def similarity_search():
                 # Feature Count Group
                 if min_features > 0 or sort_by == "feat_count":
                     feat_key = f"idx:{col}:sim:min_features"
-                    if min_features <= 0:
-                        feat_weight = r.zcard(feat_key)
-                    else:
-                        feat_weight = r.zcount(feat_key, min_features, "+inf")
-                    
+                    feat_weight = r.zcount(feat_key, min_features, "+inf") if min_features > 0 else r.zcard(feat_key)
                     groups_raw.append({
                         "type": "feature_range",
                         "field": "feat_count",
@@ -373,12 +278,31 @@ def similarity_search():
                     "sort_by": sort_by,
                     "sort_order": sort_order,
                     "collection": col,
-                    "algo": algo
+                    "algo": algo,
+                    "min_score": min_score, # For Lua bulk score mapping optimization
+                    "max_score": max_score
+                }
+                # --- LUA CONFIG ---
+                lua_config = {
+                    "collection": col,
+                    "algo": algo,
+                    "pool_limit": pool_limit,
+                    "groups": groups_raw,
+                    "offset": 0,    # Lua pool is offset-less; pagination happens in Python
+                    "limit": pool_limit,
+                    "min_score": min_score,
+                    "max_score": max_score,
+                    "sort_by": sort_by,
+                    "sort_order": sort_order
                 }
 
-                # Exec Lua Search (Deep Selection Architecture)
+                # Exec Lua Search (Unified Involves Architecture)
                 t_lua_start = time.perf_counter()
-                keys = [algo_zset, f"idx:{col}:sim:min_features"] + bucket_keys
+                # We only pass keys that need direct ZSET access or global metric access
+                keys = [algo_zset, feat_count_zset]
+                for g in groups_raw:
+                    if g["type"] == "direct_zset": keys.append(g["key"])
+                
                 try:
                     res = search_script(keys=keys, args=[json.dumps(lua_config)])
                     total = res[0]
@@ -420,12 +344,19 @@ def similarity_search():
 
             # Helper to extract IDs from SID (same logic as Lua)
             def extract_from_sid(sid):
-                prefix = f"{col}:sim_meta:{algo}:"
-                rest = sid[len(prefix):]
-                f_prefix = f"{col}:function:"
-                start_id2 = rest.find(f":{f_prefix}", len(f_prefix))
-                if start_id2 == -1: return None, None
-                return rest[:start_id2], rest[start_id2+1:]
+                # sid is idx:coll:sim:algo:idx:coll:func:md5:addr:idx:coll:func:md5:addr
+                sim_prefix = f"idx:{col}:sim:{algo}:"
+                if not sid.startswith(sim_prefix): return None, None
+                
+                rest = sid[len(sim_prefix):]
+                # We look for the start of the second ID: ':idx:{col}:func:'
+                sep = f":idx:{col}:func:"
+                pivot = rest.find(sep, 2)
+                if pivot == -1: return None, None
+                
+                id1 = rest[:pivot]
+                id2 = rest[pivot+1:]
+                return id1, id2
 
             # Phase 2: Pipeline fetch for function-specific metadata
             meta_pipe = r.pipeline()
@@ -452,6 +383,14 @@ def similarity_search():
             # Map meta results back
             for i, sid in enumerate(f_id_map.keys()):
                 id1, id2, sim_data, other_metric, sid_sort_sc = f_id_map[sid]
+                
+                # Standard ID extraction: idx:col:sim:algo:id1:id2
+                # id1 is idx:col:func:md5:addr (6 parts)
+                # Standard Key: idx:col:sim:algo:idx:col:func:md5:addr:idx:col:func:md5:addr 
+                # (Actually, let's keep it robust by getting them from sim_data)
+                id1 = sim_data.get("id1")
+                id2 = sim_data.get("id2")
+                
                 m1_json = meta_results[i*2]
                 m2_json = meta_results[i*2 + 1]
                 
@@ -466,8 +405,8 @@ def similarity_search():
                 enriched_pairs.append({
                     "id1": id1,
                     "id2": id2,
-                    "name1": m1.get("function_name", id1.split(":")[-1]),
-                    "name2": m2.get("function_name", id2.split(":")[-1]),
+                    "name1": m1.get("function_name", id1.split(":")[-1] if id1 else "N/A"),
+                    "name2": m2.get("function_name", id2.split(":")[-1] if id2 else "N/A"),
                     "score": sim_score,
                     "feat_count": int(feat_count),
                     "sid": sid,

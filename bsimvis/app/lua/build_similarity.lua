@@ -56,8 +56,9 @@ table.sort(candidate_list, function(a, b) return a.score > b.score end)
 
 -- 4. Deep Selection Architecture: Minimal Storage
 local limit_val = math.min(limit, #candidate_list)
-local global_zset_key = collection .. ':all_sim:' .. algo
-local all_key = 'idx:' .. collection .. ':all_similarities'
+-- Standard Global Score Index: idx:{col}:sim:score:{algo}
+local global_zset_key = 'idx:' .. collection .. ':sim:score:' .. algo
+local all_key = 'idx:' .. collection .. ':sim:all'
 
 for i = 1, limit_val do
     local item = candidate_list[i]
@@ -71,9 +72,9 @@ for i = 1, limit_val do
     
     -- Robust Canonical Order
     if is_target_greater or is_item_built then
-        -- Parse item MD5 from ID (id is collection:function:md5:addr)
-        local func_tag = collection .. ":function:"
-        local rest = item.id:sub(#func_tag + 1)
+        -- Parse item MD5 from ID (id is idx:collection:func:md5:addr)
+        local func_pref = "idx:" .. collection .. ":func:"
+        local rest = item.id:sub(#func_pref + 1)
         local next_sep = rest:find(":")
         local item_md5 = rest:sub(1, next_sep and (next_sep - 1) or #rest)
 
@@ -88,7 +89,8 @@ for i = 1, limit_val do
         end
 
         local score_rounded = math.floor(item.score * 10000 + 0.5) / 10000
-        local sim_meta_key = collection .. ':sim_meta:' .. algo .. ':' .. id_a .. ':' .. id_b
+        -- Standard Similarity Meta: idx:{col}:sim:{algo}:{id1}:{id2}
+        local sim_meta_key = 'idx:' .. collection .. ':sim:' .. algo .. ':' .. id_a .. ':' .. id_b
         
         -- Deep Selection: Store ONLY identity and metrics
         local sim_doc = {
@@ -112,17 +114,20 @@ for i = 1, limit_val do
         redis.call('ZADD', global_zset_key, score_rounded, sim_meta_key)
         redis.call('ZADD', all_key, 0, sim_meta_key)
         
-        -- Bridge Index: Function to Similarity
-        redis.call('SADD', 'idx:' .. collection .. ':function_to_sim:' .. id_a, sim_meta_key)
-        redis.call('SADD', 'idx:' .. collection .. ':function_to_sim:' .. id_b, sim_meta_key)
+        -- Unified Involves Indexing (Binary & Function level)
+        -- lvl in {file, func}
+        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:func:' .. id_a, sim_meta_key)
+        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:func:' .. id_b, sim_meta_key)
+        
+        -- MD5 involves uses the standardized file base-key
+        local file_id_a = 'idx:' .. collection .. ':file:' .. md5_a
+        local file_id_b = 'idx:' .. collection .. ':file:' .. md5_b
+        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:file:' .. file_id_a, sim_meta_key)
+        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:file:' .. file_id_b, sim_meta_key)
         
         -- Similarity-Specific Range Filters
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
+        redis.call('ZADD', 'idx:' .. collection .. ':sim:feat_count', sim_doc.min_features, sim_meta_key)
         redis.call('ZADD', 'idx:' .. collection .. ':sim:is_cross_binary:' .. sim_doc.is_cross_binary, 0, sim_meta_key)
-        
-        -- MD5 indexing is kept as it's a primary similarity filter
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:md5_1:' .. md5_a, 0, sim_meta_key)
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:md5_2:' .. md5_b, 0, sim_meta_key)
         
         -- NOTE: name1, name2, tags1, tags2, etc. are NOT indexed here anymore.
         -- They are resolved via Function Registries during search.

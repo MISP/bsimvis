@@ -30,14 +30,14 @@ class SimilarityService:
         function_ids = []
         
         if batch_uuid:
-            batch_func_set = f"{collection}:batch:{batch_uuid}:functions"
+            batch_func_set = f"idx:{collection}:batch:{batch_uuid}:functions"
             function_ids = list(r.smembers(batch_func_set))
         elif md5:
             # Find all functions for this MD5
             raw_ids = list(r.smembers(f"idx:{collection}:file_funcs:{md5}"))
             function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
             if not function_ids:
-                pattern = f"{collection}:function:{md5}:*:vec:tf"
+                pattern = f"idx:{collection}:func:{md5}:*:vec:tf"
                 keys = r.keys(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
 
@@ -247,9 +247,9 @@ class SimilarityService:
 
     def check_cache(self, id1, id2, collection, algo):
         """Checks if a similarity pair is already built."""
-        key1 = f"{collection}:sim_meta:{algo}:{id1}:{id2}"
-        key2 = f"{collection}:sim_meta:{algo}:{id2}:{id1}"
-        zset_key = f"{collection}:all_sim:{algo}"
+        key1 = f"idx:{collection}:sim:{algo}:{id1}:{id2}"
+        key2 = f"idx:{collection}:sim:{algo}:{id2}:{id1}"
+        zset_key = f"idx:{collection}:sim:score:{algo}"
         
         score = self.r.zscore(zset_key, key1)
         if score is None:
@@ -300,11 +300,11 @@ class SimilarityService:
 
         results = []
         for uuid in sorted(list(batch_uuids)):
-            batch_func_set = f"{collection}:batch:{uuid}:functions"
+            batch_func_set = f"idx:{collection}:batch:{uuid}:functions"
             if not r.exists(batch_func_set):
                 continue
 
-            meta_key = f"{collection}:batch:{uuid}"
+            meta_key = f"idx:{collection}:batch:{uuid}"
             name_raw = r.json().get(meta_key, "$")
             name = "N/A"
             if name_raw:
@@ -367,9 +367,9 @@ class SimilarityService:
     def _canonicalize_sid(self, collection: str, id1: str, id2: str, algo: str) -> str:
         """Returns the canonical key for a similarity pair."""
         if id1 > id2:
-            return f"{collection}:sim_meta:{algo}:{id1}:{id2}"
+            return f"idx:{collection}:sim:{algo}:{id1}:{id2}"
         else:
-            return f"{collection}:sim_meta:{algo}:{id2}:{id1}"
+            return f"idx:{collection}:sim:{algo}:{id2}:{id1}"
 
     def tag_similarity(self, collection: str, id1: str, id2: str, algo: str, tag: str) -> bool:
         """Adds a user tag to a similarity pair (delegates to TagService)."""

@@ -260,13 +260,18 @@ def diff_api():
         parts2 = id2.split(":")
 
         if len(parts1) < 4 or len(parts2) < 4:
-            return (
-                jsonify({"detail": "Invalid ID format. Expected coll:type:md5:addr"}),
-                400,
-            )
+            return jsonify({"detail": "Invalid ID format"}), 400
 
-        collection1, _, md5_1, addr_1 = parts1[:4]
-        collection2, _, md5_2, addr_2 = parts2[:4]
+        # Standard Robust Resolution
+        if parts1[0] == "idx":
+            collection1, md5_1, addr_1 = parts1[1], parts1[3], parts1[4]
+        else:
+            collection1, md5_1, addr_1 = parts1[0], parts1[2], parts1[3]
+
+        if parts2[0] == "idx":
+            collection2, md5_2, addr_2 = parts2[1], parts2[3], parts2[4]
+        else:
+            collection2, md5_2, addr_2 = parts2[0], parts2[2], parts2[3]
     except Exception:
         return jsonify({"detail": "Malformed ID"}), 400
 
@@ -298,11 +303,11 @@ def diff_api():
 
     if meta1:
         if "function_id" not in meta1:
-            meta1["function_id"] = f"{collection1}:function:{md5_1}:{addr_1}"
+            meta1["function_id"] = f"idx:{collection1}:func:{md5_1}:{addr_1}"
         if "file_id" not in meta1:
-            meta1["file_id"] = f"{collection1}:file:{md5_1}"
+            meta1["file_id"] = f"idx:{collection1}:file:{md5_1}"
         if "batch_id" not in meta1 and meta1.get("batch_uuid"):
-            meta1["batch_id"] = f"{collection1}:batch:{meta1['batch_uuid']}"
+            meta1["batch_id"] = f"idx:{collection1}:batch:{meta1['batch_uuid']}"
         if "entry_date" in meta1:
             meta1["entry_date"] = parse_timestamp(meta1["entry_date"])
         if "file_date" in meta1:
@@ -310,11 +315,11 @@ def diff_api():
 
     if meta2:
         if "function_id" not in meta2:
-            meta2["function_id"] = f"{collection2}:function:{md5_2}:{addr_2}"
+            meta2["function_id"] = f"idx:{collection2}:func:{md5_2}:{addr_2}"
         if "file_id" not in meta2:
-            meta2["file_id"] = f"{collection2}:file:{md5_2}"
+            meta2["file_id"] = f"idx:{collection2}:file:{md5_2}"
         if "batch_id" not in meta2 and meta2.get("batch_uuid"):
-            meta2["batch_id"] = f"{collection2}:batch:{meta2['batch_uuid']}"
+            meta2["batch_id"] = f"idx:{collection2}:batch:{meta2['batch_uuid']}"
         if "entry_date" in meta2:
             meta2["entry_date"] = parse_timestamp(meta2["entry_date"])
         if "file_date" in meta2:

@@ -28,7 +28,7 @@ def upload_file_data():
         
         # 1. Store in Kvrocks (JSON.SET)
         r_data = get_redis()
-        file_id = f"{collection}:file:{file_md5}"
+        file_id = f"idx:{collection}:file:{file_md5}"
         r_data.json().set(file_id, "$", data)
         
         # 2. Trigger Pipeline

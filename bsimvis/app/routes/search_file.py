@@ -94,7 +94,7 @@ def search_files():
         md5 = data.get("file_md5")
         b_uuid = data.get("batch_uuid")
         if col and md5 and "file_id" not in data:
-            data["file_id"] = f"{col}:file:{md5}"
+            data["file_id"] = f"idx:{col}:file:{md5}"
         if col and b_uuid and "batch_id" not in data:
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 

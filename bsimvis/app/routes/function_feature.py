@@ -19,11 +19,18 @@ def get_function_features():
     try:
         parts = func_id.split(":")
         if len(parts) < 4:
-            return jsonify({"detail": "Invalid ID format"}), 400
+            return jsonify({"detail": f"Invalid ID format: {func_id}"}), 400
 
-        collection = parts[0]
-        md5 = parts[2]
-        addr = parts[3]
+        if parts[0] == "idx":
+            # New Format: idx:collection:func:md5:addr
+            collection = parts[1]
+            md5 = parts[3]
+            addr = parts[4]
+        else:
+            # Legacy: collection:function:md5:addr
+            collection = parts[0]
+            md5 = parts[2]
+            addr = parts[3]
 
         source, features, meta, tf_map = fetch_function_data(collection, md5, addr)
 
@@ -69,11 +76,11 @@ def get_function_features():
 
         if meta:
             if "function_id" not in meta:
-                meta["function_id"] = f"{collection}:function:{md5}:{addr}"
+                meta["function_id"] = f"idx:{collection}:func:{md5}:{addr}"
             if "file_id" not in meta:
-                meta["file_id"] = f"{collection}:file:{md5}"
+                meta["file_id"] = f"idx:{collection}:file:{md5}"
             if "batch_id" not in meta and meta.get("batch_uuid"):
-                meta["batch_id"] = f"{collection}:batch:{meta['batch_uuid']}"
+                meta["batch_id"] = f"idx:{collection}:batch:{meta['batch_uuid']}"
             if "entry_date" in meta:
                 meta["entry_date"] = parse_timestamp(meta["entry_date"])
             if "file_date" in meta:

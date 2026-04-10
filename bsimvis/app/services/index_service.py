@@ -77,8 +77,8 @@ FUNC_NUM_FIELDS = [
 # ---------------------------------------------------------------------------
 
 
-def _index_tag(pipe, coll, field, value, doc_id):
-    """Add doc_id to the tag set for field=value."""
+def _index_tag(pipe, coll, level, field, value, doc_id):
+    """Add doc_id to the tag set for field=value in a standardized registry/bucket structure."""
     if value is None:
         return
     # Handle list values (e.g. tags)
@@ -86,25 +86,23 @@ def _index_tag(pipe, coll, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        # Store tags lower-cased for case-insensitive search
-        bucket_key = f"idx:{coll}:{field}:{str(v).lower()}"
+        # Standardized Bucket: idx:{col}:idx:{level}:{field}:{value}
+        bucket_key = f"idx:{coll}:idx:{level}:{field}:{str(v).lower()}"
         pipe.sadd(bucket_key, doc_id)
-        # Register the bucket key for safe lookups without using 'KEYS'
-        pipe.sadd(f"idx:{coll}:reg:{field}", bucket_key)
+        # Standardized Registry: idx:{coll}:reg:{level}:{field} (points to many buckets)
+        registry_key = f"idx:{coll}:reg:{level}:{field}"
+        pipe.sadd(registry_key, bucket_key)
 
-        # AUTO-DISCOVERY: Ensure tags (Analysis or User) are registered in global metadata
-        if ":tags" in field or ":user_tags" in field:
+        # AUTO-DISCOVERY: Ensure tags are registered in global metadata
+        if "tags" in field:
             meta_key = f"idx:{coll}:tags_metadata"
-            # Default metadata for discovered tags (HSETNX prevents overwriting existing colors/prio)
             import random
             palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF"]
-            # We use a fixed-ish default to avoid random colors in pipelines if possible, 
-            # but TagService uses random, so we match for consistency.
             default_meta = json.dumps({"color": random.choice(palette), "priority": 0})
             pipe.hsetnx(meta_key, str(v), default_meta)
 
 
-def _unindex_tag(pipe, coll, field, value, doc_id):
+def _unindex_tag(pipe, coll, level, field, value, doc_id):
     """Remove doc_id from the tag set for field=value."""
     if value is None:
         return
@@ -112,25 +110,24 @@ def _unindex_tag(pipe, coll, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        bucket_key = f"idx:{coll}:{field}:{str(v).lower()}"
+        bucket_key = f"idx:{coll}:idx:{level}:{field}:{str(v).lower()}"
         pipe.srem(bucket_key, doc_id)
-        # We don't necessarily remove from registry on every unindex to avoid expensive scard checks,
-        # but the bucket key itself will eventually be empty if all docs are removed.
 
 
-def _index_num(pipe, coll, field, value, doc_id):
+def _index_num(pipe, coll, level, field, value, doc_id):
     """Add doc_id to the numeric ZSET for field."""
     if value is None:
         return
     try:
-        pipe.zadd(f"idx:{coll}:{field}", {doc_id: float(value)})
+        # Standard Numeric Index: idx:{col}:idx:{level}:{field}
+        pipe.zadd(f"idx:{coll}:idx:{level}:{field}", {doc_id: float(value)})
     except (ValueError, TypeError):
         pass
 
 
-def _unindex_num(pipe, coll, field, doc_id):
+def _unindex_num(pipe, coll, level, field, doc_id):
     """Remove doc_id from the numeric ZSET."""
-    pipe.zrem(f"idx:{coll}:{field}", doc_id)
+    pipe.zrem(f"idx:{coll}:idx:{level}:{field}", doc_id)
 
 
 # ---------------------------------------------------------------------------
@@ -139,31 +136,25 @@ def _unindex_num(pipe, coll, field, doc_id):
 
 
 def save_file(pipe, coll, file_md5, data):
-    """Index all fields for a file doc. Must be called with an active pipeline."""
-    base_id = f"{coll}:file:{file_md5}"
-    doc_id = f"{base_id}:meta"
+    """Index all fields for a file doc. Standardized as idx:{col}:file:{md5}"""
+    base_id = f"idx:{coll}:file:{file_md5}"
     for f in FILE_TAG_FIELDS:
-        _index_tag(pipe, coll, f"file:{f}", data.get(f), base_id)
+        _index_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
-        _index_num(pipe, coll, f"file:{f}", data.get(f), base_id)
-    # Track count
+        _index_num(pipe, coll, "file", f, data.get(f), base_id)
     pipe.sadd(f"idx:{coll}:all_files", base_id)
 
 
 def save_function(pipe, coll, md5, addr, data):
-    """Index all fields for a function doc."""
-    base_id = f"{coll}:function:{md5}:{addr}"
-    doc_id = f"{base_id}:meta"
+    """Index all fields for a function doc. Standardized as idx:{col}:func:{md5}:{addr}"""
+    base_id = f"idx:{coll}:func:{md5}:{addr}"
     for f in FUNC_TAG_FIELDS:
-        _index_tag(pipe, coll, f"function:{f}", data.get(f), base_id)
+        _index_tag(pipe, coll, "func", f, data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
-        _index_num(pipe, coll, f"function:{f}", data.get(f), base_id)
-    # file->function relationship
+        _index_num(pipe, coll, "func", f, data.get(f), base_id)
+    # relationship links
     pipe.sadd(f"idx:{coll}:file_funcs:{md5}", base_id)
     pipe.sadd(f"idx:{coll}:all_functions", base_id)
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -172,8 +163,8 @@ def save_function(pipe, coll, md5, addr, data):
 
 
 def delete_file(r, coll, file_md5):
-    """Remove a file from all indexes. Reads current data first."""
-    base_id = f"{coll}:file:{file_md5}"
+    """Remove a file from all indexes."""
+    base_id = f"idx:{coll}:file:{file_md5}"
     doc_id = f"{base_id}:meta"
     data = r.json().get(doc_id, "$")
     if isinstance(data, list) and data:
@@ -182,16 +173,16 @@ def delete_file(r, coll, file_md5):
         return
     pipe = r.pipeline()
     for f in FILE_TAG_FIELDS:
-        _unindex_tag(pipe, coll, f"file:{f}", data.get(f), doc_id)
+        _unindex_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
-        _unindex_num(pipe, coll, f"file:{f}", doc_id)
+        _unindex_num(pipe, coll, "file", f, base_id)
     pipe.srem(f"idx:{coll}:all_files", base_id)
     pipe.execute()
 
 
 def delete_function(r, coll, md5, addr):
-    """Remove a function from all indexes. Reads current data first."""
-    base_id = f"{coll}:function:{md5}:{addr}"
+    """Remove a function from all indexes."""
+    base_id = f"idx:{coll}:func:{md5}:{addr}"
     doc_id = f"{base_id}:meta"
     data = r.json().get(doc_id, "$")
     if isinstance(data, list) and data:
@@ -200,9 +191,9 @@ def delete_function(r, coll, md5, addr):
         return
     pipe = r.pipeline()
     for f in FUNC_TAG_FIELDS:
-        _unindex_tag(pipe, coll, f"function:{f}", data.get(f), doc_id)
+        _unindex_tag(pipe, coll, "func", f, data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
-        _unindex_num(pipe, coll, f"function:{f}", doc_id)
+        _unindex_num(pipe, coll, "func", f, base_id)
     pipe.srem(f"idx:{coll}:file_funcs:{md5}", base_id)
     pipe.srem(f"idx:{coll}:all_functions", base_id)
     pipe.execute()
@@ -217,39 +208,35 @@ def query_ids(
     r, coll, doc_type, tag_filters=None, num_filters=None, offset=0, limit=100
 ):
     """
-    Resolve filters to a list of doc IDs.
-    Supports a special 'tags' filter that checks both legacy analysis 'tags' 
-    and the new 'user_tags' bucket.
+    Resolve filters to a list of doc IDs using standardized buckets.
     """
     tag_filters = tag_filters or {}
     num_filters = num_filters or {}
+    
+    # Internal level mapping: API 'function' -> internal 'func'
+    lvl = "func" if doc_type == "function" else doc_type
 
     all_key = f"idx:{coll}:all_{doc_type}s"
 
-    # Build filter keys (skip empty values)
-    # filter_keys will contain (is_union, keys_list)
     filter_key_groups = []
     
     for field, value in tag_filters.items():
         if value is None or value == "":
             continue
         
-        # Standard filter key
-        base_prefix = f"idx:{coll}:{doc_type}:{field}:{str(value).lower()}"
+        # Standard Bucket: idx:{col}:idx:{level}:{field}:{value}
+        base_prefix = f"idx:{coll}:idx:{lvl}:{field}:{str(value).lower()}"
         
-        # SPECIAL CASE: 'tags' search should also check 'user_tags'
+        # User Tag Union Logic
         if field == "tags":
-            user_tags_prefix = f"idx:{coll}:{doc_type}:user_tags:{str(value).lower()}"
+            user_tags_prefix = f"idx:{coll}:idx:{lvl}:user_tags:{str(value).lower()}"
             filter_key_groups.append((True, [base_prefix, user_tags_prefix]))
         else:
             filter_key_groups.append((False, [base_prefix]))
 
-    # Choose the base group: smallest group wins (simple heuristic)
-    # For now, just pick the first group to keep it simple and compatible with existing logic
     if filter_key_groups:
         is_union, group_keys = filter_key_groups[0]
         if is_union:
-            # Union of legacy and user tags (ensure results from either)
             candidates = list(r.sunion(*group_keys))
         else:
             candidates = list(r.smembers(group_keys[0]))
@@ -259,48 +246,32 @@ def query_ids(
         candidates = list(r.smembers(all_key))
         other_groups = []
 
-    # Filter candidates against remaining groups via pipeline SISMEMBER
     if other_groups and candidates:
         for is_union, group_keys in other_groups:
-            pipe = r.pipeline()
-            for cid in candidates:
-                if is_union:
-                    # For union groups, we need to check SISMEMBER for ANY of the keys
-                    # This is slightly more complex in a pipeline.
-                    # We'll just execute it and merge in Python for the UNION case
-                    pass 
-                else:
-                    pipe.sismember(group_keys[0], cid)
-            
+            if not candidates: break
             if not is_union:
+                pipe = r.pipeline()
+                for cid in candidates:
+                    pipe.sismember(group_keys[0], cid)
                 results = pipe.execute()
                 candidates = [cid for cid, ok in zip(candidates, results) if ok]
             else:
-                # Union filtering: Check if in ANY key
-                # This is less common in secondary filters, but we support it
-                results_matrix = []
-                for gk in group_keys:
-                    p = r.pipeline()
-                    for cid in candidates:
-                        p.sismember(gk, cid)
-                    results_matrix.append(p.execute())
-                
                 new_candidates = []
-                for idx, cid in enumerate(candidates):
-                    if any(res[idx] for res in results_matrix):
-                        new_candidates.append(cid)
+                for cid in candidates:
+                    exists = False
+                    for gk in group_keys:
+                        if r.sismember(gk, cid):
+                            exists = True; break
+                    if exists: new_candidates.append(cid)
                 candidates = new_candidates
-
-            if not candidates:
-                break
 
     all_ids = candidates
 
-    # Numeric range filters (in-memory after tag narrowing)
+    # Standardized Numerical Filtering: idx:{col}:idx:{level}:{field}
     if num_filters and all_ids:
         pipe = r.pipeline()
         for field, (fmin, fmax) in num_filters.items():
-            pipe.zrangebyscore(f"idx:{coll}:{doc_type}:{field}", fmin, fmax)
+            pipe.zrangebyscore(f"idx:{coll}:idx:{lvl}:{field}", fmin, fmax)
         range_results = pipe.execute()
         for id_set in range_results:
             id_set_s = set(id_set)
@@ -371,11 +342,11 @@ class IndexStatsService:
         # We try to avoid a full SCAN if possible.
         if "file:*:meta" in pattern:
             return num_files
-        if "function:*:*:meta" in pattern:
+        if "func:*:*:meta" in pattern:
             return num_funcs
-        if "function:*:*:source" in pattern:
+        if "func:*:*:source" in pattern:
             return num_funcs
-        if "function:*:*:vec:tf" in pattern:
+        if "func:*:*:vec:tf" in pattern:
             return num_funcs
         if "feature:*:functions" in pattern:
             return num_unique_features
@@ -445,7 +416,7 @@ class IndexStatsService:
         num_funcs = r.scard(f"idx:{coll}:all_functions")
         num_indexed = r.scard(f"idx:{coll}:indexed:functions")
         num_unique_features = r.zcard(f"idx:{coll}:features:by_tf")
-        num_sim_meta = self.estimate_total_keys(f"{coll}:sim_meta:*:*:*", num_files, num_funcs, num_unique_features)
+        num_sim_meta = self.estimate_total_keys(f"idx:{coll}:sim:*:*:*", num_files, num_funcs, num_unique_features)
 
         summary = {
             "num_files": num_files,
@@ -463,11 +434,11 @@ class IndexStatsService:
         # 2. Detailed Breakdown
         components = []
         patterns = [
-            ("File Meta", f"{coll}:file:*:meta"),
-            ("Func Meta", f"{coll}:function:*:*:meta"),
-            ("Func Source", f"{coll}:function:*:*:source"),
-            ("Func Vector (TF)", f"{coll}:function:*:*:vec:tf"),
-            ("Sim Meta", f"{coll}:sim_meta:*:*:*"),
+            ("File Meta", f"idx:{coll}:file:*:meta"),
+            ("Func Meta", f"idx:{coll}:func:*:*:meta"),
+            ("Func Source", f"idx:{coll}:func:*:*:source"),
+            ("Func Vector (TF)", f"idx:{coll}:func:*:*:vec:tf"),
+            ("Sim Meta", f"idx:{coll}:sim:*:*:*"),
             ("Inverted Index", f"idx:{coll}:feature:*:functions"),
             ("Feature Meta", f"idx:{coll}:feature:*:meta"),
         ]

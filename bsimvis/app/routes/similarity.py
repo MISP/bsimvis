@@ -19,12 +19,15 @@ def list_similarities():
 
     r = get_redis()
     
-    # We use the existing idx:coll:sim:md5_1:VAL or batch_uuid1:VAL indices
+    # Standardized Involves Index: idx:{col}:sim:involves:{lvl}:{id}
     index_key = None
     if md5:
-        index_key = f"idx:{collection}:sim:md5_1:{md5}"
+        # File level involves
+        index_key = f"idx:{collection}:sim:involves:file:idx:{collection}:file:{md5}"
     elif batch_uuid:
-        index_key = f"idx:{collection}:sim:batch_uuid1:{batch_uuid}"
+        # Batch involves (currently mapped to all similarities involving ANY function in the batch)
+        # For listing, we might just want to check similarity build status primarily.
+        index_key = f"idx:{collection}:batch:{batch_uuid}:functions" # This is just funcs
     
     if not index_key:
         return jsonify({"error": "md5 or batch parameter required"}), 400

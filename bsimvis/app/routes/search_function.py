@@ -99,9 +99,9 @@ def search_functions():
         b_uuid = data.get("batch_uuid")
 
         if col and md5 and addr and "function_id" not in data:
-            data["function_id"] = f"{col}:function:{md5}:{addr}"
+            data["function_id"] = f"idx:{col}:func:{md5}:{addr}"
         if col and md5 and "file_id" not in data:
-            data["file_id"] = f"{col}:file:{md5}"
+            data["file_id"] = f"idx:{col}:file:{md5}"
         if col and b_uuid and "batch_id" not in data:
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 

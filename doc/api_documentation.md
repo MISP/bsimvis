@@ -8,7 +8,7 @@ This document describes the primary API endpoints for the BSimVis backend.
 **`GET /api/function/code`**
 Retrieves decompiled code and semantic tokens for a function.
 - **Parameters:**
-  - `id`: (string, required) Function ID (format: `coll:function:md5:addr`).
+  - `id`: (string, required) Function ID (format: `idx:coll:func:md5:addr`).
 - **Returns:**
   - `rows`: List of line objects with tokens.
   - `tips`: Tooltip data (features associated with each tokens).
@@ -59,6 +59,7 @@ High-performance similarity search with advanced filtering.
   - `sort_order`: `desc` or `asc`.
 - **Returns:**
   - `pairs`: List of similar function pairs with metadata.
+  - `metrics`: Performance metrics for the search operation.
   - `total`, `pool_truncated`: Search result statistics.
 
 ---

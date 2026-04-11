@@ -123,8 +123,8 @@ class SimilarityService:
         pipe = r.pipeline()
         for fid, features in targets_to_build:
             parts = fid.split(":")
-            if len(parts) < 4: continue
-            md5, addr = parts[2], parts[3]
+            if len(parts) < 5: continue
+            md5, addr = parts[3], parts[4]
             
             # Use pre-calculated length for target
             target_feat_count = len(features)
@@ -147,10 +147,10 @@ class SimilarityService:
         base_id: coll:function:md5:addr
         """
         parts = base_id.split(":")
-        if len(parts) < 4:
+        if len(parts) < 5:
             return False
         
-        md5, addr = parts[2], parts[3]
+        md5, addr = parts[3], parts[4]
         vec_key = f"{base_id}:vec:tf"
         built_set_key = f"idx:{collection}:built:functions:{algo}"
 

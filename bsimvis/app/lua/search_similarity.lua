@@ -129,6 +129,14 @@ if #raw / 2 >= pool_limit then pool_truncated = true end
 for i=1, #raw, 2 do
     local sid = raw[i]
     local score = tonumber(raw[i+1])
+    
+    -- If we aren't sorting/producing from the score index, the 'score' in raw 
+    -- is just the rank/value from the producer ZSET (e.g. 0 for direct_zsets).
+    -- We must ensure we have the real similarity score for range checks and final sorting.
+    if not sorting_on_producer then
+        score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
+    end
+
     local id1, id2 = nil, nil
     local match = true
     

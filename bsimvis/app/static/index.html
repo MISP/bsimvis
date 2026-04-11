@@ -1087,7 +1087,7 @@
                         <input type="text" id="flt-sim-tag" placeholder="Tag..." value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
-                    <th></th>
+                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
                     <th style="font-size: 0.65rem;">
                         <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
@@ -1151,7 +1151,7 @@
                 const p = new URLSearchParams(params);
                 searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
                     <div style="display:flex; gap:10px; align-items:center;">
-                        <input type="text" id="sim-search-input" placeholder="Search by Keywords (space-separated)..." value="${p.get('q') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()">
+                        <input type="text" id="sim-search-input" placeholder="Search by Keywords..." value="${p.get('q') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()">
                         <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px;">
@@ -1259,11 +1259,13 @@
             const minFeatures = document.getElementById('sim-min-features')?.value;
             const crossBinary = document.getElementById('sim-cross-binary')?.value;
             const globalQ = document.getElementById('sim-search-input')?.value;
+            const lang = document.getElementById('flt-sim-language')?.value;
             const poolLimit = document.getElementById('sim-pool-limit')?.value;
             const countLimit = document.getElementById('sim-limit')?.value;
 
             // ALWAY set params for canonical URL state (Perfect Match)
             params.set('q', globalQ || '');
+            if (lang) params.set('language', lang); else params.delete('language');
             params.set('min_score', minScore || '0.95');
             params.set('max_score', maxScore || '1.0');
             params.set('algo', algo || 'unweighted_cosine');

@@ -155,16 +155,46 @@ def similarity_search():
                     """
                     Resolves a filter into raw identity base-keys 
                     using the standardized registry->bucket hierarchy.
+                    Supports partial matching via registry scanning.
                     """
-                    # Standardized Bucket: idx:{col}:idx:{lvl}:{field}:{val}
-                    potential_fields = ["tags", "user_tags", "function_name", "file_name", "file_md5"]
+                    potential_fields = ["tags", "user_tags", "function_name", "file_name", "file_md5", "language_id"]
+                    val_lower = val.lower()
                     
                     for field in potential_fields:
-                        exact_bucket_key = f"idx:{col}:idx:{lvl}:{field}:{val.lower()}"
-                        if r.exists(exact_bucket_key):
-                            targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_bucket_key)]
-                            logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} {lvl}-level targets for '{field}:{val}'")
+                        # 1. Try Exact Match (O(1))
+                        exact_key = f"idx:{col}:idx:{lvl}:{field}:{val_lower}"
+                        if r.exists(exact_key):
+                            targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_key)]
+                            logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} exact {lvl}-level targets for '{field}:{val}'")
                             return lvl, targets
+                        
+                        # 2. Try Registry-Based Partial Match (SSCAN)
+                        registry_key = f"idx:{col}:reg:{lvl}:{field}"
+                        if r.exists(registry_key):
+                            matching_buckets = []
+                            # Use sscan_iter for efficient, non-blocking discovery
+                            try:
+                                # NOTE: We manually filter in Python because some Kvrocks versions/configs 
+                                # may not strictly respect the MATCH pattern in SSCAN.
+                                for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*"):
+                                    bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
+                                    if val_lower in bucket_str.lower():
+                                        matching_buckets.append(bucket_str)
+                            except Exception as e:
+                                logging.warning(f"SSCAN failed for {registry_key}: {e}")
+                                pass
+                            
+                            if matching_buckets:
+                                targets = []
+                                if len(matching_buckets) == 1:
+                                    targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(matching_buckets[0])]
+                                else:
+                                    # Use SUNION for multiple buckets
+                                    targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.sunion(*matching_buckets)]
+                                
+                                logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} partial {lvl}-level targets across {len(matching_buckets)} buckets for '{field}:{val}'")
+                                return lvl, targets
+                    
                     return None, []
 
                 def add_group(level, targets, field=None):
@@ -205,18 +235,28 @@ def similarity_search():
                             l, tgts = get_group_targets(lvl, f_val)
                             if tgts:
                                 targets = tgts
-                                resolved_lvl = "binary" if lvl=="file" else "function" if lvl=="func" else "similarity"
+                                resolved_lvl = "binary" if lvl == "file" else "function" if lvl == "func" else "similarity"
                                 break
                         
-                        if not targets: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                        if not targets:
+                            logging.info(f"SIM SEARCH | {session_id} | Filter '{f_name}={f_val}' matched 0 targets. Returning empty.")
+                            return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False})
+                        
                         add_group(resolved_lvl, targets, field=f_name)
 
                 if md5_filters:
                     all_md5_base_ids = []
                     for m in md5_filters:
-                        # Standardized binary ID for MD5 is the involves target
-                        all_md5_base_ids.append(f"idx:{col}:file:{m}")
-                    add_group("binary", all_md5_base_ids, field="md5")
+                        if not m: continue
+                        # Use registry-based lookup for MD5 to support partials even in the dedicated filter
+                        l, tgts = get_group_targets("file", m)
+                        if tgts:
+                            all_md5_base_ids.extend(tgts)
+                    
+                    if not all_md5_base_ids:
+                        return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False})
+                        
+                    add_group("binary", list(set(all_md5_base_ids)), field="md5")
 
                 if search_q:
                     for word in [w for w in search_q.split() if w.strip()]:
@@ -227,10 +267,12 @@ def similarity_search():
                             l, tgts = get_group_targets(lvl, word)
                             if tgts:
                                 targets = tgts
-                                resolved_lvl = "binary" if lvl=="file" else "function" if lvl=="func" else "similarity"
+                                resolved_lvl = "binary" if lvl == "file" else "function" if lvl == "func" else "similarity"
                                 break
                         
-                        if not targets: return jsonify({"total": 0, "pairs": [], "algo": algo, "pool_truncated": False})
+                        if not targets:
+                            return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False, "q": search_q})
+                        
                         add_group(resolved_lvl, targets, field=f"q({word})")
 
                 if cross_binary_val is not None:
@@ -242,6 +284,18 @@ def similarity_search():
                             "field": "cross_binary",
                             "key": cb_key,
                             "weight": r.zcard(cb_key)
+                        })
+                    else:
+                        # Essential: If user filters by cross_binary but no such pairs exist, return empty
+                        logging.info(f"SIM SEARCH | {session_id} | Cross-Binary Filter '{cross_binary_val}' matched 0 pairs (Key {cb_key} missing)")
+                        return jsonify({
+                            "total": 0, 
+                            "pairs": [], 
+                            "algo": algo, 
+                            "collection": col,
+                            "pool_truncated": False,
+                            "offset": offset,
+                            "limit": limit
                         })
 
                 # Similarity Score Group

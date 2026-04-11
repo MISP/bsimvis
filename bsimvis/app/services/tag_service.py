@@ -59,7 +59,7 @@ class TagService:
                 
                 # 3. Update Secondary Index
                 tag_lower = tag.lower()
-                lvl = "func" if entity_type == "function" else entity_type
+                lvl = "func" if entity_type == "function" else "sim" if entity_type == "similarity" else entity_type
                 
                 # We store the BASE IDENTITY in the bucket (e.g. idx:col:func:md5:addr)
                 indexed_id = doc_id
@@ -100,7 +100,7 @@ class TagService:
                 
                 # Update Index
                 tag_lower = tag.lower()
-                lvl = "func" if entity_type == "function" else entity_type
+                lvl = "func" if entity_type == "function" else "sim" if entity_type == "similarity" else entity_type
                 
                 indexed_id = doc_id
                 if indexed_id.endswith(":meta"):

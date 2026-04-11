@@ -51,6 +51,7 @@ def similarity_search():
     name_filter = request.args.get("name", "").lower()
     tag_filter = request.args.get("tag", "").lower()
     user_tag_filter = request.args.get("user_tag", "").lower()
+    sim_tag_filter = request.args.get("sim_tag", "").lower()
     lang_filter = request.args.get("language", "").lower()
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
@@ -99,7 +100,7 @@ def similarity_search():
             "sort_order": (request.args.get("sort_order") or "").strip().lower(),
         }
         # Include all other filters
-        for f in ["md5_", "id", "language_id", "batch_uuid"]:
+        for f in ["md5", "id", "language_id", "batch_uuid"]:
             v = request.args.get(f)
             if v:
                 cache_params[f] = v.strip().lower()
@@ -140,7 +141,6 @@ def similarity_search():
             logging.info(f"SIM SEARCH [@CACHE] MISS {cache_key}: lookup={m_cache_lookup_time:.3f}s, total={total} VS looking for {offset + limit}")
             start_time = time.perf_counter()
             # Collect all ZSET keys for the final intersection
-            temp_keys = []
             metrics["cache_lookup"] = m_cache_lookup_time
 
             try:
@@ -151,31 +151,34 @@ def similarity_search():
                 t_lua_prep = time.perf_counter()
                 groups_raw = []
 
-                def get_group_targets(lvl, val):
+                def get_group_targets(lvl, val, allowed_fields=None):
                     """
                     Resolves a filter into raw identity base-keys 
                     using the standardized registry->bucket hierarchy.
-                    Supports partial matching via registry scanning.
+                    Returns a list of (lvl, targets, field) tuples for all matches.
                     """
-                    potential_fields = ["tags", "user_tags", "function_name", "file_name", "file_md5", "language_id"]
-                    val_lower = val.lower()
+                    if not allowed_fields:
+                        allowed_fields = ["tags", "user_tags", "function_name", "file_name", "file_md5", "language_id"]
                     
-                    for field in potential_fields:
-                        # 1. Try Exact Match (O(1))
-                        exact_key = f"idx:{col}:idx:{lvl}:{field}:{val_lower}"
-                        if r.exists(exact_key):
-                            targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_key)]
-                            logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} exact {lvl}-level targets for '{field}:{val}'")
-                            return lvl, targets
+                    val_lower = val.lower()
+                    matches = []
+                    
+                    for field in allowed_fields:
+                        # # 1. Try Exact Match (O(1))
+                        # exact_key = f"idx:{col}:idx:{lvl}:{field}:{val_lower}"
+                        # if r.exists(exact_key):
+                        #     if lvl == "sim":
+                        #         matches.append((lvl, [exact_key.split(":")[-1]], field))
+                        #     else:
+                        #         targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_key)]
+                        #         logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} exact {lvl}-level targets for '{field}:{val}'")
+                        #         matches.append((lvl, targets, field))
                         
                         # 2. Try Registry-Based Partial Match (SSCAN)
                         registry_key = f"idx:{col}:reg:{lvl}:{field}"
                         if r.exists(registry_key):
                             matching_buckets = []
-                            # Use sscan_iter for efficient, non-blocking discovery
                             try:
-                                # NOTE: We manually filter in Python because some Kvrocks versions/configs 
-                                # may not strictly respect the MATCH pattern in SSCAN.
                                 for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*"):
                                     bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
                                     if val_lower in bucket_str.lower():
@@ -186,94 +189,124 @@ def similarity_search():
                             
                             if matching_buckets:
                                 targets = []
-                                if len(matching_buckets) == 1:
-                                    targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(matching_buckets[0])]
+                                if lvl == "sim":
+                                    targets = [b.split(":")[-1] for b in matching_buckets]
                                 else:
-                                    # Use SUNION for multiple buckets
-                                    targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.sunion(*matching_buckets)]
+                                    if len(matching_buckets) == 1:
+                                        targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(matching_buckets[0])]
+                                    else:
+                                        # Use SUNION for multiple buckets
+                                        targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.sunion(*matching_buckets)]
                                 
                                 logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} partial {lvl}-level targets across {len(matching_buckets)} buckets for '{field}:{val}'")
-                                return lvl, targets
+                                matches.append((lvl, targets, field))
                     
-                    return None, []
+                    return matches
 
-                def add_group(level, targets, field=None):
-                    if not targets: return
-                    weight = 0
+                def add_group(sub_matches, field_name="q"):
+                    """
+                    Adds a metadata group to the Lua config.
+                    Supports sub_groups for OR logic within a single search term.
+                    """
+                    if not sub_matches: return
+                    
+                    # Group normalization for Lua
+                    normalized_subs = []
+                    total_weight = 0
+                    
                     prefix_map = {
                         "binary": f"idx:{col}:sim:involves:file:",
                         "function": f"idx:{col}:sim:involves:func:",
-                        "similarity": f"idx:{col}:sim:tags:"
+                        "similarity": f"idx:{col}:idx:sim:tags:" 
                     }
-                    p = prefix_map.get(level)
-                    if p:
-                        for t in targets:
-                            try:
-                                weight += r.scard(f"{p}{t}")
-                            except: pass
+                    
+                    for lvl, targets, field in sub_matches:
+                        l_name = "binary" if lvl == "file" else "function" if lvl == "func" else "similarity"
+                        p = prefix_map.get(l_name)
+                        if l_name == "similarity" and field == "user_tags":
+                            p = f"idx:{col}:idx:sim:user_tags:"
+                        
+                        weight = 0
+                        if p:
+                            for t in targets:
+                                try:
+                                    weight += r.scard(f"{p}{t}")
+                                except: pass
+                        
+                        total_weight += weight
+                        normalized_subs.append({
+                            "level": l_name,
+                            "targets": targets[:1000],
+                            "field": field
+                        })
                     
                     groups_raw.append({
                         "type": "metadata",
-                        "field": field,
-                        "level": level,
-                        "targets": targets[:1000], # Cap expansion
-                        "weight": weight
+                        "field": field_name,
+                        "sub_groups": normalized_subs,
+                        "weight": total_weight
                     })
 
                 # Group resolution (Unified Involves Architecture)
+                field_map = {
+                    "language_id": ["language_id"],
+                    "name": ["function_name", "file_name"],
+                    "tags": ["tags", "user_tags"],
+                    "user_tags": ["user_tags"]
+                }
                 for f_name, f_val in [
                     ("language_id", lang_filter), 
                     ("name", name_filter), 
                     ("tags", tag_filter), 
-                    ("user_tags", user_tag_filter)
+                    ("user_tags", user_tag_filter),
+                    ("tags", sim_tag_filter) 
                 ]:
                     if f_val:
-                        # Level priority: Binary -> Function -> Similarity
-                        targets = []
-                        resolved_lvl = None
-                        for lvl in ["file", "func", "sim"]:
-                            l, tgts = get_group_targets(lvl, f_val)
-                            if tgts:
-                                targets = tgts
-                                resolved_lvl = "binary" if lvl == "file" else "function" if lvl == "func" else "similarity"
-                                break
+                        levels = ["sim", "func", "file"]
+                        if f_val == sim_tag_filter and f_name == f_name == "tags":
+                            levels = ["sim"]
                         
-                        if not targets:
+                        all_matches = []
+                        allowed = field_map.get(f_name)
+                        for lvl in levels:
+                            matches = get_group_targets(lvl, f_val, allowed_fields=allowed)
+                            if matches:
+                                all_matches.extend(matches)
+                        
+                        if not all_matches:
                             logging.info(f"SIM SEARCH | {session_id} | Filter '{f_name}={f_val}' matched 0 targets. Returning empty.")
                             return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False})
                         
-                        add_group(resolved_lvl, targets, field=f_name)
+                        add_group(all_matches, field_name=f_name)
 
                 if md5_filters:
                     all_md5_base_ids = []
                     for m in md5_filters:
                         if not m: continue
-                        # Use registry-based lookup for MD5 to support partials even in the dedicated filter
-                        l, tgts = get_group_targets("file", m)
-                        if tgts:
+                        matches = get_group_targets("file", m, allowed_fields=["file_md5"])
+                        for _, tgts, _ in matches:
                             all_md5_base_ids.extend(tgts)
                     
                     if not all_md5_base_ids:
                         return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False})
                         
-                    add_group("binary", list(set(all_md5_base_ids)), field="md5")
+                    # MD5 is binary-only, but we wrap in a sub-group format for add_group
+                    md5_submatches = [("file", list(set(all_md5_base_ids)), "md5")]
+                    add_group(md5_submatches, field_name="md5")
 
                 if search_q:
                     for word in [w for w in search_q.split() if w.strip()]:
-                        # Try all levels for the query word
-                        targets = []
-                        resolved_lvl = None
-                        for lvl in ["file", "func", "sim"]:
-                            l, tgts = get_group_targets(lvl, word)
-                            if tgts:
-                                targets = tgts
-                                resolved_lvl = "binary" if lvl == "file" else "function" if lvl == "func" else "similarity"
-                                break
+                        all_matches = []
+                        # q search always checks all levels and does an OR between them
+                        for lvl in ["sim", "func", "file"]:
+                            matches = get_group_targets(lvl, word)
+                            if matches:
+                                all_matches.extend(matches)
                         
-                        if not targets:
+                        if not all_matches:
                             return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False, "q": search_q})
                         
-                        add_group(resolved_lvl, targets, field=f"q({word})")
+                        add_group(all_matches, field_name=f"q({word})")
 
                 if cross_binary_val is not None:
                     cb_bool = cross_binary_val.lower() == "true"
@@ -320,7 +353,14 @@ def similarity_search():
                         "key": min_features_zset
                     })
 
-                # Sort all groups by weight (Selective Order)
+                # Sort all groups by weight to find the best Producer (Step 2 of Lua)
+                # Boost priority of the group that matches our sort_by metric
+                for g in groups_raw:
+                    if sort_by == "score" and g["type"] == "score_range":
+                        g["weight"] = max(0, g["weight"] - 5000)
+                    elif (sort_by == "feat_count" or sort_by == "min_features") and g["type"] == "feature_range":
+                        g["weight"] = max(0, g["weight"] - 5000)
+
                 groups = sorted(groups_raw, key=lambda x: x["weight"])
 
                 # --- LUA CONFIG ---
@@ -329,8 +369,8 @@ def similarity_search():
                     "algo": algo,
                     "pool_limit": pool_limit,
                     "groups": groups,  # Use the sorted groups
-                    "offset": 0,    # Lua pool is offset-less; pagination happens in Python
-                    "limit": pool_limit,
+                    "offset": offset,  # Lua performs pagination
+                    "limit": limit,
                     "min_score": min_score,
                     "max_score": max_score,
                     "sort_by": sort_by,
@@ -345,6 +385,8 @@ def similarity_search():
                     if g["type"] == "direct_zset": keys.append(g["key"])
                 
                 try:
+                    import json as std_json
+                    logging.info(f"SIM SEARCH LUA_CONFIG: {std_json.dumps(lua_config, indent=2)}")
                     res = search_script(keys=keys, args=[json.dumps(lua_config)])
                     total = res[0]
                     pool_truncated = bool(res[1])
@@ -357,7 +399,8 @@ def similarity_search():
                         cache_data = {"total": total, "pool_truncated": pool_truncated, "ids": all_ids, "scores": all_scores}
                         r.setex(cache_key, 3600, json.dumps(cache_data))
                     
-                    page_results = list(zip(all_ids[offset : offset + limit], all_scores[offset : offset + limit]))
+                    # Direct assignment, as Lua already handled pagination
+                    page_results = list(zip(all_ids, all_scores))
                 except Exception as lua_err:
                     logging.error(f"LUA SEARCH CRASH: {lua_err}")
                     return jsonify({"detail": f"Search engine error: {lua_err}"}), 500

@@ -21,7 +21,7 @@ class SimilarityService:
         from bsimvis.app.services.tag_service import tag_service
         self.tag_service = tag_service
 
-    def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0, job_service=None, job_id=None, sleep_time=0.05):
+    def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0.3, job_service=None, job_id=None, sleep_time=0.05):
         """
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
@@ -38,7 +38,7 @@ class SimilarityService:
             function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
             if not function_ids:
                 pattern = f"idx:{collection}:func:{md5}:*:vec:tf"
-                keys = r.keys(pattern)
+                keys = r.scan_iter(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
 
         total = len(function_ids)
@@ -96,7 +96,7 @@ class SimilarityService:
         pipe = r.pipeline()
         for fid in chunk:
             pipe.sismember(built_set_key, fid)
-            pipe.zrange(f"{fid}:vec:tf", 0, -1)
+            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
         
         results = pipe.execute()
         
@@ -121,19 +121,31 @@ class SimilarityService:
 
         # Phase 3: Execute Lua script bursts
         pipe = r.pipeline()
-        for fid, features in targets_to_build:
+        for fid, features_raw in targets_to_build:
             parts = fid.split(":")
             if len(parts) < 5: continue
             md5, addr = parts[3], parts[4]
             
-            # Use pre-calculated length for target
-            target_feat_count = len(features)
+            # Fetch TF-aware metrics for target
+            # features_raw comes from zrange(fid:vec:tf, 0, -1, withscores=True)
+            # which is a list of tuples [(feat, score), ...]
+            target_feat_total = 0
+            target_feat_norm_sq = 0
+            lua_features_args = []
+            
+            for f_hash, f_tf_raw in features_raw:
+                f_tf = float(f_tf_raw)
+                target_feat_total += f_tf
+                target_feat_norm_sq += (f_tf * f_tf)
+                lua_features_args.extend([f_hash, str(f_tf)])
+            
+            target_feat_norm = math.sqrt(target_feat_norm_sq)
             
             lua_args = [
                 fid, collection, algo, int(time.time() * 1000),
                 top_k, md5, addr, min_score, built_set_key,
-                target_feat_count
-            ] + features
+                target_feat_total, target_feat_norm
+            ] + lua_features_args
             
             # Call Lua script within the pipeline
             self._sim_script(args=lua_args, client=pipe)
@@ -141,7 +153,7 @@ class SimilarityService:
             
         pipe.execute()
 
-    def build_function(self, collection, base_id, algo="unweighted_cosine", top_k=20, min_score=0.1, sleep_time=0):
+    def build_function(self, collection, base_id, algo="unweighted_cosine", top_k=1000, min_score=0.3, sleep_time=0):
         """
         Builds similarities for a single function against the collection.
         base_id: coll:function:md5:addr
@@ -158,11 +170,22 @@ class SimilarityService:
         if self.r.sismember(built_set_key, base_id):
             return True
 
-        features = self.r.zrange(vec_key, 0, -1)
-        if not features:
+        features_raw = self.r.zrange(vec_key, 0, -1, withscores=True)
+        if not features_raw:
             return False
 
-        # Lua ARGV: [id, collection, algo, timestamp, top_k, md5, addr, threshold, built_set, features...]
+        target_feat_total = 0
+        target_feat_norm_sq = 0
+        lua_features_args = []
+        for f_hash, f_tf_raw in features_raw:
+            f_tf = float(f_tf_raw)
+            target_feat_total += f_tf
+            target_feat_norm_sq += (f_tf * f_tf)
+            lua_features_args.extend([f_hash, str(f_tf)])
+        
+        target_feat_norm = math.sqrt(target_feat_norm_sq)
+
+        # Lua ARGV: [id, collection, algo, timestamp, top_k, md5, addr, threshold, built_set, total, norm, features...]
         lua_args = [
             base_id,
             collection,
@@ -173,7 +196,9 @@ class SimilarityService:
             addr,
             min_score,
             built_set_key,
-        ] + features
+            target_feat_total,
+            target_feat_norm
+        ] + lua_features_args
 
         try:
             self._sim_script(args=lua_args)
@@ -224,22 +249,33 @@ class SimilarityService:
     def calculate_exact_score(self, id1, id2, algo="unweighted_cosine"):
         """Fetches feature vectors and calculates similarity directly in Python."""
         try:
-            vec1 = self.r.zrange(f"{id1}:vec:tf", 0, -1)
-            vec2 = self.r.zrange(f"{id2}:vec:tf", 0, -1)
+            vec1_raw = self.r.zrange(f"{id1}:vec:tf", 0, -1, withscores=True)
+            vec2_raw = self.r.zrange(f"{id2}:vec:tf", 0, -1, withscores=True)
 
-            if not vec1 or not vec2:
+            if not vec1_raw or not vec2_raw:
                 return None
 
-            s1 = set(vec1)
-            s2 = set(vec2)
-            intersect = len(s1.intersection(s2))
+            d1 = {h: float(s) for h, s in vec1_raw}
+            d2 = {h: float(s) for h, s in vec2_raw}
+            
+            common = set(d1.keys()).intersection(set(d2.keys()))
 
             if algo == "jaccard":
-                union_len = len(s1) + len(s2) - intersect
-                return float(intersect / union_len) if union_len > 0 else 0.0
+                # Generalized Jaccard (Tanimoto): sum(min(a,b)) / sum(max(a,b))
+                # sum(max(a,b)) = sum(a) + sum(b) - sum(min(a,b))
+                sum_min = sum(min(d1[h], d2[h]) for h in common)
+                sum_a = sum(d1.values())
+                sum_b = sum(d2.values())
+                union = sum_a + sum_b - sum_min
+                return float(sum_min / union) if union > 0 else 0.0
+            
             elif algo == "unweighted_cosine":
-                # Cosine = intersect / sqrt(count1 * count2)
-                return float(intersect / math.sqrt(len(s1) * len(s2))) if (len(s1) > 0 and len(s2) > 0) else 0.0
+                # TF-weighted Cosine: sum(a*b) / (sqrt(sum(a^2)) * sqrt(sum(b^2)))
+                dot_product = sum(d1[h] * d2[h] for h in common)
+                norm1 = math.sqrt(sum(v**2 for v in d1.values()))
+                norm2 = math.sqrt(sum(v**2 for v in d2.values()))
+                return float(dot_product / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+            
             return None
         except Exception as e:
             logging.error(f"SimilarityService: Error calculating exact score for {id1}, {id2}: {e}")

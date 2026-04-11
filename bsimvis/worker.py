@@ -162,7 +162,7 @@ class Worker:
         elif jtype == JobType.BUILD_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
             top_k = payload.get("top_k", 1000)
-            min_score = payload.get("min_score", 0)
+            min_score = payload.get("min_score", 0.3)
             
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing

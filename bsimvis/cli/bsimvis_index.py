@@ -28,8 +28,8 @@ def run_index_status(host, port, args):
         funcs = r.scard(f"idx:{col}:all_functions") or 0
         indexed = r.scard(f"idx:{col}:indexed:functions") or 0
         features = r.zcard(f"idx:{col}:features:by_tf") or 0
-        sim_cos = r.zcard(f"{col}:all_sim:unweighted_cosine") or 0
-        sim_jac = r.zcard(f"{col}:all_sim:jaccard") or 0
+        sim_cos = r.zcard(f"idx:{col}:sim:score:unweighted_cosine") or 0
+        sim_jac = r.zcard(f"idx:{col}:sim:score:jaccard") or 0
         
         print(f"\n[*] Exact Index Status for {col.upper()}")
         print("-" * 45)
@@ -63,7 +63,7 @@ def run_index_reg(host, port, args):
         else:
             pattern = "idx:*:reg:*"
             
-        keys = r.keys(pattern)
+        keys = list(r.scan_iter(pattern))
         
         if not keys:
             col_str = f" for '{args.collection}'" if getattr(args, "collection", None) else ""
@@ -71,8 +71,8 @@ def run_index_reg(host, port, args):
             return
 
         print(f"\n[*] Registry Efficiency (Sampled):")
-        print(f"    {'Registry Key':<45} | {'Bucket Template':<40} | {'Buckets':<10} | {'Avg Size':<10}")
-        print("-" * 115)
+        print(f"    {'Registry Key':<42} | {'Template':<38} | {'Buckets':<8} | {'Avg':<8} | {'Sample Bucket'}")
+        print("-" * 145)
         
         total_buckets = 0
         for k in sorted(keys):
@@ -80,9 +80,9 @@ def run_index_reg(host, port, args):
                 card = r.scard(k)
                 total_buckets += card
                 
-                prefix = k.replace(":reg:", ":") + ":"
+                prefix = k.replace(":reg:", ":idx:") + ":"
                 if ":reg:tags" in k and ":sim:tags" not in k and ":function:tags" not in k:
-                    prefix = k.replace(":reg:tags", ":sim:tags:")
+                    prefix = k.replace(":reg:tags", ":idx:sim:tags:")
                 template = prefix + "*"
                 
                 # Fast Estimate: Sample up to 50 random buckets from the registry
@@ -109,11 +109,12 @@ def run_index_reg(host, port, args):
                     if valid_sizes:
                         avg_size = sum(valid_sizes) / len(valid_sizes)
                 
-                print(f"    {k:<45} | {template:<40} | {card:<10} | {avg_size:<10.1f}")
+                sample_bucket = sample[0] if sample else "N/A"
+                print(f"    {k:<42} | {template:<38} | {card:<8} | {avg_size:<8.1f} | {sample_bucket}")
             except Exception:
                 pass
                 
-        print("-" * 115)
-        print(f"    {'TOTAL':<45} | {'':<40} | {total_buckets:<10} | {'-':<10}\n")
+        print("-" * 145)
+        print(f"    {'TOTAL':<42} | {'':<38} | {total_buckets:<8} | {'-':<8} | {'-'}\n")
     except Exception as e:
         print(f"[!] Error connecting to database for registry status: {e}")

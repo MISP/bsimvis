@@ -1079,12 +1079,15 @@
                             <span class="dim" style="font-size:0.6rem">-</span>
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
+                        <div style="margin-top:4px;">
+                            <input type="text" id="flt-sim-sim-tag" placeholder="Sim Tag..." value="${p.get('sim_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); width:100%;">
+                        </div>
                     </th>
                     <th>
                         <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
                     </th>
                     <th style="position:relative">
-                        <input type="text" id="flt-sim-tag" placeholder="Tag..." value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
+                        <input type="text" id="flt-sim-func-tag" placeholder="Func Tag..." value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
                     <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
@@ -1281,11 +1284,13 @@
 
             // Per-column filters
             const nameFlt = document.getElementById('flt-sim-name')?.value;
-            const tagFlt = document.getElementById('flt-sim-tag')?.value;
+            const funcTagFlt = document.getElementById('flt-sim-func-tag')?.value;
+            const simTagFlt = document.getElementById('flt-sim-sim-tag')?.value;
             const md5Flt = document.getElementById('flt-sim-md5')?.value;
 
             if (nameFlt) params.set('name', nameFlt); else params.delete('name');
-            if (tagFlt) params.set('tag', tagFlt); else params.delete('tag');
+            if (funcTagFlt) params.set('tag', funcTagFlt); else params.delete('tag');
+            if (simTagFlt) params.set('sim_tag', simTagFlt); else params.delete('sim_tag');
 
             params.delete('md5');
             if (md5Flt) {

@@ -86,7 +86,7 @@ class FeatureService:
             if not function_ids:
                 # Fallback scan
                 pattern = f"{collection}:function:{file_md5}:*:vec:tf"
-                keys = r.keys(pattern)
+                keys = r.scan_iter(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
         
         if not function_ids:

@@ -45,21 +45,27 @@ for idx, g in ipairs(groups) do
         producer.idx = idx
     end
 
-    if g.type == "metadata" and g.targets then
+    if g.type == "metadata" then
         local allowed = {}
-        local prefix = ""
-        if g.level == "binary" then prefix = "idx:" .. collection .. ":sim:involves:file:"
-        elseif g.level == "function" then prefix = "idx:" .. collection .. ":sim:involves:func:"
-        elseif g.level == "similarity" then prefix = "idx:" .. collection .. ":sim:tags:" end
+        local sub_groups = g.sub_groups or { {level=g.level, targets=g.targets, field=g.field} }
         
-        if prefix ~= "" then
-            -- Chunked UNION to resolve all SIDs for these targets
-            local targets = g.targets
-            for j=1, #targets, 5000 do
-                local keys = {}
-                for k=j, math.min(j+4999, #targets) do table.insert(keys, prefix .. targets[k]) end
-                local members = redis.call('SUNION', unpack(keys)) or {}
-                for _, m in ipairs(members) do allowed[m] = true end
+        for _, sub in ipairs(sub_groups) do
+            local prefix = ""
+            if sub.level == "binary" then prefix = "idx:" .. collection .. ":sim:involves:file:"
+            elseif sub.level == "function" then prefix = "idx:" .. collection .. ":sim:involves:func:"
+            elseif sub.level == "similarity" then 
+                prefix = "idx:" .. collection .. ":idx:sim:tags:"
+                if sub.field == "user_tags" then prefix = "idx:" .. collection .. ":idx:sim:user_tags:" end
+            end
+            
+            if prefix ~= "" and sub.targets then
+                local targets = sub.targets
+                for j=1, #targets, 5000 do
+                    local keys = {}
+                    for k=j, math.min(j+4999, #targets) do table.insert(keys, prefix .. targets[k]) end
+                    local members = redis.call('SUNION', unpack(keys)) or {}
+                    for _, m in ipairs(members) do allowed[m] = true end
+                end
             end
         end
         filter_maps[idx] = allowed
@@ -84,33 +90,20 @@ local sorting_on_producer = false
 
 -- 2. Producer Phase: Generate candidate pool
 if producer.type == "metadata" then
-    local seen_sids = {}
-    local unsorted_raw = {}
-    local targets = producer.targets
-    local prefix = ""
-    if producer.level == "binary" then prefix = "idx:" .. collection .. ":sim:involves:file:"
-    elseif producer.level == "function" then prefix = "idx:" .. collection .. ":sim:involves:func:"
-    elseif producer.level == "similarity" then prefix = "idx:" .. collection .. ":sim:tags:" end
-    
-    for j=1, #targets, 5000 do
-        local keys = {}
-        for k=j, math.min(j+4999, #targets) do table.insert(keys, prefix .. targets[k]) end
-        local sids = redis.call('SUNION', unpack(keys)) or {}
-        
-        for _, sid in ipairs(sids) do
-            if not seen_sids[sid] then
-                seen_sids[sid] = true
-                local score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
-                if score >= min_score and score <= max_score then
-                    table.insert(unsorted_raw, sid)
-                    table.insert(unsorted_raw, tostring(score))
-                end
-                if (#unsorted_raw / 2) >= pool_limit then break end
+    local sorted_raw = {}
+    -- The allowed map for the producer already contains the UNION of all sub-group SIDs
+    local allowed = filter_maps[producer.idx]
+    if allowed then
+        for sid, _ in pairs(allowed) do
+            local score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
+            if score >= min_score and score <= max_score then
+                table.insert(sorted_raw, sid)
+                table.insert(sorted_raw, tostring(score))
             end
+            if (#sorted_raw / 2) >= pool_limit then break end
         end
-        if (#unsorted_raw / 2) >= pool_limit then break end
     end
-    raw = unsorted_raw
+    raw = sorted_raw
     sorting_on_producer = (sort_by == "score")
 elseif producer.type == "score_range" or producer.type == "feature_range" or producer.type == "direct_zset" then
     sorting_on_producer = (sort_by == "score" and producer.type == "score_range") or ((sort_by == "min_features" or sort_by == "feat_count") and producer.type == "feature_range")
@@ -128,34 +121,38 @@ if #raw / 2 >= pool_limit then pool_truncated = true end
 -- 3. Main Loop: Fast In-Memory Filtering
 for i=1, #raw, 2 do
     local sid = raw[i]
-    local score = tonumber(raw[i+1])
+    local producer_val = tonumber(raw[i+1])
+    local score = 0
     
-    -- If we aren't sorting/producing from the score index, the 'score' in raw 
-    -- is just the rank/value from the producer ZSET (e.g. 0 for direct_zsets).
-    -- We must ensure we have the real similarity score for range checks and final sorting.
-    if not sorting_on_producer then
+    -- We must ensure we have the real similarity score for range checks (Step 3).
+    -- Only use the producer_val as the score if the producer IS the score index.
+    if producer.type == "score_range" then
+        score = producer_val
+    else
         score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
     end
 
     local id1, id2 = nil, nil
     local match = true
     
+    local feat_count_val = nil
     for idx, g in ipairs(groups) do
         if idx == producer.idx then
-            -- Redundant
+            -- Redundant (already filtered by producer)
         elseif g.type == "score_range" then
-            local s = score -- We always have score in 'raw' (either from producer or manual expansion)
-            if s < min_score or s > max_score then match = false; break end
+            if score < (g.min or min_score) or score > (g.max or max_score) then match = false; break end
         elseif g.type == "feature_range" then
-            local f = tonumber(redis.call('ZSCORE', g.key, sid) or 0)
-            if f < (g.min or 0) then match = false; break end
+            feat_count_val = tonumber(redis.call('ZSCORE', g.key or feat_zset, sid) or 0)
+            if feat_count_val < (g.min or 0) then match = false; break end
         elseif g.type == "metadata" then
             -- In-Memory Map Check (Fast Intersect)
             local map = filter_maps[idx]
-            if not map[sid] then
-                -- Check constituent FIDs (Deep Join)
-                if not id1 then id1, id2 = extract_ids(sid) end
-                if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+            if map then
+                if not map[sid] then
+                    -- Check constituent FIDs (Deep Join)
+                    if not id1 then id1, id2 = extract_ids(sid) end
+                    if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+                end
             end
         elseif g.type == "direct_zset" then
             if not redis.call('ZSCORE', g.key, sid) then match = false; break end
@@ -164,13 +161,22 @@ for i=1, #raw, 2 do
     
     if match then
         total_found = total_found + 1
-        if #refined < 1000 then
-            local final_metric = score
-            if sort_by == "feat_count" or sort_by == "min_features" then
-                final_metric = tonumber(redis.call('ZSCORE', feat_zset, sid) or 0)
-            end
-            table.insert(refined, {sid, final_metric})
+        
+        -- DEBUG: Log the first few matches for main2
+        if total_found <= 3 and collection == "main2" then
+            redis.log(redis.LOG_NOTICE, "MATCH SID=" .. sid .. " score=" .. tostring(score) .. " metric=" .. tostring(producer_val))
         end
+
+        local final_metric = score
+        if sort_by == "feat_count" or sort_by == "min_features" then
+            -- Ensure we use feature count for sorting, fetching if needed
+            if producer.type == "feature_range" then
+                final_metric = producer_val
+            else
+                final_metric = feat_count_val or tonumber(redis.call('ZSCORE', feat_zset, sid) or 0)
+            end
+        end
+        table.insert(refined, {sid, final_metric})
     end
 end
 

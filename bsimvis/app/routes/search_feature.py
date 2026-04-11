@@ -11,7 +11,7 @@ search_feature_bp = Blueprint("search_feature", __name__)
 def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
     """Scans or ZRanges features based on sort criteria."""
     if sort_by == "tf":
-        zset_key = f"idx:{collection}:features:by_tf"
+        zset_key = f"{collection}:features:by_tf"
         if feature_prefix:
             cursor = 0
             all_matches = []
@@ -28,7 +28,7 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
                 {
                     "hash": h,
                     "tf_score": s,
-                    "frequency": r.zcard(f"idx:{collection}:feature:{h}:functions"),
+                    "frequency": r.zcard(f"{collection}:feature:{h}:functions"),
                 }
                 for h, s in page
             ], len(all_matches)
@@ -39,12 +39,12 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
                 {
                     "hash": h,
                     "tf_score": s,
-                    "frequency": r.zcard(f"idx:{collection}:feature:{h}:functions"),
+                    "frequency": r.zcard(f"{collection}:feature:{h}:functions"),
                 }
                 for h, s in page
             ], total
     else:
-        match_pattern = f"idx:{collection}:feature:{feature_prefix}*:functions"
+        match_pattern = f"{collection}:feature:{feature_prefix}*:functions"
         feature_list = []
         cursor = 0
         total_found = 0
@@ -54,7 +54,7 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
             for key in keys:
                 if current_idx >= offset and len(feature_list) < limit:
                     # Key is idx:{collection}:feature:{hash}:functions
-                    prefix = f"idx:{collection}:feature:"
+                    prefix = f"{collection}:feature:"
                     suffix = ":functions"
                     if key.startswith(prefix) and key.endswith(suffix):
                         fh = key[len(prefix):-len(suffix)]
@@ -73,7 +73,7 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
                 break
 
         if feature_list:
-            zset_key = f"idx:{collection}:features:by_tf"
+            zset_key = f"{collection}:features:by_tf"
             pipe = r.pipeline()
             for f in feature_list:
                 pipe.zscore(zset_key, f["hash"])
@@ -92,7 +92,7 @@ def _enrich_feature_context(r, collection, feature_list):
     try:
         pipe = r.pipeline()
         for f in feature_list:
-            pipe.execute_command("HVALS", f"idx:{collection}:feature:{f['hash']}:meta")
+            pipe.execute_command("HVALS", f"{collection}:feature:{f['hash']}:meta")
         first_metas_raw = pipe.execute()
 
         first_metas = []
@@ -234,7 +234,7 @@ def search_features():
 
     for f in feature_list:
         if "feature_id" not in f:
-            f["feature_id"] = f"idx:{collection}:feature:{f['hash']}"
+            f["feature_id"] = f"{collection}:feature:{f['hash']}"
 
     return jsonify(
         {
@@ -259,8 +259,8 @@ def get_feature_details(f_hash):
     except ValueError:
         return jsonify({"error": "offset and limit must be integers"}), 400
 
-    func_ids = r.zrange(f"idx:{collection}:feature:{f_hash}:functions", 0, -1)
-    raw_meta_vals = r.hvals(f"idx:{collection}:feature:{f_hash}:meta")
+    func_ids = r.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
+    raw_meta_vals = r.hvals(f"{collection}:feature:{f_hash}:meta")
     meta_data = []
     if raw_meta_vals:
         for v in raw_meta_vals:
@@ -318,7 +318,7 @@ def get_feature_details(f_hash):
         if "file_id" not in occ and col and md5:
             occ["file_id"] = f"idx:{col}:file:{md5}"
         if "batch_id" not in occ and col and b_uuid:
-            occ["batch_id"] = f"idx:{col}:batch:{b_uuid}"
+            occ["batch_id"] = f"{col}:batch:{b_uuid}"
 
     return jsonify(
         {

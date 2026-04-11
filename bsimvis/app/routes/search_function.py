@@ -29,7 +29,7 @@ def normalize_tags(data):
 
 
 def get_true_total_functions(r, collection):
-    return r.scard(f"idx:{collection}:indexed:functions")
+    return r.scard(f"{collection}:indexed:functions")
 
 
 @search_function_bp.route("/api/function/search")

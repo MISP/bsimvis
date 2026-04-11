@@ -51,21 +51,21 @@ class FeatureService:
                 new_tf = tf_dict.get(f_hash, 0)
                 
                 # Update function mapping for this feature
-                pipe.zadd(f"idx:{collection}:feature:{f_hash}:functions", {func_id: new_tf})
+                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
                 
                 # Update global TF counter for this feature
-                pipe.zincrby(f"idx:{collection}:features:by_tf", float(new_tf), f_hash)
+                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
                 
                 # Store feature metadata as a JSON string in a HASH keyed by function_id
                 # This allows the API to pick any function's context for a feature.
                 meta_entry = dict(feat_item)
                 meta_entry["function_id"] = func_id
                 
-                # Convention: idx:{coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
-                pipe.hset(f"idx:{collection}:feature:{f_hash}:meta", func_id, json.dumps(meta_entry))
+                # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
+                pipe.hset(f"{collection}:feature:{f_hash}:meta", func_id, json.dumps(meta_entry))
 
             # Mark as indexed (Base ID)
-            pipe.sadd(f"idx:{collection}:indexed:functions", func_id)
+            pipe.sadd(f"{collection}:indexed:functions", func_id)
             pipe.execute()
 
         return True
@@ -80,8 +80,8 @@ class FeatureService:
             batch_func_set = f"{collection}:batch:{batch_uuid}:functions"
             function_ids = list(r.smembers(batch_func_set))
         elif file_md5:
-            # Assuming idx:{coll}:file_funcs:{md5} exists
-            raw_ids = list(r.smembers(f"idx:{collection}:file_funcs:{file_md5}"))
+            # Assuming {coll}:file_funcs:{md5} exists
+            raw_ids = list(r.smembers(f"{collection}:file_funcs:{file_md5}"))
             function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
             if not function_ids:
                 # Fallback scan
@@ -93,9 +93,9 @@ class FeatureService:
             # Full collection clear if no filters and no specific functions found
             if not batch_uuid and not file_md5:
                 patterns = [
-                    f"idx:{collection}:feature:*:functions",
-                    f"idx:{collection}:feature:*:meta",
-                    f"idx:{collection}:features:by_tf",
+                    f"{collection}:feature:*:functions",
+                    f"{collection}:feature:*:meta",
+                    f"{collection}:features:by_tf",
                 ]
                 for pattern in patterns:
                     cursor = 0
@@ -111,7 +111,7 @@ class FeatureService:
                     cursor, keys = r.scan(cursor=cursor, match=f"{collection}:function:*:meta", count=1000)
                     if keys:
                         fids = [k.replace(":meta", "") for k in keys]
-                        r.srem(f"idx:{collection}:indexed:functions", *fids)
+                        r.srem(f"{collection}:indexed:functions", *fids)
                     if cursor == 0:
                         break
                 return True
@@ -134,13 +134,13 @@ class FeatureService:
                 if not f_hash: continue
 
                 # Remove from inverted index and subtract from global rank
-                pipe.zrem(f"idx:{collection}:feature:{f_hash}:functions", fid)
-                pipe.zincrby(f"idx:{collection}:features:by_tf", -float(tf), f_hash)
+                pipe.zrem(f"{collection}:feature:{f_hash}:functions", fid)
+                pipe.zincrby(f"{collection}:features:by_tf", -float(tf), f_hash)
                 # Remove from feature details HASH
-                pipe.hdel(f"idx:{collection}:feature:{f_hash}:meta", fid)
+                pipe.hdel(f"{collection}:feature:{f_hash}:meta", fid)
             
             pipe.delete(f"{fid}:vec:norm")
-            pipe.srem(f"idx:{collection}:indexed:functions", fid)
+            pipe.srem(f"{collection}:indexed:functions", fid)
             pipe.execute()
             
         return True
@@ -148,10 +148,10 @@ class FeatureService:
     def get_indexing_status(self, collection, batch_uuid=None, file_md5=None):
         """Returns high-level indexing stats (collection, batch, or file level)."""
         r = self.r
-        indexed_set = f"idx:{collection}:indexed:functions"
+        indexed_set = f"{collection}:indexed:functions"
 
         if file_md5:
-            file_func_set = f"idx:{collection}:file_funcs:{file_md5}"
+            file_func_set = f"{collection}:file_funcs:{file_md5}"
             total = r.scard(file_func_set)
             try:
                 indexed = r.execute_command("SINTERCARD", "2", file_func_set, indexed_set)
@@ -194,7 +194,7 @@ class FeatureService:
         """Returns detailed indexing status for all batches in a collection."""
         r = self.r
         batch_uuids = r.smembers("global:batches")
-        indexed_set = f"idx:{collection}:indexed:functions"
+        indexed_set = f"{collection}:indexed:functions"
 
         results = []
         for uuid in sorted(list(batch_uuids)):
@@ -234,8 +234,8 @@ class FeatureService:
     def list_files_status(self, collection):
         """Returns detailed indexing status for all files in a collection."""
         r = self.r
-        file_keys = r.smembers(f"idx:{collection}:all_files")
-        indexed_set = f"idx:{collection}:indexed:functions"
+        file_keys = r.smembers(f"{collection}:all_files")
+        indexed_set = f"{collection}:indexed:functions"
 
         results = []
         for f_key in sorted(list(file_keys)):
@@ -251,7 +251,7 @@ class FeatureService:
             name = meta.get("file_name", "N/A") if meta else "N/A"
             
             # Get functions for this file (Base IDs now)
-            file_func_set = f"idx:{collection}:file_funcs:{md5}"
+            file_func_set = f"{collection}:file_funcs:{md5}"
             total = r.scard(file_func_set)
             
             try:

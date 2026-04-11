@@ -2,9 +2,9 @@
 Secondary index service for BSimVis.
 
 Key naming conventions:
-  idx:{coll}:{field}:{value}  -> SET  of doc IDs  (TAG / exact match)
-  idx:{coll}:{field}          -> ZSET of doc IDs  (NUMERIC)
-  idx:{coll}:file_funcs:{md5} -> SET  of func IDs (file->function relationship)
+  {coll}:idx:{level}:{field}:{value}  -> SET  of doc IDs  (TAG / exact match)
+  {coll}:idx:{level}:{field}          -> ZSET of doc IDs  (NUMERIC)
+  {coll}:file_funcs:{md5}             -> SET  of func IDs (file->function relationship)
 """
 
 import json
@@ -86,16 +86,16 @@ def _index_tag(pipe, coll, level, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        # Standardized Bucket: idx:{col}:idx:{level}:{field}:{value}
-        bucket_key = f"idx:{coll}:idx:{level}:{field}:{str(v).lower()}"
+        # Standardized Bucket: {col}:idx:{level}:{field}:{value}
+        bucket_key = f"{coll}:idx:{level}:{field}:{str(v).lower()}"
         pipe.sadd(bucket_key, doc_id)
-        # Standardized Registry: idx:{coll}:reg:{level}:{field} (points to many buckets)
-        registry_key = f"idx:{coll}:reg:{level}:{field}"
+        # Standardized Registry: {coll}:reg:{level}:{field} (points to many buckets)
+        registry_key = f"{coll}:reg:{level}:{field}"
         pipe.sadd(registry_key, bucket_key)
 
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
-            meta_key = f"idx:{coll}:tags_metadata"
+            meta_key = f"{coll}:tags_metadata"
             import random
             palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF"]
             default_meta = json.dumps({"color": random.choice(palette), "priority": 0})
@@ -110,7 +110,7 @@ def _unindex_tag(pipe, coll, level, field, value, doc_id):
     for v in values:
         if v is None or v == "":
             continue
-        bucket_key = f"idx:{coll}:idx:{level}:{field}:{str(v).lower()}"
+        bucket_key = f"{coll}:idx:{level}:{field}:{str(v).lower()}"
         pipe.srem(bucket_key, doc_id)
 
 
@@ -119,15 +119,15 @@ def _index_num(pipe, coll, level, field, value, doc_id):
     if value is None:
         return
     try:
-        # Standard Numeric Index: idx:{col}:idx:{level}:{field}
-        pipe.zadd(f"idx:{coll}:idx:{level}:{field}", {doc_id: float(value)})
+        # Standard Numeric Index: {col}:idx:{level}:{field}
+        pipe.zadd(f"{coll}:idx:{level}:{field}", {doc_id: float(value)})
     except (ValueError, TypeError):
         pass
 
 
 def _unindex_num(pipe, coll, level, field, doc_id):
     """Remove doc_id from the numeric ZSET."""
-    pipe.zrem(f"idx:{coll}:idx:{level}:{field}", doc_id)
+    pipe.zrem(f"{coll}:idx:{level}:{field}", doc_id)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ def save_file(pipe, coll, file_md5, data):
         _index_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
         _index_num(pipe, coll, "file", f, data.get(f), base_id)
-    pipe.sadd(f"idx:{coll}:all_files", base_id)
+    pipe.sadd(f"{coll}:all_files", base_id)
 
 
 def save_function(pipe, coll, md5, addr, data):
@@ -154,7 +154,7 @@ def save_function(pipe, coll, md5, addr, data):
         _index_num(pipe, coll, "func", f, data.get(f), base_id)
     # relationship links
     pipe.sadd(f"idx:{coll}:file_funcs:{md5}", base_id)
-    pipe.sadd(f"idx:{coll}:all_functions", base_id)
+    pipe.sadd(f"{coll}:all_functions", base_id)
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +176,7 @@ def delete_file(r, coll, file_md5):
         _unindex_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
         _unindex_num(pipe, coll, "file", f, base_id)
-    pipe.srem(f"idx:{coll}:all_files", base_id)
+    pipe.srem(f"{coll}:all_files", base_id)
     pipe.execute()
 
 
@@ -195,7 +195,7 @@ def delete_function(r, coll, md5, addr):
     for f in FUNC_NUM_FIELDS:
         _unindex_num(pipe, coll, "func", f, base_id)
     pipe.srem(f"idx:{coll}:file_funcs:{md5}", base_id)
-    pipe.srem(f"idx:{coll}:all_functions", base_id)
+    pipe.srem(f"{coll}:all_functions", base_id)
     pipe.execute()
 
 
@@ -216,7 +216,7 @@ def query_ids(
     # Internal level mapping: API 'function' -> internal 'func'
     lvl = "func" if doc_type == "function" else doc_type
 
-    all_key = f"idx:{coll}:all_{doc_type}s"
+    all_key = f"{coll}:all_{doc_type}s"
 
     filter_key_groups = []
     
@@ -224,12 +224,12 @@ def query_ids(
         if value is None or value == "":
             continue
         
-        # Standard Bucket: idx:{col}:idx:{level}:{field}:{value}
-        base_prefix = f"idx:{coll}:idx:{lvl}:{field}:{str(value).lower()}"
+        # Standard Bucket: {col}:idx:{level}:{field}:{value}
+        base_prefix = f"{coll}:idx:{lvl}:{field}:{str(value).lower()}"
         
         # User Tag Union Logic
         if field == "tags":
-            user_tags_prefix = f"idx:{coll}:idx:{lvl}:user_tags:{str(value).lower()}"
+            user_tags_prefix = f"{coll}:idx:{lvl}:user_tags:{str(value).lower()}"
             filter_key_groups.append((True, [base_prefix, user_tags_prefix]))
         else:
             filter_key_groups.append((False, [base_prefix]))
@@ -271,7 +271,7 @@ def query_ids(
     if num_filters and all_ids:
         pipe = r.pipeline()
         for field, (fmin, fmax) in num_filters.items():
-            pipe.zrangebyscore(f"idx:{coll}:idx:{lvl}:{field}", fmin, fmax)
+            pipe.zrangebyscore(f"{coll}:idx:{lvl}:{field}", fmin, fmax)
         range_results = pipe.execute()
         for id_set in range_results:
             id_set_s = set(id_set)
@@ -412,11 +412,11 @@ class IndexStatsService:
         coll = collection
 
         # 1. Core Counts
-        num_files = r.scard(f"idx:{coll}:all_files")
-        num_funcs = r.scard(f"idx:{coll}:all_functions")
-        num_indexed = r.scard(f"idx:{coll}:indexed:functions")
-        num_unique_features = r.zcard(f"idx:{coll}:features:by_tf")
-        num_sim_meta = self.estimate_total_keys(f"idx:{coll}:sim:*:*:*", num_files, num_funcs, num_unique_features)
+        num_files = r.scard(f"{coll}:all_files")
+        num_funcs = r.scard(f"{coll}:all_functions")
+        num_indexed = r.scard(f"{coll}:indexed:functions")
+        num_unique_features = r.zcard(f"{coll}:features:by_tf")
+        num_sim_meta = self.estimate_total_keys(f"{coll}:sim:*:*:*", num_files, num_funcs, num_unique_features)
 
         summary = {
             "num_files": num_files,
@@ -438,9 +438,9 @@ class IndexStatsService:
             ("Func Meta", f"idx:{coll}:func:*:*:meta"),
             ("Func Source", f"idx:{coll}:func:*:*:source"),
             ("Func Vector (TF)", f"idx:{coll}:func:*:*:vec:tf"),
-            ("Sim Meta", f"idx:{coll}:sim:*:*:*"),
-            ("Inverted Index", f"idx:{coll}:feature:*:functions"),
-            ("Feature Meta", f"idx:{coll}:feature:*:meta"),
+            ("Sim Meta", f"{coll}:sim:*:*:*"),
+            ("Inverted Index", f"{coll}:feature:*:functions"),
+            ("Feature Meta", f"{coll}:feature:*:meta"),
         ]
 
         for name, pat in patterns:

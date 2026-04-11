@@ -66,12 +66,12 @@ class TagService:
                 if indexed_id.endswith(":meta"):
                     indexed_id = indexed_id[:-5]
                 
-                # Standard Bucket: idx:{col}:idx:{lvl}:user_tags:{tag}
-                index_key = f"idx:{collection}:idx:{lvl}:user_tags:{tag_lower}"
+                # Standard Bucket: {col}:idx:{lvl}:user_tags:{tag}
+                index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
                 r.sadd(index_key, indexed_id)
                 
-                # Standard Registry: idx:{col}:reg:{lvl}:user_tags
-                registry_key = f"idx:{collection}:reg:{lvl}:user_tags"
+                # Standard Registry: {col}:reg:{lvl}:user_tags
+                registry_key = f"{collection}:reg:{lvl}:user_tags"
                 r.sadd(registry_key, index_key)
                 
                 # 5. Ensure metadata
@@ -106,7 +106,7 @@ class TagService:
                 if indexed_id.endswith(":meta"):
                     indexed_id = indexed_id[:-5]
                     
-                index_key = f"idx:{collection}:idx:{lvl}:user_tags:{tag_lower}"
+                index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
                 r.srem(index_key, indexed_id)
                 
             return True
@@ -116,7 +116,7 @@ class TagService:
 
     def _ensure_tag_metadata(self, collection, tag):
         """Ensures a tag has metadata (color) in the global index."""
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         if not self.r.hexists(meta_key, tag):
             palette = [
                 "#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", 
@@ -128,7 +128,7 @@ class TagService:
     def get_collection_tags(self, collection):
         """Returns all tags (Analysis + User) and their metadata for a collection."""
         r = self.r
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         raw_meta = r.hgetall(meta_key)
         
         results = {}
@@ -140,12 +140,12 @@ class TagService:
             count = 0
             # Registry patterns to check
             buckets = [
-                f"idx:{collection}:idx:sim:tags:{tag_name.lower()}", 
-                f"idx:{collection}:idx:sim:user_tags:{tag_name.lower()}", 
-                f"idx:{collection}:idx:file:tags:{tag_name.lower()}",     
-                f"idx:{collection}:idx:file:user_tags:{tag_name.lower()}", 
-                f"idx:{collection}:idx:func:tags:{tag_name.lower()}", 
-                f"idx:{collection}:idx:func:user_tags:{tag_name.lower()}" 
+                f"{collection}:idx:sim:tags:{tag_name.lower()}", 
+                f"{collection}:idx:sim:user_tags:{tag_name.lower()}", 
+                f"{collection}:idx:file:tags:{tag_name.lower()}",     
+                f"{collection}:idx:file:user_tags:{tag_name.lower()}", 
+                f"{collection}:idx:func:tags:{tag_name.lower()}", 
+                f"{collection}:idx:func:user_tags:{tag_name.lower()}" 
             ]
             
             for bkey in buckets:
@@ -157,7 +157,7 @@ class TagService:
         return results
 
     def set_tag_color(self, collection, tag, color):
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         raw = self.r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"priority": 0}
         meta["color"] = color
@@ -165,7 +165,7 @@ class TagService:
         return True
 
     def set_tag_priority(self, collection, tag, priority):
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         raw = self.r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"color": "#66d9ef"}
         meta["priority"] = int(priority)

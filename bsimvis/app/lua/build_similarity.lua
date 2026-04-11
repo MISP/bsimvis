@@ -21,7 +21,7 @@ local candidates_seen = {}
 
 -- 1. Identify all candidates and calculate dot product / sum(min(tf))
 for f_hash, target_tf in pairs(target_features) do
-    local f_key = 'idx:' .. collection .. ':feature:' .. f_hash .. ':functions'
+    local f_key = collection .. ':feature:' .. f_hash .. ':functions'
     -- Fetch (func_id, tf) pairs from the inverted index
     local functions = redis.call('ZRANGE', f_key, 0, -1, 'WITHSCORES')
     for i = 1, #functions, 2 do
@@ -47,7 +47,7 @@ end
 
 -- 2. Scored Candidates (Filtered by Threshold)
 local candidate_list = {}
-local count_idx = 'idx:' .. collection .. ':idx:func:bsim_features_count'
+local count_idx = collection .. ':idx:func:bsim_features_count'
 
 for id, intersect in pairs(intersection_counts) do
     -- Fetch candidate metrics
@@ -75,8 +75,8 @@ table.sort(candidate_list, function(a, b) return a.score > b.score end)
 
 -- 4. Deep Selection Architecture: Minimal Storage
 local limit_val = math.min(limit, #candidate_list)
-local global_zset_key = 'idx:' .. collection .. ':sim:score:' .. algo
-local all_key = 'idx:' .. collection .. ':sim:all'
+local global_zset_key = collection .. ':sim:score:' .. algo
+local all_key = collection .. ':sim:all'
 
 for i = 1, limit_val do
     local item = candidate_list[i]
@@ -132,17 +132,17 @@ for i = 1, limit_val do
         redis.call('ZADD', all_key, 0, sim_meta_key)
         
         -- Unified Involves Indexing
-        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:func:' .. id_a, sim_meta_key)
-        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:func:' .. id_b, sim_meta_key)
+        redis.call('SADD', collection .. ':sim:involves:func:' .. id_a, sim_meta_key)
+        redis.call('SADD', collection .. ':sim:involves:func:' .. id_b, sim_meta_key)
         
         local file_id_a = 'idx:' .. collection .. ':file:' .. md5_a
         local file_id_b = 'idx:' .. collection .. ':file:' .. md5_b
-        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:file:' .. file_id_a, sim_meta_key)
-        redis.call('SADD', 'idx:' .. collection .. ':sim:involves:file:' .. file_id_b, sim_meta_key)
+        redis.call('SADD', collection .. ':sim:involves:file:' .. file_id_a, sim_meta_key)
+        redis.call('SADD', collection .. ':sim:involves:file:' .. file_id_b, sim_meta_key)
         
         -- Similarity-Specific Range Filters (Using Total Feature Counts)
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
-        redis.call('ZADD', 'idx:' .. collection .. ':sim:is_cross_binary:' .. sim_doc.is_cross_binary, 0, sim_meta_key)
+        redis.call('ZADD', collection .. ':sim:min_features', sim_doc.min_features, sim_meta_key)
+        redis.call('ZADD', collection .. ':sim:is_cross_binary:' .. sim_doc.is_cross_binary, 0, sim_meta_key)
     end
 end
 

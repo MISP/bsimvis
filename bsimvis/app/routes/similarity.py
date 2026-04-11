@@ -23,11 +23,11 @@ def list_similarities():
     index_key = None
     if md5:
         # File level involves
-        index_key = f"idx:{collection}:sim:involves:file:idx:{collection}:file:{md5}"
+        index_key = f"{collection}:sim:involves:file:idx:{collection}:file:{md5}"
     elif batch_uuid:
         # Batch involves (currently mapped to all similarities involving ANY function in the batch)
         # For listing, we might just want to check similarity build status primarily.
-        index_key = f"idx:{collection}:batch:{batch_uuid}:functions" # This is just funcs
+        index_key = f"{collection}:batch:{batch_uuid}:functions" # This is just funcs
     
     if not index_key:
         return jsonify({"error": "md5 or batch parameter required"}), 400

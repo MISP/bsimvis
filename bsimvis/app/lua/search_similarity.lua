@@ -51,11 +51,11 @@ for idx, g in ipairs(groups) do
         
         for _, sub in ipairs(sub_groups) do
             local prefix = ""
-            if sub.level == "binary" then prefix = "idx:" .. collection .. ":sim:involves:file:"
-            elseif sub.level == "function" then prefix = "idx:" .. collection .. ":sim:involves:func:"
+            if sub.level == "binary" then prefix = collection .. ":sim:involves:file:"
+            elseif sub.level == "function" then prefix = collection .. ":sim:involves:func:"
             elseif sub.level == "similarity" then 
-                prefix = "idx:" .. collection .. ":idx:sim:tags:"
-                if sub.field == "user_tags" then prefix = "idx:" .. collection .. ":idx:sim:user_tags:" end
+                prefix = collection .. ":idx:sim:tags:"
+                if sub.field == "user_tags" then prefix = collection .. ":idx:sim:user_tags:" end
             end
             
             if prefix ~= "" and sub.targets then

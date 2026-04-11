@@ -208,7 +208,7 @@ class ProcessingService:
             
             # Add to batch-to-functions mapping SET (using base key)
             if batch_uuid:
-                pipe.sadd(f"idx:{collection}:batch:{batch_uuid}:functions", base_func_key)
+                pipe.sadd(f"{collection}:batch:{batch_uuid}:functions", base_func_key)
 
             vec_tf_list = func_features.get("bsim_features_tf", [])
             if vec_tf_list:

@@ -24,12 +24,12 @@ def run_index_status(host, port, args):
         r = redis.Redis(host=host, port=kv_port, decode_responses=True)
         col = args.collection
 
-        files = r.scard(f"idx:{col}:all_files") or 0
-        funcs = r.scard(f"idx:{col}:all_functions") or 0
-        indexed = r.scard(f"idx:{col}:indexed:functions") or 0
-        features = r.zcard(f"idx:{col}:features:by_tf") or 0
-        sim_cos = r.zcard(f"idx:{col}:sim:score:unweighted_cosine") or 0
-        sim_jac = r.zcard(f"idx:{col}:sim:score:jaccard") or 0
+        files = r.scard(f"{col}:all_files") or 0
+        funcs = r.scard(f"{col}:all_functions") or 0
+        indexed = r.scard(f"{col}:indexed:functions") or 0
+        features = r.zcard(f"{col}:features:by_tf") or 0
+        sim_cos = r.zcard(f"{col}:sim:score:unweighted_cosine") or 0
+        sim_jac = r.zcard(f"{col}:sim:score:jaccard") or 0
         
         print(f"\n[*] Exact Index Status for {col.upper()}")
         print("-" * 45)
@@ -59,9 +59,9 @@ def run_index_reg(host, port, args):
         
         # Determine the pattern based on the optional collection argument
         if getattr(args, "collection", None):
-            pattern = f"idx:{args.collection}:reg:*"
+            pattern = f"{args.collection}:reg:*"
         else:
-            pattern = "idx:*:reg:*"
+            pattern = "*:reg:*"
             
         keys = list(r.scan_iter(pattern))
         
@@ -83,6 +83,8 @@ def run_index_reg(host, port, args):
                 prefix = k.replace(":reg:", ":idx:") + ":"
                 if ":reg:tags" in k and ":sim:tags" not in k and ":function:tags" not in k:
                     prefix = k.replace(":reg:tags", ":idx:sim:tags:")
+                    if ":reg:user_tags" in k:
+                        prefix = k.replace(":reg:user_tags", ":idx:sim:user_tags:")
                 template = prefix + "*"
                 
                 # Fast Estimate: Sample up to 50 random buckets from the registry

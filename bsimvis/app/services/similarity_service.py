@@ -30,11 +30,11 @@ class SimilarityService:
         function_ids = []
         
         if batch_uuid:
-            batch_func_set = f"idx:{collection}:batch:{batch_uuid}:functions"
+            batch_func_set = f"{collection}:batch:{batch_uuid}:functions"
             function_ids = list(r.smembers(batch_func_set))
         elif md5:
             # Find all functions for this MD5
-            raw_ids = list(r.smembers(f"idx:{collection}:file_funcs:{md5}"))
+            raw_ids = list(r.smembers(f"{collection}:file_funcs:{md5}"))
             function_ids = [fid.replace(":meta", "") if fid.endswith(":meta") else fid for fid in raw_ids]
             if not function_ids:
                 pattern = f"idx:{collection}:func:{md5}:*:vec:tf"
@@ -90,7 +90,7 @@ class SimilarityService:
     def _process_chunk(self, collection, chunk, algo, top_k, min_score):
         """Processes a chunk of functions using Redis pipelining."""
         r = self.r
-        built_set_key = f"idx:{collection}:built:functions:{algo}"
+        built_set_key = f"{collection}:built:functions:{algo}"
         
         # Phase 1: Bulk fetch built status and feature vectors
         pipe = r.pipeline()
@@ -164,7 +164,7 @@ class SimilarityService:
         
         md5, addr = parts[3], parts[4]
         vec_key = f"{base_id}:vec:tf"
-        built_set_key = f"idx:{collection}:built:functions:{algo}"
+        built_set_key = f"{collection}:built:functions:{algo}"
 
         # Incremental Skip: Check if already built
         if self.r.sismember(built_set_key, base_id):
@@ -285,7 +285,7 @@ class SimilarityService:
         """Checks if a similarity pair is already built."""
         key1 = f"idx:{collection}:sim:{algo}:{id1}:{id2}"
         key2 = f"idx:{collection}:sim:{algo}:{id2}:{id1}"
-        zset_key = f"idx:{collection}:sim:score:{algo}"
+        zset_key = f"{collection}:sim:score:{algo}"
         
         score = self.r.zscore(zset_key, key1)
         if score is None:
@@ -296,7 +296,7 @@ class SimilarityService:
     def get_build_status(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine"):
         """Returns total vs built counts for a target."""
         r = self.r
-        built_set = f"idx:{collection}:built:functions:{algo}"
+        built_set = f"{collection}:built:functions:{algo}"
         
         total = 0
         built = 0
@@ -309,7 +309,7 @@ class SimilarityService:
             except:
                 built = len(r.sinter(batch_func_set, built_set))
         elif md5:
-            file_func_set = f"idx:{collection}:file_funcs:{md5}"
+            file_func_set = f"{collection}:file_funcs:{md5}"
             total = r.scard(file_func_set)
             try:
                 built = r.execute_command("SINTERCARD", "2", file_func_set, built_set)
@@ -317,7 +317,7 @@ class SimilarityService:
                 built = len(r.sinter(file_func_set, built_set))
         else:
             # Full collection status
-            total = r.scard(f"idx:{collection}:indexed:functions")
+            total = r.scard(f"{collection}:indexed:functions")
             built = r.scard(built_set)
             
         return {
@@ -332,15 +332,15 @@ class SimilarityService:
         """Returns detailed build status for all batches in a collection."""
         r = self.r
         batch_uuids = r.smembers("global:batches")
-        built_set = f"idx:{collection}:built:functions:{algo}"
+        built_set = f"{collection}:built:functions:{algo}"
 
         results = []
         for uuid in sorted(list(batch_uuids)):
-            batch_func_set = f"idx:{collection}:batch:{uuid}:functions"
+            batch_func_set = f"{collection}:batch:{uuid}:functions"
             if not r.exists(batch_func_set):
                 continue
 
-            meta_key = f"idx:{collection}:batch:{uuid}"
+            meta_key = f"{collection}:batch:{uuid}"
             name_raw = r.json().get(meta_key, "$")
             name = "N/A"
             if name_raw:
@@ -367,8 +367,8 @@ class SimilarityService:
     def list_files_build_status(self, collection, algo="unweighted_cosine"):
         """Returns detailed build status for all files in a collection."""
         r = self.r
-        file_keys = r.smembers(f"idx:{collection}:all_files")
-        built_set = f"idx:{collection}:built:functions:{algo}"
+        file_keys = r.smembers(f"{collection}:all_files")
+        built_set = f"{collection}:built:functions:{algo}"
 
         results = []
         for f_key in sorted(list(file_keys)):
@@ -382,7 +382,7 @@ class SimilarityService:
             name = meta.get("file_name", "N/A") if meta else "N/A"
 
             # Get functions for this file
-            file_func_set = f"idx:{collection}:file_funcs:{md5}"
+            file_func_set = f"{collection}:file_funcs:{md5}"
             total = r.scard(file_func_set)
             
             try:
@@ -415,7 +415,7 @@ class SimilarityService:
     def _ensure_tag_metadata(self, collection: str, tag: str):
         """Ensures a tag has metadata (color) in the global index."""
         r = self.r
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         if not r.hexists(meta_key, tag):
             palette = [
                 "#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", 
@@ -433,7 +433,7 @@ class SimilarityService:
     def set_tag_color(self, collection: str, tag: str, color: str) -> bool:
         """Updates the color for a tag."""
         r = self.r
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         import json
         raw = r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"priority": 0}
@@ -444,7 +444,7 @@ class SimilarityService:
     def set_tag_priority(self, collection: str, tag: str, priority: int) -> bool:
         """Updates the priority for a tag."""
         r = self.r
-        meta_key = f"idx:{collection}:tags_metadata"
+        meta_key = f"{collection}:tags_metadata"
         import json
         raw = r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"color": "#66d9ef"}

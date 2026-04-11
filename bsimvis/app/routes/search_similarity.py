@@ -71,8 +71,8 @@ def similarity_search():
     try:
         r = get_redis()
 
-        algo_zset = f"idx:{col}:sim:score:{algo}"
-        min_features_zset = f"idx:{col}:sim:min_features"
+        algo_zset = f"{col}:sim:score:{algo}"
+        min_features_zset = f"{col}:sim:min_features"
         pool_truncated = False
         total = 0
 
@@ -175,7 +175,7 @@ def similarity_search():
                         #         matches.append((lvl, targets, field))
                         
                         # 2. Try Registry-Based Partial Match (SSCAN)
-                        registry_key = f"idx:{col}:reg:{lvl}:{field}"
+                        registry_key = f"{col}:reg:{lvl}:{field}"
                         if r.exists(registry_key):
                             matching_buckets = []
                             try:
@@ -215,16 +215,16 @@ def similarity_search():
                     total_weight = 0
                     
                     prefix_map = {
-                        "binary": f"idx:{col}:sim:involves:file:",
-                        "function": f"idx:{col}:sim:involves:func:",
-                        "similarity": f"idx:{col}:idx:sim:tags:" 
+                        "binary": f"{col}:sim:involves:file:",
+                        "function": f"{col}:sim:involves:func:",
+                        "similarity": f"{col}:idx:sim:tags:" 
                     }
                     
                     for lvl, targets, field in sub_matches:
                         l_name = "binary" if lvl == "file" else "function" if lvl == "func" else "similarity"
                         p = prefix_map.get(l_name)
                         if l_name == "similarity" and field == "user_tags":
-                            p = f"idx:{col}:idx:sim:user_tags:"
+                            p = f"{col}:idx:sim:user_tags:"
                         
                         weight = 0
                         if p:
@@ -310,7 +310,7 @@ def similarity_search():
 
                 if cross_binary_val is not None:
                     cb_bool = cross_binary_val.lower() == "true"
-                    cb_key = f"idx:{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
+                    cb_key = f"{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
                     if r.exists(cb_key):
                         groups_raw.append({
                             "type": "direct_zset",

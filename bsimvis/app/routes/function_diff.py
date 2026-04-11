@@ -307,7 +307,7 @@ def diff_api():
         if "file_id" not in meta1:
             meta1["file_id"] = f"idx:{collection1}:file:{md5_1}"
         if "batch_id" not in meta1 and meta1.get("batch_uuid"):
-            meta1["batch_id"] = f"idx:{collection1}:batch:{meta1['batch_uuid']}"
+            meta1["batch_id"] = f"{collection1}:batch:{meta1['batch_uuid']}"
         if "entry_date" in meta1:
             meta1["entry_date"] = parse_timestamp(meta1["entry_date"])
         if "file_date" in meta1:
@@ -319,7 +319,7 @@ def diff_api():
         if "file_id" not in meta2:
             meta2["file_id"] = f"idx:{collection2}:file:{md5_2}"
         if "batch_id" not in meta2 and meta2.get("batch_uuid"):
-            meta2["batch_id"] = f"idx:{collection2}:batch:{meta2['batch_uuid']}"
+            meta2["batch_id"] = f"{collection2}:batch:{meta2['batch_uuid']}"
         if "entry_date" in meta2:
             meta2["entry_date"] = parse_timestamp(meta2["entry_date"])
         if "file_date" in meta2:

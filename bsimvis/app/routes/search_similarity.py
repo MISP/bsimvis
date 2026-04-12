@@ -268,8 +268,8 @@ def similarity_search():
                 # Unified Filter Configuration Architecture
                 # Format: (filter_value, label, levels, allowed_fields)
                 filter_configs = [
-                    (lang_filter, "language_id", ["sim", "func", "file"], ["language_id"]),
-                    (name_filter, "name", ["sim", "func", "file"], ["function_name", "file_name"]),
+                    (lang_filter, "language_id", [ "func"], ["language_id"]),
+                    (name_filter, "name", ["func"], ["function_name", "file_name"]),
                     
                     # General Tag Search
                     (tag_filter, "tags", ["sim", "func", "file"], ["tags", "user_tags"]),

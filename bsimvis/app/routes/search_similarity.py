@@ -49,9 +49,20 @@ def similarity_search():
     # Filtering parameters
     search_q = request.args.get("q", "").lower()
     name_filter = request.args.get("name", "").lower()
+    
+    # Tag related filters
     tag_filter = request.args.get("tag", "").lower()
+    static_tag_filter = request.args.get("static_tag", "").lower()
     user_tag_filter = request.args.get("user_tag", "").lower()
+    
     sim_tag_filter = request.args.get("sim_tag", "").lower()
+    sim_static_tag_filter = request.args.get("sim_static_tag", "").lower()
+    sim_user_tag_filter = request.args.get("sim_user_tag", "").lower()
+    
+    func_tag_filter = request.args.get("func_tag", "").lower()
+    func_static_tag_filter = request.args.get("func_static_tag", "").lower()
+    func_user_tag_filter = request.args.get("func_user_tag", "").lower()
+    
     lang_filter = request.args.get("language", "").lower()
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
@@ -91,7 +102,14 @@ def similarity_search():
             "q": (request.args.get("q") or "").strip().lower(),
             "name": (request.args.get("name") or "").strip().lower(),
             "tag": (request.args.get("tag") or "").strip().lower(),
+            "static_tag": (request.args.get("static_tag") or "").strip().lower(),
             "user_tag": (request.args.get("user_tag") or "").strip().lower(),
+            "sim_tag": (request.args.get("sim_tag") or "").strip().lower(),
+            "sim_static_tag": (request.args.get("sim_static_tag") or "").strip().lower(),
+            "sim_user_tag": (request.args.get("sim_user_tag") or "").strip().lower(),
+            "func_tag": (request.args.get("func_tag") or "").strip().lower(),
+            "func_static_tag": (request.args.get("func_static_tag") or "").strip().lower(),
+            "func_user_tag": (request.args.get("func_user_tag") or "").strip().lower(),
             "md5": (request.args.get("md5") or "").strip().lower(),
             "id": (request.args.get("id") or "").strip().lower(),
             "language_id": (request.args.get("language_id") or "").strip().lower(),
@@ -247,37 +265,41 @@ def similarity_search():
                         "weight": total_weight
                     })
 
-                # Group resolution (Unified Involves Architecture)
-                field_map = {
-                    "language_id": ["language_id"],
-                    "name": ["function_name", "file_name"],
-                    "tags": ["tags", "user_tags"],
-                    "user_tags": ["user_tags"]
-                }
-                for f_name, f_val in [
-                    ("language_id", lang_filter), 
-                    ("name", name_filter), 
-                    ("tags", tag_filter), 
-                    ("user_tags", user_tag_filter),
-                    ("tags", sim_tag_filter) 
-                ]:
+                # Unified Filter Configuration Architecture
+                # Format: (filter_value, label, levels, allowed_fields)
+                filter_configs = [
+                    (lang_filter, "language_id", ["sim", "func", "file"], ["language_id"]),
+                    (name_filter, "name", ["sim", "func", "file"], ["function_name", "file_name"]),
+                    
+                    # General Tag Search
+                    (tag_filter, "tags", ["sim", "func", "file"], ["tags", "user_tags"]),
+                    (static_tag_filter, "static_tags", ["sim", "func", "file"], ["tags"]),
+                    (user_tag_filter, "user_tags", ["func", "file"], ["user_tags"]),
+                    
+                    # Similarity Tag Search
+                    (sim_tag_filter, "sim_tags", ["sim"], ["tags", "user_tags"]),
+                    (sim_static_tag_filter, "sim_static_tags", ["sim"], ["tags"]),
+                    (sim_user_tag_filter, "sim_user_tags", ["sim"], ["user_tags"]),
+                    
+                    # Function Tag Search
+                    (func_tag_filter, "func_tags", ["func"], ["tags", "user_tags"]),
+                    (func_static_tag_filter, "func_static_tags", ["func"], ["tags"]),
+                    (func_user_tag_filter, "func_user_tags", ["func"], ["user_tags"]),
+                ]
+
+                for f_val, label, levels, allowed in filter_configs:
                     if f_val:
-                        levels = ["sim", "func", "file"]
-                        if f_val == sim_tag_filter and f_name == f_name == "tags":
-                            levels = ["sim"]
-                        
                         all_matches = []
-                        allowed = field_map.get(f_name)
                         for lvl in levels:
                             matches = get_group_targets(lvl, f_val, allowed_fields=allowed)
                             if matches:
                                 all_matches.extend(matches)
                         
                         if not all_matches:
-                            logging.info(f"SIM SEARCH | {session_id} | Filter '{f_name}={f_val}' matched 0 targets. Returning empty.")
+                            logging.info(f"SIM SEARCH | {session_id} | Filter '{label}={f_val}' matched 0 targets. Returning empty.")
                             return jsonify({"total": 0, "pairs": [], "algo": algo, "collection": col, "pool_truncated": False})
                         
-                        add_group(all_matches, field_name=f_name)
+                        add_group(all_matches, field_name=label)
 
                 if md5_filters:
                     all_md5_base_ids = []
@@ -547,6 +569,14 @@ def similarity_search():
                 "q": request.args.get("q", ""),
                 "name": request.args.get("name", ""),
                 "tag": request.args.get("tag", ""),
+                "static_tag": request.args.get("static_tag", ""),
+                "user_tag": request.args.get("user_tag", ""),
+                "sim_tag": request.args.get("sim_tag", ""),
+                "sim_static_tag": request.args.get("sim_static_tag", ""),
+                "sim_user_tag": request.args.get("sim_user_tag", ""),
+                "func_tag": request.args.get("func_tag", ""),
+                "func_static_tag": request.args.get("func_static_tag", ""),
+                "func_user_tag": request.args.get("func_user_tag", ""),
                 "language": request.args.get("language", ""),
                 "md5": md5_filters,
                 "cross_binary": cross_binary_val,

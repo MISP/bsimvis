@@ -15,13 +15,13 @@ class SimilarityService:
             self.r = get_redis()
         
         from bsimvis.app.services.lua_manager import lua_manager
-        self._sim_script = lua_manager.get_script("build_similarity")
+        self._find_script = lua_manager.get_script("find_candidates")
         self._clear_script = lua_manager.get_script("clear_similarity")
         
         from bsimvis.app.services.tag_service import tag_service
         self.tag_service = tag_service
 
-    def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0.3, job_service=None, job_id=None, sleep_time=0.05):
+    def build_batch(self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine", top_k=1000, min_score=0.3, job_service=None, job_id=None, sleep_time=0):
         """
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
@@ -49,7 +49,7 @@ class SimilarityService:
         logging.info(f"[*] Building similarities for {total} functions in {batch_uuid or md5} (chunk_size=20, yield={sleep_time}s)...")
         
         start_time = time.time()
-        chunk_size = 20
+        chunk_size = 5
         
         for i in range(0, total, chunk_size):
             chunk = function_ids[i:i + chunk_size]
@@ -119,16 +119,13 @@ class SimilarityService:
         if not targets_to_build:
             return
 
-        # Phase 3: Execute Lua script bursts
-        pipe = r.pipeline()
+        # Phase 3: Execute Discovery (Lua)
+        discovery_results = []
         for fid, features_raw in targets_to_build:
             parts = fid.split(":")
             if len(parts) < 5: continue
             md5, addr = parts[3], parts[4]
             
-            # Fetch TF-aware metrics for target
-            # features_raw comes from zrange(fid:vec:tf, 0, -1, withscores=True)
-            # which is a list of tuples [(feat, score), ...]
             target_feat_total = 0
             target_feat_norm_sq = 0
             lua_features_args = []
@@ -141,17 +138,99 @@ class SimilarityService:
             
             target_feat_norm = math.sqrt(target_feat_norm_sq)
             
+            # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, features...]
             lua_args = [
-                fid, collection, algo, int(time.time() * 1000),
-                top_k, md5, addr, min_score, built_set_key,
-                target_feat_total, target_feat_norm
+                fid, collection, algo, min_score,
+                target_feat_total, target_feat_norm, top_k
             ] + lua_features_args
             
-            # Call Lua script within the pipeline
-            self._sim_script(args=lua_args, client=pipe)
-            pipe.sadd(built_set_key, fid)
-            
-        pipe.execute()
+            # Execute Discovery Script
+            try:
+                candidates_raw = self._find_script(args=lua_args)
+                logging.debug(f"Discovery for {fid}: {len(candidates_raw) if candidates_raw else 0} raw results")
+                if candidates_raw:
+                    # Parse flat array return into triples (id, score, c_total)
+                    candidates = []
+                    for k in range(0, len(candidates_raw), 3):
+                        candidates.append({
+                            "id": candidates_raw[k],
+                            "score": float(candidates_raw[k+1]),
+                            "c_total": float(candidates_raw[k+2])
+                        })
+                    discovery_results.append((fid, md5, addr, target_feat_total, candidates))
+                
+                # Mark as built regardless of candidates found
+                r.sadd(built_set_key, fid)
+            except Exception as e:
+                logging.error(f"Discovery Error for {fid}: {e}")
+
+        # Phase 4: Persistence (Python)
+        if not discovery_results:
+            return
+
+        persist_pipe = r.pipeline()
+        now = int(time.time() * 1000)
+        
+        # We need to collect MD5s for the candidates to generate correct sim_docs
+        # However, extracting them from the ID is faster than fetching from Redis
+        def extract_md5(fid, coll):
+            # doc: idx:{coll}:func:{md5}:{addr}
+            prefix = f"idx:{coll}:func:"
+            if fid.startswith(prefix):
+                parts = fid[len(prefix):].split(":")
+                if parts: return parts[0]
+            return "unknown"
+
+        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+            for item in candidates:
+                # Canonical Order (id_a > id_b)
+                if fid > item["id"]:
+                    id_a, id_b = fid, item["id"]
+                    md5_a = t_md5
+                    md5_b = extract_md5(item["id"], collection)
+                    fc_a, fc_b = t_total, item["c_total"]
+                else:
+                    id_a, id_b = item["id"], fid
+                    md5_a = extract_md5(item["id"], collection)
+                    md5_b = t_md5
+                    fc_a, fc_b = item["c_total"], t_total
+
+                score_rounded = round(item["score"], 4)
+                sid = f"idx:{collection}:sim:{algo}:{id_a}:{id_b}"
+                
+                sim_doc = {
+                    "type": "sim",
+                    "collection": collection,
+                    "algo": algo,
+                    "score": score_rounded,
+                    "id1": id_a,
+                    "id2": id_b,
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "feat_count1": int(fc_a),
+                    "feat_count2": int(fc_b),
+                    "min_features": int(min(fc_a, fc_b)),
+                    "entry_date": now,
+                    "is_cross_binary": "true" if md5_a != md5_b else "false"
+                }
+                
+                # Persistence
+                persist_pipe.json().set(sid, "$", sim_doc)
+                persist_pipe.zadd(f"{collection}:sim:score:{algo}", {sid: score_rounded})
+                persist_pipe.zadd(f"{collection}:sim:all", {sid: 0})
+                
+                # Involves
+                persist_pipe.sadd(f"{collection}:sim:involves:func:{id_a}", sid)
+                persist_pipe.sadd(f"{collection}:sim:involves:func:{id_b}", sid)
+                persist_pipe.sadd(f"{collection}:sim:involves:file:idx:{collection}:file:{md5_a}", sid)
+                persist_pipe.sadd(f"{collection}:sim:involves:file:idx:{collection}:file:{md5_b}", sid)
+                
+                # Range filters
+                persist_pipe.zadd(f"{collection}:sim:min_features", {sid: sim_doc["min_features"]})
+                persist_pipe.zadd(f"{collection}:sim:is_cross_binary:{sim_doc['is_cross_binary']}", {sid: 0})
+
+        res = persist_pipe.execute()
+        logging.debug(f"Persistence executed: {len(res)} commands in pipe")
 
     def build_function(self, collection, base_id, algo="unweighted_cosine", top_k=1000, min_score=0.3, sleep_time=0):
         """
@@ -185,27 +264,80 @@ class SimilarityService:
         
         target_feat_norm = math.sqrt(target_feat_norm_sq)
 
-        # Lua ARGV: [id, collection, algo, timestamp, top_k, md5, addr, threshold, built_set, total, norm, features...]
-        lua_args = [
-            base_id,
-            collection,
-            algo,
-            int(time.time() * 1000),
-            top_k,
-            md5,
-            addr,
-            min_score,
-            built_set_key,
-            target_feat_total,
-            target_feat_norm
-        ] + lua_features_args
-
         try:
-            self._sim_script(args=lua_args)
+            # Stage 1: Discovery (Lua)
+            lua_args = [
+                base_id, collection, algo, min_score,
+                target_feat_total, target_feat_norm, top_k
+            ] + lua_features_args
+            
+            candidates_raw = self._find_script(args=lua_args)
+            
+            # Mark as built
             self.r.sadd(built_set_key, base_id)
+            
+            if not candidates_raw:
+                return True
+                
+            # Stage 2: Persistence (Python)
+            now = int(time.time() * 1000)
+            pipe = self.r.pipeline()
+            
+            def extract_md5(fid, coll):
+                prefix = f"idx:{coll}:func:"
+                if fid.startswith(prefix):
+                    parts = fid[len(prefix):].split(":")
+                    if parts: return parts[0]
+                return "unknown"
+
+            for k in range(0, len(candidates_raw), 3):
+                item_id = candidates_raw[k]
+                item_score = float(candidates_raw[k+1])
+                item_fc = float(candidates_raw[k+2])
+                
+                # Canonical Order
+                if base_id > item_id:
+                    id_a, id_b = base_id, item_id
+                    md5_a, md5_b = md5, extract_md5(item_id, collection)
+                    fc_a, fc_b = target_feat_total, item_fc
+                else:
+                    id_a, id_b = item_id, base_id
+                    md5_a, md5_b = extract_md5(item_id, collection), md5
+                    fc_a, fc_b = item_fc, target_feat_total
+
+                score_rounded = round(item_score, 4)
+                sid = f"idx:{collection}:sim:{algo}:{id_a}:{id_b}"
+                
+                sim_doc = {
+                    "type": "sim",
+                    "collection": collection,
+                    "algo": algo,
+                    "score": score_rounded,
+                    "id1": id_a,
+                    "id2": id_b,
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "feat_count1": int(fc_a),
+                    "feat_count2": int(fc_b),
+                    "min_features": int(min(fc_a, fc_b)),
+                    "entry_date": now,
+                    "is_cross_binary": "true" if md5_a != md5_b else "false"
+                }
+
+                pipe.json().set(sid, "$", sim_doc)
+                pipe.zadd(f"{collection}:sim:score:{algo}", {sid: score_rounded})
+                pipe.zadd(f"{collection}:sim:all", {sid: 0})
+                pipe.sadd(f"{collection}:sim:involves:func:{id_a}", sid)
+                pipe.sadd(f"{collection}:sim:involves:func:{id_b}", sid)
+                pipe.sadd(f"{collection}:sim:involves:file:idx:{collection}:file:{md5_a}", sid)
+                pipe.sadd(f"{collection}:sim:involves:file:idx:{collection}:file:{md5_b}", sid)
+                pipe.zadd(f"{collection}:sim:min_features", {sid: sim_doc["min_features"]})
+                pipe.zadd(f"{collection}:sim:is_cross_binary:{sim_doc['is_cross_binary']}", {sid: 0})
+
+            pipe.execute()
             return True
         except Exception as e:
-            logging.error(f"SimilarityService: Lua Error for {base_id}: {e}")
+            logging.error(f"SimilarityService: Error for {base_id}: {e}")
             return False
 
     def clear_filtered(self, collection, field, value, algo=None):

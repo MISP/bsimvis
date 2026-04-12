@@ -765,6 +765,8 @@
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
                     <button onclick="refreshData()"
                         style="background:none; border:1px solid var(--accent); color:var(--accent); cursor:pointer; padding:5px 12px; border-radius:4px;">Refresh</button>
+                    <button onclick="clearFilters()"
+                        style="background:none; border:1px solid #ff4d8d; color:#ff4d8d; cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Clear Filters</button>
                 </div>
             </div>
             <p id="view-subtitle" style="margin: 5px 0 0 0; font-size: 0.9rem;"></p>
@@ -866,6 +868,22 @@
                 renderer: renderTopCorrelations
             }
         };
+
+        function clearFilters() {
+            const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+            const params = new URLSearchParams(queryString);
+            const newParams = new URLSearchParams();
+
+            // Preserved context keys
+            const preserved = ['collection', 'batch_uuid', 'file_md5', 'algo', 'view'];
+            preserved.forEach(k => {
+                if (params.has(k)) newParams.set(k, params.get(k));
+            });
+
+            currentOffset = 0;
+            isEndOfResults = false;
+            window.location.hash = hashPath + (newParams.toString() ? '?' + newParams.toString() : '');
+        }
 
         async function refreshData(appendArg = false) {
             const append = (appendArg === true);
@@ -1079,15 +1097,27 @@
                             <span class="dim" style="font-size:0.6rem">-</span>
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
-                        <div style="margin-top:4px;">
-                            <input type="text" id="flt-sim-sim-tag" placeholder="Sim Tag..." value="${p.get('sim_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); width:100%;">
+                        <div style="margin-top:4px; display:flex; gap:2px;">
+                            <select id="type-sim-sim-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
+                                <option value="sim_tag" ${p.has('sim_tag') || (!p.has('sim_static_tag') && !p.has('sim_user_tag')) ? 'selected' : ''}>All</option>
+                                <option value="sim_static_tag" ${p.has('sim_static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="sim_user_tag" ${p.has('sim_user_tag') ? 'selected' : ''}>User</option>
+                            </select>
+                            <input type="text" id="flt-sim-sim-tag" placeholder="Tag..." value="${p.get('sim_tag') || p.get('sim_static_tag') || p.get('sim_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); width:65%;">
                         </div>
                     </th>
                     <th>
                         <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
                     </th>
                     <th style="position:relative">
-                        <input type="text" id="flt-sim-func-tag" placeholder="Func Tag..." value="${p.get('tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
+                        <div style="display:flex; gap:2px;">
+                            <select id="type-sim-func-tag" onchange="applySimSearch()" style="width:40%; font-size:0.65rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
+                                <option value="func_tag" ${p.has('func_tag') || p.has('tag') || (!p.has('static_tag') && !p.has('user_tag') && !p.has('func_static_tag') && !p.has('func_user_tag')) ? 'selected' : ''}>All</option>
+                                <option value="func_static_tag" ${p.has('func_static_tag') || p.has('static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="func_user_tag" ${p.has('func_user_tag') || p.has('user_tag') ? 'selected' : ''}>User</option>
+                            </select>
+                            <input type="text" id="flt-sim-func-tag" placeholder="Tag..." value="${p.get('func_tag') || p.get('tag') || p.get('static_tag') || p.get('user_tag') || p.get('func_static_tag') || p.get('func_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1;">
+                        </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
                     <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
@@ -1127,7 +1157,14 @@
                     const p = new URLSearchParams(params);
                     searchArea.innerHTML = `<div id="func-filters" class="filter-bar" style="flex-wrap: wrap;">
                         <input type="text" id="flt-function_name" placeholder="Function Name" value="${p.get('function_name') || ''}">
-                        <input type="text" id="flt-tag" placeholder="Tag" value="${p.get('tag') || ''}">
+                        <div style="display:inline-flex; align-items:center; background:#000; border:1px solid #333; border-radius:4px; padding:0 5px;">
+                            <select id="type-func-tag" style="background:none; border:none; color:var(--accent); font-size:0.75rem; border-right:1px solid #333; margin-right:5px; outline:none;">
+                                <option value="tag" ${p.has('tag') || (!p.has('static_tag') && !p.has('user_tag')) ? 'selected' : ''}>All Tags</option>
+                                <option value="static_tag" ${p.has('static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="user_tag" ${p.has('user_tag') ? 'selected' : ''}>User</option>
+                            </select>
+                            <input type="text" id="flt-tag" placeholder="Tag..." value="${p.get('tag') || p.get('static_tag') || p.get('user_tag') || ''}" style="border:none; background:none;">
+                        </div>
                         <input type="text" id="flt-file_name" placeholder="File Name" value="${p.get('file_name') || ''}">
                         <input type="text" id="flt-file_md5" placeholder="File MD5" value="${p.get('file_md5') || ''}">
                         <input type="text" id="flt-decompiler_id" placeholder="Decompiler ID" value="${p.get('decompiler_id') || ''}">
@@ -1222,12 +1259,22 @@
 
         function applyFuncSearch() {
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-            const fields = ['function_name', 'tag', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
+            const fields = ['function_name', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
             fields.forEach(f => {
-                const val = document.getElementById('flt-' + f).value;
-                if (val) params.set(f, val);
-                else params.delete(f);
+                const el = document.getElementById('flt-' + f);
+                if (el) {
+                    const val = el.value;
+                    if (val) params.set(f, val);
+                    else params.delete(f);
+                }
             });
+
+            // Handle Tags
+            const tagVal = document.getElementById('flt-tag')?.value;
+            const tagType = document.getElementById('type-func-tag')?.value || 'tag';
+            ['tag', 'static_tag', 'user_tag'].forEach(t => params.delete(t));
+            if (tagVal) params.set(tagType, tagVal);
+
             currentOffset = 0;
             isEndOfResults = false;
             window.location.hash = `#functions?${params.toString()}`;
@@ -1285,12 +1332,20 @@
             // Per-column filters
             const nameFlt = document.getElementById('flt-sim-name')?.value;
             const funcTagFlt = document.getElementById('flt-sim-func-tag')?.value;
+            const funcTagType = document.getElementById('type-sim-func-tag')?.value || 'func_tag';
             const simTagFlt = document.getElementById('flt-sim-sim-tag')?.value;
+            const simTagType = document.getElementById('type-sim-sim-tag')?.value || 'sim_tag';
             const md5Flt = document.getElementById('flt-sim-md5')?.value;
 
             if (nameFlt) params.set('name', nameFlt); else params.delete('name');
-            if (funcTagFlt) params.set('tag', funcTagFlt); else params.delete('tag');
-            if (simTagFlt) params.set('sim_tag', simTagFlt); else params.delete('sim_tag');
+            
+            // Handle Func Tags (Columns 4)
+            ['tag', 'static_tag', 'user_tag', 'func_tag', 'func_static_tag', 'func_user_tag'].forEach(t => params.delete(t));
+            if (funcTagFlt) params.set(funcTagType, funcTagFlt);
+
+            // Handle Sim Tags (Column 2)
+            ['sim_tag', 'sim_static_tag', 'sim_user_tag'].forEach(t => params.delete(t));
+            if (simTagFlt) params.set(simTagType, simTagFlt);
 
             params.delete('md5');
             if (md5Flt) {

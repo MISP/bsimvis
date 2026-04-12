@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 # --- Defaults ---
 API_BASE = "http://localhost:5000/api"
-DEFAULT_TEST_DIR = "tests/data/bench"
+DEFAULT_TEST_DIR = "data/bench"
 DEFAULT_COLLECTION = "test_bench"
 
 def poll_job(job_id, timeout=300):

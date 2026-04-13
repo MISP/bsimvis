@@ -46,6 +46,7 @@
             width: 100%;
             border-collapse: collapse;
             font-size: 0.85rem;
+            table-layout: fixed;
         }
 
         th {
@@ -214,6 +215,68 @@
             padding-bottom: 60px;
         }
 
+        /* Fixed Column Support */
+        .code-cell {
+            overflow: hidden;
+            word-break: break-all;
+            position: relative;
+        }
+
+        .pcode-block-container {
+            font-family: 'Consolas', monospace;
+            font-size: 0.7rem;
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-x: auto;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .pcode-block-line {
+            white-space: nowrap;
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            margin-bottom: 2px;
+            width: fit-content;
+        }
+
+        .pcode-block-line.active {
+            color: var(--accent);
+            background: rgba(102, 217, 239, 0.15);
+            margin: 0 -8px;
+            padding: 0 8px;
+        }
+
+        .pcode-block-line.prev-active {
+            color: var(--subtle);
+            opacity: 0.7;
+        }
+
+        .pcode-block-seq {
+            color: var(--subtle);
+            opacity: 0.5;
+            flex-shrink: 0;
+            width: 80px;
+        }
+
+        .pcode-text {
+            white-space: nowrap;
+            color: #e6db74;
+            font-family: 'Consolas', monospace;
+            font-size: 0.75rem;
+        }
+
+        .code-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow-x: auto;
+            padding: 8px;
+        }
+
         /* Space for bar */
     </style>
 </head>
@@ -228,11 +291,11 @@
         <table>
             <thead>
                 <tr>
-                    <th style="width: 220px;">Function Origin</th>
-                    <th style="width: 120px;">Type & Op</th>
-                    <th style="width: 110px;">Sequence</th>
-                    <th style="width: 200px;">PCode</th>
-                    <th style="width: 220px;">PCode Context</th>
+                    <th style="width: 200px;">Function Origin</th>
+                    <th style="width: 100px;">Type & Op</th>
+                    <th style="width: 70px;">Sequence</th>
+                    <th style="width: 160px;">PCode</th>
+                    <th style="width: 180px;">PCode Context</th>
                     <th style="width: 40px;">TF</th>
                     <th>Source Context (Highlighted)</th>
                 </tr>

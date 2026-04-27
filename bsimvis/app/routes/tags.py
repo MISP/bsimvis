@@ -5,6 +5,7 @@ import logging
 
 tags_bp = Blueprint("tags", __name__)
 
+
 @tags_bp.route("/api/tags/add", methods=["POST"])
 def add_tag():
     """
@@ -34,6 +35,7 @@ def add_tag():
     else:
         return jsonify({"status": "failed", "message": "Could not add tag"}), 500
 
+
 @tags_bp.route("/api/tags/remove", methods=["POST"])
 def remove_tag():
     """Removes a user_tag from an entity."""
@@ -52,15 +54,17 @@ def remove_tag():
     else:
         return jsonify({"status": "failed", "message": "Could not remove tag"}), 500
 
+
 @tags_bp.route("/api/tags/metadata", methods=["GET"])
 def get_metadata():
     """Returns all tag metadata for a collection."""
     collection = request.args.get("collection")
     if not collection:
         return jsonify({"error": "Missing collection"}), 400
-    
+
     tags = tag_service.get_collection_tags(collection)
     return jsonify(tags)
+
 
 @tags_bp.route("/api/tags/set_color", methods=["POST"])
 def set_color():
@@ -69,12 +73,13 @@ def set_color():
     collection = data.get("collection")
     tag = data.get("tag")
     color = data.get("color")
-    
+
     if not all([collection, tag, color]):
         return jsonify({"error": "Missing parameters"}), 400
-        
+
     tag_service.set_tag_color(collection, tag, color)
     return jsonify({"status": "success"})
+
 
 @tags_bp.route("/api/tags/set_priority", methods=["POST"])
 def set_priority():
@@ -83,9 +88,9 @@ def set_priority():
     collection = data.get("collection")
     tag = data.get("tag")
     priority = data.get("priority")
-    
+
     if not all([collection, tag, priority]):
         return jsonify({"error": "Missing parameters"}), 400
-        
+
     tag_service.set_tag_priority(collection, tag, priority)
     return jsonify({"status": "success"})

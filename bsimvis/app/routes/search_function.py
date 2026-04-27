@@ -21,7 +21,9 @@ def normalize_tags(data):
     # Normalize new user tags
     user_tags = data.get("user_tags")
     if isinstance(user_tags, str):
-        data["user_tags"] = [t.strip() for t in user_tags.split(",")] if user_tags else []
+        data["user_tags"] = (
+            [t.strip() for t in user_tags.split(",")] if user_tags else []
+        )
     elif user_tags is None:
         data["user_tags"] = []
 
@@ -99,9 +101,9 @@ def search_functions():
         b_uuid = data.get("batch_uuid")
 
         if col and md5 and addr and "function_id" not in data:
-            data["function_id"] = f"idx:{col}:func:{md5}:{addr}"
+            data["function_id"] = f"{col}:func:{md5}:{addr}"
         if col and md5 and "file_id" not in data:
-            data["file_id"] = f"idx:{col}:file:{md5}"
+            data["file_id"] = f"{col}:file:{md5}"
         if col and b_uuid and "batch_id" not in data:
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 

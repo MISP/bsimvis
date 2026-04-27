@@ -17,79 +17,76 @@ local function rem_item(k, m)
     if t == 'zset' then redis.call('ZREM', k, m) end
     if t == 'set' then redis.call('SREM', k, m) end
 end
-
 local function cleanup_key(sm_key)
     local doc_raw = redis.call('JSON.GET', sm_key)
     if not doc_raw then return end
     local doc = cjson.decode(doc_raw)
     
-    -- 1. Remove from global ZSETs
     local algo = doc.algo or "unweighted_cosine"
     if algo_filter ~= "" and algo ~= algo_filter then return end
 
-    rem_item(collection .. ':all_sim:' .. algo, sm_key)
-    rem_item(collection .. ':sim:all_similarities', sm_key)
+    -- 1. Remove from global ZSETs
+    redis.call('ZREM', collection .. ':sim:score:' .. algo, sm_key)
+    redis.call('ZREM', collection .. ':sim:all', sm_key)
+    redis.call('ZREM', collection .. ':sim:min_features', sm_key)
     
-    -- 2. Remove from field indexes
-    local fields = {"name1", "name2", "md5_1", "md5_2", "batch_uuid1", "batch_uuid2", "language_id1", "language_id2", "is_cross_binary", "id1", "id2"}
-    for _, f in ipairs(fields) do
-        if doc[f] then
-            local val = string.lower(tostring(doc[f]))
-            rem_item(collection .. ':sim:' .. f .. ':' .. val, sm_key)
+    -- 2. Remove from involves indexes
+    local clean_id1 = doc.id1:gsub("^" .. collection .. ":func:", "")
+    local clean_id2 = doc.id2:gsub("^" .. collection .. ":func:", "")
+    
+    redis.call('SREM', collection .. ':sim:involves:func:' .. clean_id1, sm_key)
+    redis.call('SREM', collection .. ':sim:involves:func:' .. clean_id2, sm_key)
+    redis.call('SREM', collection .. ':sim:involves:file:' .. doc.md5_1, sm_key)
+    redis.call('SREM', collection .. ':sim:involves:file:' .. doc.md5_2, sm_key)
+    
+    -- 3. Remove from secondary tag indexes
+    if doc.user_tags then
+        for _, t in ipairs(doc.user_tags) do
+             redis.call('SREM', collection .. ':idx:sim:user_tags:' .. string.lower(t), sm_key)
+        end
+    end
+    if doc.tags then
+        for _, t in ipairs(doc.tags) do
+             redis.call('SREM', collection .. ':idx:sim:tags:' .. string.lower(t), sm_key)
         end
     end
     
-    -- 3. Numeric Indexes
-    rem_item(collection .. ':sim:feat_count', sm_key)
-    rem_item(collection .. ':sim:min_features', sm_key)
-    rem_item(collection .. ':sim:entry_date', sm_key)
-    
-    -- 4. Tags
-    if doc.tags1 then
-        for t in string.gmatch(doc.tags1, "([^,]+)") do
-            rem_item(collection .. ':sim:tags1:' .. string.lower(t), sm_key)
-        end
-    end
-    if doc.tags2 then
-        for t in string.gmatch(doc.tags2, "([^,]+)") do
-            rem_item(collection .. ':sim:tags2:' .. string.lower(t), sm_key)
-        end
-    end
-    
-    -- 5. Delete the doc itself
+    -- 4. Delete the doc itself
     redis.call('DEL', sm_key)
 end
 
--- Find keys via filter indexes
-local sep = (filter_field == 'md5') and '_' or ''
-local keys1 = get_items('idx:' .. collection .. ':sim:' .. filter_field .. sep .. '1:' .. filter_value)
-local keys2 = get_items('idx:' .. collection .. ':sim:' .. filter_field .. sep .. '2:' .. filter_value)
-
-local seen = {}
-for _, k in ipairs(keys1) do
-    if not seen[k] then
-        cleanup_key(k)
-        seen[k] = true
+-- Find keys via involves index
+local index_key = ""
+if filter_field == 'md5' then
+    index_key = collection .. ':sim:involves:file:' .. filter_value
+elseif filter_field == 'batch_uuid' then
+    -- Batch involves is currently mapped via the batch:functions set -> individual involves:func
+    local b_funcs = redis.call('SMEMBERS', collection .. ':batch:' .. filter_value .. ':functions')
+    for _, f_id in ipairs(b_funcs) do
+        local clean_fid = f_id:gsub("^" .. collection .. ":func:", "")
+        local f_sims = get_items(collection .. ':sim:involves:func:' .. clean_fid)
+        for _, sm_key in ipairs(f_sims) do
+            cleanup_key(sm_key)
+        end
     end
-end
-for _, k in ipairs(keys2) do
-    if not seen[k] then
-        cleanup_key(k)
-        seen[k] = true
-    end
+    -- No central batch involves key yet, so we return here after per-function cleanup
 end
 
--- Cleanup the filter indexes themselves
-redis.call('DEL', collection .. ':sim:' .. filter_field .. sep .. '1:' .. filter_value)
-redis.call('DEL', collection .. ':sim:' .. filter_field .. sep .. '2:' .. filter_value)
+if index_key ~= "" then
+    local keys = get_items(index_key)
+    for _, k in ipairs(keys) do
+        cleanup_key(k)
+    end
+    -- Cleanup the filter index itself
+    redis.call('DEL', index_key)
+end
 
--- Also un-build the functions associated with this filter
+-- Also un-build the functions associated with this filter to allow re-building
 local target_funcs = {}
 if filter_field == 'batch_uuid' then
     target_funcs = redis.call('SMEMBERS', collection .. ':batch:' .. filter_value .. ':functions')
 elseif filter_field == 'md5' then
-    local p = 'idx:' .. collection .. ':file_funcs:' .. filter_value
-    target_funcs = redis.call('SMEMBERS', p)
+    target_funcs = redis.call('SMEMBERS', collection .. ':idx:file:functions:' .. filter_value)
 end
 
 local algos = {"jaccard", "unweighted_cosine"}
@@ -101,4 +98,4 @@ for _, f_id in ipairs(target_funcs) do
     end
 end
 
-return 1
+return true

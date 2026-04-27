@@ -72,7 +72,7 @@ def search_batches():
         b_uuid = data.get("batch_uuid")
         if col and b_uuid and "batch_id" not in data:
             data["batch_id"] = f"{col}:batch:{b_uuid}"
-        
+
         # Ensure Unix timestamps for UI
         for field in ["last_updated", "created_at", "entry_date", "file_date"]:
             if field in data:

@@ -22,7 +22,9 @@ def similarity_api():
             score = service.get_pair_score(id1, id2, algo=algo)
             scores[algo] = score
 
-        return jsonify({"id1": id1, "id2": id2, "scores": scores, "source": "on-demand"})
+        return jsonify(
+            {"id1": id1, "id2": id2, "scores": scores, "source": "on-demand"}
+        )
 
     except Exception as e:
         return jsonify({"detail": f"Error retrieving similarity: {str(e)}"}), 500

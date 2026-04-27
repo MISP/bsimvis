@@ -18,18 +18,16 @@ local feat_zset = KEYS[2]
 
 -- Helper: Reconstruct FIDs from Lean SID (idx:coll:sim:algo:id1:id2)
 local function extract_ids(sid)
-    -- sid is idx:coll:sim:algo:idx:coll:func:md5:addr:idx:coll:func:md5:addr
-    local sim_prefix = 'idx:' .. collection .. ':sim:' .. algo .. ':'
+    -- sid is {coll}:sim:{algo}:{clean_id1}::{clean_id2}
+    local sim_prefix = collection .. ':sim:' .. algo .. ':'
     if sid:sub(1, #sim_prefix) ~= sim_prefix then return nil, nil end
     
     local rest = sid:sub(#sim_prefix + 1)
-    -- We look for the start of the second ID: ':idx:{coll}:func:'
-    local sep = ':idx:' .. collection .. ':func:'
-    local pivot = rest:find(sep, 2, true) 
+    local pivot = rest:find("::", 1, true)
     if not pivot then return nil, nil end
     
-    local id1 = rest:sub(1, pivot - 1)
-    local id2 = rest:sub(pivot + 1)
+    local id1 = collection .. ':func:' .. rest:sub(1, pivot - 1)
+    local id2 = collection .. ':func:' .. rest:sub(pivot + 2)
     return id1, id2
 end
 
@@ -161,11 +159,6 @@ for i=1, #raw, 2 do
     
     if match then
         total_found = total_found + 1
-        
-        -- DEBUG: Log the first few matches for main2
-        if total_found <= 3 and collection == "main2" then
-            redis.log(redis.LOG_NOTICE, "MATCH SID=" .. sid .. " score=" .. tostring(score) .. " metric=" .. tostring(producer_val))
-        end
 
         local final_metric = score
         if sort_by == "feat_count" or sort_by == "min_features" then

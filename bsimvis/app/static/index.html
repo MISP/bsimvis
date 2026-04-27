@@ -1628,7 +1628,7 @@
                 const s1 = p.id1.split(':');
                 const s2 = p.id2.split(':');
                 
-                // New 5-part format: idx:coll:func:md5:addr
+                // New 4-part format: coll:func:md5:addr
                 // Old 4-part format: coll:function:md5:addr
                 const offset1 = s1[0] === 'idx' ? 1 : 0;
                 const offset2 = s2[0] === 'idx' ? 1 : 0;
@@ -1660,21 +1660,17 @@
                     const isBookmarked = userTagsList.includes('bookmark');
                     const editorClass = etype === 'similarity' ? 'sim-tags-editor' : 'entity-tags-editor';
                     const bookmarkOnClick = etype === 'similarity'
-                        ? `toggleBookmark(event, '${p.id1}', '${p.id2}', '${p.algo}')`
+                        ? `toggleBookmark(event, '${eid}')`
                         : `toggleEntityBookmark(event, '${etype}', '${eid}')`;
 
-                    const addOnClick = etype === 'similarity'
-                        ? `startAddTag(event, 'similarity', '${p.id1}|${p.id2}|${p.algo}')`
-                        : `startAddTag(event, '${etype}', '${eid}')`;
+                    const addOnClick = `startAddTag(event, '${etype}', '${eid}')`;
 
                     const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${t}">${t}</span>`).join('');
                     const userHtml = userTagsList.map(t => {
                         if (t === 'bookmark') return '';
                         const meta = tagMetadata[t] || { color: '#66d9ef' };
                         const color = meta.color;
-                        const removeClick = etype === 'similarity'
-                            ? `removeTag(event, 'similarity', '${p.id1}|${p.id2}|${p.algo}', '${t}')`
-                            : `removeTag(event, '${etype}', '${eid}', '${t}')`;
+                        const removeClick = `removeTag(event, '${etype}', '${eid}', '${t}')`;
                         return `
                         <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11;">
                             ${t} 
@@ -1696,10 +1692,10 @@
                     `;
                 };
 
-                const pairId = `${p.id1}|${p.id2}|${p.algo}`;
+                const pairId = p.sid || `${p.id1}|${p.id2}|${p.algo}`;
 
                 return `
-                <tr class="sim-row" style="background: ${rowStyle}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}">
+                <tr class="sim-row" style="background: ${rowStyle}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
                     <td style="text-align:center; vertical-align:middle;">
                         <input type="checkbox" class="row-selector" 
                                 data-pair-id="${pairId}"
@@ -2174,7 +2170,7 @@
                     const cleanAddr = addrPart.substring(1);
                     const cleanMd5 = md5Part.substring(1);
                     // Standardize to new short 'func' format
-                    return `idx:${colPart}:func:${cleanMd5}:${cleanAddr}`;
+                    return `${colPart}:func:${cleanMd5}:${cleanAddr}`;
                 }
             }
             return id;
@@ -3209,8 +3205,7 @@
             if (!cb) return null;
             const row = cb.closest('tr.sim-row');
             const container = row.querySelector('.sim-tags-editor');
-            const parts = pairId.split('|');
-            return { row, container, id1: parts[0], id2: parts[1], algo: parts[2] };
+            return { row, container, id1: row.dataset.id1, id2: row.dataset.id2, algo: row.dataset.algo, sid: row.dataset.sid };
         }
 
         async function toggleEntityBookmark(event, etype, eid) {
@@ -3235,20 +3230,20 @@
             event.stopPropagation();
             const btn = event.currentTarget;
             const isBookmarked = btn.classList.contains('active');
-            const pairId = `${id1}|${id2}|${algo}`;
+            const pairId = (id2 && algo) ? `${id1}|${id2}|${algo}` : id1;
 
-            let targets = [{ id1, id2, algo, btn }];
+            let targets = [{ id1, id2, algo, btn, sid: (id2 && algo) ? null : id1 }];
             if (selectedSimilarityPairs.has(pairId)) {
                 targets = Array.from(selectedSimilarityPairs).map(pid => {
                     const info = getSimilarityRowInfo(pid);
-                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, btn: info.container.querySelector('.bookmark-btn') } : null;
+                    return info ? { id1: info.id1, id2: info.id2, algo: info.algo, btn: info.container.querySelector('.bookmark-btn'), sid: info.sid } : null;
                 }).filter(t => t !== null);
             }
 
             const action = isBookmarked ? 'remove' : 'add';
 
             for (const t of targets) {
-                const eid = `${t.id1}|${t.id2}|${t.algo}`;
+                const eid = t.sid || `${t.id1}|${t.id2}|${t.algo}`;
                 if (action === 'remove') {
                     await removeTag(null, 'similarity', eid, 'bookmark');
                     if (t.btn) {

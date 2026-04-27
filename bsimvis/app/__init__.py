@@ -17,6 +17,7 @@ def create_app():
 
     # 1. Initialize Lua Scripts
     from .services.lua_manager import lua_manager
+
     lua_manager.init_app(app)
 
     # 2. Performance Hooks

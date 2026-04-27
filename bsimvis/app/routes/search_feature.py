@@ -53,11 +53,11 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
             cursor, keys = r.scan(cursor=cursor, match=match_pattern, count=1000)
             for key in keys:
                 if current_idx >= offset and len(feature_list) < limit:
-                    # Key is idx:{collection}:feature:{hash}:functions
+                    # Key is collection}:feature:{hash}:functions
                     prefix = f"{collection}:feature:"
                     suffix = ":functions"
                     if key.startswith(prefix) and key.endswith(suffix):
-                        fh = key[len(prefix):-len(suffix)]
+                        fh = key[len(prefix) : -len(suffix)]
                         feature_list.append({"hash": fh, "frequency": r.zcard(key)})
                     else:
                         # Fallback for unexpected formats
@@ -117,7 +117,7 @@ def _enrich_feature_context(r, collection, feature_list):
                     else:
                         md5 = parts[2]
                         addr = parts[3]
-                
+
                 f["context"] = {
                     "type": fm.get("type", "N/A"),
                     "op": fm.get("pcode_op", "N/A"),
@@ -314,9 +314,9 @@ def get_feature_details(f_hash):
         addr = occ.get("entrypoint_address")
         b_uuid = occ.get("batch_uuid")
         if "function_id" not in occ and col and md5 and addr:
-            occ["function_id"] = f"idx:{col}:func:{md5}:{addr}"
+            occ["function_id"] = f"{col}:func:{md5}:{addr}"
         if "file_id" not in occ and col and md5:
-            occ["file_id"] = f"idx:{col}:file:{md5}"
+            occ["file_id"] = f"{col}:file:{md5}"
         if "batch_id" not in occ and col and b_uuid:
             occ["batch_id"] = f"{col}:batch:{b_uuid}"
 

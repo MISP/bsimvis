@@ -45,7 +45,9 @@ def main():
     feat_list = features_actions.add_parser("list", help="Show batch table and ratios")
     feat_list.add_argument("-c", "--collection", required=True, help="Collection name")
     feat_list.add_argument("--batch", help="Filter by batch UUID")
-    feat_list.add_argument("--md5", action="store_true", help="List status by file (MD5)")
+    feat_list.add_argument(
+        "--md5", action="store_true", help="List status by file (MD5)"
+    )
 
     # features build
     feat_build = features_actions.add_parser("build", help="Index missing functions")
@@ -125,7 +127,11 @@ def main():
             # Set default for build/rebuild if not provided
             dp.set_defaults(algo="unweighted_cosine")
             dp.add_argument(
-                "-k", "--top-k", type=int, default=1000, help="Top K matches per function"
+                "-k",
+                "--top-k",
+                type=int,
+                default=1000,
+                help="Top K matches per function",
             )
             dp.add_argument("--min-score", type=float, default=0)
             dp.add_argument("--delay", type=float, default=0.0)
@@ -142,7 +148,9 @@ def main():
     sim_list = sim_actions.add_parser("list", help="List similarity builds")
     sim_list.add_argument("-c", "--collection", required=True, help="Collection name")
     sim_list.add_argument("--batch", help="Target specific batch UUID")
-    sim_list.add_argument("--md5", action="store_true", help="List status by file (MD5)")
+    sim_list.add_argument(
+        "--md5", action="store_true", help="List status by file (MD5)"
+    )
     sim_list.add_argument(
         "--algo",
         choices=["jaccard", "unweighted_cosine"],
@@ -151,19 +159,28 @@ def main():
     # --- JOB ---
     job_parser = subparsers.add_parser("job", help="Job & Pipeline management")
     job_actions = job_parser.add_subparsers(dest="action", required=True)
-    
+
     j_list = job_actions.add_parser("list", help="List recent jobs")
     j_list.add_argument("--limit", type=int, default=20)
-    
+
     j_status = job_actions.add_parser("status", help="Get job status & logs")
-    j_status.add_argument("job_id", nargs="?", help="Job or Pipeline ID (optional for global stats)")
+    j_status.add_argument(
+        "job_id", nargs="?", help="Job or Pipeline ID (optional for global stats)"
+    )
     j_status.add_argument("--watch", action="store_true", help="Watch progress")
     j_status.add_argument("--logs", action="store_true", help="Show logs")
-    
-    j_perf = job_actions.add_parser("perf", help="Display performance statistics for a job or pipeline")
+
+    j_perf = job_actions.add_parser(
+        "perf", help="Display performance statistics for a job or pipeline"
+    )
     j_perf.add_argument("job_id", help="Job or Pipeline ID")
-    j_perf.add_argument("--top", type=int, default=10, help="Show top N most demanding DB commands (default: 10)")
-    
+    j_perf.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="Show top N most demanding DB commands (default: 10)",
+    )
+
     j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
     j_cancel.add_argument("job_id", help="Job or Pipeline ID")
 
@@ -171,7 +188,9 @@ def main():
     worker_parser = subparsers.add_parser("worker", help="Worker management")
     worker_actions = worker_parser.add_subparsers(dest="action", required=True)
     w_start = worker_actions.add_parser("start", help="Start background workers")
-    w_start.add_argument("-n", "--count", type=int, default=1, help="Number of workers to start")
+    w_start.add_argument(
+        "-n", "--count", type=int, default=1, help="Number of workers to start"
+    )
 
     # --- UPLOAD ---
     upload_parser = subparsers.add_parser(
@@ -193,7 +212,10 @@ def main():
         "-v", "--verbose", action="count", default=0, help="Increase output verbosity"
     )
     upload_parser.add_argument(
-        "--limit", type=int, default=0, help="Limit the number of targets processed (useful with *)"
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit the number of targets processed (useful with *)",
     )
     upload_parser.add_argument(
         "-H",
@@ -283,11 +305,11 @@ def main():
 
     # Parse and Resolve Host
     args = parser.parse_args()
-    
+
     def resolve_api_host(cli_host):
         if cli_host:
             return cli_host
-        
+
         config_path = "bsimvis_config.toml"
         if os.path.exists(config_path):
             try:
@@ -303,7 +325,7 @@ def main():
         g_host, g_port = api_host_str.split(":")
     else:
         g_host, g_port = api_host_str, 5000
-    
+
     # For backward compatibility with things that still talk directly to Redis/Kvrocks (like setup)
     # we reuse the same host but we might need a different port if redirected.
     # For now, we assume the API host is what we use.

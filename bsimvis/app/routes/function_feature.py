@@ -76,11 +76,11 @@ def get_function_features():
 
         if meta:
             if "function_id" not in meta:
-                meta["function_id"] = f"idx:{collection}:func:{md5}:{addr}"
+                meta["function_id"] = f"{collection}:func:{md5}:{addr}"
             if "file_id" not in meta:
-                meta["file_id"] = f"idx:{collection}:file:{md5}"
+                meta["file_id"] = f"{collection}:file:{md5}"
             if "batch_id" not in meta and meta.get("batch_uuid"):
-                meta["batch_id"] = f"idx:{collection}:batch:{meta['batch_uuid']}"
+                meta["batch_id"] = f"{collection}:batch:{meta['batch_uuid']}"
             if "entry_date" in meta:
                 meta["entry_date"] = parse_timestamp(meta["entry_date"])
             if "file_date" in meta:

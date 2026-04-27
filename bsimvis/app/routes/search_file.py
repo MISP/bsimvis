@@ -18,14 +18,16 @@ def normalize_tags(data):
         data["tags"] = [t.strip() for t in tags.split(",")] if tags else []
     elif tags is None:
         data["tags"] = []
-    
+
     # Normalize new user tags
     user_tags = data.get("user_tags")
     if isinstance(user_tags, str):
-        data["user_tags"] = [t.strip() for t in user_tags.split(",")] if user_tags else []
+        data["user_tags"] = (
+            [t.strip() for t in user_tags.split(",")] if user_tags else []
+        )
     elif user_tags is None:
         data["user_tags"] = []
-    
+
     return data
 
 
@@ -94,7 +96,7 @@ def search_files():
         md5 = data.get("file_md5")
         b_uuid = data.get("batch_uuid")
         if col and md5 and "file_id" not in data:
-            data["file_id"] = f"idx:{col}:file:{md5}"
+            data["file_id"] = f"{col}:file:{md5}"
         if col and b_uuid and "batch_id" not in data:
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 

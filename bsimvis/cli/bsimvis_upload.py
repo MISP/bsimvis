@@ -1,4 +1,3 @@
-
 import tomllib, json, uuid
 
 import pyghidra
@@ -35,34 +34,34 @@ def upload_bsim_data(data, args, config):
 
     file_meta = data.get("file_metadata", {})
     file_md5 = file_meta.get("file_md5", "unknown_md5")
-    
+
     # Ensure collection is at the root for the API
     collections = args.collections if args.collections else ["main"]
-    
+
     # NEW: Handle saving JSON to file
-    save_path = getattr(args, 'save_json', None)
+    save_path = getattr(args, "save_json", None)
     if save_path:
         # If multiple collections, we still only need to save the data once
         # (collection field will be set by the bench script during replay)
-        dump_data = {
-            "collection": collections[0],
-            "file_md5": file_md5,
-            **data
-        }
-        
+        dump_data = {"collection": collections[0], "file_md5": file_md5, **data}
+
         target_file = save_path
         # If it's an existing dir, or ends in slash, or doesn't have .json extension, treat as dir
-        if os.path.isdir(save_path) or save_path.endswith(("/", "\\")) or not save_path.lower().endswith(".json"):
+        if (
+            os.path.isdir(save_path)
+            or save_path.endswith(("/", "\\"))
+            or not save_path.lower().endswith(".json")
+        ):
             os.makedirs(save_path, exist_ok=True)
             target_file = os.path.join(save_path, f"{file_md5}.json")
-            
+
         try:
             # For pure file paths, ensure parent exists
             parent_dir = os.path.dirname(os.path.abspath(target_file))
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
-                
-            with open(target_file, 'w') as f:
+
+            with open(target_file, "w") as f:
                 json.dump(dump_data, f, indent=2)
             logging.info(f"[+] Data saved to {target_file}")
         except Exception as e:
@@ -71,23 +70,23 @@ def upload_bsim_data(data, args, config):
     # We trigger the API for each collection
     for collection in collections:
         # Prepare the payload for the API
-        payload = {
-            "collection": collection,
-            "file_md5": file_md5,
-            **data
-        }
+        payload = {"collection": collection, "file_md5": file_md5, **data}
 
         # Submit to API
-        api_host = getattr(args, 'host', 'localhost:5000')
+        api_host = getattr(args, "host", "localhost:5000")
         api_url = f"http://{api_host}/api/file/upload/file_data"
-        
+
         try:
-            logging.info(f"[*] Submitting {file_md5} to API at {api_url} (collection: {collection})...")
+            logging.info(
+                f"[*] Submitting {file_md5} to API at {api_url} (collection: {collection})..."
+            )
             resp = requests.post(api_url, json=payload, timeout=300)
             resp.raise_for_status()
-            
+
             result = resp.json()
-            logging.info(f"[+] Upload Success! Pipeline ID: {result.get('pipeline_id')}")
+            logging.info(
+                f"[+] Upload Success! Pipeline ID: {result.get('pipeline_id')}"
+            )
         except Exception as e:
             logging.error(f"[!] API Submission failed for {api_url}: {e}")
 
@@ -726,7 +725,9 @@ def process_target(target, args, config, batch_order) -> int:
                     else:
                         cspec = lang.getDefaultCompilerSpec()
 
-                    logging.info(f"[i] Importing {target_path.name} with forced language: {lang_id}")
+                    logging.info(
+                        f"[i] Importing {target_path.name} with forced language: {lang_id}"
+                    )
                     program = project.importProgram(target_path, lang, cspec)
                 else:
                     program = project.importProgram(target_path, readOnly=True)
@@ -808,8 +809,8 @@ def main(args):
         f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}"
     )
 
-    if getattr(args, 'limit', 0) > 0:
-        args.targets = args.targets[:args.limit]
+    if getattr(args, "limit", 0) > 0:
+        args.targets = args.targets[: args.limit]
         logging.info(f"[i] Capping upload targets to strictly {args.limit} binaries.")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
@@ -867,9 +868,12 @@ def cli_main():
         help="Increase output verbosity (e.g., -v, -vv, -vvv)",
         action="count",
     )
-    
+
     parser.add_argument(
-        "--limit", type=int, default=0, help="Limit the number of targets processed (useful with *)"
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit the number of targets processed (useful with *)",
     )
 
     parser.add_argument(

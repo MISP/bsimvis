@@ -4,6 +4,7 @@ from bsimvis.app.services.job_service import JobService
 jobs_bp = Blueprint("jobs", __name__)
 job_service = JobService()
 
+
 @jobs_bp.route("/api/jobs", methods=["GET"])
 def list_jobs():
     """Lists recent and active jobs."""
@@ -11,11 +12,13 @@ def list_jobs():
     jobs = job_service.list_jobs(limit=limit)
     return jsonify(jobs)
 
+
 @jobs_bp.route("/api/jobs/stats", methods=["GET"])
 def get_global_stats():
     """Returns aggregate metrics across all jobs."""
     stats = job_service.get_global_stats()
     return jsonify(stats)
+
 
 @jobs_bp.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
@@ -24,6 +27,7 @@ def get_job(job_id):
     if not job:
         return jsonify({"error": "Job not found"}), 404
     return jsonify(job)
+
 
 @jobs_bp.route("/api/jobs/<job_id>/cancel", methods=["POST"])
 def cancel_job(job_id):

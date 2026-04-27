@@ -33,6 +33,7 @@ def parse_timestamp(val):
             return 0
     return 0
 
+
 # ---------------------------------------------------------------------------
 # TAG fields that get a Set per value
 # ---------------------------------------------------------------------------
@@ -97,7 +98,18 @@ def _index_tag(pipe, coll, level, field, value, doc_id):
         if "tags" in field:
             meta_key = f"{coll}:tags_metadata"
             import random
-            palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF"]
+
+            palette = [
+                "#FF5555",
+                "#50FA7B",
+                "#F1FA8C",
+                "#BD93F9",
+                "#FF79C6",
+                "#8BE9FD",
+                "#FFB86C",
+                "#A6E22E",
+                "#66D9EF",
+            ]
             default_meta = json.dumps({"color": random.choice(palette), "priority": 0})
             pipe.hsetnx(meta_key, str(v), default_meta)
 
@@ -136,8 +148,8 @@ def _unindex_num(pipe, coll, level, field, doc_id):
 
 
 def save_file(pipe, coll, file_md5, data):
-    """Index all fields for a file doc. Standardized as idx:{col}:file:{md5}"""
-    base_id = f"idx:{coll}:file:{file_md5}"
+    """Index all fields for a file doc. Standardized as {col}:file:{md5}"""
+    base_id = f"{coll}:file:{file_md5}"
     for f in FILE_TAG_FIELDS:
         _index_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
@@ -146,14 +158,14 @@ def save_file(pipe, coll, file_md5, data):
 
 
 def save_function(pipe, coll, md5, addr, data):
-    """Index all fields for a function doc. Standardized as idx:{col}:func:{md5}:{addr}"""
-    base_id = f"idx:{coll}:func:{md5}:{addr}"
+    """Index all fields for a function doc. Standardized as {col}:func:{md5}:{addr}"""
+    base_id = f"{coll}:func:{md5}:{addr}"
     for f in FUNC_TAG_FIELDS:
         _index_tag(pipe, coll, "func", f, data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
         _index_num(pipe, coll, "func", f, data.get(f), base_id)
     # relationship links
-    pipe.sadd(f"idx:{coll}:file_funcs:{md5}", base_id)
+    pipe.sadd(f"{coll}:idx:file:functions:{md5}", base_id)
     pipe.sadd(f"{coll}:all_functions", base_id)
 
 
@@ -164,7 +176,7 @@ def save_function(pipe, coll, md5, addr, data):
 
 def delete_file(r, coll, file_md5):
     """Remove a file from all indexes."""
-    base_id = f"idx:{coll}:file:{file_md5}"
+    base_id = f"{coll}:file:{file_md5}"
     doc_id = f"{base_id}:meta"
     data = r.json().get(doc_id, "$")
     if isinstance(data, list) and data:
@@ -182,7 +194,7 @@ def delete_file(r, coll, file_md5):
 
 def delete_function(r, coll, md5, addr):
     """Remove a function from all indexes."""
-    base_id = f"idx:{coll}:func:{md5}:{addr}"
+    base_id = f"{coll}:func:{md5}:{addr}"
     doc_id = f"{base_id}:meta"
     data = r.json().get(doc_id, "$")
     if isinstance(data, list) and data:
@@ -194,7 +206,7 @@ def delete_function(r, coll, md5, addr):
         _unindex_tag(pipe, coll, "func", f, data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
         _unindex_num(pipe, coll, "func", f, base_id)
-    pipe.srem(f"idx:{coll}:file_funcs:{md5}", base_id)
+    pipe.srem(f"{coll}:idx:file:functions:{md5}", base_id)
     pipe.srem(f"{coll}:all_functions", base_id)
     pipe.execute()
 
@@ -212,21 +224,21 @@ def query_ids(
     """
     tag_filters = tag_filters or {}
     num_filters = num_filters or {}
-    
+
     # Internal level mapping: API 'function' -> internal 'func'
     lvl = "func" if doc_type == "function" else doc_type
 
     all_key = f"{coll}:all_{doc_type}s"
 
     filter_key_groups = []
-    
+
     for field, value in tag_filters.items():
         if value is None or value == "":
             continue
-        
+
         # Standard Bucket: {col}:idx:{level}:{field}:{value}
         base_prefix = f"{coll}:idx:{lvl}:{field}:{str(value).lower()}"
-        
+
         # User Tag Union Logic
         if field == "tags":
             user_tags_prefix = f"{coll}:idx:{lvl}:user_tags:{str(value).lower()}"
@@ -240,7 +252,7 @@ def query_ids(
             candidates = list(r.sunion(*group_keys))
         else:
             candidates = list(r.smembers(group_keys[0]))
-        
+
         other_groups = filter_key_groups[1:]
     else:
         candidates = list(r.smembers(all_key))
@@ -248,7 +260,8 @@ def query_ids(
 
     if other_groups and candidates:
         for is_union, group_keys in other_groups:
-            if not candidates: break
+            if not candidates:
+                break
             if not is_union:
                 pipe = r.pipeline()
                 for cid in candidates:
@@ -261,8 +274,10 @@ def query_ids(
                     exists = False
                     for gk in group_keys:
                         if r.sismember(gk, cid):
-                            exists = True; break
-                    if exists: new_candidates.append(cid)
+                            exists = True
+                            break
+                    if exists:
+                        new_candidates.append(cid)
                 candidates = new_candidates
 
     all_ids = candidates
@@ -287,6 +302,7 @@ def query_ids(
 class IndexStatsService:
     def __init__(self, r=None):
         from .redis_client import get_redis
+
         self.r = r or get_redis()
 
     def get_key_count(self, k):
@@ -363,7 +379,9 @@ class IndexStatsService:
                 break
         return count_acc
 
-    def estimate_group_size(self, pattern, count_total, tracking_set=None, key_formatter=None):
+    def estimate_group_size(
+        self, pattern, count_total, tracking_set=None, key_formatter=None
+    ):
         r = self.r
         sample_size = 10
         if count_total == 0:
@@ -416,7 +434,9 @@ class IndexStatsService:
         num_funcs = r.scard(f"{coll}:all_functions")
         num_indexed = r.scard(f"{coll}:indexed:functions")
         num_unique_features = r.zcard(f"{coll}:features:by_tf")
-        num_sim_meta = self.estimate_total_keys(f"{coll}:sim:*:*:*", num_files, num_funcs, num_unique_features)
+        num_sim_meta = self.estimate_total_keys(
+            f"{coll}:sim:*:*:*", num_files, num_funcs, num_unique_features
+        )
 
         summary = {
             "num_files": num_files,
@@ -425,7 +445,7 @@ class IndexStatsService:
             "num_missing": max(0, num_funcs - num_indexed),
             "num_features": num_unique_features,
             "num_sim_meta": num_sim_meta,
-            "indexing_ratio": (num_indexed / num_funcs * 100) if num_funcs > 0 else 0
+            "indexing_ratio": (num_indexed / num_funcs * 100) if num_funcs > 0 else 0,
         }
 
         if not details:
@@ -434,28 +454,29 @@ class IndexStatsService:
         # 2. Detailed Breakdown
         components = []
         patterns = [
-            ("File Meta", f"idx:{coll}:file:*:meta"),
-            ("Func Meta", f"idx:{coll}:func:*:*:meta"),
-            ("Func Source", f"idx:{coll}:func:*:*:source"),
-            ("Func Vector (TF)", f"idx:{coll}:func:*:*:vec:tf"),
+            ("File Meta", f"{coll}:file:*:meta"),
+            ("Func Meta", f"{coll}:func:*:*:meta"),
+            ("Func Source", f"{coll}:func:*:*:source"),
+            ("Func Vector (TF)", f"{coll}:func:*:*:vec:tf"),
             ("Sim Meta", f"{coll}:sim:*:*:*"),
             ("Inverted Index", f"{coll}:feature:*:functions"),
             ("Feature Meta", f"{coll}:feature:*:meta"),
         ]
 
         for name, pat in patterns:
-            count = self.estimate_total_keys(pat, num_files, num_funcs, num_unique_features)
+            count = self.estimate_total_keys(
+                pat, num_files, num_funcs, num_unique_features
+            )
             if count > 0:
                 avg_size = self.estimate_group_size(pat, count)
-                components.append({
-                    "name": name,
-                    "pattern": pat,
-                    "count": count,
-                    "avg_size": avg_size,
-                    "total_size": avg_size * count
-                })
+                components.append(
+                    {
+                        "name": name,
+                        "pattern": pat,
+                        "count": count,
+                        "avg_size": avg_size,
+                        "total_size": avg_size * count,
+                    }
+                )
 
-        return {
-            "summary": summary,
-            "components": components
-        }
+        return {"summary": summary, "components": components}

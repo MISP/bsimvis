@@ -255,8 +255,12 @@ def similarity_search():
                             if matching_buckets:
                                 targets = []
                                 if lvl == "sim":
+                                    # Fix: Don't use split(":")[-1] as tags can contain colons
+                                    prefix = f"{col}:idx:{lvl}:{field}:"
                                     targets = [
-                                        b.split(":")[-1] for b in matching_buckets
+                                        b[len(prefix) :]
+                                        for b in matching_buckets
+                                        if b.startswith(prefix)
                                     ]
                                 else:
                                     if len(matching_buckets) == 1:

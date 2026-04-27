@@ -149,7 +149,7 @@ def similarity_search():
         cache_key = f"cache:search:sim:{cache_hash}"
 
         t_cache_lookup_start = time.perf_counter()
-        use_cache = request.args.get("use_cache", "true").lower() == "true"
+        use_cache = request.args.get("use_cache", "false").lower() == "true"
         cached_res = r.get(cache_key) if use_cache else None
         m_cache_lookup_time = time.perf_counter() - t_cache_lookup_start
         metrics["cache_lookup"] = m_cache_lookup_time
@@ -550,8 +550,8 @@ def similarity_search():
                     "algo": algo,
                     "pool_limit": pool_limit,
                     "groups": groups,  # Use the sorted groups
-                    "offset": offset,  # Lua performs pagination
-                    "limit": limit,
+                    "offset": 0, # Always fetch from 0 on miss to ensure cache consistency
+                    "limit": max(offset + limit, 1000),  # Fetch enough to seed cache for Switch View / Load More
                     "min_score": min_score,
                     "max_score": max_score,
                     "sort_by": sort_by,
@@ -582,7 +582,7 @@ def similarity_search():
                             f"SIM SEARCH | {session_id} | Lua First Result: {all_ids[0]} -> {all_scores[0]}"
                         )
 
-                    if use_cache and (all_ids or total == 0):
+                    if all_ids or total == 0:
                         cache_data = {
                             "total": total,
                             "pool_truncated": pool_truncated,
@@ -591,8 +591,8 @@ def similarity_search():
                         }
                         r.setex(cache_key, 3600, json.dumps(cache_data))
 
-                    # Direct assignment, as Lua already handled pagination
-                    page_results = list(zip(all_ids, all_scores))
+                    # Python handles pagination for the final response when seeding from offset 0
+                    page_results = list(zip(all_ids[offset : offset + limit], all_scores[offset : offset + limit]))
                 except Exception as lua_err:
                     logging.error(f"LUA SEARCH CRASH: {lua_err}")
                     return jsonify({"detail": f"Search engine error: {lua_err}"}), 500

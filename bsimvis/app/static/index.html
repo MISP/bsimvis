@@ -619,7 +619,7 @@
                 </div>
                 <div style="display:flex; gap:10px; align-items:center;">
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-                    <button onclick="refreshData()"
+                    <button onclick="refreshData(false, true)"
                         style="background:none; border:1px solid var(--accent); color:var(--accent); cursor:pointer; padding:5px 12px; border-radius:4px;">Refresh</button>
                     <button onclick="clearFilters()"
                         style="background:none; border:1px solid #ff4d8d; color:#ff4d8d; cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Clear
@@ -661,6 +661,7 @@
         let isEndOfResults = false;
         let lastHashPath = '';
         let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
+        let lastSimilarityQuery = null; // Track filters to detect view switching
 
         function toggleSimilaritySelection(event, id1, id2, algo) {
             const pairId = event.target.dataset.pairId || `${id1}|${id2}|${algo}`;
@@ -763,7 +764,7 @@
             window.location.hash = hashPath + (newParams.toString() ? '?' + newParams.toString() : '');
         }
 
-        async function refreshData(appendArg = false) {
+        async function refreshData(appendArg = false, force = false) {
             const append = (appendArg === true);
             const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
             const full_hash = hashPath + (queryString ? '?' + queryString : '');
@@ -780,7 +781,23 @@
 
             const params = new URLSearchParams(queryString);
             const collection = params.get('collection') || 'main';
+
             if (hashPath === '#function-similarity') {
+                // Caching strategy: Use cache ONLY for 'Load More' (append) or 'Switch View' (same query)
+                const queryParams = new URLSearchParams(queryString);
+                queryParams.delete('offset');
+                queryParams.delete('limit');
+                queryParams.delete('view');
+                queryParams.delete('use_cache');
+                const currentQuery = queryParams.toString();
+
+                if (!force && (append || (lastSimilarityQuery !== null && currentQuery === lastSimilarityQuery))) {
+                    params.set('use_cache', 'true');
+                } else {
+                    params.set('use_cache', 'false');
+                }
+                lastSimilarityQuery = currentQuery;
+
                 await fetchTagMetadata(collection);
             }
 
@@ -1097,10 +1114,6 @@
                         <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="sim-use-cache" ${p.get('use_cache') !== 'false' ? 'checked' : ''} onchange="applySimSearch()">
-                        <label for="sim-use-cache" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Use Cache</label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="sim-color-by-tag" ${localStorage.getItem('sim-color-by-tag') === 'true' ? 'checked' : ''} onchange="localStorage.setItem('sim-color-by-tag', this.checked); refreshAllRowColors()">
                         <label for="sim-color-by-tag" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Color by Tag</label>
                     </div>
@@ -1194,6 +1207,7 @@
                 window.graphInstance = new SimilarityGraph('bk-similarity-plot');
                 document.getElementById('graph-refresh-btn').onclick = () => {
                     const p = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                    p.set('use_cache', 'false'); // Force refresh
                     window.graphInstance.fetch(p);
                 };
                 document.getElementById('graph-stop-btn').onclick = () => window.graphInstance.stop();
@@ -1228,8 +1242,7 @@
             params.set('pool_limit', poolLimit || '1000000');
             params.set('limit', countLimit || (params.get('view') === 'graph' ? '1000' : '20'));
 
-            const useCache = document.getElementById('sim-use-cache')?.checked;
-            params.set('use_cache', useCache !== false ? 'true' : 'false');
+            // Caching is now automated in refreshData
 
             // Per-column filters
             const nameFlt = document.getElementById('flt-sim-name')?.value;

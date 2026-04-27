@@ -36,8 +36,8 @@ def upload_file_data():
         file_id = f"idx:{collection}:file:{file_md5}"
         
         # Use execute_command to send raw JSON string directly.
-        # This avoids redis-py's internal json.dumps() which is slow for large dicts.
-        r_data.execute_command("JSON.SET", file_id, "$", raw_bytes)
+        # decode_responses=True requires a str, not bytes.
+        r_data.execute_command("JSON.SET", file_id, "$", raw_bytes.decode("utf-8"))
         
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake

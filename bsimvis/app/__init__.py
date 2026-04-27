@@ -11,13 +11,17 @@ def create_app():
     app = Flask(__name__, static_folder="static")
     CORS(app)
 
+    # Allow large JSON uploads (e.g., 1GB)
+    app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024 * 1024
+    # Increase form memory size for multi-part forms if needed
+    app.config["MAX_FORM_MEMORY_SIZE"] = 100 * 1024 * 1024 * 1024
+
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
     )
 
     # 1. Initialize Lua Scripts
     from .services.lua_manager import lua_manager
-
     lua_manager.init_app(app)
 
     # 2. Performance Hooks

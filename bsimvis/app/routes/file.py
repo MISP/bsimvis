@@ -3,10 +3,10 @@ import json
 import hashlib
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
+import logging
 
 file_bp = Blueprint("file", __name__)
 job_service = JobService()
-
 
 @file_bp.route("/api/file/upload/file_data", methods=["POST"])
 def upload_file_data():
@@ -15,60 +15,50 @@ def upload_file_data():
     Stores it in Kvrocks and triggers the processing pipeline.
     """
     try:
-        data = request.json
-        if not data:
-            return jsonify({"error": "No JSON data provided"}), 400
-
-        # Extract basic info
+        # Get raw bytes to avoid double parsing/serialization
+        raw_bytes = request.get_data()
+        if not raw_bytes:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Parse once to get meta info
+        # Note: For very huge files, this still holds the dict in memory, 
+        # but we avoid multiple json.dumps() later.
+        data = json.loads(raw_bytes)
         collection = data.get("collection", "main")
         file_md5 = data.get("file_md5")
+        
         if not file_md5:
-            # Fallback MD5 if not provided
-            content = json.dumps(data, sort_keys=True).encode()
-            file_md5 = hashlib.md5(content).hexdigest()
-
+            # Efficient MD5 from raw bytes instead of re-serializing the dict
+            file_md5 = hashlib.md5(raw_bytes).hexdigest()
+        
         # 1. Store in Kvrocks (JSON.SET)
         r_data = get_redis()
-        file_id = f"{collection}:file:{file_md5}"
-        r_data.json().set(file_id, "$", data)
-
+        file_id = f"idx:{collection}:file:{file_md5}"
+        
+        # Use execute_command to send raw JSON string directly.
+        # This avoids redis-py's internal json.dumps() which is slow for large dicts.
+        r_data.execute_command("JSON.SET", file_id, "$", raw_bytes)
+        
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake
-        # Optimization: Pass md5 directly to all tasks to avoid re-fetching monolith
         pipeline_tasks = [
-            (
-                JobType.INDEX_META,
-                {"collection": collection, "file_id": file_id, "md5": file_md5},
-            ),
-            (
-                JobType.INDEX_FUNCTIONS,
-                {"collection": collection, "file_id": file_id, "md5": file_md5},
-            ),
-            (
-                JobType.INDEX_FEATURES,
-                {"collection": collection, "file_id": file_id, "md5": file_md5},
-            ),
-            (
-                JobType.BUILD_SIM,
-                {
-                    "collection": collection,
-                    "file_id": file_id,
-                    "md5": file_md5,
-                    "algo": "unweighted_cosine",
-                },
-            ),
+            (JobType.INDEX_META, {"collection": collection, "file_id": file_id, "md5": file_md5}),
+            (JobType.INDEX_FUNCTIONS, {"collection": collection, "file_id": file_id, "md5": file_md5}),
+            (JobType.INDEX_FEATURES, {"collection": collection, "file_id": file_id, "md5": file_md5}),
+            (JobType.BUILD_SIM, {"collection": collection, "file_id": file_id, "md5": file_md5, "algo": "unweighted_cosine"}),
         ]
-
+        
         pipeline_id = job_service.create_pipeline(pipeline_tasks)
-
-        return jsonify(
-            {
-                "status": "processing",
-                "file_id": file_id,
-                "pipeline_id": pipeline_id,
-                "message": "Data stored. Processing pipeline started.",
-            }
-        )
+        
+        return jsonify({
+            "status": "processing",
+            "file_id": file_id,
+            "pipeline_id": pipeline_id,
+            "message": "Data stored. Processing pipeline started."
+        })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        logging.error(f"Upload failed: {str(e)}")
+        logging.error(traceback.format_exc())
+        return jsonify({"error": str(e), "detail": traceback.format_exc()}), 500

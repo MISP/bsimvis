@@ -6,9 +6,9 @@ pyrightconfig.json
 .aiexclude
 
 __pycache__
-AGENTS.md
 
 *.egg-info/
 
 kvrocks_data/
 *.log
+.env

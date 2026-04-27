@@ -16,7 +16,7 @@ def similarity_api():
         service = SimilarityService()
         algorithms = ["jaccard", "unweighted_cosine"]
         scores = {}
-        
+
         collection = id1.split(":")[0] if ":" in id1 else "main"
         tags = []
         user_tags = []
@@ -43,7 +43,7 @@ def similarity_api():
                 "scores": scores,
                 "tags": tags,
                 "user_tags": user_tags,
-                "source": "on-demand"
+                "source": "on-demand",
             }
         )
 

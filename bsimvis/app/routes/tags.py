@@ -53,7 +53,9 @@ def add_bulk_tags():
     entity_ids = data.get("entity_ids")
     tag = data.get("tag")
 
-    if not all([collection, etype, entity_ids, tag]) or not isinstance(entity_ids, list):
+    if not all([collection, etype, entity_ids, tag]) or not isinstance(
+        entity_ids, list
+    ):
         return jsonify({"error": "Missing or invalid parameters"}), 400
 
     success = tag_service.bulk_add_user_tag(collection, etype, entity_ids, tag)
@@ -91,7 +93,9 @@ def remove_bulk_tags():
     entity_ids = data.get("entity_ids")
     tag = data.get("tag")
 
-    if not all([collection, etype, entity_ids, tag]) or not isinstance(entity_ids, list):
+    if not all([collection, etype, entity_ids, tag]) or not isinstance(
+        entity_ids, list
+    ):
         return jsonify({"error": "Missing or invalid parameters"}), 400
 
     success = tag_service.bulk_remove_user_tag(collection, etype, entity_ids, tag)

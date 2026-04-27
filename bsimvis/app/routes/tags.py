@@ -36,6 +36,33 @@ def add_tag():
         return jsonify({"status": "failed", "message": "Could not add tag"}), 500
 
 
+@tags_bp.route("/api/tags/bulk_add", methods=["POST"])
+def add_bulk_tags():
+    """
+    Adds a user_tag to multiple entities.
+    Payload: {
+        "collection": str,
+        "entity_type": "file" | "function" | "similarity",
+        "entity_ids": list[str],
+        "tag": str
+    }
+    """
+    data = request.json
+    collection = data.get("collection")
+    etype = data.get("entity_type")
+    entity_ids = data.get("entity_ids")
+    tag = data.get("tag")
+
+    if not all([collection, etype, entity_ids, tag]) or not isinstance(entity_ids, list):
+        return jsonify({"error": "Missing or invalid parameters"}), 400
+
+    success = tag_service.bulk_add_user_tag(collection, etype, entity_ids, tag)
+    if success:
+        return jsonify({"status": "success", "tag": tag, "count": len(entity_ids)})
+    else:
+        return jsonify({"status": "failed", "message": "Could not add tags"}), 500
+
+
 @tags_bp.route("/api/tags/remove", methods=["POST"])
 def remove_tag():
     """Removes a user_tag from an entity."""
@@ -53,6 +80,25 @@ def remove_tag():
         return jsonify({"status": "success", "tag": tag})
     else:
         return jsonify({"status": "failed", "message": "Could not remove tag"}), 500
+
+
+@tags_bp.route("/api/tags/bulk_remove", methods=["POST"])
+def remove_bulk_tags():
+    """Removes a user_tag from multiple entities."""
+    data = request.json
+    collection = data.get("collection")
+    etype = data.get("entity_type")
+    entity_ids = data.get("entity_ids")
+    tag = data.get("tag")
+
+    if not all([collection, etype, entity_ids, tag]) or not isinstance(entity_ids, list):
+        return jsonify({"error": "Missing or invalid parameters"}), 400
+
+    success = tag_service.bulk_remove_user_tag(collection, etype, entity_ids, tag)
+    if success:
+        return jsonify({"status": "success", "tag": tag, "count": len(entity_ids)})
+    else:
+        return jsonify({"status": "failed", "message": "Could not remove tags"}), 500
 
 
 @tags_bp.route("/api/tags/metadata", methods=["GET"])

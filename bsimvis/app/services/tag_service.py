@@ -128,6 +128,79 @@ class TagService:
             logging.error(f"TagService: Error removing tag from {entity_id}: {e}")
             return False
 
+    def bulk_add_user_tag(self, collection, entity_type, entity_ids, tag):
+        """Adds a user tag to multiple entities."""
+        r = self.r
+        tag = tag.strip()
+        if not tag:
+            return False
+
+        try:
+            tag_lower = tag.lower()
+            lvl = (
+                "func"
+                if entity_type == "function"
+                else "sim" if entity_type == "similarity" else entity_type
+            )
+            registry_key = f"{collection}:reg:{lvl}:user_tags"
+            index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
+
+            pipe = r.pipeline()
+            for eid in entity_ids:
+                doc_id = self._resolve_doc_id(collection, entity_type, eid)
+                # Note: Still need to check if tag exists to avoid duplicates
+                # For simplicity in bulk, we'll do it sequentially but we could optimize further with Lua
+                doc = r.json().get(doc_id, "$.user_tags")
+                if not doc or not isinstance(doc, list) or len(doc) == 0:
+                    continue
+
+                user_tags = doc[0]
+                if tag not in user_tags:
+                    user_tags.append(tag)
+                    r.json().set(doc_id, "$.user_tags", user_tags)
+
+                    indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
+                    r.sadd(index_key, indexed_id)
+                    r.sadd(registry_key, index_key)
+
+            self._ensure_tag_metadata(collection, tag)
+            return True
+        except Exception as e:
+            logging.error(f"TagService: Error in bulk add tags: {e}")
+            return False
+
+    def bulk_remove_user_tag(self, collection, entity_type, entity_ids, tag):
+        """Removes a user tag from multiple entities."""
+        r = self.r
+        tag = tag.strip()
+        try:
+            tag_lower = tag.lower()
+            lvl = (
+                "func"
+                if entity_type == "function"
+                else "sim" if entity_type == "similarity" else entity_type
+            )
+            index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
+
+            for eid in entity_ids:
+                doc_id = self._resolve_doc_id(collection, entity_type, eid)
+                doc = r.json().get(doc_id, "$.user_tags")
+                if not doc or not isinstance(doc, list) or len(doc) == 0:
+                    continue
+
+                user_tags = doc[0]
+                if tag in user_tags:
+                    user_tags.remove(tag)
+                    r.json().set(doc_id, "$.user_tags", user_tags)
+
+                    indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
+                    r.srem(index_key, indexed_id)
+
+            return True
+        except Exception as e:
+            logging.error(f"TagService: Error in bulk remove tags: {e}")
+            return False
+
     def _ensure_tag_metadata(self, collection, tag):
         """Ensures a tag has metadata (color) in the global index."""
         meta_key = f"{collection}:tags_metadata"

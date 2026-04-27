@@ -650,3 +650,188 @@ body {
     font-family: monospace;
     opacity: 0.7;
 }
+
+/* --- Tagging UI Styles (Moved from index.html) --- */
+.tag-card {
+    background: rgba(102, 217, 239, 0.1);
+    color: var(--accent);
+    border: 1px solid rgba(102, 217, 239, 0.3);
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    margin: 2px;
+}
+
+.sim-tag-card {
+    background: rgba(166, 226, 46, 0.1);
+    color: var(--success);
+    border: 1px solid rgba(166, 226, 46, 0.3);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px 2px 8px;
+    border-radius: 12px;
+    font-size: 0.65rem;
+    margin: 2px;
+}
+
+.analysis-tag-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.65rem;
+    margin: 2px;
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.05);
+    color: #888;
+    opacity: 0.8;
+}
+
+.remove-tag-btn {
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    font-size: 10px;
+    transition: all 0.2s;
+}
+
+.remove-tag-btn:hover {
+    background: var(--accent);
+    color: #000;
+}
+
+.add-tag-btn {
+    background: none;
+    border: 1px dashed var(--accent);
+    color: var(--accent);
+    border-radius: 12px;
+    padding: 1px 8px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    margin: 2px;
+    transition: all 0.2s;
+}
+
+.add-tag-btn:hover {
+    background: var(--accent);
+    color: #000;
+    border-style: solid;
+}
+
+.bookmark-btn {
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #75715e;
+    border-radius: 12px;
+    padding: 1px 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin: 2px;
+    transition: all 0.2s;
+    vertical-align: middle;
+}
+
+.bookmark-btn:hover {
+    color: #66d9ef;
+    border-color: #66d9ef;
+    transform: scale(1.05);
+}
+
+.bookmark-btn.active {
+    color: #66d9ef;
+    border-color: #66d9ef;
+    background: rgba(102, 217, 239, 0.1);
+}
+
+.bookmark-btn.active svg {
+    fill: #66d9ef;
+}
+
+.ignore-btn {
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #75715e;
+    border-radius: 12px;
+    padding: 1px 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    margin: 2px;
+    transition: all 0.2s;
+    vertical-align: middle;
+}
+
+.ignore-btn:hover {
+    color: #f92672;
+    border-color: #f92672;
+    transform: scale(1.05);
+}
+
+.ignore-btn.active {
+    color: #f92672;
+    border-color: #f92672;
+    background: rgba(249, 38, 114, 0.1);
+}
+
+.ignore-btn.active svg {
+    fill: #f92672;
+}
+
+.tag-input-field {
+    background: #000;
+    border: 1px solid var(--accent);
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-size: 0.7rem;
+    width: 80px;
+    outline: none;
+}
+
+.tag-autocomplete-dropdown {
+    position: absolute;
+    background: #1A1A1A;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 10001;
+    min-width: 150px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8);
+    display: none;
+    left: 0;
+    top: 100%;
+}
+
+.tag-suggestion-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: #eee;
+    transition: all 0.2s;
+}
+
+.tag-suggestion-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--accent);
+}
+
+.tag-color-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}

@@ -145,6 +145,12 @@
             white-space: nowrap;
         }
 
+        .sim-cell {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         /* Tag styles moved to style.css */
 
         /* Syntax Highlighting */
@@ -616,7 +622,8 @@
                     <button onclick="refreshData()"
                         style="background:none; border:1px solid var(--accent); color:var(--accent); cursor:pointer; padding:5px 12px; border-radius:4px;">Refresh</button>
                     <button onclick="clearFilters()"
-                        style="background:none; border:1px solid #ff4d8d; color:#ff4d8d; cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Clear Filters</button>
+                        style="background:none; border:1px solid #ff4d8d; color:#ff4d8d; cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Clear
+                        Filters</button>
                 </div>
             </div>
             <p id="view-subtitle" style="margin: 5px 0 0 0; font-size: 0.9rem;"></p>
@@ -655,6 +662,41 @@
         let lastHashPath = '';
         let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
 
+        function toggleSimilaritySelection(event, id1, id2, algo) {
+            const pairId = event.target.dataset.pairId || `${id1}|${id2}|${algo}`;
+            if (event.target.checked) {
+                selectedSimilarityPairs.add(pairId);
+            } else {
+                selectedSimilarityPairs.delete(pairId);
+                const master = document.getElementById('select-all-sim');
+                if (master) master.checked = false;
+            }
+        }
+
+        function toggleAllSimilaritySelection(master) {
+            const checkboxes = document.querySelectorAll('.row-selector');
+            checkboxes.forEach(cb => {
+                cb.checked = master.checked;
+                const pairId = cb.dataset.pairId;
+                if (master.checked) {
+                    selectedSimilarityPairs.add(pairId);
+                } else {
+                    selectedSimilarityPairs.delete(pairId);
+                }
+            });
+        }
+
+        function getSimilarityRowInfo(pairId) {
+            const row = document.querySelector(`input[data-pair-id="${pairId}"]`)?.closest('tr');
+            if (!row) return null;
+            return {
+                container: row.querySelector('.sim-tags-editor'),
+                id1: row.dataset.id1,
+                id2: row.dataset.id2,
+                algo: row.dataset.algo
+            };
+        }
+
         const routes = {
             '#collections': {
                 title: 'Collections',
@@ -690,13 +732,16 @@
                 title: 'Function similarities',
                 api: '/api/similarity/search',
                 headers: [
-                    { label: 'Similarity', sort: 'score', width: '9%' },
+                    { label: 'Similarity', sort: 'score', width: '8%' },
                     { label: 'Function Pair', width: '20%' },
-                    { label: 'Function Tags', width: '18%' },
+                    { label: 'Address', width: '5%' },
+                    { label: 'Function Tags', width: '12%' },
                     { label: 'Feat', sort: 'feat_count', width: '5%' },
-                    { label: 'Language', width: '15%' },
-                    { label: 'Binary MD5s', width: '18%' },
-                    { label: 'Actions / Algo', width: '10%' }
+                    { label: 'MD5', width: '5%' },
+                    { label: 'File Name', width: '10%' },
+                    { label: 'File Tags', width: '12%' },
+                    { label: 'Language', width: '8%' },
+                    { label: 'Actions / Algo', width: '15%' }
                 ],
                 renderer: renderTopCorrelations
             }
@@ -852,9 +897,13 @@
 
             // Table Head
             const thead = document.getElementById('table-head');
+            const dataTable = document.getElementById('data-table');
             let headHtml = '<tr>';
             if (path === '#function-similarity') {
                 headHtml += `<th style="width:30px; text-align:center;"><input type="checkbox" id="select-all-sim" onchange="toggleAllSimilaritySelection(this)"></th>`;
+                if (dataTable) dataTable.style.tableLayout = 'fixed';
+            } else {
+                if (dataTable) dataTable.style.tableLayout = 'auto';
             }
             route.headers.forEach(h => {
                 const label = typeof h === 'string' ? h : h.label;
@@ -940,7 +989,16 @@
                         </div>
                     </th>
                     <th>
-                        <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;">
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <div style="display:flex; gap:2px;">
+                                <input type="text" id="flt-sim-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-sim-ret_type" placeholder="Return Type..." value="${p.get('ret_type') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                            </div>
+                        </div>
+                    </th>
+                    <th>
+                        <input type="text" id="flt-sim-address" placeholder="Addr..." value="${p.get('address') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                     </th>
                     <th style="position:relative">
                         <div style="display:flex; gap:2px;">
@@ -949,12 +1007,23 @@
                                 <option value="func_static_tag" ${p.has('func_static_tag') || p.has('static_tag') ? 'selected' : ''}>Static</option>
                                 <option value="func_user_tag" ${p.has('func_user_tag') || p.has('user_tag') ? 'selected' : ''}>User</option>
                             </select>
-                            <input type="text" id="flt-sim-func-tag" placeholder="Tag..." value="${p.get('func_tag') || p.get('tag') || p.get('static_tag') || p.get('user_tag') || p.get('func_static_tag') || p.get('func_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1;">
+                            <input type="text" id="flt-sim-func-tag" placeholder="Tag..." value="${p.get('func_tag') || p.get('tag') || p.get('static_tag') || p.get('user_tag') || p.get('func_static_tag') || p.get('func_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; width: 60%; box-sizing: border-box;">
                         </div>
                     </th>
-                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:80%; font-size:0.65rem;"></th>
-                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem;"></th>
-                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()"></th>
+                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th style="position:relative">
+                        <div style="display:flex; gap:2px;">
+                            <select id="type-sim-file-tag" onchange="applySimSearch()" style="width:40%; font-size:0.65rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
+                                <option value="file_tag" ${p.has('file_tag') || (!p.has('file_static_tag') && !p.has('file_user_tag')) ? 'selected' : ''}>All</option>
+                                <option value="file_static_tag" ${p.has('file_static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="file_user_tag" ${p.has('file_user_tag') ? 'selected' : ''}>User</option>
+                            </select>
+                            <input type="text" id="flt-sim-file_tag" placeholder="Tag..." value="${p.get('file_tag') || p.get('file_static_tag') || p.get('file_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; width: 60%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                     <th style="font-size: 0.65rem;">
                         <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
                             <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
@@ -1164,6 +1233,12 @@
 
             // Per-column filters
             const nameFlt = document.getElementById('flt-sim-name')?.value;
+            const addressFlt = document.getElementById('flt-sim-address')?.value;
+            const nsFlt = document.getElementById('flt-sim-namespace')?.value;
+            const retTypeFlt = document.getElementById('flt-sim-ret_type')?.value;
+            const fileNameFlt = document.getElementById('flt-sim-file_name')?.value;
+            const fileTagFlt = document.getElementById('flt-sim-file_tag')?.value;
+            const fileTagType = document.getElementById('type-sim-file-tag')?.value || 'file_tag';
             const funcTagFlt = document.getElementById('flt-sim-func-tag')?.value;
             const funcTagType = document.getElementById('type-sim-func-tag')?.value || 'func_tag';
             const simTagFlt = document.getElementById('flt-sim-sim-tag')?.value;
@@ -1171,8 +1246,16 @@
             const md5Flt = document.getElementById('flt-sim-md5')?.value;
 
             if (nameFlt) params.set('name', nameFlt); else params.delete('name');
-            
-            // Handle Func Tags (Columns 4)
+            if (addressFlt) params.set('address', addressFlt); else params.delete('address');
+            if (nsFlt) params.set('namespace', nsFlt); else params.delete('namespace');
+            if (retTypeFlt) params.set('ret_type', retTypeFlt); else params.delete('ret_type');
+            if (fileNameFlt) params.set('file_name', fileNameFlt); else params.delete('file_name');
+
+            // Handle File Tags
+            ['file_tag', 'file_static_tag', 'file_user_tag'].forEach(t => params.delete(t));
+            if (fileTagFlt) params.set(fileTagType, fileTagFlt);
+
+            // Per-column filters (re-apply others if needed)
             ['tag', 'static_tag', 'user_tag', 'func_tag', 'func_static_tag', 'func_user_tag'].forEach(t => params.delete(t));
             if (funcTagFlt) params.set(funcTagType, funcTagFlt);
 
@@ -1280,6 +1363,10 @@
             return data.map(f => {
                 const meta = f['function_metadata'] || f;
                 const name = meta['function_name'] || 'Unknown';
+                const namespace = meta['namespace'] || '';
+                const parameters = meta['parameters'] || [];
+                const paramsStr = parameters.length > 0 ? `(${parameters.join(', ')})` : '()';
+                const returnType = meta['return_type'] || 'void';
                 const entry = meta['entrypoint_address'] || '';
                 const tags = (meta['tags'] || []).map(t => `<span class="tag-card">${t}</span>`).join('');
                 const fileName = meta['file_name'] || '';
@@ -1305,7 +1392,7 @@
                                onmouseenter="showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
                                onmousemove="moveCodePreview(event)"
                                onmouseleave="hideCodePreview(event)">
-                               ${name}
+                               ${namespace ? `<span style="color:white; opacity:0.8">${namespace}::</span>` : ''}${name}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </b>
                             <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -1317,8 +1404,8 @@
                     <td class="dim" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${fileName}">${fileName}</td>
                     <td class="mono" style="font-size:0.7rem;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${file_md5}">${file_md5}</td>
                     <td class="dim" style="font-size:0.7rem;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${decompiler}">${decompiler}</td>
-                    <td class="dim">${isThunk}</td>
-                    <td class="dim">${retType}</td>
+                    <td class="dim">${meta['is_thunk'] ? 'Yes' : 'No'}</td>
+                    <td class="dim">${returnType}</td>
                     <td class="dim">${cc}</td>
                     <td>
                         <span class="badge">F: ${featCount}</span><br>
@@ -1413,13 +1500,45 @@
 
         // getRowTagColor and refreshAllRowColors moved to tags.js
 
+        function formatSigComponent(ns, ret, name, params) {
+            let truncatedNs = ns;
+            if (ns) {
+                const parts = ns.split('::');
+                if (parts.length > 3) {
+                    truncatedNs = `${parts[0]}::${parts[1]}...${parts[parts.length - 1]}`;
+                } else if (ns.length > 20) {
+                    truncatedNs = ns.substring(0, 8) + "..." + ns.substring(ns.length - 8);
+                }
+            }
+
+            let truncatedRet = ret;
+            if (ret && ret.length > 12) {
+                truncatedRet = ret.substring(0, 5) + "..." + ret.substring(ret.length - 4);
+            }
+
+            let truncatedParams = params || [];
+            if (params && params.length > 2) {
+                truncatedParams = [...params.slice(0, 2), "...", params[params.length - 1]];
+            }
+
+            const fullSig = `${ret ? ret + ' ' : ''}${ns ? ns + '::' : ''}${name}(${(params || []).join(', ')})`;
+
+            return {
+                ns: truncatedNs,
+                ret: truncatedRet,
+                params: truncatedParams,
+                fullSig: fullSig
+            };
+        }
+
         function renderTopCorrelations(items) {
             if (!items || !items.length) return '<tr><td colspan="6" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
 
             return items.map(p => {
                 const s1 = p.id1.split(':');
                 const s2 = p.id2.split(':');
-                
+                const col = s1[0];
+
                 // New 4-part format: coll:func:md5:addr
                 // Old 4-part format: coll:function:md5:addr
                 const offset1 = s1[0] === 'idx' ? 1 : 0;
@@ -1443,6 +1562,9 @@
                 const name1 = (p.name1 || '---').replace(/'/g, "\\'");
                 const name2 = (p.name2 || '---').replace(/'/g, "\\'");
 
+                const f1 = formatSigComponent(p.meta1?.namespace || '', p.meta1?.return_type || '', p.name1 || '---', p.meta1?.parameters || []);
+                const f2 = formatSigComponent(p.meta2?.namespace || '', p.meta2?.return_type || '', p.name2 || '---', p.meta2?.parameters || []);
+
                 const tags = p.tags || [];
                 const user_tags = p.user_tags || [];
                 const isBookmarked = user_tags.includes('bookmark');
@@ -1453,7 +1575,7 @@
                 const pairId = p.sid || `${p.id1}|${p.id2}|${p.algo}`;
 
                 return `
-                <tr class="sim-row" style="background: ${rowStyle}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
+                <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
                     <td style="text-align:center; vertical-align:middle;">
                         <input type="checkbox" class="row-selector" 
                                 data-pair-id="${pairId}"
@@ -1462,53 +1584,62 @@
                     </td>
                     <td>
                         <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                        <div class="dim" style="font-size:0.6rem; margin-bottom:5px;">SIMILARITY</div>
                         ${renderTagEditor('similarity', pairId, tags, user_tags)}
                     </td>
-                    <td>
-                        <div style="display:flex; flex-direction:column; justify-content: space-around; height: 100%; gap: 10px;">
-                            <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
-                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" onclick="showFunctionCodeById('${p.id1}', '${name1}')">${p.name1 || '---'}</b>
-                                <span class="dim" style="font-size:0.65rem; white-space:nowrap; flex-shrink:0;">@ ${addr1}</span>
+                    <td class="sim-cell">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f1.fullSig}">
+                                <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" onclick="showFunctionCodeById('${p.id1}', '${name1}')">
+                                    ${f1.ret ? `<span style="color:#ae81ff">${f1.ret}</span> ` : ''}${f1.ns ? `<span style="color:white; opacity:0.8">${f1.ns}::</span>` : ''}${p.name1 || '---'}<span style="color:white">(</span>${f1.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                </b>
                             </div>
-                            <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
-                                <b style="color:var(--accent); cursor:pointer; font-size:0.9rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" onclick="showFunctionCodeById('${p.id2}', '${name2}')">${p.name2 || '---'}</b>
-                                <span class="dim" style="font-size:0.65rem; white-space:nowrap; flex-shrink:0;">@ ${addr2}</span>
+                            <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f2.fullSig}">
+                                <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" onclick="showFunctionCodeById('${p.id2}', '${name2}')">
+                                    ${f2.ret ? `<span style="color:#ae81ff">${f2.ret}</span> ` : ''}${f2.ns ? `<span style="color:white; opacity:0.8">${f2.ns}::</span>` : ''}${p.name2 || '---'}<span style="color:white">(</span>${f2.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                </b>
                             </div>
                         </div>
                     </td>
-                    <td>
-                        <div style="display:flex; flex-direction:column; justify-content: space-around; height: 100%; gap: 10px;">
-                            <div>${renderTagEditor('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
-                            <div>${renderTagEditor('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
-                        </div>
-                    </td>
-                    <td style="text-align:center; vertical-align:middle;">
-                        <span class="mono" style="font-size:0.75rem; color:var(--accent); display:block;">${p.meta1?.bsim_features_count || 0}</span>
-                        <span class="mono" style="font-size:0.75rem; color:var(--success); display:block;">${p.meta2?.bsim_features_count || 0}</span>
-                    </td>
-                    <td>
-                        <div style="margin-bottom:5px;">
-                            <span class="dim" style="font-size:0.65rem;">L:</span> <span class="mono" style="font-size:0.7rem; color:var(--accent)">${p.meta1?.language_id || '---'}</span>
-                        </div>
-                        <div>
-                            <span class="dim" style="font-size:0.65rem;">R:</span> <span class="mono" style="font-size:0.7rem; color:var(--success)">${p.meta2?.language_id || '---'}</span>
+                    <td class="sim-cell">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${addr1}</span></div>
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${addr2}</span></div>
                         </div>
                     </td>
                     <td>
-                        <div style="margin-bottom:8px;">
-                            <div style="display:flex; align-items:center; gap:5px;">
-                                <span class="dim" style="font-size:0.65rem; min-width:12px;">L:</span>
-                                <span class="mono" style="color:var(--success); font-size:0.65rem;">${m1}</span>
-                            </div>
-                            <div style="color:#aaa; font-size:0.75rem; margin-top:2px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
+                            <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
                         </div>
-                        <div>
-                            <div style="display:flex; align-items:center; gap:5px;">
-                                <span class="dim" style="font-size:0.65rem; min-width:12px;">R:</span>
-                                <span class="mono" style="color:var(--success); font-size:0.65rem;">${m2}</span>
-                            </div>
-                            <div style="color:#aaa; font-size:0.75rem; margin-top:2px; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                    </td>
+                    <td class="sim-cell" style="text-align:center; vertical-align:middle;">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center; justify-content:center;"><span class="mono" style="color:var(--accent);">${p.meta1?.bsim_features_count || 0}</span></div>
+                            <div style="min-height:24px; display:flex; align-items:center; justify-content:center;"><span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span></div>
+                        </div>
+                    </td>
+                    <td class="sim-cell">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m1}"># ${m1}</span></div>
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m2}"># ${m2}</span></div>
+                        </div>
+                    </td>
+                    <td class="sim-cell">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
+                            <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                        </div>
+                    </td>
+                    <td>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
+                            <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
+                        </div>
+                    </td>
+                    <td class="sim-cell">
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta1?.language_id || '---'}</span></div>
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta2?.language_id || '---'}</span></div>
                         </div>
                     </td>
                     <td>
@@ -1516,7 +1647,7 @@
                             onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
                             onmousemove="moveCodePreview(event)"
                             onmouseleave="hideDiffPreview(event)"
-                            onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="font-size:0.7rem; padding:4px 8px;">
+                            onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="padding:4px 8px;">
                             <span>↔</span> Run Diff
                         </button>
                     </td>
@@ -2655,11 +2786,17 @@
         function renderPreview(data, name, addr, bin, v_size, extra = 0, file_name = '') {
             if (!tooltip) return;
             const rows = data.rows.slice(0, 18);
+            const m = data.meta || {};
+            const ns = m.namespace || '';
+            const parameters = m.parameters || [];
+            const paramsStr = parameters.length > 0 ? `(${parameters.join(', ')})` : '()';
+            const retType = m.return_type || '';
+
             const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
 
             let html = `
                 <div class="preview-card">
-                    <div class="preview-header">Quick Preview: ${name || data.rows[0]?.tokens[0]?.text || 'Function'}</div>
+                    <div class="preview-header">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${name || 'Function'}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
                     <div style="font-size:0.65rem; color:var(--accent); font-family:monospace; padding:0 8px; margin-bottom:5px;">
                         Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
                     </div>
@@ -2867,7 +3004,7 @@
                 bTooltip.classList.remove('showing');
             }
         }
-        
+
         // Shared tags logic moved to tags.js
         initResize('code-panel');
         initResize('feature-panel');

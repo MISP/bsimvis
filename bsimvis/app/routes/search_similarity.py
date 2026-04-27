@@ -65,6 +65,12 @@ def similarity_search():
     func_user_tag_filter = request.args.get("func_user_tag", "").lower()
 
     lang_filter = request.args.get("language", "").lower()
+    namespace_filter = request.args.get("namespace", "").lower()
+    ret_type_filter = request.args.get("ret_type", "").lower()
+    address_filter = request.args.get("address", "").lower()
+    file_tag_filter = request.args.get("file_tag", "").lower()
+    file_static_tag_filter = request.args.get("file_static_tag", "").lower()
+    file_user_tag_filter = request.args.get("file_user_tag", "").lower()
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
 
@@ -121,9 +127,15 @@ def similarity_search():
             "batch_uuid": (request.args.get("batch_uuid") or "").strip().lower(),
             "sort_by": (request.args.get("sort_by") or "").strip().lower(),
             "sort_order": (request.args.get("sort_order") or "").strip().lower(),
+            "namespace": namespace_filter,
+            "ret_type": ret_type_filter,
+            "address": address_filter,
+            "file_tag": file_tag_filter,
+            "file_static_tag": file_static_tag_filter,
+            "file_user_tag": file_user_tag_filter,
         }
         # Include all other filters
-        for f in ["md5", "id", "language_id", "batch_uuid"]:
+        for f in ["md5", "id", "language_id", "batch_uuid", "namespace", "ret_type", "address", "file_tag", "file_static_tag", "file_user_tag"]:
             v = request.args.get(f)
             if v:
                 cache_params[f] = v.strip().lower()
@@ -202,6 +214,9 @@ def similarity_search():
                             "file_name",
                             "file_md5",
                             "language_id",
+                            "namespace",
+                            "return_type",
+                            "entrypoint_address",
                         ]
 
                     val_lower = val.lower()
@@ -369,6 +384,12 @@ def similarity_search():
                     (func_tag_filter, "func_tags", ["func"], ["tags", "user_tags"]),
                     (func_static_tag_filter, "func_static_tags", ["func"], ["tags"]),
                     (func_user_tag_filter, "func_user_tags", ["func"], ["user_tags"]),
+                    (namespace_filter, "namespace", ["func"], ["namespace"]),
+                    (ret_type_filter, "ret_type", ["func"], ["return_type"]),
+                    (address_filter, "address", ["func"], ["entrypoint_address"]),
+                    (file_tag_filter, "file_tag", ["file"], ["tags", "user_tags"]),
+                    (file_static_tag_filter, "file_static_tags", ["file"], ["tags"]),
+                    (file_user_tag_filter, "file_user_tags", ["file"], ["user_tags"]),
                 ]
 
                 for f_val, label, levels, allowed in filter_configs:
@@ -632,6 +653,16 @@ def similarity_search():
                     meta_pipe.json().get(f"{id1}:meta", "$")
                     meta_pipe.json().get(f"{id2}:meta", "$")
 
+                    # Also fetch file-level metadata for tags
+                    try:
+                        md5_1 = id1.split(":")[2]
+                        md5_2 = id2.split(":")[2]
+                        meta_pipe.json().get(f"{col}:file:{md5_1}:meta", "$")
+                        meta_pipe.json().get(f"{col}:file:{md5_2}:meta", "$")
+                    except:
+                        meta_pipe.json().get("nonexistent", "$")
+                        meta_pipe.json().get("nonexistent", "$")
+
             meta_results = meta_pipe.execute()
 
             # Map meta results back
@@ -645,15 +676,20 @@ def similarity_search():
                 id1 = sim_data.get("id1")
                 id2 = sim_data.get("id2")
 
-                m1_json = meta_results[i * 2]
-                m2_json = meta_results[i * 2 + 1]
+                m1_json = meta_results[i * 4]
+                m2_json = meta_results[i * 4 + 1]
+                f1_json = meta_results[i * 4 + 2]
+                f2_json = meta_results[i * 4 + 3]
 
                 m1 = (m1_json[0] if isinstance(m1_json, list) else m1_json) or {}
                 m2 = (m2_json[0] if isinstance(m2_json, list) else m2_json) or {}
-                if isinstance(m1, str):
-                    m1 = json.loads(m1)
-                if isinstance(m2, str):
-                    m2 = json.loads(m2)
+                f1 = (f1_json[0] if isinstance(f1_json, list) else f1_json) or {}
+                f2 = (f2_json[0] if isinstance(f2_json, list) else f2_json) or {}
+
+                if isinstance(m1, str): m1 = json.loads(m1)
+                if isinstance(m2, str): m2 = json.loads(m2)
+                if isinstance(f1, str): f1 = json.loads(f1)
+                if isinstance(f2, str): f2 = json.loads(f2)
 
                 sim_score = (
                     float(sid_sort_sc)
@@ -688,7 +724,11 @@ def similarity_search():
                             "batch_uuid": m1.get("batch_uuid"),
                             "language_id": m1.get("language_id"),
                             "return_type": m1.get("return_type", "N/A"),
+                            "namespace": m1.get("namespace", ""),
+                            "parameters": m1.get("parameters", []),
                             "bsim_features_count": m1.get("bsim_features_count"),
+                            "file_tags": f1.get("tags", []),
+                            "file_user_tags": f1.get("user_tags", []),
                         },
                         "meta2": {
                             "file_md5": m2.get("file_md5"),
@@ -698,7 +738,11 @@ def similarity_search():
                             "batch_uuid": m2.get("batch_uuid"),
                             "language_id": m2.get("language_id"),
                             "return_type": m2.get("return_type", "N/A"),
+                            "namespace": m2.get("namespace", ""),
+                            "parameters": m2.get("parameters", []),
                             "bsim_features_count": m2.get("bsim_features_count"),
+                            "file_tags": f2.get("tags", []),
+                            "file_user_tags": f2.get("user_tags", []),
                         },
                         "tags": sim_data.get("tags", []),
                         "user_tags": sim_data.get("user_tags", []),

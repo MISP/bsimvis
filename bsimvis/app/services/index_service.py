@@ -59,6 +59,8 @@ FUNC_TAG_FIELDS = [
     "function_name",
     "decompiler_id",
     "return_type",
+    "namespace",
+    "parameters",
     "calling_convention",
     "entrypoint_address",
 ]

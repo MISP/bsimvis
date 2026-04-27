@@ -502,6 +502,12 @@ def get_bsim_data(program, args, config, batch_order):
 
         call_conv = func.getCallingConventionName() or "unknown"
         return_type = func.getReturnType().getName()
+        namespace = (
+            func.getParentNamespace().getName(True)
+            if not func.getParentNamespace().isGlobal()
+            else ""
+        )
+        parameters = [p.getDataType().getName() for p in func.getParameters()]
 
         entry_symbols = symbol_table.getSymbols(entry_point)
         labels = [s.getName() for s in entry_symbols]
@@ -574,6 +580,8 @@ def get_bsim_data(program, args, config, batch_order):
             "labels": labels,
             "language_id": lang_id,
             "return_type": return_type,
+            "namespace": namespace,
+            "parameters": parameters,
             "entrypoint_address": entry_str,
             "bsim_features_count": len(bsim_raw),
             "bsim_unique_features_count": len(bsim_tf),

@@ -3,18 +3,18 @@ services:
     image: redis:latest
     container_name: bsimvis_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     restart: always
 
   kvrocks:
-    image: apache/kvrocks:2.15.0
+    image: apache/kvrocks:latest
     container_name: bsimvis_kvrocks
     ports:
-      - "6666:6666"
+      - "${KVROCKS_PORT:-6666}:6666"
     volumes:
       - ./kvrocks_data:/var/lib/kvrocks
-      - ./kvrocks.conf:/var/lib/kvrocks/kvrocks.conf:ro
-    # No custom entrypoint/command needed if the config is in the right place
+      - ./kvrocks.conf:/var/lib/kvrocks/kvrocks.conf:ro  
+    command: ["--bind", "0.0.0.0", "--dir", "/var/lib/kvrocks"]
     deploy:
       resources:
         limits:

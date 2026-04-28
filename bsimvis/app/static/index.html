@@ -738,8 +738,8 @@
                     { label: 'Address', width: '5%' },
                     { label: 'Function Tags', width: '12%' },
                     { label: 'Feat', sort: 'feat_count', width: '5%' },
-                    { label: 'MD5', width: '5%' },
                     { label: 'File Name', width: '10%' },
+                    { label: 'MD5', width: '5%' },
                     { label: 'File Tags', width: '12%' },
                     { label: 'Language', width: '8%' },
                     { label: 'Actions / Algo', width: '15%' }
@@ -1028,8 +1028,8 @@
                         </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th style="position:relative">
                         <div style="display:flex; gap:2px;">
                             <select id="type-sim-file-tag" onchange="applySimSearch()" style="width:40%; font-size:0.65rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
@@ -1647,14 +1647,14 @@
                     </td>
                     <td class="sim-cell">
                         <div style="display:flex; flex-direction:column; gap:8px;">
-                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m1}"># ${m1}</span></div>
-                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m2}"># ${m2}</span></div>
+                            <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
+                            <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
                         </div>
                     </td>
                     <td class="sim-cell">
                         <div style="display:flex; flex-direction:column; gap:8px;">
-                            <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
-                            <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m1}"># ${m1}</span></div>
+                            <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m2}"># ${m2}</span></div>
                         </div>
                     </td>
                     <td>

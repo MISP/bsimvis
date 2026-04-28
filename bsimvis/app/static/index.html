@@ -762,6 +762,7 @@
         let lastHashPath = '';
         let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
         let lastSimilarityQuery = null; // Track filters to detect view switching
+        let simSearchRequested = false; // Set to true when user explicitly triggers a search
 
         function toggleSimilaritySelection(event, id1, id2, algo) {
             const pairId = event.target.dataset.pairId || `${id1}|${id2}|${algo}`;
@@ -899,6 +900,18 @@
                 queryParams.delete('use_cache');
                 const currentQuery = queryParams.toString();
 
+                // Skip auto-search on fresh navigation — wait for user to press Search/Enter
+                if (!append && !force && !simSearchRequested) {
+                    lastSimilarityQuery = null; // reset so next search always fetches fresh
+                    fetchTagMetadata(collection); // fire-and-forget
+                    updateUI(hashPath, new URLSearchParams(queryString), route);
+                    document.getElementById('loader').style.display = 'none';
+                    document.getElementById('table-body').innerHTML =
+                        '<tr><td colspan="100" style="text-align:center; padding:40px; color:#555;">Press <strong style="color:var(--accent)">Search</strong> or hit <kbd style="background:#222; border:1px solid #444; border-radius:3px; padding:1px 5px;">Enter</kbd> in any filter to load results.</td></tr>';
+                    return;
+                }
+                simSearchRequested = false; // consume the flag
+
                 if (!force && (append || (lastSimilarityQuery !== null && currentQuery === lastSimilarityQuery))) {
                     params.set('use_cache', 'true');
                 } else {
@@ -906,7 +919,7 @@
                 }
                 lastSimilarityQuery = currentQuery;
 
-                await fetchTagMetadata(collection);
+                fetchTagMetadata(collection); // fire-and-forget, not blocking
             }
 
             // Standard pagination for all search routes
@@ -1294,6 +1307,9 @@
                 params.set('sort_order', 'desc');
             }
             currentOffset = 0;
+            if (window.location.hash.startsWith('#function-similarity')) {
+                simSearchRequested = true;
+            }
             window.location.hash = `${window.location.hash.split('?')[0]}?${params.toString()}`;
         }
 
@@ -1323,6 +1339,7 @@
         function switchSimView(mode) {
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
             params.set('view', mode);
+            simSearchRequested = true; // view switch counts as intentional
             window.location.hash = `#function-similarity?${params.toString()}`;
         }
 
@@ -1413,6 +1430,7 @@
 
             currentOffset = 0;
             isEndOfResults = false;
+            simSearchRequested = true; // signal that next refreshData is user-initiated
             window.location.hash = `${hashPath}?${params.toString()}`;
         }
 

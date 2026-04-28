@@ -1,5 +1,10 @@
 # AGENTS.md
 
+## Python
+
+Use uv run to run commands. 
+
+
 ## Ports
 Kvrocks : 6666 -> storage of functions, binaries and similarities
 Redis : 6379 -> Job queue only
@@ -35,4 +40,4 @@ Since its only for jobs, the jobs are in :
 Always minimal code change unless user asks drastic change.
 Dont be destructive of features when building new.
 Comments must be simple, they are only required for complex code
-Use `black .` to clear up python synthax.
+Use `uv run black .` to clear up python synthax.

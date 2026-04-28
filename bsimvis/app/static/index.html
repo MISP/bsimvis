@@ -861,7 +861,14 @@
 
             currentOffset = 0;
             isEndOfResults = false;
-            window.location.hash = hashPath + (newParams.toString() ? '?' + newParams.toString() : '');
+            const newHash = hashPath + (newParams.toString() ? '?' + newParams.toString() : '');
+            window.location.hash = newHash;
+            // Re-apply sim view defaults when clearing within the sim view
+            // (hashchange guard won't fire since we stay on the same view)
+            if (hashPath === '#function-similarity') {
+                const [hp, qs] = (window.location.hash || '').split('?');
+                applySimViewDefaults(hp, qs);
+            }
         }
 
         async function refreshData(appendArg = false, force = false) {
@@ -871,34 +878,6 @@
             const route = routes[hashPath];
             if (!route) return;
 
-            // Default: NOT ignore for similarity view if NO tags are specified for a column
-            if (hashPath === '#function-similarity') {
-                const pC = new URLSearchParams(queryString);
-                let changed = false;
-
-                const hasFunc = pC.has('func_tag') || pC.has('exclude_func_tag') ||
-                    pC.has('func_static_tag') || pC.has('exclude_func_static_tag') ||
-                    pC.has('func_user_tag') || pC.has('exclude_func_user_tag') ||
-                    pC.has('tag') || pC.has('exclude_tag') ||
-                    pC.has('static_tag') || pC.has('exclude_static_tag') ||
-                    pC.has('user_tag') || pC.has('exclude_user_tag');
-                if (!hasFunc) { pC.set('exclude_func_tag', 'ignore'); changed = true; }
-
-                const hasSim = pC.has('sim_tag') || pC.has('exclude_sim_tag') ||
-                    pC.has('sim_static_tag') || pC.has('exclude_sim_static_tag') ||
-                    pC.has('sim_user_tag') || pC.has('exclude_sim_user_tag');
-                if (!hasSim) { pC.set('exclude_sim_tag', 'ignore'); changed = true; }
-
-                const hasFile = pC.has('file_tag') || pC.has('exclude_file_tag') ||
-                    pC.has('file_static_tag') || pC.has('exclude_file_static_tag') ||
-                    pC.has('file_user_tag') || pC.has('exclude_file_user_tag');
-                if (!hasFile) { pC.set('exclude_file_tag', 'ignore'); changed = true; }
-
-                if (changed) {
-                    window.location.hash = hashPath + '?' + pC.toString();
-                    return;
-                }
-            }
 
             if (full_hash !== lastHashPath || !append) {
                 currentOffset = 0;
@@ -2506,10 +2485,57 @@
             document.body.style.userSelect = 'auto';
         });
 
-        window.addEventListener('hashchange', refreshData);
+        // Apply "NOT ignore" defaults only when first entering the Sim view
+        function applySimViewDefaults(hashPath, queryString) {
+            if (hashPath !== '#function-similarity') return false;
+            const pC = new URLSearchParams(queryString);
+            let changed = false;
+
+            const hasFunc = pC.has('func_tag') || pC.has('exclude_func_tag') ||
+                pC.has('func_static_tag') || pC.has('exclude_func_static_tag') ||
+                pC.has('func_user_tag') || pC.has('exclude_func_user_tag') ||
+                pC.has('tag') || pC.has('exclude_tag') ||
+                pC.has('static_tag') || pC.has('exclude_static_tag') ||
+                pC.has('user_tag') || pC.has('exclude_user_tag');
+            if (!hasFunc) { pC.set('exclude_func_tag', 'ignore'); changed = true; }
+
+            const hasSim = pC.has('sim_tag') || pC.has('exclude_sim_tag') ||
+                pC.has('sim_static_tag') || pC.has('exclude_sim_static_tag') ||
+                pC.has('sim_user_tag') || pC.has('exclude_sim_user_tag');
+            if (!hasSim) { pC.set('exclude_sim_tag', 'ignore'); changed = true; }
+
+            const hasFile = pC.has('file_tag') || pC.has('exclude_file_tag') ||
+                pC.has('file_static_tag') || pC.has('exclude_file_static_tag') ||
+                pC.has('file_user_tag') || pC.has('exclude_file_user_tag');
+            if (!hasFile) { pC.set('exclude_file_tag', 'ignore'); changed = true; }
+
+            if (changed) {
+                window.location.hash = hashPath + '?' + pC.toString();
+                return true; // redirected, don't call refreshData yet
+            }
+            return false;
+        }
+
+        window.addEventListener('hashchange', (e) => {
+            const [newHash] = (window.location.hash || '#collections').split('?');
+            const [oldHash] = (e.oldURL ? new URL(e.oldURL).hash : '').split('?');
+            // Apply defaults only when entering sim view from a different view
+            if (newHash === '#function-similarity' && oldHash !== '#function-similarity') {
+                const [hashPath, queryString] = (window.location.hash || '').split('?');
+                if (applySimViewDefaults(hashPath, queryString)) return;
+            }
+            refreshData();
+        });
+
         window.addEventListener('load', () => {
             if (!window.location.hash) window.location.hash = '#collections';
             populateCollectionDropdown();
+            // Apply defaults on initial page load if landing on sim view
+            const [hashPath, queryString] = (window.location.hash || '').split('?');
+            if (applySimViewDefaults(hashPath, queryString)) {
+                loadDiffQueue();
+                return;
+            }
             refreshData();
             loadDiffQueue();
         });

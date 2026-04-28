@@ -589,7 +589,7 @@
             border: 1px solid #333;
             border-radius: 4px;
             min-height: 28px;
-            max-height: 75px; 
+            max-height: 75px;
             overflow-y: auto;
             align-items: center;
         }
@@ -597,6 +597,7 @@
         .tag-filter-container::-webkit-scrollbar {
             width: 2px;
         }
+
         .tag-filter-container::-webkit-scrollbar-thumb {
             background: #444;
             border-radius: 2px;
@@ -638,9 +639,9 @@
             font-weight: bold;
             font-size: 0.6rem;
             padding: 0 4px;
-            background: rgba(255,255,255,0.05);
+            background: rgba(255, 255, 255, 0.05);
             border-radius: 2px;
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .tag-filter-card.exclude .btn-card-ex {
@@ -675,8 +676,15 @@
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
         }
     </style>
 
@@ -821,7 +829,19 @@
             '#functions': {
                 title: 'Functions',
                 api: '/api/function/search',
-                headers: ['Function', 'Entry Addr', 'Tags', 'File Name', 'MD5', 'Decompiler', 'Thunk', 'Ret Type', 'CC', 'Features', 'Date', 'Actions'],
+                headers: [
+
+                    { label: 'Function', width: '22%' },
+                    { label: 'Address', width: '8%', sort: 'entrypoint_address' },
+                    { label: 'Function Tags', width: '15%' },
+                    { label: 'Feat', width: '5%', sort: 'bsim_features_count' },
+                    { label: 'File Name', width: '10%', sort: 'file_name' },
+                    { label: 'MD5', width: '5%', sort: 'file_md5' },
+                    { label: 'File Tags', width: '12%' },
+                    { label: 'Language', width: '5%', sort: 'language_id' },
+                    { label: 'Date', width: '8%', sort: 'entry_date' },
+                    { label: 'Actions', width: '5%' }
+                ],
                 renderer: renderFunctions
             },
             '#features-global': {
@@ -891,6 +911,11 @@
             const params = new URLSearchParams(queryString);
             const collection = params.get('collection') || 'main';
 
+            // Ensure tag metadata is loaded for views that use it (functions and similarities)
+            if (hashPath === '#functions' || hashPath === '#function-similarity') {
+                await fetchTagMetadata(collection);
+            }
+
             if (hashPath === '#function-similarity') {
                 // Caching strategy: Use cache ONLY for 'Load More' (append) or 'Switch View' (same query)
                 const queryParams = new URLSearchParams(queryString);
@@ -903,7 +928,6 @@
                 // Skip auto-search on fresh navigation — wait for user to press Search/Enter
                 if (!append && !force && !simSearchRequested) {
                     lastSimilarityQuery = null; // reset so next search always fetches fresh
-                    fetchTagMetadata(collection); // fire-and-forget
                     updateUI(hashPath, new URLSearchParams(queryString), route);
                     document.getElementById('loader').style.display = 'none';
                     document.getElementById('table-body').innerHTML =
@@ -918,8 +942,6 @@
                     params.set('use_cache', 'false');
                 }
                 lastSimilarityQuery = currentQuery;
-
-                fetchTagMetadata(collection); // fire-and-forget, not blocking
             }
 
             // Standard pagination for all search routes
@@ -1165,11 +1187,11 @@
 
                 // --- Inject Tag Cards from URL Params ---
                 const tagFields = [
-                    {key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag']},
-                    {key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag']},
-                    {key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag']}
+                    { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
+                    { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
+                    { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
                 ];
-                
+
                 tagFields.forEach(col => {
                     col.fields.forEach(f => {
                         const values = p.getAll(f);
@@ -1188,6 +1210,64 @@
                     'file_name': 'flt-sim-file_name',
                     'language_id': 'flt-sim-language'
                 });
+            } else if (path === '#functions') {
+                const p = new URLSearchParams(params);
+                if (dataTable) dataTable.style.tableLayout = 'fixed';
+                headHtml += `<tr class="filter-row">
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <input type="text" id="flt-function-name" placeholder="Name..." value="${p.get('function_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <div style="display:flex; gap:2px;">
+                                <input type="text" id="flt-function-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-function-ret_type" placeholder="Return Type..." value="${p.get('return_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                            </div>
+                        </div>
+                    </th>
+                    <th>
+                        <input type="text" id="flt-function-address" placeholder="Addr..." value="${p.get('entrypoint_address') || ''}" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    </th>
+                    <th style="position:relative">
+                        <div class="tag-filter-container" id="tag-container-func">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; })">
+                        </div>
+                    </th>
+                    <th><input type="number" id="flt-function-min_features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-function-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-function-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th style="position:relative">
+                        <div class="tag-filter-container" id="tag-container-file">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; })">
+                        </div>
+                    </th>
+                    <th><input type="text" id="flt-function-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                    <th></th>
+                    <th></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+
+                // Re-inject tags
+                const tagFields = [
+                    { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
+                    { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
+                ];
+                tagFields.forEach(col => {
+                    col.fields.forEach(f => {
+                        const values = p.getAll(f);
+                        const isEx = f.startsWith('exclude_');
+                        const baseType = isEx ? f.substring(8) : f;
+                        values.forEach(v => {
+                            if (v) createTagCard(col.key, baseType, v, isEx);
+                        });
+                    });
+                });
+                loadFieldCardinalities(col, 'func', {
+                    'function_name': 'flt-function-name',
+                    'file_name': 'flt-function-file_name',
+                    'file_md5': 'flt-function-md5',
+                    'return_type': 'flt-function-ret_type',
+                    'language_id': 'flt-function-language',
+                    'namespace': 'flt-function-namespace'
+                });
             } else {
                 settingsEl.style.display = 'none';
                 settingsEl.innerHTML = '';
@@ -1204,34 +1284,17 @@
                     <button onclick="applySearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
                 </div>`;
             } else if (path === '#functions') {
-                if (!document.getElementById('func-filters')) {
-                    const p = new URLSearchParams(params);
-                    searchArea.innerHTML = `<div id="func-filters" class="filter-bar" style="flex-wrap: wrap;">
-                        <input type="text" id="flt-function_name" placeholder="Function Name" value="${p.get('function_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applyFuncSearch(); })">
-                        <div style="display:inline-flex; align-items:center; background:#000; border:1px solid #333; border-radius:4px; padding:0 5px;">
-                            <select id="type-func-tag" style="background:none; border:none; color:var(--accent); font-size:0.75rem; border-right:1px solid #333; margin-right:5px; outline:none;">
-                                <option value="tag" ${p.has('tag') || (!p.has('static_tag') && !p.has('user_tag')) ? 'selected' : ''}>All Tags</option>
-                                <option value="static_tag" ${p.has('static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="user_tag" ${p.has('user_tag') ? 'selected' : ''}>User</option>
-                            </select>
-                            <input type="text" id="flt-tag" placeholder="Tag..." value="${p.get('tag') || p.get('static_tag') || p.get('user_tag') || ''}" style="border:none; background:none;">
-                        </div>
-                        <input type="text" id="flt-file_name" placeholder="File Name" value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applyFuncSearch(); })">
-                        <input type="text" id="flt-file_md5" placeholder="File MD5" value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applyFuncSearch(); })">
-                        <input type="text" id="flt-decompiler_id" placeholder="Decompiler ID" value="${p.get('decompiler_id') || ''}">
-                        <input type="text" id="flt-is_thunk" placeholder="Is Thunk" value="${p.get('is_thunk') || ''}">
-                        <input type="text" id="flt-return_type" placeholder="Return Type" value="${p.get('return_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applyFuncSearch(); })">
-                        <input type="text" id="flt-calling_convention" placeholder="Calling Conv" value="${p.get('calling_convention') || ''}">
-                        <input type="text" id="flt-entrypoint_address" placeholder="Entry Address" value="${p.get('entrypoint_address') || ''}">
-                        <button onclick="applyFuncSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
-                    </div>`;
-                }
-                loadFieldCardinalities(col, 'func', {
-                    'function_name': 'flt-function_name',
-                    'file_name': 'flt-file_name',
-                    'file_md5': 'flt-file_md5',
-                    'return_type': 'flt-return_type'
-                });
+                const p = new URLSearchParams(params);
+                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <input type="text" id="func-search-input" placeholder="Search by Keywords..." value="${p.get('q') || ''}" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()">
+                        <button onclick="applyAdvancedFuncSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="sim-color-by-tag" ${localStorage.getItem('sim-color-by-tag') === 'true' ? 'checked' : ''} onchange="localStorage.setItem('sim-color-by-tag', this.checked); refreshAllRowColors()">
+                        <label for="sim-color-by-tag" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Color by Tag</label>
+                    </div>
+                </div>`;
             } else if (path === '#features-global' && !document.getElementById('feature-search')) {
                 const p = new URLSearchParams(params);
                 searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
@@ -1313,27 +1376,55 @@
             window.location.hash = `${window.location.hash.split('?')[0]}?${params.toString()}`;
         }
 
-        function applyFuncSearch() {
-            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-            const fields = ['function_name', 'file_name', 'file_md5', 'decompiler_id', 'is_thunk', 'return_type', 'calling_convention', 'entrypoint_address'];
-            fields.forEach(f => {
-                const el = document.getElementById('flt-' + f);
-                if (el) {
-                    const val = el.value;
-                    if (val) params.set(f, val);
-                    else params.delete(f);
-                }
-            });
+        function applyAdvancedFuncSearch() {
+            const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+            const params = new URLSearchParams(queryString);
 
-            // Handle Tags
-            const tagVal = document.getElementById('flt-tag')?.value;
-            const tagType = document.getElementById('type-func-tag')?.value || 'tag';
-            ['tag', 'static_tag', 'user_tag'].forEach(t => params.delete(t));
-            if (tagVal) params.set(tagType, tagVal);
+            const globalQ = document.getElementById('func-search-input')?.value;
+            params.set('q', globalQ || '');
+
+            const nameFlt = document.getElementById('flt-function-name')?.value;
+            const addressFlt = document.getElementById('flt-function-address')?.value;
+            const nsFlt = document.getElementById('flt-function-namespace')?.value;
+            const retTypeFlt = document.getElementById('flt-function-ret_type')?.value;
+            const fileNameFlt = document.getElementById('flt-function-file_name')?.value;
+            const md5Flt = document.getElementById('flt-function-md5')?.value;
+            const langFlt = document.getElementById('flt-function-language')?.value;
+            const minFeatFlt = document.getElementById('flt-function-min_features')?.value;
+
+            if (nameFlt) params.set('function_name', nameFlt); else params.delete('function_name');
+            if (addressFlt) params.set('entrypoint_address', addressFlt); else params.delete('entrypoint_address');
+            if (nsFlt) params.set('namespace', nsFlt); else params.delete('namespace');
+            if (retTypeFlt) params.set('return_type', retTypeFlt); else params.delete('return_type');
+            if (fileNameFlt) params.set('file_name', fileNameFlt); else params.delete('file_name');
+            if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
+            if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
+            if (minFeatFlt) params.set('min_features', minFeatFlt); else params.delete('min_features');
+
+            // Dynamic Multi-Tag Collector
+            const tagCols = ['func', 'file'];
+            const allPossibleTagKeys = [
+                'tag', 'static_tag', 'user_tag', 'func_tag', 'func_static_tag', 'func_user_tag', 'file_tag', 'file_static_tag', 'file_user_tag',
+                'exclude_tag', 'exclude_static_tag', 'exclude_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'
+            ];
+            allPossibleTagKeys.forEach(k => params.delete(k));
+
+            tagCols.forEach(colId => {
+                const container = document.getElementById(`tag-container-${colId}`);
+                if (!container) return;
+                const cards = container.querySelectorAll('.tag-filter-card');
+                cards.forEach(card => {
+                    const type = card.dataset.type;
+                    const val = card.dataset.value;
+                    const isEx = card.dataset.exclude === 'true';
+                    const key = (isEx ? 'exclude_' : '') + type;
+                    params.append(key, val);
+                });
+            });
 
             currentOffset = 0;
             isEndOfResults = false;
-            window.location.hash = `#functions?${params.toString()}`;
+            window.location.hash = `${hashPath}?${params.toString()}`;
         }
 
         function switchSimView(mode) {
@@ -1563,63 +1654,51 @@
 
         function renderFunctions(data) {
             return data.map(f => {
-                const meta = f['function_metadata'] || f;
-                const name = meta['function_name'] || 'Unknown';
-                const namespace = meta['namespace'] || '';
-                const parameters = meta['parameters'] || [];
-                const paramsStr = parameters.length > 0 ? `(${parameters.join(', ')})` : '()';
-                const returnType = meta['return_type'] || 'void';
-                const entry = meta['entrypoint_address'] || '';
-                const tags = (meta['tags'] || []).map(t => `<span class="tag-card">${t}</span>`).join('');
-                const fileName = meta['file_name'] || '';
-                const file_md5 = meta['file_md5'] || '';
-                const decompiler = meta['decompiler_id'] || '';
-                const isThunk = meta['is_thunk'] ? 'Yes' : 'No';
-                const retType = meta['return_type'] || 'void';
-                const cc = meta['calling_convention'] || 'unknown';
-                const funcId = meta['function_id'] || `${meta.collection}:function:${file_md5}:${entry}`;
+                const name = f['function_name'] || 'Unknown';
+                const namespace = f['namespace'] || '';
+                const parameters = f['parameters'] || [];
+                const returnType = f['return_type'] || 'void';
+                const entry = f['entrypoint_address'] || '';
+                const tags = f['tags'] || [];
+                const user_tags = f['user_tags'] || [];
+                const fileName = f['file_name'] || '';
+                const file_md5 = f['file_md5'] || '';
+                const language = f['language_id'] || '---';
+                const featCount = f['bsim_features_count'] || 0;
+                const funcId = f['function_id'] || `${f.collection}:func:${file_md5}:${entry}`;
 
-                // BSim features
-                const featCount = meta['bsim_features_count'] || 0;
-                const uniqueCount = meta['bsim_unique_features_count'] || 0;
-
-                // Safe quote escaping for onclick
                 const safeName = (name || '').replace(/'/g, "\\'");
+                const fInfo = formatSigComponent(namespace, returnType, name, parameters);
+                const rowStyle = getRowTagColor(tags, user_tags);
 
                 return `
-                <tr>
-                    <td>
-                        <div style="display:inline-flex; align-items:center; gap:8px;">
-                            <b style="color:var(--accent); cursor:pointer;" 
+                <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${funcId}">
+                    <td class="sim-cell">
+                        <div style="display:flex; align-items:center; gap:8px; overflow:hidden;" title="${fInfo.fullSig}">
+                            <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
                                onmouseenter="showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
                                onmousemove="moveCodePreview(event)"
-                               onmouseleave="hideCodePreview(event)">
-                               ${namespace ? `<span style="color:white; opacity:0.8">${namespace}::</span>` : ''}${name}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                               onmouseleave="hideCodePreview(event)"
+                               onclick="showFunctionCodeById('${funcId}', '${safeName}')">
+                                ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </b>
-                            <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
                         </div>
-                    </td>   
-                    <td class="mono" style="font-size:0.75rem">${entry}</td>
-                    <td>${tags}</td>
-                    <td class="dim" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${fileName}">${fileName}</td>
-                    <td class="mono" style="font-size:0.7rem;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${file_md5}">${file_md5}</td>
-                    <td class="dim" style="font-size:0.7rem;max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${decompiler}">${decompiler}</td>
-                    <td class="dim">${meta['is_thunk'] ? 'Yes' : 'No'}</td>
-                    <td class="dim">${returnType}</td>
-                    <td class="dim">${cc}</td>
-                    <td>
-                        <span class="badge">F: ${featCount}</span><br>
-                        <span class="badge" style="margin-top:2px;display:inline-block">U: ${uniqueCount}</span>
                     </td>
-                    <td class="dim">${formatDate(meta['entry_date'] || meta['file_date'])}</td>
-                    <td>
-                        <div style="display:flex; gap:5px; margin-top:10px;">
-                            <button class="btn-feat-action" onclick="showFeaturePanel('${funcId}')"><span>🔍</span> Features</button>
-                            <button class="btn-code-action" onclick="showFunctionCodeById('${funcId}', '${safeName}')"><span>↗</span> Code</button>
-                            <button class="btn-diff-action" onclick="addToDiff('${funcId}', '${safeName}')"><span>+</span> Add to Diff</button>
+                    <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
+                    <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
+                    <td class="sim-cell" style="text-align:center;">
+                        <div style="display:inline-flex; align-items:center; gap:6px;">
+                            <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
+                            <button class="btn-icon" onclick="showFeaturePanel('${funcId}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                         </div>
+                    </td>
+                    <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
+                    <td class="sim-cell"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${file_md5}"># ${file_md5}</span></td>
+                    <td>${renderTagEditor('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
+                    <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
+                    <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
+                    <td>
+                        <button class="btn-diff-action" onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff"><span>+</span> Diff</button>
                     </td>
                 </tr>
             `}).join('');

@@ -19,48 +19,73 @@ async function fetchTagMetadata(collection) {
     }
 }
 
-function getRowTagColor(tags, userTags = []) {
-    const allTags = [...(tags || []), ...(userTags || [])];
+function getRowTagColor(analysisTags, userTags = []) {
+    // Only use user-defined tags for row coloring as requested
+    const allTags = [...(userTags || [])].filter(t => t && t.trim());
     if (localStorage.getItem('sim-color-by-tag') !== 'true' || allTags.length === 0) return "";
+    
     let bestColor = null;
     let maxPrio = -1;
     allTags.forEach(t => {
         let meta = tagMetadata[t];
         if (t === 'bookmark') meta = { color: '#66d9ef', priority: 1000 };
         if (t === 'ignore') meta = { color: '#f92672', priority: 900 };
-        if (meta && (meta.priority || 0) > maxPrio) {
-            maxPrio = meta.priority || 0;
-            bestColor = meta.color;
+        const color = (meta && meta.color) ? meta.color : '#66d9ef';
+        const priority = (meta && meta.priority !== undefined) ? meta.priority : 0;
+        
+        if (priority >= maxPrio) {
+            maxPrio = priority;
+            bestColor = color;
         }
     });
     if (bestColor) {
-        return `linear-gradient(90deg, ${bestColor}22 0%, transparent 100%)`;
+        return `linear-gradient(90deg, ${bestColor}44 0%, transparent 100%)`;
     }
     return "";
 }
 
 function refreshAllRowColors() {
     const rows = document.querySelectorAll('tr.sim-row');
-    rows.forEach(tr => {
-        const simEditor = tr.querySelector('.sim-tags-editor');
-        if (!simEditor) return;
+    const [hashPath] = (window.location.hash || '#collections').split('?');
+    const isColorEnabled = localStorage.getItem('sim-color-by-tag') === 'true';
 
-        const analystCards = simEditor.querySelectorAll('.sim-tag-card');
-        const analysisCards = simEditor.querySelectorAll('.analysis-tag-badge');
+    rows.forEach(tr => {
+        if (!isColorEnabled) {
+            tr.style.background = "";
+            return;
+        }
+
+        // Only collect tags from the PRIMARY editor of the row
+        let selector = '.entity-tags-editor[data-etype="function"]';
+        if (hashPath === '#function-similarity') {
+            selector = '.sim-tags-editor[data-etype="similarity"]';
+        } else if (hashPath === '#files') {
+            selector = '.entity-tags-editor[data-etype="file"]';
+        }
+
+        const editor = tr.querySelector(selector);
+        if (!editor) {
+            tr.style.background = "";
+            return;
+        }
+
+        const analystCards = editor.querySelectorAll('.sim-tag-card');
+        const analysisCards = editor.querySelectorAll('.analysis-tag-badge');
+        
         const userTags = Array.from(analystCards).map(c => c.textContent.replace('×', '').trim());
         const analysisTags = Array.from(analysisCards).map(c => c.textContent.trim());
 
-        // Check for similarity-level buttons
-        const bookmarkBtn = simEditor.querySelector('.bookmark-btn');
+        const bookmarkBtn = editor.querySelector('.bookmark-btn');
         if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
             if (!userTags.includes('bookmark')) userTags.push('bookmark');
         }
-        const ignoreBtn = simEditor.querySelector('.ignore-btn');
+        const ignoreBtn = editor.querySelector('.ignore-btn');
         if (ignoreBtn && ignoreBtn.classList.contains('active')) {
             if (!userTags.includes('ignore')) userTags.push('ignore');
         }
 
-        tr.style.background = getRowTagColor(analysisTags, userTags);
+        const rowColor = getRowTagColor(analysisTags, userTags);
+        tr.style.background = rowColor;
     });
 }
 

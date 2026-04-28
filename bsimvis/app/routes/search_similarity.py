@@ -138,8 +138,8 @@ def similarity_search():
         return jsonify({"detail": "Invalid numeric parameter"}), 400
 
     # Filtering parameters
-    search_q = request.args.get("q", "").lower()
-    name_filter = request.args.get("name", "").lower()
+    search_q = request.args.get("q", "").lower().strip()
+    name_filter = request.args.get("name", "").lower().strip()
 
     # Tag related filters (now lists)
     tag_filters = request.args.getlist("tag")
@@ -154,13 +154,14 @@ def similarity_search():
     func_static_tag_filters = request.args.getlist("func_static_tag")
     func_user_tag_filters = request.args.getlist("func_user_tag")
 
-    lang_filter = request.args.get("language", "").lower()
-    namespace_filter = request.args.get("namespace", "").lower()
-    ret_type_filter = request.args.get("ret_type", "").lower()
-    address_filter = request.args.get("address", "").lower()
+    lang_filter = request.args.get("language", "").lower().strip()
+    namespace_filter = request.args.get("namespace", "").lower().strip()
+    ret_type_filter = request.args.get("ret_type", "").lower().strip()
+    address_filter = request.args.get("address", "").lower().strip()
     file_tag_filters = request.args.getlist("file_tag")
     file_static_tag_filters = request.args.getlist("file_static_tag")
     file_user_tag_filters = request.args.getlist("file_user_tag")
+    file_name_filter = request.args.get("file_name", "").lower().strip()
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
 
@@ -220,13 +221,14 @@ def similarity_search():
         for f in [
             "md5",
             "id",
-            "language_id",
+            "language",
             "batch_uuid",
             "namespace",
             "ret_type",
             "address",
             "q",
             "name",
+            "file_name",
         ]:
             v = request.args.get(f)
             if v:
@@ -518,6 +520,7 @@ def similarity_search():
                     (file_tag_filters, "file_tag", ["file"], ["tags", "user_tags"]),
                     (file_static_tag_filters, "file_static_tag", ["file"], ["tags"]),
                     (file_user_tag_filters, "file_user_tag", ["file"], ["user_tags"]),
+                    (file_name_filter, "file_name", ["func", "file"], ["file_name"]),
                 ]
 
                 for f_v, label, levels, allowed in filter_configs:

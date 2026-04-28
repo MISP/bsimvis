@@ -578,6 +578,36 @@
             animation: spin 1s linear infinite;
             margin-bottom: 15px;
         }
+
+        /* Exclusion Toggle */
+        .btn-ex {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid #333;
+            color: #666;
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-size: 0.65rem;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 18px;
+        }
+
+        .btn-ex:hover {
+            background: rgba(255, 77, 141, 0.1);
+            border-color: #ff4d8d;
+            color: #ff4d8d;
+        }
+
+        .btn-ex.active {
+            background: rgba(255, 77, 141, 0.2);
+            border-color: #ff4d8d;
+            color: #ff4d8d;
+            box-shadow: 0 0 5px rgba(255, 77, 141, 0.3);
+        }
     </style>
 
 <body>
@@ -996,13 +1026,15 @@
                             <span class="dim" style="font-size:0.6rem">-</span>
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
-                        <div style="margin-top:4px; display:flex; gap:2px;">
+                        <div style="margin-top:4px; display:flex; gap:2px; align-items:center;">
                             <select id="type-sim-sim-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
-                                <option value="sim_tag" ${p.has('sim_tag') || (!p.has('sim_static_tag') && !p.has('sim_user_tag')) ? 'selected' : ''}>All</option>
-                                <option value="sim_static_tag" ${p.has('sim_static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="sim_user_tag" ${p.has('sim_user_tag') ? 'selected' : ''}>User</option>
+                                <option value="sim_tag" ${p.has('sim_tag') || p.has('exclude_sim_tag') || (!p.has('sim_static_tag') && !p.has('sim_user_tag') && !p.has('exclude_sim_static_tag') && !p.has('exclude_sim_user_tag')) ? 'selected' : ''}>All</option>
+                                <option value="sim_static_tag" ${p.has('sim_static_tag') || p.has('exclude_sim_static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="sim_user_tag" ${p.has('sim_user_tag') || p.has('exclude_sim_user_tag') ? 'selected' : ''}>User</option>
                             </select>
-                            <input type="text" id="flt-sim-sim-tag" placeholder="Tag..." value="${p.get('sim_tag') || p.get('sim_static_tag') || p.get('sim_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); width:65%;">
+                            <input type="text" id="flt-sim-sim-tag" placeholder="Tag..." value="${p.get('sim_tag') || p.get('sim_static_tag') || p.get('sim_user_tag') || p.get('exclude_sim_tag') || p.get('exclude_sim_static_tag') || p.get('exclude_sim_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); flex:1; min-width:0;">
+                            <button class="btn-ex ${p.has('exclude_sim_tag') || p.has('exclude_sim_static_tag') || p.has('exclude_sim_user_tag') ? 'active' : ''}" 
+                                    id="ex-sim-sim-tag" title="Exclude this tag" onclick="this.classList.toggle('active'); applySimSearch()">!</button>
                         </div>
                     </th>
                     <th>
@@ -1018,26 +1050,30 @@
                         <input type="text" id="flt-sim-address" placeholder="Addr..." value="${p.get('address') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                     </th>
                     <th style="position:relative">
-                        <div style="display:flex; gap:2px;">
-                            <select id="type-sim-func-tag" onchange="applySimSearch()" style="width:40%; font-size:0.65rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
-                                <option value="func_tag" ${p.has('func_tag') || p.has('tag') || (!p.has('static_tag') && !p.has('user_tag') && !p.has('func_static_tag') && !p.has('func_user_tag')) ? 'selected' : ''}>All</option>
-                                <option value="func_static_tag" ${p.has('func_static_tag') || p.has('static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="func_user_tag" ${p.has('func_user_tag') || p.has('user_tag') ? 'selected' : ''}>User</option>
+                        <div style="display:flex; gap:2px; align-items:center;">
+                            <select id="type-sim-func-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
+                                <option value="func_tag" ${p.has('func_tag') || p.has('exclude_func_tag') || p.has('tag') || p.has('exclude_tag') || (!p.has('static_tag') && !p.has('user_tag') && !p.has('func_static_tag') && !p.has('func_user_tag') && !p.has('exclude_static_tag') && !p.has('exclude_user_tag') && !p.has('exclude_func_static_tag') && !p.has('exclude_func_user_tag')) ? 'selected' : ''}>All</option>
+                                <option value="func_static_tag" ${p.has('func_static_tag') || p.has('static_tag') || p.has('exclude_func_static_tag') || p.has('exclude_static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="func_user_tag" ${p.has('func_user_tag') || p.has('user_tag') || p.has('exclude_func_user_tag') || p.has('exclude_user_tag') ? 'selected' : ''}>User</option>
                             </select>
-                            <input type="text" id="flt-sim-func-tag" placeholder="Tag..." value="${p.get('func_tag') || p.get('tag') || p.get('static_tag') || p.get('user_tag') || p.get('func_static_tag') || p.get('func_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; width: 60%; box-sizing: border-box;">
+                            <input type="text" id="flt-sim-func-tag" placeholder="Tag..." value="${p.get('func_tag') || p.get('tag') || p.get('static_tag') || p.get('user_tag') || p.get('func_static_tag') || p.get('func_user_tag') || p.get('exclude_func_tag') || p.get('exclude_tag') || p.get('exclude_static_tag') || p.get('exclude_user_tag') || p.get('exclude_func_static_tag') || p.get('exclude_func_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; min-width:0;">
+                            <button class="btn-ex ${p.has('exclude_func_tag') || p.has('exclude_func_static_tag') || p.has('exclude_func_user_tag') || p.has('exclude_tag') || p.has('exclude_static_tag') || p.has('exclude_user_tag') ? 'active' : ''}" 
+                                    id="ex-sim-func-tag" title="Exclude this tag" onclick="this.classList.toggle('active'); applySimSearch()">!</button>
                         </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th style="position:relative">
-                        <div style="display:flex; gap:2px;">
-                            <select id="type-sim-file-tag" onchange="applySimSearch()" style="width:40%; font-size:0.65rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
-                                <option value="file_tag" ${p.has('file_tag') || (!p.has('file_static_tag') && !p.has('file_user_tag')) ? 'selected' : ''}>All</option>
-                                <option value="file_static_tag" ${p.has('file_static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="file_user_tag" ${p.has('file_user_tag') ? 'selected' : ''}>User</option>
+                        <div style="display:flex; gap:2px; align-items:center;">
+                            <select id="type-sim-file-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
+                                <option value="file_tag" ${p.has('file_tag') || p.has('exclude_file_tag') || (!p.has('file_static_tag') && !p.has('file_user_tag') && !p.has('exclude_file_static_tag') && !p.has('exclude_file_user_tag')) ? 'selected' : ''}>All</option>
+                                <option value="file_static_tag" ${p.has('file_static_tag') || p.has('exclude_file_static_tag') ? 'selected' : ''}>Static</option>
+                                <option value="file_user_tag" ${p.has('file_user_tag') || p.has('exclude_file_user_tag') ? 'selected' : ''}>User</option>
                             </select>
-                            <input type="text" id="flt-sim-file_tag" placeholder="Tag..." value="${p.get('file_tag') || p.get('file_static_tag') || p.get('file_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; width: 60%; box-sizing: border-box;">
+                            <input type="text" id="flt-sim-file_tag" placeholder="Tag..." value="${p.get('file_tag') || p.get('file_static_tag') || p.get('file_user_tag') || p.get('exclude_file_tag') || p.get('exclude_file_static_tag') || p.get('exclude_file_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; min-width:0;">
+                            <button class="btn-ex ${p.has('exclude_file_tag') || p.has('exclude_file_static_tag') || p.has('exclude_file_user_tag') ? 'active' : ''}" 
+                                    id="ex-sim-file-tag" title="Exclude this tag" onclick="this.classList.toggle('active'); applySimSearch()">!</button>
                         </div>
                     </th>
                     <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
@@ -1279,16 +1315,20 @@
             if (fileNameFlt) params.set('file_name', fileNameFlt); else params.delete('file_name');
 
             // Handle File Tags
-            ['file_tag', 'file_static_tag', 'file_user_tag'].forEach(t => params.delete(t));
-            if (fileTagFlt) params.set(fileTagType, fileTagFlt);
+            const fileEx = document.getElementById('ex-sim-file-tag')?.classList.contains('active');
+            ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'].forEach(t => params.delete(t));
+            if (fileTagFlt) params.set((fileEx ? 'exclude_' : '') + fileTagType, fileTagFlt);
 
-            // Per-column filters (re-apply others if needed)
-            ['tag', 'static_tag', 'user_tag', 'func_tag', 'func_static_tag', 'func_user_tag'].forEach(t => params.delete(t));
-            if (funcTagFlt) params.set(funcTagType, funcTagFlt);
+            // Handle Func Tags
+            const funcEx = document.getElementById('ex-sim-func-tag')?.classList.contains('active');
+            ['tag', 'static_tag', 'user_tag', 'func_tag', 'func_static_tag', 'func_user_tag', 
+             'exclude_tag', 'exclude_static_tag', 'exclude_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag'].forEach(t => params.delete(t));
+            if (funcTagFlt) params.set((funcEx ? 'exclude_' : '') + funcTagType, funcTagFlt);
 
-            // Handle Sim Tags (Column 2)
-            ['sim_tag', 'sim_static_tag', 'sim_user_tag'].forEach(t => params.delete(t));
-            if (simTagFlt) params.set(simTagType, simTagFlt);
+            // Handle Sim Tags
+            const simEx = document.getElementById('ex-sim-sim-tag')?.classList.contains('active');
+            ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'].forEach(t => params.delete(t));
+            if (simTagFlt) params.set((simEx ? 'exclude_' : '') + simTagType, simTagFlt);
 
             params.delete('md5');
             if (md5Flt) {

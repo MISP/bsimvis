@@ -162,6 +162,23 @@ def similarity_search():
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
 
+    # Tag Exclusion filters
+    ex_tag_filter = request.args.get("exclude_tag", "").lower()
+    ex_static_tag_filter = request.args.get("exclude_static_tag", "").lower()
+    ex_user_tag_filter = request.args.get("exclude_user_tag", "").lower()
+
+    ex_sim_tag_filter = request.args.get("exclude_sim_tag", "").lower()
+    ex_sim_static_tag_filter = request.args.get("exclude_sim_static_tag", "").lower()
+    ex_sim_user_tag_filter = request.args.get("exclude_sim_user_tag", "").lower()
+
+    ex_func_tag_filter = request.args.get("exclude_func_tag", "").lower()
+    ex_func_static_tag_filter = request.args.get("exclude_func_static_tag", "").lower()
+    ex_func_user_tag_filter = request.args.get("exclude_func_user_tag", "").lower()
+
+    ex_file_tag_filter = request.args.get("exclude_file_tag", "").lower()
+    ex_file_static_tag_filter = request.args.get("exclude_file_static_tag", "").lower()
+    ex_file_user_tag_filter = request.args.get("exclude_file_user_tag", "").lower()
+
     try:
         pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
     except (ValueError, TypeError):
@@ -222,8 +239,15 @@ def similarity_search():
             "file_static_tag": file_static_tag_filter,
             "file_user_tag": file_user_tag_filter,
         }
-        # Include all other filters
-        for f in ["md5", "id", "language_id", "batch_uuid", "namespace", "ret_type", "address", "file_tag", "file_static_tag", "file_user_tag"]:
+        # Include all other filters & exclusions
+        for f in [
+            "md5", "id", "language_id", "batch_uuid", "namespace", "ret_type", "address", 
+            "file_tag", "file_static_tag", "file_user_tag",
+            "exclude_tag", "exclude_static_tag", "exclude_user_tag",
+            "exclude_sim_tag", "exclude_sim_static_tag", "exclude_sim_user_tag",
+            "exclude_func_tag", "exclude_func_static_tag", "exclude_func_user_tag",
+            "exclude_file_tag", "exclude_file_static_tag", "exclude_file_user_tag"
+        ]:
             v = request.args.get(f)
             if v:
                 cache_params[f] = v.strip().lower()
@@ -378,7 +402,7 @@ def similarity_search():
 
                     return matches
 
-                def add_group(sub_matches, field_name="q"):
+                def add_group(sub_matches, field_name="q", exclude=False):
                     """
                     Adds a metadata group to the Lua config.
                     Supports sub_groups for OR logic within a single search term.
@@ -445,7 +469,8 @@ def similarity_search():
                             "type": "metadata",
                             "field": field_name,
                             "sub_groups": normalized_subs,
-                            "weight": total_weight,
+                            "weight": total_weight if not exclude else 99999999,
+                            "exclude": exclude
                         }
                     )
 
@@ -509,6 +534,40 @@ def similarity_search():
                             )
 
                         add_group(all_matches, field_name=label)
+
+                # --- EXCLUSION CONFIGURATION ---
+                exclude_configs = [
+                    # General Tag Exclusion
+                    (ex_tag_filter, "ex_tags", ["sim", "func", "file"], ["tags", "user_tags"]),
+                    (ex_static_tag_filter, "ex_static_tags", ["sim", "func", "file"], ["tags"]),
+                    (ex_user_tag_filter, "ex_user_tags", ["func", "file"], ["user_tags"]),
+                    
+                    # Sim Tag Exclusion
+                    (ex_sim_tag_filter, "ex_sim_tags", ["sim"], ["tags", "user_tags"]),
+                    (ex_sim_static_tag_filter, "ex_sim_static_tags", ["sim"], ["tags"]),
+                    (ex_sim_user_tag_filter, "ex_sim_user_tags", ["sim"], ["user_tags"]),
+                    
+                    # Func Tag Exclusion
+                    (ex_func_tag_filter, "ex_func_tags", ["func"], ["tags", "user_tags"]),
+                    (ex_func_static_tag_filter, "ex_func_static_tags", ["func"], ["tags"]),
+                    (ex_func_user_tag_filter, "ex_func_user_tags", ["func"], ["user_tags"]),
+                    
+                    # File Tag Exclusion
+                    (ex_file_tag_filter, "ex_file_tags", ["file"], ["tags", "user_tags"]),
+                    (ex_file_static_tag_filter, "ex_file_static_tags", ["file"], ["tags"]),
+                    (ex_file_user_tag_filter, "ex_file_user_tags", ["file"], ["user_tags"]),
+                ]
+
+                for ex_val, label, levels, allowed in exclude_configs:
+                    if ex_val:
+                        all_matches = []
+                        for lvl in levels:
+                            matches = get_group_targets(lvl, ex_val, allowed_fields=allowed)
+                            if matches:
+                                all_matches.extend(matches)
+                        
+                        if all_matches:
+                            add_group(all_matches, field_name=label, exclude=True)
 
                 if md5_filters:
                     all_md5_base_ids = []

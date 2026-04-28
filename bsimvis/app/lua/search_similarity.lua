@@ -38,7 +38,7 @@ local score_map = nil  -- sid -> score (if narrow range)
 
 -- Identify Producer and handle pre-loading
 for idx, g in ipairs(groups) do
-    if not producer and (g.type == "score_range" or g.type == "feature_range" or g.type == "metadata" or g.type == "direct_zset") then
+    if not producer and not g.exclude and (g.type == "score_range" or g.type == "feature_range" or g.type == "metadata" or g.type == "direct_zset") then
         producer = g
         producer.idx = idx
     end
@@ -146,10 +146,18 @@ for i=1, #raw, 2 do
             -- In-Memory Map Check (Fast Intersect)
             local map = filter_maps[idx]
             if map then
-                if not map[sid] then
-                    -- Check constituent FIDs (Deep Join)
+                if g.exclude then
+                    -- Exclusion Check (Filter-Out logic)
+                    if map[sid] then match = false; break end
                     if not id1 then id1, id2 = extract_ids(sid) end
-                    if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+                    if id1 and (map[id1] or map[id2]) then match = false; break end
+                else
+                    -- Normal Inclusion Check (In-Memory Intersect)
+                    if not map[sid] then
+                        -- Check constituent FIDs (Deep Join)
+                        if not id1 then id1, id2 = extract_ids(sid) end
+                        if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+                    end
                 end
             end
         elseif g.type == "direct_zset" then

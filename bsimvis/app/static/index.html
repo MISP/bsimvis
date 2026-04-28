@@ -579,34 +579,104 @@
             margin-bottom: 15px;
         }
 
-        /* Exclusion Toggle */
-        .btn-ex {
-            background: rgba(255,255,255,0.05);
-            border: 1px solid #333;
-            color: #666;
-            cursor: pointer;
-            padding: 2px 4px;
-            border-radius: 2px;
-            font-size: 0.65rem;
-            font-weight: bold;
-            transition: all 0.2s;
+        /* Dynamic Tag Filters */
+        .tag-filter-container {
             display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            padding: 4px;
+            background: #000;
+            border: 1px solid #333;
+            border-radius: 4px;
+            min-height: 28px;
+            max-height: 75px; 
+            overflow-y: auto;
             align-items: center;
-            justify-content: center;
-            min-width: 18px;
         }
 
-        .btn-ex:hover {
-            background: rgba(255, 77, 141, 0.1);
-            border-color: #ff4d8d;
-            color: #ff4d8d;
+        .tag-filter-container::-webkit-scrollbar {
+            width: 2px;
+        }
+        .tag-filter-container::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 2px;
         }
 
-        .btn-ex.active {
-            background: rgba(255, 77, 141, 0.2);
+        .tag-filter-card {
+            display: inline-flex;
+            align-items: center;
+            background: #1a1a1a;
+            border: 1px solid var(--accent);
+            border-radius: 3px;
+            padding: 1px 5px;
+            gap: 5px;
+            font-size: 0.65rem;
+            color: var(--text);
+            animation: fadeIn 0.15s ease-out;
+            white-space: nowrap;
+        }
+
+        .tag-filter-card.exclude {
             border-color: #ff4d8d;
+            background: rgba(255, 77, 141, 0.05);
+        }
+
+        /* Removed tag-filter-card select styles as select is removed */
+
+        .tag-filter-card .tag-text {
+            font-weight: bold;
+            max-width: 80px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .tag-filter-card .btn-card-ex {
+            cursor: pointer;
+            color: #75715e;
+            transition: all 0.2s;
+            font-weight: bold;
+            font-size: 0.6rem;
+            padding: 0 4px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 2px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .tag-filter-card.exclude .btn-card-ex {
+            color: #fff;
+            background: #ff4d8d;
+            border-color: #ff4d8d;
+        }
+
+        .btn-card-remove {
+            cursor: pointer;
             color: #ff4d8d;
-            box-shadow: 0 0 5px rgba(255, 77, 141, 0.3);
+            opacity: 0.5;
+            transition: opacity 0.2s;
+            font-weight: bold;
+            margin-left: 2px;
+            font-size: 0.8rem;
+        }
+
+        .btn-card-remove:hover {
+            opacity: 1;
+        }
+
+        .tag-filter-add {
+            flex: 1;
+            min-width: 40px;
+            background: none !important;
+            border: none !important;
+            color: #fff !important;
+            font-size: 0.65rem !important;
+            padding: 1px 4px !important;
+            outline: none !important;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
         }
     </style>
 
@@ -800,6 +870,35 @@
             const full_hash = hashPath + (queryString ? '?' + queryString : '');
             const route = routes[hashPath];
             if (!route) return;
+
+            // Default: NOT ignore for similarity view if NO tags are specified for a column
+            if (hashPath === '#function-similarity') {
+                const pC = new URLSearchParams(queryString);
+                let changed = false;
+
+                const hasFunc = pC.has('func_tag') || pC.has('exclude_func_tag') ||
+                    pC.has('func_static_tag') || pC.has('exclude_func_static_tag') ||
+                    pC.has('func_user_tag') || pC.has('exclude_func_user_tag') ||
+                    pC.has('tag') || pC.has('exclude_tag') ||
+                    pC.has('static_tag') || pC.has('exclude_static_tag') ||
+                    pC.has('user_tag') || pC.has('exclude_user_tag');
+                if (!hasFunc) { pC.set('exclude_func_tag', 'ignore'); changed = true; }
+
+                const hasSim = pC.has('sim_tag') || pC.has('exclude_sim_tag') ||
+                    pC.has('sim_static_tag') || pC.has('exclude_sim_static_tag') ||
+                    pC.has('sim_user_tag') || pC.has('exclude_sim_user_tag');
+                if (!hasSim) { pC.set('exclude_sim_tag', 'ignore'); changed = true; }
+
+                const hasFile = pC.has('file_tag') || pC.has('exclude_file_tag') ||
+                    pC.has('file_static_tag') || pC.has('exclude_file_static_tag') ||
+                    pC.has('file_user_tag') || pC.has('exclude_file_user_tag');
+                if (!hasFile) { pC.set('exclude_file_tag', 'ignore'); changed = true; }
+
+                if (changed) {
+                    window.location.hash = hashPath + '?' + pC.toString();
+                    return;
+                }
+            }
 
             if (full_hash !== lastHashPath || !append) {
                 currentOffset = 0;
@@ -1026,15 +1125,8 @@
                             <span class="dim" style="font-size:0.6rem">-</span>
                             <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
                         </div>
-                        <div style="margin-top:4px; display:flex; gap:2px; align-items:center;">
-                            <select id="type-sim-sim-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
-                                <option value="sim_tag" ${p.has('sim_tag') || p.has('exclude_sim_tag') || (!p.has('sim_static_tag') && !p.has('sim_user_tag') && !p.has('exclude_sim_static_tag') && !p.has('exclude_sim_user_tag')) ? 'selected' : ''}>All</option>
-                                <option value="sim_static_tag" ${p.has('sim_static_tag') || p.has('exclude_sim_static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="sim_user_tag" ${p.has('sim_user_tag') || p.has('exclude_sim_user_tag') ? 'selected' : ''}>User</option>
-                            </select>
-                            <input type="text" id="flt-sim-sim-tag" placeholder="Tag..." value="${p.get('sim_tag') || p.get('sim_static_tag') || p.get('sim_user_tag') || p.get('exclude_sim_tag') || p.get('exclude_sim_static_tag') || p.get('exclude_sim_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); flex:1; min-width:0;">
-                            <button class="btn-ex ${p.has('exclude_sim_tag') || p.has('exclude_sim_static_tag') || p.has('exclude_sim_user_tag') ? 'active' : ''}" 
-                                    id="ex-sim-sim-tag" title="Exclude this tag" onclick="this.classList.toggle('active'); applySimSearch()">!</button>
+                        <div class="tag-filter-container" id="tag-container-sim">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; applySimSearch(); })">
                         </div>
                     </th>
                     <th>
@@ -1050,30 +1142,16 @@
                         <input type="text" id="flt-sim-address" placeholder="Addr..." value="${p.get('address') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                     </th>
                     <th style="position:relative">
-                        <div style="display:flex; gap:2px; align-items:center;">
-                            <select id="type-sim-func-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
-                                <option value="func_tag" ${p.has('func_tag') || p.has('exclude_func_tag') || p.has('tag') || p.has('exclude_tag') || (!p.has('static_tag') && !p.has('user_tag') && !p.has('func_static_tag') && !p.has('func_user_tag') && !p.has('exclude_static_tag') && !p.has('exclude_user_tag') && !p.has('exclude_func_static_tag') && !p.has('exclude_func_user_tag')) ? 'selected' : ''}>All</option>
-                                <option value="func_static_tag" ${p.has('func_static_tag') || p.has('static_tag') || p.has('exclude_func_static_tag') || p.has('exclude_static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="func_user_tag" ${p.has('func_user_tag') || p.has('user_tag') || p.has('exclude_func_user_tag') || p.has('exclude_user_tag') ? 'selected' : ''}>User</option>
-                            </select>
-                            <input type="text" id="flt-sim-func-tag" placeholder="Tag..." value="${p.get('func_tag') || p.get('tag') || p.get('static_tag') || p.get('user_tag') || p.get('func_static_tag') || p.get('func_user_tag') || p.get('exclude_func_tag') || p.get('exclude_tag') || p.get('exclude_static_tag') || p.get('exclude_user_tag') || p.get('exclude_func_static_tag') || p.get('exclude_func_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; min-width:0;">
-                            <button class="btn-ex ${p.has('exclude_func_tag') || p.has('exclude_func_static_tag') || p.has('exclude_func_user_tag') || p.has('exclude_tag') || p.has('exclude_static_tag') || p.has('exclude_user_tag') ? 'active' : ''}" 
-                                    id="ex-sim-func-tag" title="Exclude this tag" onclick="this.classList.toggle('active'); applySimSearch()">!</button>
+                        <div class="tag-filter-container" id="tag-container-func">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; applySimSearch(); })">
                         </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th style="position:relative">
-                        <div style="display:flex; gap:2px; align-items:center;">
-                            <select id="type-sim-file-tag" onchange="applySimSearch()" style="width:35%; font-size:0.6rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
-                                <option value="file_tag" ${p.has('file_tag') || p.has('exclude_file_tag') || (!p.has('file_static_tag') && !p.has('file_user_tag') && !p.has('exclude_file_static_tag') && !p.has('exclude_file_user_tag')) ? 'selected' : ''}>All</option>
-                                <option value="file_static_tag" ${p.has('file_static_tag') || p.has('exclude_file_static_tag') ? 'selected' : ''}>Static</option>
-                                <option value="file_user_tag" ${p.has('file_user_tag') || p.has('exclude_file_user_tag') ? 'selected' : ''}>User</option>
-                            </select>
-                            <input type="text" id="flt-sim-file_tag" placeholder="Tag..." value="${p.get('file_tag') || p.get('file_static_tag') || p.get('file_user_tag') || p.get('exclude_file_tag') || p.get('exclude_file_static_tag') || p.get('exclude_file_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; min-width:0;">
-                            <button class="btn-ex ${p.has('exclude_file_tag') || p.has('exclude_file_static_tag') || p.has('exclude_file_user_tag') ? 'active' : ''}" 
-                                    id="ex-sim-file-tag" title="Exclude this tag" onclick="this.classList.toggle('active'); applySimSearch()">!</button>
+                        <div class="tag-filter-container" id="tag-container-file">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; applySimSearch(); })">
                         </div>
                     </th>
                     <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
@@ -1092,6 +1170,24 @@
                     </th>
                 </tr>`;
                 thead.innerHTML = headHtml;
+
+                // --- Inject Tag Cards from URL Params ---
+                const tagFields = [
+                    {key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag']},
+                    {key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag']},
+                    {key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag']}
+                ];
+                
+                tagFields.forEach(col => {
+                    col.fields.forEach(f => {
+                        const values = p.getAll(f);
+                        const isEx = f.startsWith('exclude_');
+                        const baseType = isEx ? f.substring(8) : f;
+                        values.forEach(v => {
+                            if (v) createTagCard(col.key, baseType, v, isEx);
+                        });
+                    });
+                });
                 loadFieldCardinalities(col, 'func', {
                     'function_name': 'flt-sim-name',
                     'namespace': 'flt-sim-namespace',
@@ -1300,36 +1396,36 @@
             const nsFlt = document.getElementById('flt-sim-namespace')?.value;
             const retTypeFlt = document.getElementById('flt-sim-ret_type')?.value;
             const fileNameFlt = document.getElementById('flt-sim-file_name')?.value;
-            const fileTagFlt = document.getElementById('flt-sim-file_tag')?.value;
-            const fileTagType = document.getElementById('type-sim-file-tag')?.value || 'file_tag';
-            const funcTagFlt = document.getElementById('flt-sim-func-tag')?.value;
-            const funcTagType = document.getElementById('type-sim-func-tag')?.value || 'func_tag';
-            const simTagFlt = document.getElementById('flt-sim-sim-tag')?.value;
-            const simTagType = document.getElementById('type-sim-sim-tag')?.value || 'sim_tag';
-            const md5Flt = document.getElementById('flt-sim-md5')?.value;
 
             if (nameFlt) params.set('name', nameFlt); else params.delete('name');
             if (addressFlt) params.set('address', addressFlt); else params.delete('address');
             if (nsFlt) params.set('namespace', nsFlt); else params.delete('namespace');
             if (retTypeFlt) params.set('ret_type', retTypeFlt); else params.delete('ret_type');
             if (fileNameFlt) params.set('file_name', fileNameFlt); else params.delete('file_name');
+            // Dynamic Multi-Tag Collector
+            const tagCols = ['sim', 'func', 'file'];
+            const allPossibleTagKeys = [
+                'tag', 'static_tag', 'user_tag', 'sim_tag', 'sim_static_tag', 'sim_user_tag',
+                'func_tag', 'func_static_tag', 'func_user_tag', 'file_tag', 'file_static_tag', 'file_user_tag',
+                'exclude_tag', 'exclude_static_tag', 'exclude_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag',
+                'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'
+            ];
+            allPossibleTagKeys.forEach(k => params.delete(k));
 
-            // Handle File Tags
-            const fileEx = document.getElementById('ex-sim-file-tag')?.classList.contains('active');
-            ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'].forEach(t => params.delete(t));
-            if (fileTagFlt) params.set((fileEx ? 'exclude_' : '') + fileTagType, fileTagFlt);
+            tagCols.forEach(colId => {
+                const container = document.getElementById(`tag-container-${colId}`);
+                if (!container) return;
+                const cards = container.querySelectorAll('.tag-filter-card');
+                cards.forEach(card => {
+                    const type = card.dataset.type;
+                    const val = card.dataset.value;
+                    const isEx = card.dataset.exclude === 'true';
+                    const key = (isEx ? 'exclude_' : '') + type;
+                    params.append(key, val);
+                });
+            });
 
-            // Handle Func Tags
-            const funcEx = document.getElementById('ex-sim-func-tag')?.classList.contains('active');
-            ['tag', 'static_tag', 'user_tag', 'func_tag', 'func_static_tag', 'func_user_tag', 
-             'exclude_tag', 'exclude_static_tag', 'exclude_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag'].forEach(t => params.delete(t));
-            if (funcTagFlt) params.set((funcEx ? 'exclude_' : '') + funcTagType, funcTagFlt);
-
-            // Handle Sim Tags
-            const simEx = document.getElementById('ex-sim-sim-tag')?.classList.contains('active');
-            ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'].forEach(t => params.delete(t));
-            if (simTagFlt) params.set((simEx ? 'exclude_' : '') + simTagType, simTagFlt);
-
+            const md5Flt = document.getElementById('flt-sim-md5')?.value;
             params.delete('md5');
             if (md5Flt) {
                 const md5s = md5Flt.split(/[\s,]+/).filter(x => x.length > 0);
@@ -1339,6 +1435,50 @@
             currentOffset = 0;
             isEndOfResults = false;
             window.location.hash = `${hashPath}?${params.toString()}`;
+        }
+
+        // --- Dynamic Tag Cards JS Helpers ---
+        function createTagCard(columnId, type, value, isExclude = false) {
+            const container = document.getElementById(`tag-container-${columnId}`);
+            if (!container) return;
+
+            // Avoid duplicates
+            const existing = Array.from(container.querySelectorAll('.tag-filter-card')).find(c => c.dataset.value === value && c.dataset.type === type);
+            if (existing) return;
+
+            const card = document.createElement('div');
+            card.className = `tag-filter-card ${isExclude ? 'exclude' : ''}`;
+            card.dataset.value = value;
+            card.dataset.type = type;
+            card.dataset.exclude = isExclude;
+
+            card.innerHTML = `
+                <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
+                <span class="tag-text" title="${value}">${value}</span>
+                <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove(); applySimSearch()">×</span>
+            `;
+
+            container.insertBefore(card, container.querySelector('.tag-filter-add'));
+        }
+
+        function toggleCardExclude(btn) {
+            const card = btn.parentElement;
+            const isExclude = card.classList.toggle('exclude');
+            card.dataset.exclude = isExclude;
+            applySimSearch();
+        }
+
+        function handleTagAdd(event, columnId) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const val = event.target.value.trim();
+                if (val) {
+                    let type = (columnId === 'sim' ? 'sim_tag' : (columnId === 'func' ? 'func_tag' : 'file_tag'));
+                    createTagCard(columnId, type, val);
+                    event.target.value = '';
+                    applySimSearch();
+                }
+            }
         }
 
         function renderPagination(path) {

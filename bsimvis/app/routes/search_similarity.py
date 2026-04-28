@@ -16,8 +16,6 @@ CACHE_TIME_THRESHOLD = 0.1  # Only cache requests that take more than X seconds
 MAX_CACHED_RESULTS = 10000
 
 
-
-
 @search_similarity_bp.route("/api/search/autocomplete", methods=["GET"])
 def autocomplete():
     col = request.args.get("collection")
@@ -39,30 +37,31 @@ def autocomplete():
 
         # Search pattern: for better performance we match the whole bucket key
         match_pat = f"*{query}*"
-        
 
         try:
             # Parse key to get the suffix
             count_found = 0
             pipe = r.pipeline()
             candidate_buckets = []
-            
+
             for bucket in r.sscan_iter(registry_key, match=match_pat, count=1000):
-                bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
-                
+                bucket_str = (
+                    bucket.decode() if isinstance(bucket, bytes) else str(bucket)
+                )
+
                 if bucket_str.startswith(prefix):
-                    val = bucket_str[len(prefix):]
+                    val = bucket_str[len(prefix) :]
                     if query in val.lower():
                         candidate_buckets.append((val, bucket_str))
                         count_found += 1
-                
+
                 if count_found >= 100:
                     break
 
             # Batch fetch cardinalities
             for val, b_key in candidate_buckets:
                 pipe.scard(b_key)
-            
+
             counts = pipe.execute()
             for (val, b_key), count in zip(candidate_buckets, counts):
                 results.append({"value": val, "count": count})
@@ -77,12 +76,16 @@ def autocomplete():
         if v not in unique_results or item["count"] > unique_results[v]["count"]:
             unique_results[v] = item
 
-    final_results = sorted(unique_results.values(), key=lambda x: (len(x["value"]), x["value"]))[:limit]
-    
-    return jsonify({
-        "results": final_results,
-        "cardinality": r.scard(registry_key) if r.exists(registry_key) else 0
-    })
+    final_results = sorted(
+        unique_results.values(), key=lambda x: (len(x["value"]), x["value"])
+    )[:limit]
+
+    return jsonify(
+        {
+            "results": final_results,
+            "cardinality": r.scard(registry_key) if r.exists(registry_key) else 0,
+        }
+    )
 
 
 @search_similarity_bp.route("/api/search/fields", methods=["GET"])
@@ -90,21 +93,20 @@ def get_field_stats():
     col = request.args.get("collection")
     level = request.args.get("level", "func")
     fields = request.args.getlist("field")
-    
+
     if not col or not fields:
         return jsonify({"error": "Missing parameters"}), 400
-        
+
     r = get_redis()
     stats = {}
     for f in fields:
         reg_key = f"{col}:reg:{level}:{f}"
         stats[f] = r.scard(reg_key)
-        
+
     return jsonify(stats)
 
 
 @search_similarity_bp.route("/api/similarity/search", methods=["GET"])
-
 def similarity_search():
     import time
     import uuid
@@ -139,45 +141,45 @@ def similarity_search():
     search_q = request.args.get("q", "").lower()
     name_filter = request.args.get("name", "").lower()
 
-    # Tag related filters
-    tag_filter = request.args.get("tag", "").lower()
-    static_tag_filter = request.args.get("static_tag", "").lower()
-    user_tag_filter = request.args.get("user_tag", "").lower()
+    # Tag related filters (now lists)
+    tag_filters = request.args.getlist("tag")
+    static_tag_filters = request.args.getlist("static_tag")
+    user_tag_filters = request.args.getlist("user_tag")
 
-    sim_tag_filter = request.args.get("sim_tag", "").lower()
-    sim_static_tag_filter = request.args.get("sim_static_tag", "").lower()
-    sim_user_tag_filter = request.args.get("sim_user_tag", "").lower()
+    sim_tag_filters = request.args.getlist("sim_tag")
+    sim_static_tag_filters = request.args.getlist("sim_static_tag")
+    sim_user_tag_filters = request.args.getlist("sim_user_tag")
 
-    func_tag_filter = request.args.get("func_tag", "").lower()
-    func_static_tag_filter = request.args.get("func_static_tag", "").lower()
-    func_user_tag_filter = request.args.get("func_user_tag", "").lower()
+    func_tag_filters = request.args.getlist("func_tag")
+    func_static_tag_filters = request.args.getlist("func_static_tag")
+    func_user_tag_filters = request.args.getlist("func_user_tag")
 
     lang_filter = request.args.get("language", "").lower()
     namespace_filter = request.args.get("namespace", "").lower()
     ret_type_filter = request.args.get("ret_type", "").lower()
     address_filter = request.args.get("address", "").lower()
-    file_tag_filter = request.args.get("file_tag", "").lower()
-    file_static_tag_filter = request.args.get("file_static_tag", "").lower()
-    file_user_tag_filter = request.args.get("file_user_tag", "").lower()
+    file_tag_filters = request.args.getlist("file_tag")
+    file_static_tag_filters = request.args.getlist("file_static_tag")
+    file_user_tag_filters = request.args.getlist("file_user_tag")
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
 
-    # Tag Exclusion filters
-    ex_tag_filter = request.args.get("exclude_tag", "").lower()
-    ex_static_tag_filter = request.args.get("exclude_static_tag", "").lower()
-    ex_user_tag_filter = request.args.get("exclude_user_tag", "").lower()
+    # Tag Exclusion filters (now lists)
+    ex_tag_filters = request.args.getlist("exclude_tag")
+    ex_static_tag_filters = request.args.getlist("exclude_static_tag")
+    ex_user_tag_filters = request.args.getlist("exclude_user_tag")
 
-    ex_sim_tag_filter = request.args.get("exclude_sim_tag", "").lower()
-    ex_sim_static_tag_filter = request.args.get("exclude_sim_static_tag", "").lower()
-    ex_sim_user_tag_filter = request.args.get("exclude_sim_user_tag", "").lower()
+    ex_sim_tag_filters = request.args.getlist("exclude_sim_tag")
+    ex_sim_static_tag_filters = request.args.getlist("exclude_sim_static_tag")
+    ex_sim_user_tag_filters = request.args.getlist("exclude_sim_user_tag")
 
-    ex_func_tag_filter = request.args.get("exclude_func_tag", "").lower()
-    ex_func_static_tag_filter = request.args.get("exclude_func_static_tag", "").lower()
-    ex_func_user_tag_filter = request.args.get("exclude_func_user_tag", "").lower()
+    ex_func_tag_filters = request.args.getlist("exclude_func_tag")
+    ex_func_static_tag_filters = request.args.getlist("exclude_func_static_tag")
+    ex_func_user_tag_filters = request.args.getlist("exclude_func_user_tag")
 
-    ex_file_tag_filter = request.args.get("exclude_file_tag", "").lower()
-    ex_file_static_tag_filter = request.args.get("exclude_file_static_tag", "").lower()
-    ex_file_user_tag_filter = request.args.get("exclude_file_user_tag", "").lower()
+    ex_file_tag_filters = request.args.getlist("exclude_file_tag")
+    ex_file_static_tag_filters = request.args.getlist("exclude_file_static_tag")
+    ex_file_user_tag_filters = request.args.getlist("exclude_file_user_tag")
 
     try:
         pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
@@ -211,46 +213,55 @@ def similarity_search():
             "min_features": min_features,
             "pool_limit": pool_limit,  # CRITICAL: Include pool_limit in cache hash
             "cross_binary": cross_binary_val,
-            "q": (request.args.get("q") or "").strip().lower(),
-            "name": (request.args.get("name") or "").strip().lower(),
-            "tag": (request.args.get("tag") or "").strip().lower(),
-            "static_tag": (request.args.get("static_tag") or "").strip().lower(),
-            "user_tag": (request.args.get("user_tag") or "").strip().lower(),
-            "sim_tag": (request.args.get("sim_tag") or "").strip().lower(),
-            "sim_static_tag": (request.args.get("sim_static_tag") or "")
-            .strip()
-            .lower(),
-            "sim_user_tag": (request.args.get("sim_user_tag") or "").strip().lower(),
-            "func_tag": (request.args.get("func_tag") or "").strip().lower(),
-            "func_static_tag": (request.args.get("func_static_tag") or "")
-            .strip()
-            .lower(),
-            "func_user_tag": (request.args.get("func_user_tag") or "").strip().lower(),
-            "md5": (request.args.get("md5") or "").strip().lower(),
-            "id": (request.args.get("id") or "").strip().lower(),
-            "language_id": (request.args.get("language_id") or "").strip().lower(),
-            "batch_uuid": (request.args.get("batch_uuid") or "").strip().lower(),
-            "sort_by": (request.args.get("sort_by") or "").strip().lower(),
-            "sort_order": (request.args.get("sort_order") or "").strip().lower(),
-            "namespace": namespace_filter,
-            "ret_type": ret_type_filter,
-            "address": address_filter,
-            "file_tag": file_tag_filter,
-            "file_static_tag": file_static_tag_filter,
-            "file_user_tag": file_user_tag_filter,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
         }
         # Include all other filters & exclusions
         for f in [
-            "md5", "id", "language_id", "batch_uuid", "namespace", "ret_type", "address", 
-            "file_tag", "file_static_tag", "file_user_tag",
-            "exclude_tag", "exclude_static_tag", "exclude_user_tag",
-            "exclude_sim_tag", "exclude_sim_static_tag", "exclude_sim_user_tag",
-            "exclude_func_tag", "exclude_func_static_tag", "exclude_func_user_tag",
-            "exclude_file_tag", "exclude_file_static_tag", "exclude_file_user_tag"
+            "md5",
+            "id",
+            "language_id",
+            "batch_uuid",
+            "namespace",
+            "ret_type",
+            "address",
+            "q",
+            "name",
         ]:
             v = request.args.get(f)
             if v:
                 cache_params[f] = v.strip().lower()
+
+        # Multi-value tag filters
+        for f in [
+            "tag",
+            "static_tag",
+            "user_tag",
+            "sim_tag",
+            "sim_static_tag",
+            "sim_user_tag",
+            "func_tag",
+            "func_static_tag",
+            "func_user_tag",
+            "file_tag",
+            "file_static_tag",
+            "file_user_tag",
+            "exclude_tag",
+            "exclude_static_tag",
+            "exclude_user_tag",
+            "exclude_sim_tag",
+            "exclude_sim_static_tag",
+            "exclude_sim_user_tag",
+            "exclude_func_tag",
+            "exclude_func_static_tag",
+            "exclude_func_user_tag",
+            "exclude_file_tag",
+            "exclude_file_static_tag",
+            "exclude_file_user_tag",
+        ]:
+            v = request.args.getlist(f)
+            if v:
+                cache_params[f] = [x.strip().lower() for x in v if x.strip()]
 
         cache_hash = hashlib.md5(
             json.dumps(cache_params, sort_keys=True).encode()
@@ -470,7 +481,7 @@ def similarity_search():
                             "field": field_name,
                             "sub_groups": normalized_subs,
                             "weight": total_weight if not exclude else 99999999,
-                            "exclude": exclude
+                            "exclude": exclude,
                         }
                     )
 
@@ -481,47 +492,52 @@ def similarity_search():
                     (name_filter, "name", ["func"], ["function_name", "file_name"]),
                     # General Tag Search
                     (
-                        tag_filter,
-                        "tags",
+                        tag_filters,
+                        "tag",
                         ["sim", "func", "file"],
                         ["tags", "user_tags"],
                     ),
                     (
-                        static_tag_filter,
-                        "static_tags",
+                        static_tag_filters,
+                        "static_tag",
                         ["sim", "func", "file"],
                         ["tags"],
                     ),
-                    (user_tag_filter, "user_tags", ["func", "file"], ["user_tags"]),
+                    (user_tag_filters, "user_tag", ["func", "file"], ["user_tags"]),
                     # Similarity Tag Search
-                    (sim_tag_filter, "sim_tags", ["sim"], ["tags", "user_tags"]),
-                    (sim_static_tag_filter, "sim_static_tags", ["sim"], ["tags"]),
-                    (sim_user_tag_filter, "sim_user_tags", ["sim"], ["user_tags"]),
+                    (sim_tag_filters, "sim_tag", ["sim"], ["tags", "user_tags"]),
+                    (sim_static_tag_filters, "sim_static_tag", ["sim"], ["tags"]),
+                    (sim_user_tag_filters, "sim_user_tag", ["sim"], ["user_tags"]),
                     # Function Tag Search
-                    (func_tag_filter, "func_tags", ["func"], ["tags", "user_tags"]),
-                    (func_static_tag_filter, "func_static_tags", ["func"], ["tags"]),
-                    (func_user_tag_filter, "func_user_tags", ["func"], ["user_tags"]),
+                    (func_tag_filters, "func_tag", ["func"], ["tags", "user_tags"]),
+                    (func_static_tag_filters, "func_static_tag", ["func"], ["tags"]),
+                    (func_user_tag_filters, "func_user_tag", ["func"], ["user_tags"]),
                     (namespace_filter, "namespace", ["func"], ["namespace"]),
                     (ret_type_filter, "ret_type", ["func"], ["return_type"]),
                     (address_filter, "address", ["func"], ["entrypoint_address"]),
-                    (file_tag_filter, "file_tag", ["file"], ["tags", "user_tags"]),
-                    (file_static_tag_filter, "file_static_tags", ["file"], ["tags"]),
-                    (file_user_tag_filter, "file_user_tags", ["file"], ["user_tags"]),
+                    (file_tag_filters, "file_tag", ["file"], ["tags", "user_tags"]),
+                    (file_static_tag_filters, "file_static_tag", ["file"], ["tags"]),
+                    (file_user_tag_filters, "file_user_tag", ["file"], ["user_tags"]),
                 ]
 
-                for f_val, label, levels, allowed in filter_configs:
-                    if f_val:
+                for f_v, label, levels, allowed in filter_configs:
+                    if not f_v:
+                        continue
+                    vals = f_v if isinstance(f_v, list) else [f_v]
+                    for val in vals:
+                        if not val:
+                            continue
                         all_matches = []
                         for lvl in levels:
                             matches = get_group_targets(
-                                lvl, f_val, allowed_fields=allowed
+                                lvl, val, allowed_fields=allowed
                             )
                             if matches:
                                 all_matches.extend(matches)
 
                         if not all_matches:
                             logging.info(
-                                f"SIM SEARCH | {session_id} | Filter '{label}={f_val}' matched 0 targets. Returning empty."
+                                f"SIM SEARCH | {session_id} | Filter '{label}={val}' matched 0 targets. Empty."
                             )
                             return jsonify(
                                 {
@@ -533,41 +549,93 @@ def similarity_search():
                                 }
                             )
 
-                        add_group(all_matches, field_name=label)
+                        add_group(all_matches, field_name=f"{label}:{val}")
 
                 # --- EXCLUSION CONFIGURATION ---
                 exclude_configs = [
-                    # General Tag Exclusion
-                    (ex_tag_filter, "ex_tags", ["sim", "func", "file"], ["tags", "user_tags"]),
-                    (ex_static_tag_filter, "ex_static_tags", ["sim", "func", "file"], ["tags"]),
-                    (ex_user_tag_filter, "ex_user_tags", ["func", "file"], ["user_tags"]),
-                    
-                    # Sim Tag Exclusion
-                    (ex_sim_tag_filter, "ex_sim_tags", ["sim"], ["tags", "user_tags"]),
-                    (ex_sim_static_tag_filter, "ex_sim_static_tags", ["sim"], ["tags"]),
-                    (ex_sim_user_tag_filter, "ex_sim_user_tags", ["sim"], ["user_tags"]),
-                    
-                    # Func Tag Exclusion
-                    (ex_func_tag_filter, "ex_func_tags", ["func"], ["tags", "user_tags"]),
-                    (ex_func_static_tag_filter, "ex_func_static_tags", ["func"], ["tags"]),
-                    (ex_func_user_tag_filter, "ex_func_user_tags", ["func"], ["user_tags"]),
-                    
-                    # File Tag Exclusion
-                    (ex_file_tag_filter, "ex_file_tags", ["file"], ["tags", "user_tags"]),
-                    (ex_file_static_tag_filter, "ex_file_static_tags", ["file"], ["tags"]),
-                    (ex_file_user_tag_filter, "ex_file_user_tags", ["file"], ["user_tags"]),
+                    (
+                        ex_tag_filters,
+                        "ex_tag",
+                        ["sim", "func", "file"],
+                        ["tags", "user_tags"],
+                    ),
+                    (
+                        ex_static_tag_filters,
+                        "ex_static_tag",
+                        ["sim", "func", "file"],
+                        ["tags"],
+                    ),
+                    (
+                        ex_user_tag_filters,
+                        "ex_user_tag",
+                        ["func", "file"],
+                        ["user_tags"],
+                    ),
+                    (ex_sim_tag_filters, "ex_sim_tag", ["sim"], ["tags", "user_tags"]),
+                    (ex_sim_static_tag_filters, "ex_sim_static_tag", ["sim"], ["tags"]),
+                    (
+                        ex_sim_user_tag_filters,
+                        "ex_sim_user_tag",
+                        ["sim"],
+                        ["user_tags"],
+                    ),
+                    (
+                        ex_func_tag_filters,
+                        "ex_func_tag",
+                        ["func"],
+                        ["tags", "user_tags"],
+                    ),
+                    (
+                        ex_func_static_tag_filters,
+                        "ex_func_static_tag",
+                        ["func"],
+                        ["tags"],
+                    ),
+                    (
+                        ex_func_user_tag_filters,
+                        "ex_func_user_tag",
+                        ["func"],
+                        ["user_tags"],
+                    ),
+                    (
+                        ex_file_tag_filters,
+                        "ex_file_tag",
+                        ["file"],
+                        ["tags", "user_tags"],
+                    ),
+                    (
+                        ex_file_static_tag_filters,
+                        "ex_file_static_tag",
+                        ["file"],
+                        ["tags"],
+                    ),
+                    (
+                        ex_file_user_tag_filters,
+                        "ex_file_user_tag",
+                        ["file"],
+                        ["user_tags"],
+                    ),
                 ]
 
-                for ex_val, label, levels, allowed in exclude_configs:
-                    if ex_val:
+                for ex_v, label, levels, allowed in exclude_configs:
+                    if not ex_v:
+                        continue
+                    vals = ex_v if isinstance(ex_v, list) else [ex_v]
+                    for val in vals:
+                        if not val:
+                            continue
                         all_matches = []
                         for lvl in levels:
-                            matches = get_group_targets(lvl, ex_val, allowed_fields=allowed)
+                            matches = get_group_targets(
+                                lvl, val, allowed_fields=allowed
+                            )
                             if matches:
                                 all_matches.extend(matches)
-                        
+
                         if all_matches:
-                            add_group(all_matches, field_name=label, exclude=True)
+                            add_group(
+                                all_matches, field_name=f"{label}:{val}", exclude=True
+                            )
 
                 if md5_filters:
                     all_md5_base_ids = []
@@ -697,8 +765,10 @@ def similarity_search():
                     "algo": algo,
                     "pool_limit": pool_limit,
                     "groups": groups,  # Use the sorted groups
-                    "offset": 0, # Always fetch from 0 on miss to ensure cache consistency
-                    "limit": max(offset + limit, 1000),  # Fetch enough to seed cache for Switch View / Load More
+                    "offset": 0,  # Always fetch from 0 on miss to ensure cache consistency
+                    "limit": max(
+                        offset + limit, 1000
+                    ),  # Fetch enough to seed cache for Switch View / Load More
                     "min_score": min_score,
                     "max_score": max_score,
                     "sort_by": sort_by,
@@ -739,7 +809,12 @@ def similarity_search():
                         r.setex(cache_key, 3600, json.dumps(cache_data))
 
                     # Python handles pagination for the final response when seeding from offset 0
-                    page_results = list(zip(all_ids[offset : offset + limit], all_scores[offset : offset + limit]))
+                    page_results = list(
+                        zip(
+                            all_ids[offset : offset + limit],
+                            all_scores[offset : offset + limit],
+                        )
+                    )
                 except Exception as lua_err:
                     logging.error(f"LUA SEARCH CRASH: {lua_err}")
                     return jsonify({"detail": f"Search engine error: {lua_err}"}), 500
@@ -837,10 +912,14 @@ def similarity_search():
                 f1 = (f1_json[0] if isinstance(f1_json, list) else f1_json) or {}
                 f2 = (f2_json[0] if isinstance(f2_json, list) else f2_json) or {}
 
-                if isinstance(m1, str): m1 = json.loads(m1)
-                if isinstance(m2, str): m2 = json.loads(m2)
-                if isinstance(f1, str): f1 = json.loads(f1)
-                if isinstance(f2, str): f2 = json.loads(f2)
+                if isinstance(m1, str):
+                    m1 = json.loads(m1)
+                if isinstance(m2, str):
+                    m2 = json.loads(m2)
+                if isinstance(f1, str):
+                    f1 = json.loads(f1)
+                if isinstance(f2, str):
+                    f2 = json.loads(f2)
 
                 sim_score = (
                     float(sid_sort_sc)

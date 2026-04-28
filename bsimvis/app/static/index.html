@@ -1066,7 +1066,7 @@
                         <input type="number" id="sim-pool-limit" value="${currentLimit}" step="100000" min="1000" max="1000000" 
                             title="Max candidates to score" 
                             style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                            onchange="applySimSearch()">
+                            onkeyup="if(event.key==='Enter') applySimSearch()">
                         <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
                     </div>
                     <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
@@ -1074,7 +1074,7 @@
                         <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
                             title="Max results to display (Output Limit)" 
                             style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                            onchange="applySimSearch()">
+                            onkeyup="if(event.key==='Enter') applySimSearch()">
                         <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
                     </div>
                 `;
@@ -1100,20 +1100,20 @@
                     <th></th>
                     <th style="vertical-align: middle;">
                         <div style="display:flex; align-items:center; gap:2px;">
-                            <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
+                            <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onkeyup="if(event.key==='Enter') applySimSearch()">
                             <span class="dim" style="font-size:0.6rem">-</span>
-                            <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="applySimSearch()">
+                            <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onkeyup="if(event.key==='Enter') applySimSearch()">
                         </div>
                         <div class="tag-filter-container" id="tag-container-sim">
-                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; applySimSearch(); })">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; })">
                         </div>
                     </th>
                     <th>
                         <div style="display:flex; flex-direction:column; gap:4px;">
-                            <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                             <div style="display:flex; gap:2px;">
-                                <input type="text" id="flt-sim-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                                <input type="text" id="flt-sim-ret_type" placeholder="Return Type..." value="${p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-sim-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-sim-ret_type" placeholder="Return Type..." value="${p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
                             </div>
                         </div>
                     </th>
@@ -1122,25 +1122,25 @@
                     </th>
                     <th style="position:relative">
                         <div class="tag-filter-container" id="tag-container-func">
-                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; applySimSearch(); })">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; })">
                         </div>
                     </th>
-                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onkeyup="if(event.key==='Enter') applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th style="position:relative">
                         <div class="tag-filter-container" id="tag-container-file">
-                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; applySimSearch(); })">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; })">
                         </div>
                     </th>
-                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                     <th style="font-size: 0.65rem;">
-                        <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                        <select id="sim-algo" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
                             <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
                             <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                         </select>
                         <div style="margin-top:4px;">
-                            <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                            <select id="sim-cross-binary" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
                                 <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
                                 <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
                                 <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
@@ -1434,7 +1434,7 @@
             card.innerHTML = `
                 <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
                 <span class="tag-text" title="${value}">${value}</span>
-                <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove(); applySimSearch()">×</span>
+                <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove()">×</span>
             `;
 
             container.insertBefore(card, container.querySelector('.tag-filter-add'));
@@ -1444,7 +1444,6 @@
             const card = btn.parentElement;
             const isExclude = card.classList.toggle('exclude');
             card.dataset.exclude = isExclude;
-            applySimSearch();
         }
 
         function handleTagAdd(event, columnId) {
@@ -1455,7 +1454,6 @@
                     let type = (columnId === 'sim' ? 'sim_tag' : (columnId === 'func' ? 'func_tag' : 'file_tag'));
                     createTagCard(columnId, type, val);
                     event.target.value = '';
-                    applySimSearch();
                 }
             }
         }

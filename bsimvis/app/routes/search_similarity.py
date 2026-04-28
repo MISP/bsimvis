@@ -16,7 +16,95 @@ CACHE_TIME_THRESHOLD = 0.1  # Only cache requests that take more than X seconds
 MAX_CACHED_RESULTS = 10000
 
 
+
+
+@search_similarity_bp.route("/api/search/autocomplete", methods=["GET"])
+def autocomplete():
+    col = request.args.get("collection")
+    level = request.args.get("level", "func")
+    field = request.args.get("field")
+    query = request.args.get("q", "").lower().strip()
+    limit = int(request.args.get("limit", 50))
+
+    if not all([col, level, field]):
+        return jsonify({"error": "Missing parameters"}), 400
+
+    r = get_redis()
+    registry_key = f"{col}:reg:{level}:{field}"
+
+    results = []
+    if r.exists(registry_key):
+        # bucket_key is {coll}:idx:{level}:{field}:{value}
+        prefix = f"{col}:idx:{level}:{field}:"
+
+        # Search pattern: for better performance we match the whole bucket key
+        match_pat = f"*{query}*"
+        
+
+        try:
+            # Parse key to get the suffix
+            count_found = 0
+            pipe = r.pipeline()
+            candidate_buckets = []
+            
+            for bucket in r.sscan_iter(registry_key, match=match_pat, count=1000):
+                bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
+                
+                if bucket_str.startswith(prefix):
+                    val = bucket_str[len(prefix):]
+                    if query in val.lower():
+                        candidate_buckets.append((val, bucket_str))
+                        count_found += 1
+                
+                if count_found >= 100:
+                    break
+
+            # Batch fetch cardinalities
+            for val, b_key in candidate_buckets:
+                pipe.scard(b_key)
+            
+            counts = pipe.execute()
+            for (val, b_key), count in zip(candidate_buckets, counts):
+                results.append({"value": val, "count": count})
+
+        except Exception as e:
+            logging.warning(f"Autocomplete SSCAN failed for {registry_key}: {e}")
+
+    # Deduplicate, sort and limit
+    unique_results = {}
+    for item in results:
+        v = item["value"]
+        if v not in unique_results or item["count"] > unique_results[v]["count"]:
+            unique_results[v] = item
+
+    final_results = sorted(unique_results.values(), key=lambda x: (len(x["value"]), x["value"]))[:limit]
+    
+    return jsonify({
+        "results": final_results,
+        "cardinality": r.scard(registry_key) if r.exists(registry_key) else 0
+    })
+
+
+@search_similarity_bp.route("/api/search/fields", methods=["GET"])
+def get_field_stats():
+    col = request.args.get("collection")
+    level = request.args.get("level", "func")
+    fields = request.args.getlist("field")
+    
+    if not col or not fields:
+        return jsonify({"error": "Missing parameters"}), 400
+        
+    r = get_redis()
+    stats = {}
+    for f in fields:
+        reg_key = f"{col}:reg:{level}:{f}"
+        stats[f] = r.scard(reg_key)
+        
+    return jsonify(stats)
+
+
 @search_similarity_bp.route("/api/similarity/search", methods=["GET"])
+
 def similarity_search():
     import time
     import uuid

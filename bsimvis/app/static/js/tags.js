@@ -71,7 +71,7 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const bookmarkOnClick = etype === 'similarity'
         ? `toggleBookmark(event, '${eid}')`
         : `toggleEntityBookmark(event, '${etype}', '${eid}')`;
-    
+
     const ignoreOnClick = etype === 'similarity'
         ? `toggleIgnore(event, '${eid}')`
         : `toggleEntityIgnore(event, '${etype}', '${eid}')`;
@@ -161,8 +161,72 @@ function attachTagAutocomplete(input, onSelect) {
         setTimeout(() => { dropdown.style.display = 'none'; }, 200);
     };
 
+
     if (document.activeElement === input) showSuggestions(input.value);
 }
+
+function attachAutocomplete(input, level, field, onSelect) {
+    if (input._acAttached) return;
+    input._acAttached = true;
+
+    const parent = input.parentElement;
+    const originalPosition = window.getComputedStyle(parent).position;
+    if (originalPosition === 'static') parent.style.position = 'relative';
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'tag-autocomplete-dropdown';
+    parent.appendChild(dropdown);
+
+
+    const renderSuggestions = (items) => {
+        dropdown.innerHTML = '';
+        items.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'tag-suggestion-item';
+            div.style.display = 'flex';
+            div.style.justifyContent = 'space-between';
+            div.innerHTML = `<span>${item.value}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${item.count}</span>`;
+            div.onmousedown = (e) => {
+                e.preventDefault();
+                onSelect(item.value);
+                dropdown.style.display = 'none';
+            };
+            dropdown.appendChild(div);
+        });
+        dropdown.style.display = 'block';
+    };
+
+
+    const showSuggestions = async (filter = '') => {
+        const hashParts = window.location.hash.split('?');
+        const params = new URLSearchParams(hashParts[1] || "");
+        const col = params.get('collection') || 'main';
+
+        try {
+            const res = await fetch(`/api/search/autocomplete?collection=${col}&level=${level}&field=${field}&q=${encodeURIComponent(filter)}&limit=50`);
+            if (res.ok) {
+                const data = await res.json();
+                const items = data.results || [];
+                if (items.length > 0) {
+                    renderSuggestions(items);
+                } else {
+                    dropdown.style.display = 'none';
+                }
+            }
+        } catch (err) {
+            console.error("Autocomplete fetch failed", err);
+        }
+    };
+
+    input.onfocus = () => showSuggestions(input.value);
+    input.oninput = () => showSuggestions(input.value);
+    input.onblur = () => {
+        setTimeout(() => { dropdown.style.display = 'none'; }, 200);
+    };
+
+    if (document.activeElement === input) showSuggestions(input.value);
+}
+
 
 // ----------------------------------------------------
 // Togglers
@@ -301,7 +365,7 @@ async function confirmAddTag(etype, eid, tag, container) {
     }
 
     let mainSuccess = false;
-    
+
     if (targets.length > 1) {
         try {
             const res = await fetch('/api/tags/bulk_add', {
@@ -321,7 +385,7 @@ async function confirmAddTag(etype, eid, tag, container) {
                     const editorsToUpdate = (t.etype === 'function' || t.etype === 'file')
                         ? document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`)
                         : (t.container ? [t.container] : document.querySelectorAll(`[data-eid="${t.eid}"][data-etype="${t.etype}"]`));
-                    
+
                     updateUIForTagAdd(editorsToUpdate, tag);
                 });
             }
@@ -349,7 +413,7 @@ async function confirmAddTag(etype, eid, tag, container) {
     if (window.parent && window.parent !== window && typeof window.parent.updateUIForTagAdd === 'function') {
         targets.forEach(t => {
             let parentEditors = Array.from(window.parent.document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`));
-            
+
             // Fallback for similarities because dashboard might use canonical sid while diff view uses id1|id2|algo
             if (parentEditors.length === 0 && t.etype === 'similarity') {
                 const parts = t.eid.split('|');
@@ -440,7 +504,7 @@ async function removeTag(event, etype, eid, tag) {
                     const editorsToUpdate = (t.etype === 'function' || t.etype === 'file')
                         ? document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`)
                         : (t.container ? [t.container] : document.querySelectorAll(`[data-eid="${t.eid}"][data-etype="${t.etype}"]`));
-                    
+
                     updateUIForTagRemove(editorsToUpdate, tag);
                 });
             }
@@ -457,7 +521,7 @@ async function removeTag(event, etype, eid, tag) {
                 const editorsToUpdate = (t.etype === 'function' || t.etype === 'file')
                     ? document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`)
                     : (t.container ? [t.container] : document.querySelectorAll(`[data-eid="${t.eid}"][data-etype="${t.etype}"]`));
-                
+
                 updateUIForTagRemove(editorsToUpdate, tag);
             }
         } catch (err) { console.error(err); }
@@ -468,7 +532,7 @@ async function removeTag(event, etype, eid, tag) {
     if (window.parent && window.parent !== window && typeof window.parent.updateUIForTagRemove === 'function') {
         targets.forEach(t => {
             let parentEditors = Array.from(window.parent.document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`));
-            
+
             if (parentEditors.length === 0 && t.etype === 'similarity') {
                 const parts = t.eid.split('|');
                 if (parts.length >= 2) {
@@ -505,4 +569,32 @@ function updateUIForTagRemove(editors, tag) {
             cards.forEach(c => { if (c.textContent.trim().startsWith(tag)) c.remove(); });
         }
     });
+}
+
+async function loadFieldCardinalities(col, level, fieldMap) {
+    if (!col) return;
+    const fields = Object.keys(fieldMap);
+    const query = fields.map(f => `field=${f}`).join('&');
+    try {
+        const res = await fetch(`/api/search/fields?collection=${col}&level=${level}&${query}`);
+        if (res.ok) {
+            const stats = await res.json();
+            for (const [field, count] of Object.entries(stats)) {
+                const inputId = fieldMap[field];
+                const input = document.getElementById(inputId);
+                if (input) {
+                    const originalPlaceholder = input.getAttribute('data-original-placeholder') || input.placeholder;
+                    if (!input.getAttribute('data-original-placeholder')) {
+                        input.setAttribute('data-original-placeholder', originalPlaceholder);
+                    }
+                    if (count > 0) {
+                        input.placeholder = `${originalPlaceholder} (${count})`;
+                        input.title = `Total unique values for ${field}: ${count}`;
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error("Failed to load cardinalities", err);
+    }
 }

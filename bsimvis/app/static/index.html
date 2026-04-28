@@ -1007,10 +1007,10 @@
                     </th>
                     <th>
                         <div style="display:flex; flex-direction:column; gap:4px;">
-                            <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                             <div style="display:flex; gap:2px;">
-                                <input type="text" id="flt-sim-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                                <input type="text" id="flt-sim-ret_type" placeholder="Return Type..." value="${p.get('ret_type') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-sim-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-sim-ret_type" placeholder="Return Type..." value="${p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
                             </div>
                         </div>
                     </th>
@@ -1028,8 +1028,8 @@
                         </div>
                     </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th style="position:relative">
                         <div style="display:flex; gap:2px;">
                             <select id="type-sim-file-tag" onchange="applySimSearch()" style="width:40%; font-size:0.65rem; background:#000; border:1px solid #333; color:var(--text); border-radius:2px;">
@@ -1040,7 +1040,7 @@
                             <input type="text" id="flt-sim-file_tag" placeholder="Tag..." value="${p.get('file_tag') || p.get('file_static_tag') || p.get('file_user_tag') || ''}" onfocus="attachTagAutocomplete(this, (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; flex:1; width: 60%; box-sizing: border-box;">
                         </div>
                     </th>
-                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                     <th style="font-size: 0.65rem;">
                         <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
                             <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
@@ -1056,6 +1056,14 @@
                     </th>
                 </tr>`;
                 thead.innerHTML = headHtml;
+                loadFieldCardinalities(col, 'func', {
+                    'function_name': 'flt-sim-name',
+                    'namespace': 'flt-sim-namespace',
+                    'return_type': 'flt-sim-ret_type',
+                    'file_md5': 'flt-sim-md5',
+                    'file_name': 'flt-sim-file_name',
+                    'language_id': 'flt-sim-language'
+                });
             } else {
                 settingsEl.style.display = 'none';
                 settingsEl.innerHTML = '';
@@ -1075,7 +1083,7 @@
                 if (!document.getElementById('func-filters')) {
                     const p = new URLSearchParams(params);
                     searchArea.innerHTML = `<div id="func-filters" class="filter-bar" style="flex-wrap: wrap;">
-                        <input type="text" id="flt-function_name" placeholder="Function Name" value="${p.get('function_name') || ''}">
+                        <input type="text" id="flt-function_name" placeholder="Function Name" value="${p.get('function_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applyFuncSearch(); })">
                         <div style="display:inline-flex; align-items:center; background:#000; border:1px solid #333; border-radius:4px; padding:0 5px;">
                             <select id="type-func-tag" style="background:none; border:none; color:var(--accent); font-size:0.75rem; border-right:1px solid #333; margin-right:5px; outline:none;">
                                 <option value="tag" ${p.has('tag') || (!p.has('static_tag') && !p.has('user_tag')) ? 'selected' : ''}>All Tags</option>
@@ -1084,16 +1092,22 @@
                             </select>
                             <input type="text" id="flt-tag" placeholder="Tag..." value="${p.get('tag') || p.get('static_tag') || p.get('user_tag') || ''}" style="border:none; background:none;">
                         </div>
-                        <input type="text" id="flt-file_name" placeholder="File Name" value="${p.get('file_name') || ''}">
-                        <input type="text" id="flt-file_md5" placeholder="File MD5" value="${p.get('file_md5') || ''}">
+                        <input type="text" id="flt-file_name" placeholder="File Name" value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applyFuncSearch(); })">
+                        <input type="text" id="flt-file_md5" placeholder="File MD5" value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applyFuncSearch(); })">
                         <input type="text" id="flt-decompiler_id" placeholder="Decompiler ID" value="${p.get('decompiler_id') || ''}">
                         <input type="text" id="flt-is_thunk" placeholder="Is Thunk" value="${p.get('is_thunk') || ''}">
-                        <input type="text" id="flt-return_type" placeholder="Return Type" value="${p.get('return_type') || ''}">
+                        <input type="text" id="flt-return_type" placeholder="Return Type" value="${p.get('return_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applyFuncSearch(); })">
                         <input type="text" id="flt-calling_convention" placeholder="Calling Conv" value="${p.get('calling_convention') || ''}">
                         <input type="text" id="flt-entrypoint_address" placeholder="Entry Address" value="${p.get('entrypoint_address') || ''}">
                         <button onclick="applyFuncSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
                     </div>`;
                 }
+                loadFieldCardinalities(col, 'func', {
+                    'function_name': 'flt-function_name',
+                    'file_name': 'flt-file_name',
+                    'file_md5': 'flt-file_md5',
+                    'return_type': 'flt-return_type'
+                });
             } else if (path === '#features-global' && !document.getElementById('feature-search')) {
                 const p = new URLSearchParams(params);
                 searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">

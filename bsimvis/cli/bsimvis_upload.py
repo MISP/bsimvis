@@ -80,22 +80,27 @@ def upload_bsim_data(data, args, config):
             payload["min_features"] = args.min_features
 
         # Submit to API
-        api_host = getattr(args, "host", "localhost:5000")
-        api_url = f"http://{api_host}/api/file/upload/file_data"
+        hosts = getattr(args, "hosts", [])
+        if not hosts:
+            # Fallback to single host if plural not set
+            hosts = [getattr(args, "host", "localhost:5000")]
 
-        try:
-            logging.info(
-                f"[*] Submitting {file_md5} to API at {api_url} (collection: {collection})..."
-            )
-            resp = requests.post(api_url, json=payload, timeout=300)
-            resp.raise_for_status()
+        for api_host in hosts:
+            api_url = f"http://{api_host}/api/file/upload/file_data"
 
-            result = resp.json()
-            logging.info(
-                f"[+] Upload Success! Pipeline ID: {result.get('pipeline_id')}"
-            )
-        except Exception as e:
-            logging.error(f"[!] API Submission failed for {api_url}: {e}")
+            try:
+                logging.info(
+                    f"[*] Submitting {file_md5} to API at {api_url} (collection: {collection})..."
+                )
+                resp = requests.post(api_url, json=payload, timeout=300)
+                resp.raise_for_status()
+
+                result = resp.json()
+                logging.info(
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
+                )
+            except Exception as e:
+                logging.error(f"[!] API Submission failed for {api_url}: {e}")
 
 
 def get_token_type(clazz):

@@ -7,6 +7,9 @@ API_BASE = "http://localhost:5000/api"
 
 
 def run_job(host, port, args):
+    global API_BASE
+    API_BASE = f"http://{host}:{port}/api"
+
     if args.action == "list":
         list_jobs(args.limit)
     elif args.action == "status":

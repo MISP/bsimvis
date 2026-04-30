@@ -344,7 +344,12 @@ def main():
                 pass
         return "localhost:5000"
 
-    api_host_str = resolve_api_host(args.host)
+    # Use the first host from args.hosts if it exists and args.host is None
+    effective_host = args.host
+    if effective_host is None and hasattr(args, "hosts") and args.hosts:
+        effective_host = args.hosts[0]
+
+    api_host_str = resolve_api_host(effective_host)
     if ":" in api_host_str:
         g_host, g_port = api_host_str.split(":")
     else:

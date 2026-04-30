@@ -33,6 +33,7 @@ class SimilarityService:
         algo="unweighted_cosine",
         top_k=1000,
         min_score=0.3,
+        min_features=0,
         job_service=None,
         job_id=None,
         sleep_time=0,
@@ -107,7 +108,7 @@ class SimilarityService:
                 )
 
             # 2. Process Chunk with Pipelining
-            self._process_chunk(collection, chunk, algo, top_k, min_score)
+            self._process_chunk(collection, chunk, algo, top_k, min_score, min_features)
 
             # 3. Dashboard Protection: Yield
             if sleep_time > 0 and i + chunk_size < total:
@@ -121,7 +122,7 @@ class SimilarityService:
 
         return True
 
-    def _process_chunk(self, collection, chunk, algo, top_k, min_score):
+    def _process_chunk(self, collection, chunk, algo, top_k, min_score, min_features=0):
         """Processes a chunk of functions using Redis pipelining."""
         r = self.r
         built_set_key = f"{collection}:built:functions:{algo}"
@@ -143,8 +144,8 @@ class SimilarityService:
             if is_built:
                 continue
 
-            if not features:
-                # Shortcut: Zero features = Mark as built immediately
+            if not features or len(features) < min_features:
+                # Shortcut: Too few features = Mark as built immediately
                 r.sadd(built_set_key, fid)
                 continue
 
@@ -173,7 +174,7 @@ class SimilarityService:
 
             target_feat_norm = math.sqrt(target_feat_norm_sq)
 
-            # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, features...]
+            # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, features...]
             lua_args = [
                 fid,
                 collection,
@@ -182,6 +183,7 @@ class SimilarityService:
                 target_feat_total,
                 target_feat_norm,
                 top_k,
+                min_features,
             ] + lua_features_args
 
             # Execute Discovery Script
@@ -303,6 +305,7 @@ class SimilarityService:
         algo="unweighted_cosine",
         top_k=1000,
         min_score=0.3,
+        min_features=0,
         sleep_time=0,
     ):
         """
@@ -322,8 +325,10 @@ class SimilarityService:
             return True
 
         features_raw = self.r.zrange(vec_key, 0, -1, withscores=True)
-        if not features_raw:
-            return False
+        if not features_raw or len(features_raw) < min_features:
+            # Skip if missing or too few features (mark as built to avoid retries)
+            self.r.sadd(built_set_key, base_id)
+            return True
 
         target_feat_total = 0
         target_feat_norm_sq = 0
@@ -346,6 +351,7 @@ class SimilarityService:
                 target_feat_total,
                 target_feat_norm,
                 top_k,
+                min_features,
             ] + lua_features_args
 
             candidates_raw = self._find_script(args=lua_args)

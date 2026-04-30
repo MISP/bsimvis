@@ -3,6 +3,12 @@ import json
 import logging
 import signal
 import sys
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
 from bsimvis.app.services.job_service import JobService, JobStatus, JobType
 from bsimvis.app.services.processing_service import ProcessingService

@@ -18,6 +18,7 @@ class ProcessingService:
             return False
 
         import json
+
         data = json.loads(raw_data)
 
         if not data:
@@ -121,6 +122,7 @@ class ProcessingService:
             return False
 
         import json
+
         data = json.loads(raw_data)
 
         if not data:

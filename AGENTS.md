@@ -6,9 +6,12 @@ Use uv run to run commands.
 
 
 ## Ports
-Kvrocks : 6666 -> storage of functions, binaries and similarities
-Redis : 6379 -> Job queue only
-API : 5000 -> localhost:5000/api
+Configurable via `.env` file:
+- Kvrocks : `KVROCKS_PORT` (default: 6666) -> storage of functions, binaries and similarities
+- Redis : `REDIS_PORT` (default: 6379) -> Job queue only
+- API : `APP_PORT` (default: 5000) -> localhost:5000/api
+
+Hosts are also configurable via `KVROCKS_HOST`, `REDIS_HOST`, and `APP_HOST`.
 
 ## Databases tip
 

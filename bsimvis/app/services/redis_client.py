@@ -1,9 +1,14 @@
 import redis
 import time
+import os
+from dotenv import load_dotenv
 from redis.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError, TimeoutError
 from .timer_service import get_active_timer
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class TimedRedis(redis.Redis):
@@ -67,10 +72,10 @@ class TimedPipeline(redis.client.Pipeline):
             timer.record(desc, duration, category)
 
 
-# Kvrocks is on 6666 for data
+# Kvrocks is for data
 KV_CONFIG = {
-    "host": "localhost",
-    "port": 6666,
+    "host": os.getenv("KVROCKS_HOST", "localhost"),
+    "port": int(os.getenv("KVROCKS_PORT", 6666)),
     "decode_responses": True,
     "socket_timeout": 1000,
     "socket_connect_timeout": 1000,
@@ -81,10 +86,10 @@ KV_CONFIG = {
     "retry_on_error": [ConnectionError, TimeoutError],
 }
 
-# Standard Redis is on 6379 for jobs
+# Standard Redis is for jobs
 REDIS_CONFIG = {
-    "host": "localhost",
-    "port": 6379,
+    "host": os.getenv("REDIS_HOST", "localhost"),
+    "port": int(os.getenv("REDIS_PORT", 6379)),
     "decode_responses": True,
     "health_check_interval": 30,
     "socket_keepalive": True,

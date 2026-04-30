@@ -495,6 +495,9 @@ def get_bsim_data(program, args, config, batch_order):
         if func.isExternal() or func.isThunk():
             continue
 
+        if func.getBody().getNumAddresses() < args.min_func_len:
+            continue
+
         func_name = func.getName()
         entry_point = func.getEntryPoint()
         entry_str = str(entry_point).split(":")[-1]

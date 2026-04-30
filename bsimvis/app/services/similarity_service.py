@@ -58,6 +58,9 @@ class SimilarityService:
                 pattern = f"{collection}:func:{md5}:*:vec:tf"
                 keys = r.scan_iter(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
+        else:
+            # Build for ALL functions in the collection
+            function_ids = list(r.smembers(f"{collection}:indexed:functions"))
 
         total = len(function_ids)
         if total == 0:
@@ -435,6 +438,42 @@ class SimilarityService:
         field: 'batch_uuid' or 'md5'
         """
         return self._clear_script(args=[collection, field, value, algo or ""])
+
+    def clear_all(self, collection, algo=None):
+        """Clears ALL similarities in the collection safely using SCAN."""
+        r = self.r
+        algos = [algo] if algo else ["jaccard", "unweighted_cosine"]
+
+        logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
+
+        # 1. Clear global ZSETs and SETs
+        for a in algos:
+            r.delete(f"{collection}:sim:score:{a}")
+            r.delete(f"{collection}:built:functions:{a}")
+
+        r.delete(f"{collection}:sim:all")
+        r.delete(f"{collection}:sim:min_features")
+
+        # 2. Scan and delete involves, tag indexes, and similarity docs
+        patterns = [
+            f"{collection}:sim:involves:func:*",
+            f"{collection}:sim:involves:file:*",
+            f"{collection}:idx:sim:user_tags:*",
+            f"{collection}:idx:sim:tags:*",
+        ]
+        for a in algos:
+            patterns.append(f"{collection}:sim:{a}:*")
+
+        for pattern in patterns:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+                if keys:
+                    r.delete(*keys)
+                if cursor == 0:
+                    break
+
+        return True
 
     def get_pair_score(self, id1, id2, algo="unweighted_cosine"):
         """

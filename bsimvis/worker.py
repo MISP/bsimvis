@@ -169,9 +169,8 @@ class Worker:
                 ]
             elif file_id:
                 # Fallback: Fetch monolith if MD5 is missing (legacy/direct call)
-                data = self.r_data.json().get(file_id, "$")
-                if isinstance(data, list) and data:
-                    data = data[0]
+                raw_data = self.r_data.get(file_id)
+                data = json.loads(raw_data) if raw_data else {}
                 md5 = data.get("file_md5")
                 batch_func_set = f"{collection}:idx:file:functions:{md5}"
                 raw_ids = list(self.r_data.smembers(batch_func_set))

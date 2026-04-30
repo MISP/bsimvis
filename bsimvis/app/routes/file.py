@@ -36,9 +36,10 @@ def upload_file_data():
         r_data = get_redis()
         file_id = f"idx:{collection}:file:{file_md5}"
 
-        # Use execute_command to send raw JSON string directly.
-        # decode_responses=True requires a str, not bytes.
-        r_data.execute_command("JSON.SET", file_id, "$", raw_bytes.decode("utf-8"))
+        # Store as a standard string (SET) instead of a JSON object.
+        # This is much faster and avoids server-side parsing of large files.
+        r_data.set(file_id, raw_bytes)
+
         build_sim_payload = {
             "collection": collection,
             "file_id": file_id,

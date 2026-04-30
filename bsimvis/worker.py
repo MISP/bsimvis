@@ -193,6 +193,7 @@ class Worker:
             algo = payload.get("algo", "unweighted_cosine")
             top_k = payload.get("top_k", 1000)
             min_score = payload.get("min_score", 0.3)
+            min_features = payload.get("min_features", 0)
 
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing
@@ -208,16 +209,22 @@ class Worker:
                 algo=algo,
                 top_k=top_k,
                 min_score=min_score,
+                min_features=min_features,
                 job_service=self.job_service,
                 job_id=job_id,
             )
 
         elif jtype == JobType.CLEAR_SIM.value:
-            field = "batch_uuid" if batch_uuid else "md5"
-            value = batch_uuid or md5
-            return self.similarity_service.clear_filtered(
-                collection, field, value, algo=payload.get("algo")
-            )
+            if payload.get("all"):
+                return self.similarity_service.clear_all(
+                    collection, algo=payload.get("algo")
+                )
+            else:
+                field = "batch_uuid" if batch_uuid else "md5"
+                value = batch_uuid or md5
+                return self.similarity_service.clear_filtered(
+                    collection, field, value, algo=payload.get("algo")
+                )
 
         elif jtype == JobType.CLEAR_FEATURES.value:
             return self.feature_service.clear_features(

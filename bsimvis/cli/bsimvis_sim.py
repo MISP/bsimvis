@@ -113,12 +113,30 @@ def run_sim(host, port, args):
         if args.batch:
             targets.append({"batch": args.batch})
 
+        if args.all or (not targets):
+            try:
+                params = {
+                    "collection": coll,
+                    "algo": args.algo or "unweighted_cosine",
+                    "by": "md5",
+                }
+                resp = requests.get(f"{api_url}/batches", params=params)
+                resp.raise_for_status()
+                results = resp.json().get("results", [])
+                for res in results:
+                    if "file_md5" in res:
+                        targets.append({"md5": res["file_md5"]})
+            except Exception as e:
+                print(f"[!] Error fetching MD5s for --all: {e}")
+                return
+
         for target in targets:
             payload = {
                 "collection": coll,
                 "algo": args.algo or "unweighted_cosine",
                 "top_k": args.top_k,
                 "min_score": args.min_score,
+                "min_features": args.min_features,
                 **target,
             }
             try:
@@ -136,12 +154,30 @@ def run_sim(host, port, args):
         if args.batch:
             targets.append({"batch": args.batch})
 
+        if args.all or (not targets):
+            try:
+                params = {
+                    "collection": coll,
+                    "algo": args.algo or "unweighted_cosine",
+                    "by": "md5",
+                }
+                resp = requests.get(f"{api_url}/batches", params=params)
+                resp.raise_for_status()
+                results = resp.json().get("results", [])
+                for res in results:
+                    if "file_md5" in res:
+                        targets.append({"md5": res["file_md5"]})
+            except Exception as e:
+                print(f"[!] Error fetching MD5s for --all: {e}")
+                return
+
         for target in targets:
             payload = {
                 "collection": coll,
                 "algo": args.algo or "unweighted_cosine",
                 "top_k": args.top_k,
                 "min_score": args.min_score,
+                "min_features": args.min_features,
                 **target,
             }
             try:

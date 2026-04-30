@@ -94,8 +94,8 @@ def build_similarity():
     batch_uuid = data.get("batch")
     algo = data.get("algo", "unweighted_cosine")
 
-    if not md5 and not batch_uuid:
-        return jsonify({"error": "md5 or batch required"}), 400
+    if not md5 and not batch_uuid and not data.get("all"):
+        return jsonify({"error": "md5, batch, or all required"}), 400
 
     payload = {
         "collection": collection,
@@ -104,6 +104,8 @@ def build_similarity():
         "algo": algo,
         "min_score": data.get("min_score", 0.95),
         "top_k": data.get("top_k", 20),
+        "min_features": data.get("min_features", 0),
+        "all": data.get("all", False),
     }
 
     job_id = job_service.create_job(JobType.BUILD_SIM, payload)
@@ -119,8 +121,8 @@ def rebuild_similarity():
     batch_uuid = data.get("batch")
     algo = data.get("algo", "unweighted_cosine")
 
-    if not md5 and not batch_uuid:
-        return jsonify({"error": "md5 or batch required"}), 400
+    if not md5 and not batch_uuid and not data.get("all"):
+        return jsonify({"error": "md5, batch, or all required"}), 400
 
     tasks = [
         (
@@ -130,6 +132,7 @@ def rebuild_similarity():
                 "md5": md5,
                 "batch_uuid": batch_uuid,
                 "algo": algo,
+                "all": data.get("all", False),
             },
         ),
         (
@@ -141,6 +144,8 @@ def rebuild_similarity():
                 "algo": algo,
                 "min_score": data.get("min_score", 0.95),
                 "top_k": data.get("top_k", 20),
+                "min_features": data.get("min_features", 0),
+                "all": data.get("all", False),
             },
         ),
     ]

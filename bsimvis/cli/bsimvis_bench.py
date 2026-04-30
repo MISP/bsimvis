@@ -84,7 +84,15 @@ def get_collection_stats(collection):
     return {}
 
 
-def run_bench(data_dir, collection, clear_first=False, limit=None):
+def run_bench(
+    data_dir,
+    collection,
+    clear_first=False,
+    limit=None,
+    top_k=None,
+    min_score=None,
+    min_features=None,
+):
     """Run benchmark by uploading all JSON files in a directory."""
     if not os.path.exists(data_dir):
         print(f"Error: Directory {data_dir} not found.")
@@ -116,8 +124,14 @@ def run_bench(data_dir, collection, clear_first=False, limit=None):
             with open(path, "r") as f:
                 data = json.load(f)
 
-            # Rewrite collection
+            # Rewrite collection and add parameters
             data["collection"] = collection
+            if top_k:
+                data["top_k"] = top_k
+            if min_score:
+                data["min_score"] = min_score
+            if min_features:
+                data["min_features"] = min_features
             num_funcs_in_file = len(data.get("functions", []))
 
             print(f"\n[*] Processing {filename}")
@@ -206,10 +220,25 @@ def main():
     parser.add_argument(
         "--limit", type=int, help="Limit number of binaries to process", default=None
     )
+    parser.add_argument("--top-k", type=int, help="Top K candidates to keep")
+    parser.add_argument(
+        "--min-score", type=float, help="Minimum similarity score threshold"
+    )
+    parser.add_argument(
+        "--min-features", type=int, help="Minimum feature count required"
+    )
 
     args = parser.parse_args()
 
-    run_bench(args.dir, args.collection, args.clear, args.limit)
+    run_bench(
+        args.dir,
+        args.collection,
+        args.clear,
+        args.limit,
+        args.top_k,
+        args.min_score,
+        args.min_features,
+    )
 
 
 if __name__ == "__main__":

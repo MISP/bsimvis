@@ -39,6 +39,18 @@ def upload_file_data():
         # Use execute_command to send raw JSON string directly.
         # decode_responses=True requires a str, not bytes.
         r_data.execute_command("JSON.SET", file_id, "$", raw_bytes.decode("utf-8"))
+        build_sim_payload = {
+            "collection": collection,
+            "file_id": file_id,
+            "md5": file_md5,
+            "algo": "unweighted_cosine",
+        }
+        if "top_k" in data:
+            build_sim_payload["top_k"] = data["top_k"]
+        if "min_score" in data:
+            build_sim_payload["min_score"] = data["min_score"]
+        if "min_features" in data:
+            build_sim_payload["min_features"] = data["min_features"]
 
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake
@@ -57,12 +69,7 @@ def upload_file_data():
             ),
             (
                 JobType.BUILD_SIM,
-                {
-                    "collection": collection,
-                    "file_id": file_id,
-                    "md5": file_md5,
-                    "algo": "unweighted_cosine",
-                },
+                build_sim_payload,
             ),
         ]
 

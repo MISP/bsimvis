@@ -72,6 +72,13 @@ def upload_bsim_data(data, args, config):
         # Prepare the payload for the API
         payload = {"collection": collection, "file_md5": file_md5, **data}
 
+        if getattr(args, "top_k", None) is not None:
+            payload["top_k"] = args.top_k
+        if getattr(args, "min_score", None) is not None:
+            payload["min_score"] = args.min_score
+        if getattr(args, "min_features", None) is not None:
+            payload["min_features"] = args.min_features
+
         # Submit to API
         api_host = getattr(args, "host", "localhost:5000")
         api_url = f"http://{api_host}/api/file/upload/file_data"
@@ -993,6 +1000,17 @@ def cli_main():
     batch_options.add_argument("--batch-uuid", help="Batch uuid", default=None)
     batch_options.add_argument(
         "--batch-name", help="Batch name", default=DEFAULT_BATCH_NAME
+    )
+
+    sim_options = parser.add_argument_group("Similarity Options")
+    sim_options.add_argument(
+        "-k", "--top-k", type=int, default=None, help="Top K matches per function"
+    )
+    sim_options.add_argument(
+        "--min-score", type=float, default=None, help="Minimum similarity score"
+    )
+    sim_options.add_argument(
+        "--min-features", type=int, default=None, help="Minimum number of features"
     )
 
     args = parser.parse_args()

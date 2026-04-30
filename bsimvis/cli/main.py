@@ -134,7 +134,20 @@ def main():
                 help="Top K matches per function",
             )
             dp.add_argument("--min-score", type=float, default=0)
+            dp.add_argument(
+                "--min-feature",
+                "--min-features",
+                dest="min_features",
+                type=int,
+                default=0,
+                help="Minimum number of features",
+            )
             dp.add_argument("--delay", type=float, default=0.0)
+            dp.add_argument(
+                "--all",
+                action="store_true",
+                help="Build/Rebuild for all functions in the collection",
+            )
             dp.add_argument(
                 "--batch-size", type=int, default=100, help="Internal SCAN batch size"
             )
@@ -301,6 +314,17 @@ def main():
     batch_options.add_argument("--batch-uuid", help="Batch uuid", default=None)
     batch_options.add_argument(
         "--batch-name", help="Batch name", default="Ghidra Batch"
+    )
+
+    sim_options = upload_parser.add_argument_group("Similarity Options")
+    sim_options.add_argument(
+        "-k", "--top-k", type=int, default=None, help="Top K matches per function"
+    )
+    sim_options.add_argument(
+        "--min-score", type=float, default=None, help="Minimum similarity score"
+    )
+    sim_options.add_argument(
+        "--min-features", type=int, default=None, help="Minimum number of features"
     )
 
     # Parse and Resolve Host

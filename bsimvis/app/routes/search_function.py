@@ -203,27 +203,63 @@ def search_functions():
             }
         )
 
-    # Core Filters
+    # Core Filters — config-driven
+    from bsimvis.app.services.index_config import (
+        get_search_paths_for_field,
+        INDEX_CONFIG,
+        resolve_target_field,
+    )
+
+    def _paths(field):
+        return get_search_paths_for_field(field, "func")
+
+    def _paths_for_source(source_lvl, field):
+        targets = INDEX_CONFIG.get(source_lvl, {}).get(field, [])
+        path = []
+        for lvl in ["func", "file"]:
+            if lvl in targets:
+                path.append((lvl, resolve_target_field(source_lvl, lvl, field)))
+        return [path] if path else []
+
     filter_configs = [
-        (lang_filter, "language_id", ["func"], ["language_id"]),
-        (name_filter, "name", ["func"], ["function_name", "file_name"]),
-        (namespace_filter, "namespace", ["func"], ["namespace"]),
-        (ret_type_filter, "ret_type", ["func"], ["return_type"]),
-        (address_filter, "address", ["func"], ["entrypoint_address"]),
-        (md5_filter, "md5", ["func", "file"], ["file_md5"]),
-        (file_name_filter, "file_name", ["func", "file"], ["file_name"]),
-        (tag_filters, "tag", ["func", "file"], ["tags", "user_tags"]),
-        (static_tag_filters, "static_tag", ["func", "file"], ["tags"]),
-        (user_tag_filters, "user_tag", ["func", "file"], ["user_tags"]),
-        (func_tag_filters, "func_tag", ["func"], ["tags", "user_tags"]),
-        (func_static_tag_filters, "func_static_tag", ["func"], ["tags"]),
-        (func_user_tag_filters, "func_user_tag", ["func"], ["user_tags"]),
-        (file_tag_filters, "file_tag", ["file"], ["tags", "user_tags"]),
-        (file_static_tag_filters, "file_static_tag", ["file"], ["tags"]),
-        (file_user_tag_filters, "file_user_tag", ["file"], ["user_tags"]),
+        (lang_filter, "language_id", _paths("language_id")),
+        (namespace_filter, "namespace", _paths("namespace")),
+        (ret_type_filter, "ret_type", _paths("return_type")),
+        (address_filter, "address", _paths("entrypoint_address")),
+        (md5_filter, "md5", _paths("file_md5")),
+        (file_name_filter, "file_name", _paths("file_name")),
+        (name_filter, "name", _paths("function_name") + _paths("file_name")),
+        # General tag search
+        (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
+        (static_tag_filters, "static_tag", _paths("tags")),
+        (user_tag_filters, "user_tag", _paths("user_tags")),
+        # Func-scoped
+        (
+            func_tag_filters,
+            "func_tag",
+            _paths_for_source("func", "tags") + _paths_for_source("func", "user_tags"),
+        ),
+        (func_static_tag_filters, "func_static_tag", _paths_for_source("func", "tags")),
+        (
+            func_user_tag_filters,
+            "func_user_tag",
+            _paths_for_source("func", "user_tags"),
+        ),
+        # File-scoped
+        (
+            file_tag_filters,
+            "file_tag",
+            _paths_for_source("file", "tags") + _paths_for_source("file", "user_tags"),
+        ),
+        (file_static_tag_filters, "file_static_tag", _paths_for_source("file", "tags")),
+        (
+            file_user_tag_filters,
+            "file_user_tag",
+            _paths_for_source("file", "user_tags"),
+        ),
     ]
 
-    for f_v, label, levels, allowed in filter_configs:
+    for f_v, label, paths in filter_configs:
         if not f_v:
             continue
         vals = f_v if isinstance(f_v, list) else [f_v]
@@ -231,10 +267,18 @@ def search_functions():
             if not val:
                 continue
             all_matches = []
-            for lvl in levels:
-                matches = get_group_targets(lvl, val, allowed_fields=allowed)
-                if matches:
-                    all_matches.extend(matches)
+            for path in paths:
+                for i, (lvl, physical_field) in enumerate(path):
+                    matches = get_group_targets(
+                        lvl, val, allowed_fields=[physical_field]
+                    )
+                    if matches:
+                        if i > 0:
+                            logging.info(
+                                f"FUNC SEARCH | {session_id} | Fallback triggered! '{physical_field}={val}' wasn't found natively at '{path[0][0]}', successfully joined via '{lvl}'."
+                            )
+                        all_matches.extend(matches)
+                        break  # stop at first level that returns results
 
             if not all_matches:
                 logging.info(
@@ -246,19 +290,44 @@ def search_functions():
 
             add_group(all_matches, field_name=f"{label}:{val}")
 
-    # Exclusions
+    # Exclusions — config-driven
     exclude_configs = [
-        (ex_tag_filters, "ex_tag", ["func", "file"], ["tags", "user_tags"]),
-        (ex_static_tag_filters, "ex_static_tag", ["func", "file"], ["tags"]),
-        (ex_user_tag_filters, "ex_user_tag", ["func", "file"], ["user_tags"]),
-        (ex_func_tag_filters, "ex_func_tag", ["func"], ["tags", "user_tags"]),
-        (ex_func_static_tag_filters, "ex_func_static_tag", ["func"], ["tags"]),
-        (ex_func_user_tag_filters, "ex_func_user_tag", ["func"], ["user_tags"]),
-        (ex_file_tag_filters, "ex_file_tag", ["file"], ["tags", "user_tags"]),
-        (ex_file_static_tag_filters, "ex_file_static_tag", ["file"], ["tags"]),
-        (ex_file_user_tag_filters, "ex_file_user_tag", ["file"], ["user_tags"]),
+        (ex_tag_filters, "ex_tag", _paths("tags") + _paths("user_tags")),
+        (ex_static_tag_filters, "ex_static_tag", _paths("tags")),
+        (ex_user_tag_filters, "ex_user_tag", _paths("user_tags")),
+        (
+            ex_func_tag_filters,
+            "ex_func_tag",
+            _paths_for_source("func", "tags") + _paths_for_source("func", "user_tags"),
+        ),
+        (
+            ex_func_static_tag_filters,
+            "ex_func_static_tag",
+            _paths_for_source("func", "tags"),
+        ),
+        (
+            ex_func_user_tag_filters,
+            "ex_func_user_tag",
+            _paths_for_source("func", "user_tags"),
+        ),
+        (
+            ex_file_tag_filters,
+            "ex_file_tag",
+            _paths_for_source("file", "tags") + _paths_for_source("file", "user_tags"),
+        ),
+        (
+            ex_file_static_tag_filters,
+            "ex_file_static_tag",
+            _paths_for_source("file", "tags"),
+        ),
+        (
+            ex_file_user_tag_filters,
+            "ex_file_user_tag",
+            _paths_for_source("file", "user_tags"),
+        ),
     ]
-    for ex_v, label, levels, allowed in exclude_configs:
+
+    for ex_v, label, paths in exclude_configs:
         if not ex_v:
             continue
         vals = ex_v if isinstance(ex_v, list) else [ex_v]
@@ -266,10 +335,18 @@ def search_functions():
             if not val:
                 continue
             all_matches = []
-            for lvl in levels:
-                matches = get_group_targets(lvl, val, allowed_fields=allowed)
-                if matches:
-                    all_matches.extend(matches)
+            for path in paths:
+                for i, (lvl, physical_field) in enumerate(path):
+                    matches = get_group_targets(
+                        lvl, val, allowed_fields=[physical_field]
+                    )
+                    if matches:
+                        if i > 0:
+                            logging.info(
+                                f"FUNC SEARCH | {session_id} | Fallback triggered (Exclude)! '{physical_field}={val}' wasn't found natively at '{path[0][0]}', successfully joined via '{lvl}'."
+                            )
+                        all_matches.extend(matches)
+                        break
             if all_matches:
                 add_group(all_matches, field_name=f"{label}:{val}", exclude=True)
 

@@ -1,14 +1,14 @@
 services:
   redis:
     image: redis:latest
-    container_name: bsimvis_redis2
+    container_name: ${PROJECT_NAME}_redis
     ports:
       - "${REDIS_PORT:-6379}:6379"
     restart: always
 
   kvrocks:
     image: apache/kvrocks:latest
-    container_name: bsimvis_kvrocks2
+    container_name: ${PROJECT_NAME}_kvrocks
     ports:
       - "${KVROCKS_PORT:-6666}:6666"
     volumes:
@@ -33,7 +33,7 @@ services:
       - ./volumes/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls=http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health"]
+      test: [ "CMD", "etcdctl", "endpoint", "health" ]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -51,7 +51,7 @@ services:
       - ./volumes/minio:/data
     command: minio server /data --console-address ":9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -59,7 +59,7 @@ services:
   standalone:
     container_name: milvus-standalone
     image: milvusdb/milvus:v2.4.15
-    command: ["milvus", "run", "standalone"]
+    command: [ "milvus", "run", "standalone" ]
     security_opt:
       - seccomp:unconfined
     environment:
@@ -68,7 +68,7 @@ services:
     volumes:
       - ./volumes/milvus:/var/lib/milvus
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9091/healthz" ]
       interval: 30s
       timeout: 20s
       retries: 3

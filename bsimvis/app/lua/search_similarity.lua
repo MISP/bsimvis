@@ -52,8 +52,7 @@ for idx, g in ipairs(groups) do
             if sub.level == "binary" then prefix = collection .. ":sim:involves:file:"
             elseif sub.level == "function" then prefix = collection .. ":sim:involves:func:"
             elseif sub.level == "similarity" then 
-                prefix = collection .. ":idx:sim:tags:"
-                if sub.field == "user_tags" then prefix = collection .. ":idx:sim:user_tags:" end
+                prefix = collection .. ":idx:sim:" .. sub.field .. ":"
             end
             
             if prefix ~= "" and sub.targets then

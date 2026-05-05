@@ -28,13 +28,26 @@ def autocomplete():
         return jsonify({"error": "Missing parameters"}), 400
 
     r = get_redis()
-    registry_key = f"{col}:reg:{level}:{field}"
+    
+    from bsimvis.app.services.index_config import get_search_paths_for_field
+    paths = get_search_paths_for_field(field, level)
+
+    registry_key = None
+    prefix = None
+
+    # Gracefully search down the path until we find a populated registry
+    for path in paths:
+        for lvl, physical_field in path:
+            candidate_reg = f"{col}:reg:{lvl}:{physical_field}"
+            if r.exists(candidate_reg):
+                registry_key = candidate_reg
+                prefix = f"{col}:idx:{lvl}:{physical_field}:"
+                break
+        if registry_key:
+            break
 
     results = []
-    if r.exists(registry_key):
-        # bucket_key is {coll}:idx:{level}:{field}:{value}
-        prefix = f"{col}:idx:{level}:{field}:"
-
+    if registry_key:
         # Search pattern: for better performance we match the whole bucket key
         match_pat = f"*{query}*"
 
@@ -83,7 +96,7 @@ def autocomplete():
     return jsonify(
         {
             "results": final_results,
-            "cardinality": r.scard(registry_key) if r.exists(registry_key) else 0,
+            "cardinality": r.scard(registry_key) if registry_key and r.exists(registry_key) else 0,
         }
     )
 
@@ -99,9 +112,25 @@ def get_field_stats():
 
     r = get_redis()
     stats = {}
+    from bsimvis.app.services.index_config import get_search_paths_for_field
+
     for f in fields:
-        reg_key = f"{col}:reg:{level}:{f}"
-        stats[f] = r.scard(reg_key)
+        paths = get_search_paths_for_field(f, level)
+        reg_key = None
+
+        for path in paths:
+            for lvl, physical_field in path:
+                candidate_reg = f"{col}:reg:{lvl}:{physical_field}"
+                if r.exists(candidate_reg):
+                    reg_key = candidate_reg
+                    break
+            if reg_key:
+                break
+
+        if reg_key:
+            stats[f] = r.scard(reg_key)
+        else:
+            stats[f] = 0
 
     return jsonify(stats)
 
@@ -435,21 +464,17 @@ def similarity_search():
                     normalized_subs = []
                     total_weight = 0
 
-                    prefix_map = {
-                        "binary": f"{col}:sim:involves:file:",
-                        "function": f"{col}:sim:involves:func:",
-                        "similarity": f"{col}:idx:sim:tags:",
-                    }
-
                     for lvl, targets, field in sub_matches:
-                        l_name = (
-                            "binary"
-                            if lvl == "file"
-                            else "function" if lvl == "func" else "similarity"
-                        )
-                        p = prefix_map.get(l_name)
-                        if l_name == "similarity" and field == "user_tags":
-                            p = f"{col}:idx:sim:user_tags:"
+                        if lvl == "sim":
+                            l_name = "similarity"
+                            # Config-driven sim prefix: always {col}:idx:sim:{field}:
+                            p = f"{col}:idx:sim:{field}:"
+                        elif lvl == "func":
+                            l_name = "function"
+                            p = f"{col}:sim:involves:func:"
+                        else:  # file
+                            l_name = "binary"
+                            p = f"{col}:sim:involves:file:"
 
                         weight = 0
                         clean_targets = []
@@ -460,12 +485,10 @@ def similarity_search():
                                 if l_name == "function" and t.startswith(
                                     f"{col}:func:"
                                 ):
-                                    # test5:func:md5:addr -> md5:addr
                                     clean_t = t[len(f"{col}:func:") :]
                                 elif l_name == "binary" and t.startswith(
                                     f"{col}:file:"
                                 ):
-                                    # test5:file:md5 -> md5
                                     clean_t = t[len(f"{col}:file:") :]
 
                                 clean_targets.append(clean_t)
@@ -495,43 +518,103 @@ def similarity_search():
                         }
                     )
 
-                # Unified Filter Configuration Architecture
-                # Format: (filter_value, label, levels, allowed_fields)
+                # --------------------------------------------------------------------------
+                # Filter Configuration — config-driven
+                #
+                # Each entry: (param_value, label, paths)
+                # where paths is a list of lists of (level, target_field_name).
+                #
+                # The search engine evaluates each path independently. It tries the levels
+                # in a path in order, and stops at the first one that returns results.
+                # --------------------------------------------------------------------------
+                from bsimvis.app.services.index_config import (
+                    get_search_paths_for_field,
+                    INDEX_CONFIG,
+                    resolve_target_field,
+                )
+
+                def _paths(field):
+                    return get_search_paths_for_field(field, "sim")
+
+                def _paths_for_source(source_lvl, field):
+                    """Explicit scoped searches (e.g. ?file_tag=) only look for tags originating from that specific source."""
+                    targets = INDEX_CONFIG.get(source_lvl, {}).get(field, [])
+                    path = []
+                    for lvl in ["sim", "func", "file"]:
+                        if lvl in targets:
+                            path.append(
+                                (lvl, resolve_target_field(source_lvl, lvl, field))
+                            )
+                    return [path] if path else []
+
                 filter_configs = [
-                    (lang_filter, "language_id", ["func"], ["language_id"]),
-                    (name_filter, "name", ["func"], ["function_name", "file_name"]),
-                    # General Tag Search
+                    (lang_filter, "language_id", _paths("language_id")),
+                    (namespace_filter, "namespace", _paths("namespace")),
+                    (ret_type_filter, "ret_type", _paths("return_type")),
+                    (address_filter, "address", _paths("entrypoint_address")),
                     (
-                        tag_filters,
-                        "tag",
-                        ["sim", "func", "file"],
-                        ["tags", "user_tags"],
+                        name_filter,
+                        "name",
+                        _paths("function_name") + _paths("file_name"),
+                    ),
+                    (file_name_filter, "file_name", _paths("file_name")),
+                    # General tag search (all levels)
+                    (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
+                    (static_tag_filters, "static_tag", _paths("tags")),
+                    (user_tag_filters, "user_tag", _paths("user_tags")),
+                    # Scoped tag searches
+                    (
+                        sim_tag_filters,
+                        "sim_tag",
+                        _paths_for_source("sim", "tags")
+                        + _paths_for_source("sim", "user_tags"),
                     ),
                     (
-                        static_tag_filters,
-                        "static_tag",
-                        ["sim", "func", "file"],
-                        ["tags"],
+                        sim_static_tag_filters,
+                        "sim_static_tag",
+                        _paths_for_source("sim", "tags"),
                     ),
-                    (user_tag_filters, "user_tag", ["func", "file"], ["user_tags"]),
-                    # Similarity Tag Search
-                    (sim_tag_filters, "sim_tag", ["sim"], ["tags", "user_tags"]),
-                    (sim_static_tag_filters, "sim_static_tag", ["sim"], ["tags"]),
-                    (sim_user_tag_filters, "sim_user_tag", ["sim"], ["user_tags"]),
-                    # Function Tag Search
-                    (func_tag_filters, "func_tag", ["func"], ["tags", "user_tags"]),
-                    (func_static_tag_filters, "func_static_tag", ["func"], ["tags"]),
-                    (func_user_tag_filters, "func_user_tag", ["func"], ["user_tags"]),
-                    (namespace_filter, "namespace", ["func"], ["namespace"]),
-                    (ret_type_filter, "ret_type", ["func"], ["return_type"]),
-                    (address_filter, "address", ["func"], ["entrypoint_address"]),
-                    (file_tag_filters, "file_tag", ["file"], ["tags", "user_tags"]),
-                    (file_static_tag_filters, "file_static_tag", ["file"], ["tags"]),
-                    (file_user_tag_filters, "file_user_tag", ["file"], ["user_tags"]),
-                    (file_name_filter, "file_name", ["func", "file"], ["file_name"]),
+                    (
+                        sim_user_tag_filters,
+                        "sim_user_tag",
+                        _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        func_tag_filters,
+                        "func_tag",
+                        _paths_for_source("func", "tags")
+                        + _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        func_static_tag_filters,
+                        "func_static_tag",
+                        _paths_for_source("func", "tags"),
+                    ),
+                    (
+                        func_user_tag_filters,
+                        "func_user_tag",
+                        _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        file_tag_filters,
+                        "file_tag",
+                        _paths_for_source("file", "tags")
+                        + _paths_for_source("file", "user_tags"),
+                    ),
+                    (
+                        file_static_tag_filters,
+                        "file_static_tag",
+                        _paths_for_source("file", "tags"),
+                    ),
+                    (
+                        file_user_tag_filters,
+                        "file_user_tag",
+                        _paths_for_source("file", "user_tags"),
+                    ),
+                    (md5_filters, "md5", _paths("file_md5")),
                 ]
 
-                for f_v, label, levels, allowed in filter_configs:
+                for f_v, label, paths in filter_configs:
                     if not f_v:
                         continue
                     vals = f_v if isinstance(f_v, list) else [f_v]
@@ -539,12 +622,20 @@ def similarity_search():
                         if not val:
                             continue
                         all_matches = []
-                        for lvl in levels:
-                            matches = get_group_targets(
-                                lvl, val, allowed_fields=allowed
-                            )
-                            if matches:
-                                all_matches.extend(matches)
+                        for path in paths:
+                            # Evaluate this specific source's propagation path
+                            for i, (lvl, physical_field) in enumerate(path):
+                                matches = get_group_targets(
+                                    lvl, val, allowed_fields=[physical_field]
+                                )
+                                if matches:
+                                    if i > 0:
+                                        logging.info(
+                                            f"SIM SEARCH | {session_id} | Fallback triggered! '{physical_field}={val}' wasn't found natively at '{path[0][0]}', successfully joined via '{lvl}'."
+                                        )
+                                    all_matches.extend(matches)
+                                    # We found it! No need to fall back to joins for THIS specific source
+                                    break
 
                         if not all_matches:
                             logging.info(
@@ -562,73 +653,62 @@ def similarity_search():
 
                         add_group(all_matches, field_name=f"{label}:{val}")
 
-                # --- EXCLUSION CONFIGURATION ---
+                # --- Exclusion Configuration (config-driven, same routing logic) ---
                 exclude_configs = [
+                    (ex_tag_filters, "ex_tag", _paths("tags") + _paths("user_tags")),
+                    (ex_static_tag_filters, "ex_static_tag", _paths("tags")),
+                    (ex_user_tag_filters, "ex_user_tag", _paths("user_tags")),
                     (
-                        ex_tag_filters,
-                        "ex_tag",
-                        ["sim", "func", "file"],
-                        ["tags", "user_tags"],
+                        ex_sim_tag_filters,
+                        "ex_sim_tag",
+                        _paths_for_source("sim", "tags")
+                        + _paths_for_source("sim", "user_tags"),
                     ),
                     (
-                        ex_static_tag_filters,
-                        "ex_static_tag",
-                        ["sim", "func", "file"],
-                        ["tags"],
+                        ex_sim_static_tag_filters,
+                        "ex_sim_static_tag",
+                        _paths_for_source("sim", "tags"),
                     ),
-                    (
-                        ex_user_tag_filters,
-                        "ex_user_tag",
-                        ["func", "file"],
-                        ["user_tags"],
-                    ),
-                    (ex_sim_tag_filters, "ex_sim_tag", ["sim"], ["tags", "user_tags"]),
-                    (ex_sim_static_tag_filters, "ex_sim_static_tag", ["sim"], ["tags"]),
                     (
                         ex_sim_user_tag_filters,
                         "ex_sim_user_tag",
-                        ["sim"],
-                        ["user_tags"],
+                        _paths_for_source("sim", "user_tags"),
                     ),
                     (
                         ex_func_tag_filters,
                         "ex_func_tag",
-                        ["func"],
-                        ["tags", "user_tags"],
+                        _paths_for_source("func", "tags")
+                        + _paths_for_source("func", "user_tags"),
                     ),
                     (
                         ex_func_static_tag_filters,
                         "ex_func_static_tag",
-                        ["func"],
-                        ["tags"],
+                        _paths_for_source("func", "tags"),
                     ),
                     (
                         ex_func_user_tag_filters,
                         "ex_func_user_tag",
-                        ["func"],
-                        ["user_tags"],
+                        _paths_for_source("func", "user_tags"),
                     ),
                     (
                         ex_file_tag_filters,
                         "ex_file_tag",
-                        ["file"],
-                        ["tags", "user_tags"],
+                        _paths_for_source("file", "tags")
+                        + _paths_for_source("file", "user_tags"),
                     ),
                     (
                         ex_file_static_tag_filters,
                         "ex_file_static_tag",
-                        ["file"],
-                        ["tags"],
+                        _paths_for_source("file", "tags"),
                     ),
                     (
                         ex_file_user_tag_filters,
                         "ex_file_user_tag",
-                        ["file"],
-                        ["user_tags"],
+                        _paths_for_source("file", "user_tags"),
                     ),
                 ]
 
-                for ex_v, label, levels, allowed in exclude_configs:
+                for ex_v, label, paths in exclude_configs:
                     if not ex_v:
                         continue
                     vals = ex_v if isinstance(ex_v, list) else [ex_v]
@@ -636,43 +716,23 @@ def similarity_search():
                         if not val:
                             continue
                         all_matches = []
-                        for lvl in levels:
-                            matches = get_group_targets(
-                                lvl, val, allowed_fields=allowed
-                            )
-                            if matches:
-                                all_matches.extend(matches)
+                        for path in paths:
+                            for i, (lvl, physical_field) in enumerate(path):
+                                matches = get_group_targets(
+                                    lvl, val, allowed_fields=[physical_field]
+                                )
+                                if matches:
+                                    if i > 0:
+                                        logging.info(
+                                            f"SIM SEARCH | {session_id} | Fallback triggered (Exclude)! '{physical_field}={val}' wasn't found natively at '{path[0][0]}', successfully joined via '{lvl}'."
+                                        )
+                                    all_matches.extend(matches)
+                                    break
 
                         if all_matches:
                             add_group(
                                 all_matches, field_name=f"{label}:{val}", exclude=True
                             )
-
-                if md5_filters:
-                    all_md5_base_ids = []
-                    for m in md5_filters:
-                        if not m:
-                            continue
-                        matches = get_group_targets(
-                            "file", m, allowed_fields=["file_md5"]
-                        )
-                        for _, tgts, _ in matches:
-                            all_md5_base_ids.extend(tgts)
-
-                    if not all_md5_base_ids:
-                        return jsonify(
-                            {
-                                "total": 0,
-                                "pairs": [],
-                                "algo": algo,
-                                "collection": col,
-                                "pool_truncated": False,
-                            }
-                        )
-
-                    # MD5 is binary-only, but we wrap in a sub-group format for add_group
-                    md5_submatches = [("file", list(set(all_md5_base_ids)), "md5")]
-                    add_group(md5_submatches, field_name="md5")
 
                 if search_q:
                     for word in [w for w in search_q.split() if w.strip()]:

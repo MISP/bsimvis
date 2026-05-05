@@ -84,6 +84,9 @@ class TagService:
                 registry_key = f"{collection}:reg:{lvl}:user_tags"
                 r.sadd(registry_key, index_key)
 
+                # 4. Handle Propagation
+                self._propagate_user_tag(collection, entity_type, entity_id, tag, op="add")
+
                 # 5. Ensure metadata
                 self._ensure_tag_metadata(collection, tag)
 
@@ -122,6 +125,11 @@ class TagService:
 
                 index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
                 r.srem(index_key, indexed_id)
+
+                # Handle Propagation
+                self._propagate_user_tag(
+                    collection, entity_type, entity_id, tag, op="remove"
+                )
 
             return True
         except Exception as e:
@@ -163,6 +171,9 @@ class TagService:
                     r.sadd(index_key, indexed_id)
                     r.sadd(registry_key, index_key)
 
+                    # Handle Propagation
+                    self._propagate_user_tag(collection, entity_type, eid, tag, op="add")
+
             self._ensure_tag_metadata(collection, tag)
             return True
         except Exception as e:
@@ -195,6 +206,11 @@ class TagService:
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                     r.srem(index_key, indexed_id)
+
+                    # Handle Propagation
+                    self._propagate_user_tag(
+                        collection, entity_type, eid, tag, op="remove"
+                    )
 
             return True
         except Exception as e:
@@ -265,6 +281,85 @@ class TagService:
         meta["priority"] = int(priority)
         self.r.hset(meta_key, tag, json.dumps(meta))
         return True
+
+
+    def _propagate_user_tag(self, collection, entity_type, entity_id, tag, op="add"):
+        """Propagates a user tag to other levels if configured in INDEX_CONFIG."""
+        from bsimvis.app.services.index_config import (
+            get_propagation_targets,
+            resolve_target_field,
+        )
+
+        # 1. Determine source level
+        src_level = (
+            "func"
+            if entity_type == "function"
+            else "sim" if entity_type == "similarity" else entity_type
+        )
+
+        # 2. Get targets for user_tags from this source level
+        prop_levels = get_propagation_targets(src_level, "user_tags")
+        if not prop_levels:
+            return
+
+        r = self.r
+        tag_lower = tag.strip().lower()
+
+        # Resolve to indexed_id (base identity)
+        indexed_id = self._resolve_doc_id(collection, entity_type, entity_id)
+        if indexed_id.endswith(":meta"):
+            indexed_id = indexed_id[:-5]
+
+        # 3. Handle File -> Func/Sim
+        if src_level == "file":
+            md5 = indexed_id.split(":")[-1]
+            for target_lvl in prop_levels:
+                target_field = resolve_target_field(src_level, target_lvl, "user_tags")
+                index_key = f"{collection}:idx:{target_lvl}:{target_field}:{tag_lower}"
+                registry_key = f"{collection}:reg:{target_lvl}:{target_field}"
+
+                if target_lvl == "func":
+                    related_ids = r.smembers(f"{collection}:idx:file:functions:{md5}")
+                elif target_lvl == "sim":
+                    related_ids = r.smembers(f"{collection}:sim:involves:file:{md5}")
+                else:
+                    continue
+
+                if related_ids:
+                    # Convert to list to avoid *set issues if empty (though checked above)
+                    id_list = list(related_ids)
+                    if op == "add":
+                        r.sadd(index_key, *id_list)
+                        r.sadd(registry_key, index_key)
+                    else:
+                        r.srem(index_key, *id_list)
+
+        # 4. Handle Func -> Sim
+        elif src_level == "func":
+            # indexed_id is {coll}:func:{md5}:{addr}
+            parts = indexed_id.split(":")
+            if len(parts) >= 4:
+                clean_id = f"{parts[-2]}:{parts[-1]}"
+                for target_lvl in prop_levels:
+                    if target_lvl == "sim":
+                        target_field = resolve_target_field(
+                            src_level, target_lvl, "user_tags"
+                        )
+                        index_key = (
+                            f"{collection}:idx:{target_lvl}:{target_field}:{tag_lower}"
+                        )
+                        registry_key = f"{collection}:reg:{target_lvl}:{target_field}"
+
+                        related_ids = r.smembers(
+                            f"{collection}:sim:involves:func:{clean_id}"
+                        )
+                        if related_ids:
+                            id_list = list(related_ids)
+                            if op == "add":
+                                r.sadd(index_key, *id_list)
+                                r.sadd(registry_key, index_key)
+                            else:
+                                r.srem(index_key, *id_list)
 
 
 tag_service = TagService()

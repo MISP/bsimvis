@@ -17,7 +17,7 @@ INDEX_CONFIG = {
         "file_name": ["file", "func", "sim"],  # propagated to sim for fast lookup
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
-        "user_tags": ["file"],  # not propagated
+        "user_tags": ["file", "func", "sim"],  # not propagated
         "language_id": ["file", "func", "sim"],
         "batch_uuid": ["file", "func", "sim"],
         "type": ["file", "func", "sim"],
@@ -29,7 +29,7 @@ INDEX_CONFIG = {
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name
         "tags": ["func", "sim"],  # becomes 'func_tags' when propagated
-        "user_tags": ["func"],
+        "user_tags": ["func", "sim"],
         "namespace": ["func", "sim"],
         "return_type": ["func", "sim"],
         "parameters": ["func", "sim"],
@@ -186,3 +186,7 @@ def get_search_paths_for_field(
             paths.append(path)
 
     return paths
+def get_propagation_targets(source_level: str, field: str) -> list[str]:
+    """Returns the list of levels a field should propagate to (excluding source)."""
+    cfg = INDEX_CONFIG.get(source_level, {}).get(field, [])
+    return [lvl for lvl in cfg if lvl != source_level]

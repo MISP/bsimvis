@@ -5,6 +5,7 @@ import time
 import logging
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
+from bsimvis.app.services.index_config import get_propagated_fields
 
 # --- Shared Lua Scripts ---
 
@@ -219,194 +220,9 @@ class SimilarityService:
             except Exception as e:
                 logging.error(f"Discovery Error for {fid}: {e}")
 
-        # Phase 4: Persistence (Python)
-        if not discovery_results:
-            return
-
-        persist_pipe = r.pipeline()
-        now = int(time.time() * 1000)
-
-        # We need to collect MD5s for the candidates to generate correct sim_docs
-        # However, extracting them from the ID is faster than fetching from Redis
-        def extract_md5(fid, coll):
-            # doc: {coll}:func:{md5}:{addr}
-            prefix = f"{coll}:func:"
-            if fid.startswith(prefix):
-                parts = fid[len(prefix) :].split(":")
-                if parts:
-                    return parts[0]
-            return "unknown"
-
-        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
-            for item in candidates:
-                # Canonical Order (id_a > id_b)
-                if fid > item["id"]:
-                    id_a, id_b = fid, item["id"]
-                    md5_a = t_md5
-                    md5_b = extract_md5(item["id"], collection)
-                    fc_a, fc_b = t_total, item["c_total"]
-                else:
-                    id_a, id_b = item["id"], fid
-                    md5_a = extract_md5(item["id"], collection)
-                    md5_b = t_md5
-                    fc_a, fc_b = item["c_total"], t_total
-
-                # Clean identifiers for SID construction (strip collection:func:)
-                func_prefix = f"{collection}:func:"
-                clean_id_a = (
-                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
-                )
-                clean_id_b = (
-                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
-                )
-
-                score_rounded = round(item["score"], 4)
-                # Use double colon as separator for clarity and easier parsing
-                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
-
-                sim_doc = {
-                    "type": "sim",
-                    "collection": collection,
-                    "algo": algo,
-                    "score": score_rounded,
-                    "id1": id_a,
-                    "id2": id_b,
-                    "md5_1": md5_a,
-                    "md5_2": md5_b,
-                    "feat_count1": int(fc_a),
-                    "feat_count2": int(fc_b),
-                    "min_features": int(min(fc_a, fc_b)),
-                    "entry_date": now,
-                    "is_cross_binary": "true" if md5_a != md5_b else "false",
-                }
-
-                # Persistence
-                persist_pipe.json().set(sid, "$", sim_doc)
-                persist_pipe.zadd(
-                    f"{collection}:sim:score:{algo}", {sid: score_rounded}
-                )
-                persist_pipe.zadd(f"{collection}:sim:all", {sid: 0})
-
-                # Involves
-                persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_a}", sid)
-                persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_b}", sid)
-                persist_pipe.sadd(f"{collection}:sim:involves:file:{md5_a}", sid)
-                persist_pipe.sadd(f"{collection}:sim:involves:file:{md5_b}", sid)
-
-                # Range filters
-                persist_pipe.zadd(
-                    f"{collection}:sim:min_features", {sid: sim_doc["min_features"]}
-                )
-                persist_pipe.zadd(
-                    f"{collection}:sim:is_cross_binary:{sim_doc['is_cross_binary']}",
-                    {sid: 0},
-                )
-
-        res = persist_pipe.execute()
-        logging.debug(f"Persistence executed: {len(res)} commands in pipe")
-
-        # -- Sim-level secondary index --
-        from bsimvis.app.services.index_config import get_propagated_fields
-
-        propagated = get_propagated_fields("sim")
-        needs_func_meta = len(propagated.get("func", [])) > 0
-        needs_file_meta = (
-            len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
-        )
-
-        func_meta_cache = {}
-        file_meta_cache = {}
-
-        if needs_func_meta or needs_file_meta:
-            func_ids_needed = set()
-            file_ids_needed = set()
-
-            for fid, t_md5, t_addr, t_total, candidates in discovery_results:
-                func_ids_needed.add(fid)
-                if needs_file_meta:
-                    md5 = fid.split(":")[2] if ":" in fid else "unknown"
-                    file_ids_needed.add(f"{collection}:file:{md5}")
-
-                for item in candidates:
-                    func_ids_needed.add(item["id"])
-                    if needs_file_meta:
-                        md5 = (
-                            item["id"].split(":")[2] if ":" in item["id"] else "unknown"
-                        )
-                        file_ids_needed.add(f"{collection}:file:{md5}")
-
-            meta_pipe = r.pipeline()
-            func_ids_list = list(func_ids_needed)
-            for fid in func_ids_list:
-                meta_pipe.json().get(f"{fid}:meta", "$")
-
-            file_ids_list = list(file_ids_needed)
-            for fid in file_ids_list:
-                meta_pipe.json().get(f"{fid}:meta", "$")
-
-            raw_metas = meta_pipe.execute()
-
-            # Unpack func metas
-            raw_func = raw_metas[: len(func_ids_list)]
-            for fid, raw in zip(func_ids_list, raw_func):
-                if raw:
-                    m = raw[0] if isinstance(raw, list) else raw
-                    if isinstance(m, str):
-                        import json as _j
-
-                        m = _j.loads(m)
-                    func_meta_cache[fid] = m
-
-            # Unpack file metas
-            raw_file = raw_metas[len(func_ids_list) :]
-            for fid, raw in zip(file_ids_list, raw_file):
-                if raw:
-                    m = raw[0] if isinstance(raw, list) else raw
-                    if isinstance(m, str):
-                        import json as _j
-
-                        m = _j.loads(m)
-                    file_meta_cache[fid] = m
-
-        idx_pipe = r.pipeline()
-        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
-            for item in candidates:
-                if fid > item["id"]:
-                    id_a, id_b = fid, item["id"]
-                else:
-                    id_a, id_b = item["id"], fid
-
-                func_prefix = f"{collection}:func:"
-                clean_id_a = (
-                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
-                )
-                clean_id_b = (
-                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
-                )
-                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
-
-                md5_a = clean_id_a.split(":")[0]
-                md5_b = clean_id_b.split(":")[0]
-
-                sim_doc_for_idx = {
-                    "md5_1": md5_a,
-                    "md5_2": md5_b,
-                    "tags": [],
-                    "user_tags": [],
-                }
-
-                save_similarity(
-                    idx_pipe,
-                    collection,
-                    sid,
-                    sim_doc_for_idx,
-                    func_meta1=func_meta_cache.get(id_a),
-                    func_meta2=func_meta_cache.get(id_b),
-                    file_meta1=file_meta_cache.get(f"{collection}:file:{md5_a}"),
-                    file_meta2=file_meta_cache.get(f"{collection}:file:{md5_b}"),
-                )
-
-        idx_pipe.execute()
+        # Phase 4: Persistence and Indexing
+        if discovery_results:
+            self._persist_and_index_batch(collection, algo, discovery_results)
 
     def _process_chunk_milvus(
         self, collection, chunk, algo, top_k, min_score, min_features=0
@@ -493,13 +309,12 @@ class SimilarityService:
                 # 3. Mark as built
                 r.sadd(built_set_key, fid)
 
-        # Phase 3: Persistence (Reuse the same logic or call a helper)
-        # For this test, I'll inline the persistence call or adapt it
+        # Phase 3: Persistence and Indexing
         if discovery_results:
-            self._persist_similarities(collection, algo, discovery_results)
+            self._persist_and_index_batch(collection, algo, discovery_results)
 
-    def _persist_similarities(self, collection, algo, discovery_results):
-        """Helper to persist similarity results back to Kvrocks."""
+    def _persist_and_index_batch(self, collection, algo, discovery_results):
+        """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
         persist_pipe = r.pipeline()
         now = int(time.time() * 1000)
@@ -512,6 +327,7 @@ class SimilarityService:
                     return parts[0]
             return "unknown"
 
+        # 1. Canonical Persistence
         for fid, t_md5, t_addr, t_total, candidates in discovery_results:
             for item in candidates:
                 if fid > item["id"]:
@@ -551,9 +367,7 @@ class SimilarityService:
                 }
 
                 persist_pipe.json().set(sid, "$", sim_doc)
-                persist_pipe.zadd(
-                    f"{collection}:sim:score:{algo}", {sid: score_rounded}
-                )
+                persist_pipe.zadd(f"{collection}:sim:score:{algo}", {sid: score_rounded})
                 persist_pipe.zadd(f"{collection}:sim:all", {sid: 0})
                 persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_a}", sid)
                 persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_b}", sid)
@@ -568,6 +382,105 @@ class SimilarityService:
                 )
 
         persist_pipe.execute()
+
+        # 2. Metadata Propagation (Search Index)
+        propagated = get_propagated_fields("sim")
+        needs_func_meta = len(propagated.get("func", [])) > 0
+        needs_file_meta = (
+            len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
+        )
+
+        func_meta_cache = {}
+        file_meta_cache = {}
+
+        if needs_func_meta or needs_file_meta:
+            func_ids_needed = set()
+            file_ids_needed = set()
+
+            for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+                func_ids_needed.add(fid)
+                if needs_file_meta:
+                    md5 = fid.split(":")[2] if ":" in fid else "unknown"
+                    file_ids_needed.add(f"{collection}:file:{md5}")
+
+                for item in candidates:
+                    func_ids_needed.add(item["id"])
+                    if needs_file_meta:
+                        md5 = (
+                            item["id"].split(":")[2] if ":" in item["id"] else "unknown"
+                        )
+                        file_ids_needed.add(f"{collection}:file:{md5}")
+
+            meta_pipe = r.pipeline()
+            func_ids_list = list(func_ids_needed)
+            for fid in func_ids_list:
+                meta_pipe.json().get(f"{fid}:meta", "$")
+
+            file_ids_list = list(file_ids_needed)
+            for fid in file_ids_list:
+                meta_pipe.json().get(f"{fid}:meta", "$")
+
+            raw_metas = meta_pipe.execute()
+
+            # Unpack func metas
+            raw_func = raw_metas[: len(func_ids_list)]
+            for fid, raw in zip(func_ids_list, raw_func):
+                if raw:
+                    m = raw[0] if isinstance(raw, list) else raw
+                    if isinstance(m, str):
+                        m = json.loads(m)
+                    func_meta_cache[fid] = m
+
+            # Unpack file metas
+            raw_file = raw_metas[len(func_ids_list) :]
+            for fid, raw in zip(file_ids_list, raw_file):
+                if raw:
+                    m = raw[0] if isinstance(raw, list) else raw
+                    if isinstance(m, str):
+                        m = json.loads(m)
+                    file_meta_cache[fid] = m
+
+        idx_pipe = r.pipeline()
+        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+            for item in candidates:
+                if fid > item["id"]:
+                    id_a, id_b = fid, item["id"]
+                else:
+                    id_a, id_b = item["id"], fid
+
+                func_prefix = f"{collection}:func:"
+                clean_id_a = (
+                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
+                )
+                clean_id_b = (
+                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
+                )
+                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
+
+                md5_a = clean_id_a.split(":")[0]
+                md5_b = clean_id_b.split(":")[0]
+
+                # We pass a minimal sim_doc to save_similarity because it only needs md5s and tags
+                # Native sim tags are handled by save_similarity internally
+                sim_doc_for_idx = {
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "tags": [],
+                    "user_tags": [],
+                }
+
+                save_similarity(
+                    idx_pipe,
+                    collection,
+                    sid,
+                    sim_doc_for_idx,
+                    func_meta1=func_meta_cache.get(id_a),
+                    func_meta2=func_meta_cache.get(id_b),
+                    file_meta1=file_meta_cache.get(f"{collection}:file:{md5_a}"),
+                    file_meta2=file_meta_cache.get(f"{collection}:file:{md5_b}"),
+                )
+
+        idx_pipe.execute()
 
     def build_function(
         self,
@@ -633,176 +546,18 @@ class SimilarityService:
             if not candidates_raw:
                 return True
 
-            # Stage 2: Persistence (Python)
-            now = int(time.time() * 1000)
-            pipe = self.r.pipeline()
-
-            def extract_md5(fid, coll):
-                prefix = f"{coll}:func:"
-                if fid.startswith(prefix):
-                    parts = fid[len(prefix) :].split(":")
-                    if parts:
-                        return parts[0]
-                return "unknown"
-
+            # Stage 2: Persistence and Indexing
+            # Format candidates_raw (Lua flat list) into unified discovery_results format
+            enriched_candidates = []
             for k in range(0, len(candidates_raw), 3):
-                item_id = candidates_raw[k]
-                item_score = float(candidates_raw[k + 1])
-                item_fc = float(candidates_raw[k + 2])
-
-                # Canonical Order
-                if base_id > item_id:
-                    id_a, id_b = base_id, item_id
-                    md5_a, md5_b = md5, extract_md5(item_id, collection)
-                    fc_a, fc_b = target_feat_total, item_fc
-                else:
-                    id_a, id_b = item_id, base_id
-                    md5_a, md5_b = extract_md5(item_id, collection), md5
-                    fc_a, fc_b = item_fc, target_feat_total
-
-                # Clean identifiers for SID construction
-                func_prefix = f"{collection}:func:"
-                clean_id_a = (
-                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
-                )
-                clean_id_b = (
-                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
-                )
-
-                score_rounded = round(item_score, 4)
-                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
-
-                sim_doc = {
-                    "type": "sim",
-                    "collection": collection,
-                    "algo": algo,
-                    "score": score_rounded,
-                    "id1": id_a,
-                    "id2": id_b,
-                    "md5_1": md5_a,
-                    "md5_2": md5_b,
-                    "feat_count1": int(fc_a),
-                    "feat_count2": int(fc_b),
-                    "min_features": int(min(fc_a, fc_b)),
-                    "entry_date": now,
-                    "is_cross_binary": "true" if md5_a != md5_b else "false",
-                }
-
-                pipe.json().set(sid, "$", sim_doc)
-                pipe.zadd(f"{collection}:sim:score:{algo}", {sid: score_rounded})
-                pipe.zadd(f"{collection}:sim:all", {sid: 0})
-                pipe.sadd(f"{collection}:sim:involves:func:{clean_id_a}", sid)
-                pipe.sadd(f"{collection}:sim:involves:func:{clean_id_b}", sid)
-                pipe.sadd(f"{collection}:sim:involves:file:{md5_a}", sid)
-                pipe.sadd(f"{collection}:sim:involves:file:{md5_b}", sid)
-                pipe.zadd(
-                    f"{collection}:sim:min_features", {sid: sim_doc["min_features"]}
-                )
-                pipe.zadd(
-                    f"{collection}:sim:is_cross_binary:{sim_doc['is_cross_binary']}",
-                    {sid: 0},
-                )
-
-            pipe.execute()
-
-            # -- Sim-level secondary index --
-            from bsimvis.app.services.index_config import get_propagated_fields
-
-            propagated = get_propagated_fields("sim")
-            needs_func_meta = len(propagated.get("func", [])) > 0
-            needs_file_meta = (
-                len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
-            )
-
-            func_meta_cache = {}
-            file_meta_cache = {}
-
-            if needs_func_meta or needs_file_meta:
-                meta_pipe = self.r.pipeline()
-                func_ids_seen = set()
-                file_ids_seen = set()
-
-                for k in range(0, len(candidates_raw), 3):
-                    item_id = candidates_raw[k]
-                    func_ids_seen.add(base_id)
-                    func_ids_seen.add(item_id)
-
-                    if needs_file_meta:
-                        md5_base = (
-                            base_id.split(":")[2] if ":" in base_id else "unknown"
-                        )
-                        md5_item = (
-                            item_id.split(":")[2] if ":" in item_id else "unknown"
-                        )
-                        file_ids_seen.add(f"{collection}:file:{md5_base}")
-                        file_ids_seen.add(f"{collection}:file:{md5_item}")
-
-                fids_list = list(func_ids_seen)
-                for fid in fids_list:
-                    meta_pipe.json().get(f"{fid}:meta", "$")
-
-                file_ids_list = list(file_ids_seen)
-                for fid in file_ids_list:
-                    meta_pipe.json().get(f"{fid}:meta", "$")
-
-                raw_metas = meta_pipe.execute()
-
-                # Unpack func metas
-                raw_func = raw_metas[: len(fids_list)]
-                for fid, raw in zip(fids_list, raw_func):
-                    if raw:
-                        m = raw[0] if isinstance(raw, list) else raw
-                        if isinstance(m, str):
-                            m = json.loads(m)
-                        func_meta_cache[fid] = m
-
-                # Unpack file metas
-                raw_file = raw_metas[len(fids_list) :]
-                for fid, raw in zip(file_ids_list, raw_file):
-                    if raw:
-                        m = raw[0] if isinstance(raw, list) else raw
-                        if isinstance(m, str):
-                            m = json.loads(m)
-                        file_meta_cache[fid] = m
-
-            idx_pipe = self.r.pipeline()
-            func_prefix = f"{collection}:func:"
-            for k in range(0, len(candidates_raw), 3):
-                item_id = candidates_raw[k]
-                if base_id > item_id:
-                    id_a, id_b = base_id, item_id
-                else:
-                    id_a, id_b = item_id, base_id
-
-                clean_id_a = (
-                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
-                )
-                clean_id_b = (
-                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
-                )
-                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
-
-                md5_a = clean_id_a.split(":")[0]
-                md5_b = clean_id_b.split(":")[0]
-                sim_doc_for_idx = {
-                    "md5_1": md5_a,
-                    "md5_2": md5_b,
-                    "tags": [],
-                    "user_tags": [],
-                }
-
-                save_similarity(
-                    idx_pipe,
-                    collection,
-                    sid,
-                    sim_doc_for_idx,
-                    func_meta1=func_meta_cache.get(id_a),
-                    func_meta2=func_meta_cache.get(id_b),
-                    file_meta1=file_meta_cache.get(f"{collection}:file:{md5_a}"),
-                    file_meta2=file_meta_cache.get(f"{collection}:file:{md5_b}"),
-                )
-
-            idx_pipe.execute()
+                enriched_candidates.append({
+                    "id": candidates_raw[k],
+                    "score": float(candidates_raw[k + 1]),
+                    "c_total": float(candidates_raw[k + 2]),
+                })
+            
+            discovery_results = [(base_id, md5, addr, target_feat_total, enriched_candidates)]
+            self._persist_and_index_batch(collection, algo, discovery_results)
 
             return True
         except Exception as e:

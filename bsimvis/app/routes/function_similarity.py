@@ -14,7 +14,7 @@ def similarity_api():
 
     try:
         service = SimilarityService()
-        algorithms = ["jaccard", "unweighted_cosine"]
+        algorithms = ["jaccard", "unweighted_cosine", "milvus_sparse", "milvus_sparse_wand"]
         scores = {}
 
         collection = id1.split(":")[0] if ":" in id1 else "main"

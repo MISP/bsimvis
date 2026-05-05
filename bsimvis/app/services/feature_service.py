@@ -2,6 +2,7 @@ import math
 import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.milvus_service import milvus_service
 
 
 class FeatureService:
@@ -15,6 +16,9 @@ class FeatureService:
         """
         total = len(function_ids)
         logging.info(f"[*] Indexing {total} functions for collection: {collection}")
+
+        milvus_data = []
+        milvus_chunk_size = 100
 
         for i, func_id in enumerate(function_ids):
             # Update job progress if applicable
@@ -76,6 +80,18 @@ class FeatureService:
             # Mark as indexed (Base ID)
             pipe.sadd(f"{collection}:indexed:functions", func_id)
             pipe.execute()
+
+            # Milvus Buffer
+            milvus_data.append({"fid": func_id, "tf_dict": tf_dict})
+            if len(milvus_data) >= milvus_chunk_size:
+                for itype in ["SPARSE_INVERTED_INDEX", "SPARSE_WAND"]:
+                    milvus_service.upsert_functions(collection, milvus_data, index_type=itype)
+                milvus_data = []
+
+        # Final Milvus Flush
+        if milvus_data:
+            for itype in ["SPARSE_INVERTED_INDEX", "SPARSE_WAND"]:
+                milvus_service.upsert_functions(collection, milvus_data, index_type=itype)
 
         return True
 

@@ -78,6 +78,10 @@ def upload_bsim_data(data, args, config):
             payload["min_score"] = args.min_score
         if getattr(args, "min_features", None) is not None:
             payload["min_features"] = args.min_features
+        if getattr(args, "algo", None) is not None:
+            payload["algo"] = args.algo
+        if getattr(args, "skip_sim", False):
+            payload["skip_sim"] = True
 
         # Submit to API
         hosts = getattr(args, "hosts", [])
@@ -1016,6 +1020,17 @@ def cli_main():
     )
     sim_options.add_argument(
         "--min-features", type=int, default=None, help="Minimum number of features"
+    )
+    sim_options.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        help="Similarity algorithm to use (default: unweighted_cosine)",
+    )
+    sim_options.add_argument(
+        "--skip-sim",
+        action="store_true",
+        default=False,
+        help="Skip building similarities after upload",
     )
 
     args = parser.parse_args()

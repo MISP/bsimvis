@@ -197,6 +197,14 @@ def similarity_search():
     try:
         r = get_redis()
 
+        # Algorithm Name Standardizer
+        # Map frontend 'milvus_sparse' to the ZSET name used in Redis
+        # Support legacy 'milvus_inverted' if it exists and milvus_sparse doesn't
+        if algo == "milvus_sparse":
+            if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(f"{col}:sim:score:milvus_inverted"):
+                algo = "milvus_inverted"
+                logging.info(f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}")
+
         algo_zset = f"{col}:sim:score:{algo}"
         min_features_zset = f"{col}:sim:min_features"
         pool_truncated = False

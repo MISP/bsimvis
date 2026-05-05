@@ -108,8 +108,16 @@ def build_similarity():
         "all": data.get("all", False),
     }
 
-    job_id = job_service.create_job(JobType.BUILD_SIM, payload)
-    return jsonify({"job_id": job_id, "status": "enqueued"})
+    if algo in ["milvus_sparse", "milvus_sparse_wand"]:
+        tasks = [
+            (JobType.SYNC_MILVUS, {"collection": collection}),
+            (JobType.BUILD_SIM, payload),
+        ]
+        job_id = job_service.create_pipeline(tasks)
+        return jsonify({"job_id": job_id, "pipeline_id": job_id, "status": "enqueued"})
+    else:
+        job_id = job_service.create_job(JobType.BUILD_SIM, payload)
+        return jsonify({"job_id": job_id, "status": "enqueued"})
 
 
 @similarity_bp.route("/api/similarity/rebuild", methods=["POST"])
@@ -150,8 +158,13 @@ def rebuild_similarity():
         ),
     ]
 
+    if algo in ["milvus_sparse", "milvus_sparse_wand"]:
+        tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
+
     pipeline_id = job_service.create_pipeline(tasks)
-    return jsonify({"pipeline_id": pipeline_id, "status": "enqueued"})
+    return jsonify(
+        {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+    )
 
 
 @similarity_bp.route("/api/similarity/clear", methods=["POST"])

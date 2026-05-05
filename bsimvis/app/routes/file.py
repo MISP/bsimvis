@@ -52,6 +52,10 @@ def upload_file_data():
             build_sim_payload["min_score"] = data["min_score"]
         if "min_features" in data:
             build_sim_payload["min_features"] = data["min_features"]
+        if "algo" in data:
+            build_sim_payload["algo"] = data["algo"]
+
+        skip_sim = data.get("skip_sim", False)
 
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake
@@ -68,11 +72,11 @@ def upload_file_data():
                 JobType.INDEX_FEATURES,
                 {"collection": collection, "file_id": file_id, "md5": file_md5},
             ),
-            (
-                JobType.BUILD_SIM,
-                build_sim_payload,
-            ),
         ]
+
+        if not skip_sim:
+            pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
+            pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
 
         pipeline_id = job_service.create_pipeline(pipeline_tasks)
 

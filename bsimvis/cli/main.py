@@ -119,7 +119,7 @@ def main():
         )
         dp.add_argument(
             "--algo",
-            choices=["jaccard", "unweighted_cosine"],
+            choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
             help="Algorithm to target",
         )
 
@@ -166,7 +166,7 @@ def main():
     )
     sim_list.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine"],
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
         help="Algorithm to filter",
     )
     # --- JOB ---
@@ -325,6 +325,17 @@ def main():
     )
     sim_options.add_argument(
         "--min-features", type=int, default=None, help="Minimum number of features"
+    )
+    sim_options.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        help="Similarity algorithm to use (default: unweighted_cosine)",
+    )
+    sim_options.add_argument(
+        "--skip-sim",
+        action="store_true",
+        default=False,
+        help="Skip building similarities after upload",
     )
 
     # Parse and Resolve Host

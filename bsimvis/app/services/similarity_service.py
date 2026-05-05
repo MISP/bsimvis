@@ -3,6 +3,7 @@ import json
 import math
 import time
 import logging
+from bsimvis.app.services.milvus_service import milvus_service
 
 # --- Shared Lua Scripts ---
 
@@ -124,6 +125,11 @@ class SimilarityService:
 
     def _process_chunk(self, collection, chunk, algo, top_k, min_score, min_features=0):
         """Processes a chunk of functions using Redis pipelining."""
+        if algo in ["milvus_sparse", "milvus_sparse_wand"]:
+            return self._process_chunk_milvus(
+                collection, chunk, algo, top_k, min_score, min_features
+            )
+
         r = self.r
         built_set_key = f"{collection}:built:functions:{algo}"
 
@@ -298,6 +304,167 @@ class SimilarityService:
         res = persist_pipe.execute()
         logging.debug(f"Persistence executed: {len(res)} commands in pipe")
 
+    def _process_chunk_milvus(
+        self, collection, chunk, algo, top_k, min_score, min_features=0
+    ):
+        """Processes a chunk using Milvus for discovery."""
+        r = self.r
+        built_set_key = f"{collection}:built:functions:{algo}"
+        index_type = (
+            "SPARSE_WAND" if algo == "milvus_sparse_wand" else "SPARSE_INVERTED_INDEX"
+        )
+
+        # Phase 1: Bulk fetch built status and feature vectors from Kvrocks
+        pipe = r.pipeline()
+        for fid in chunk:
+            pipe.sismember(built_set_key, fid)
+            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        results = pipe.execute()
+
+        targets_to_build = []
+        for idx, fid in enumerate(chunk):
+            is_built = results[idx * 2]
+            features_raw = results[idx * 2 + 1]
+            if is_built:
+                continue
+            if not features_raw or len(features_raw) < min_features:
+                r.sadd(built_set_key, fid)
+                continue
+
+            tf_dict = {h: float(s) for h, s in features_raw}
+            total_feat = sum(tf_dict.values())
+            targets_to_build.append((fid, tf_dict, total_feat))
+
+        if not targets_to_build:
+            return
+
+        # Phase 2: Milvus Discovery
+        discovery_results = []
+        for fid, tf_dict, t_total in targets_to_build:
+            parts = fid.split(":")
+            if len(parts) < 4:
+                continue
+            md5 = parts[-2]
+
+            # Query Milvus
+            candidates = milvus_service.search_similar(
+                collection,
+                tf_dict,
+                top_k=top_k,
+                min_score=min_score,
+                index_type=index_type,
+            )
+
+            if candidates is not None:
+                # 1. Enrichment and Filtering
+                enriched = []
+                if candidates:
+                    count_idx = f"{collection}:idx:func:bsim_features_count"
+                    for cand in candidates:
+                        cand_id = cand["id"]
+                        if cand_id == fid:
+                            continue
+                        c_total = float(r.zscore(count_idx, cand_id) or 0)
+                        if c_total >= min_features:
+                            enriched.append(
+                                {
+                                    "id": cand_id,
+                                    "score": cand["score"],
+                                    "c_total": c_total,
+                                }
+                            )
+
+                # 2. Protection and Persistence Prep
+                if not candidates:
+                    # PROTECTION: If Milvus returned 0 results, check if the collection is empty.
+                    # If it's empty, we likely have a sync issue, so don't mark as built yet.
+                    col = milvus_service.ensure_collection(collection, index_type=index_type)
+                    if col and col.num_entities == 0:
+                        logging.warning(f"[!] Skipping built status for {fid} because Milvus collection {col.name} is EMPTY. Sync required.")
+                        continue
+
+                if enriched:
+                    discovery_results.append((fid, md5, "", t_total, enriched))
+
+                # 3. Mark as built
+                r.sadd(built_set_key, fid)
+
+        # Phase 3: Persistence (Reuse the same logic or call a helper)
+        # For this test, I'll inline the persistence call or adapt it
+        if discovery_results:
+            self._persist_similarities(collection, algo, discovery_results)
+
+    def _persist_similarities(self, collection, algo, discovery_results):
+        """Helper to persist similarity results back to Kvrocks."""
+        r = self.r
+        persist_pipe = r.pipeline()
+        now = int(time.time() * 1000)
+
+        def extract_md5(fid, coll):
+            prefix = f"{coll}:func:"
+            if fid.startswith(prefix):
+                parts = fid[len(prefix) :].split(":")
+                if parts:
+                    return parts[0]
+            return "unknown"
+
+        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+            for item in candidates:
+                if fid > item["id"]:
+                    id_a, id_b = fid, item["id"]
+                    md5_a, md5_b = t_md5, extract_md5(item["id"], collection)
+                    fc_a, fc_b = t_total, item["c_total"]
+                else:
+                    id_a, id_b = item["id"], fid
+                    md5_a, md5_b = extract_md5(item["id"], collection), t_md5
+                    fc_a, fc_b = item["c_total"], t_total
+
+                func_prefix = f"{collection}:func:"
+                clean_id_a = (
+                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
+                )
+                clean_id_b = (
+                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
+                )
+
+                score_rounded = round(item["score"], 4)
+                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
+
+                sim_doc = {
+                    "type": "sim",
+                    "collection": collection,
+                    "algo": algo,
+                    "score": score_rounded,
+                    "id1": id_a,
+                    "id2": id_b,
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "feat_count1": int(fc_a),
+                    "feat_count2": int(fc_b),
+                    "min_features": int(min(fc_a, fc_b)),
+                    "entry_date": now,
+                    "is_cross_binary": "true" if md5_a != md5_b else "false",
+                }
+
+                persist_pipe.json().set(sid, "$", sim_doc)
+                persist_pipe.zadd(
+                    f"{collection}:sim:score:{algo}", {sid: score_rounded}
+                )
+                persist_pipe.zadd(f"{collection}:sim:all", {sid: 0})
+                persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_a}", sid)
+                persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_b}", sid)
+                persist_pipe.sadd(f"{collection}:sim:involves:file:{md5_a}", sid)
+                persist_pipe.sadd(f"{collection}:sim:involves:file:{md5_b}", sid)
+                persist_pipe.zadd(
+                    f"{collection}:sim:min_features", {sid: sim_doc["min_features"]}
+                )
+                persist_pipe.zadd(
+                    f"{collection}:sim:is_cross_binary:{sim_doc['is_cross_binary']}",
+                    {sid: 0},
+                )
+
+        persist_pipe.execute()
+
     def build_function(
         self,
         collection,
@@ -448,7 +615,11 @@ class SimilarityService:
     def clear_all(self, collection, algo=None):
         """Clears ALL similarities in the collection safely using SCAN."""
         r = self.r
-        algos = [algo] if algo else ["jaccard", "unweighted_cosine"]
+        algos = (
+            [algo]
+            if algo
+            else ["jaccard", "unweighted_cosine", "milvus_sparse", "milvus_sparse_wand"]
+        )
 
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
 
@@ -537,6 +708,17 @@ class SimilarityService:
 
             elif algo == "unweighted_cosine":
                 # TF-weighted Cosine: sum(a*b) / (sqrt(sum(a^2)) * sqrt(sum(b^2)))
+                dot_product = sum(d1[h] * d2[h] for h in common)
+                norm1 = math.sqrt(sum(v**2 for v in d1.values()))
+                norm2 = math.sqrt(sum(v**2 for v in d2.values()))
+                return (
+                    float(dot_product / (norm1 * norm2))
+                    if (norm1 > 0 and norm2 > 0)
+                    else 0.0
+                )
+
+            elif algo in ["milvus_sparse", "milvus_sparse_wand"]:
+                # Cosine Similarity: sum(a*b) / (norm1 * norm2)
                 dot_product = sum(d1[h] * d2[h] for h in common)
                 norm1 = math.sqrt(sum(v**2 for v in d1.values()))
                 norm2 = math.sqrt(sum(v**2 for v in d2.values()))

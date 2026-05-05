@@ -194,6 +194,13 @@ class Worker:
                 collection, function_ids, self.job_service, job_id
             )
 
+        elif jtype == JobType.SYNC_MILVUS.value:
+            from bsimvis.app.services.milvus_service import milvus_service
+
+            return milvus_service.sync_collection(
+                collection, self.r_data, self.job_service, job_id
+            )
+
         elif jtype == JobType.BUILD_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
             top_k = payload.get("top_k", 1000)

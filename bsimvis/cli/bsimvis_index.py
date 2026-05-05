@@ -32,6 +32,7 @@ def run_index_status(host, port, args):
         features = r.zcard(f"{col}:features:by_tf") or 0
         sim_cos = r.zcard(f"{col}:sim:score:unweighted_cosine") or 0
         sim_jac = r.zcard(f"{col}:sim:score:jaccard") or 0
+        sim_mil = r.zcard(f"{col}:sim:score:milvus_sparse") or 0
 
         print(f"\n[*] Exact Index Status for {col.upper()}")
         print("-" * 45)
@@ -42,6 +43,7 @@ def run_index_status(host, port, args):
         print(f"    {'Unique Features':<22} | {features}")
         print(f"    {'Sims (Cosine)':<22} | {sim_cos}")
         print(f"    {'Sims (Jaccard)':<22} | {sim_jac}")
+        print(f"    {'Sims (Milvus)':<22} | {sim_mil}")
         print("-" * 45 + "\n")
 
     except Exception as e:

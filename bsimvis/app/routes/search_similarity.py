@@ -28,13 +28,26 @@ def autocomplete():
         return jsonify({"error": "Missing parameters"}), 400
 
     r = get_redis()
-    registry_key = f"{col}:reg:{level}:{field}"
+    
+    from bsimvis.app.services.index_config import get_search_paths_for_field
+    paths = get_search_paths_for_field(field, level)
+
+    registry_key = None
+    prefix = None
+
+    # Gracefully search down the path until we find a populated registry
+    for path in paths:
+        for lvl, physical_field in path:
+            candidate_reg = f"{col}:reg:{lvl}:{physical_field}"
+            if r.exists(candidate_reg):
+                registry_key = candidate_reg
+                prefix = f"{col}:idx:{lvl}:{physical_field}:"
+                break
+        if registry_key:
+            break
 
     results = []
-    if r.exists(registry_key):
-        # bucket_key is {coll}:idx:{level}:{field}:{value}
-        prefix = f"{col}:idx:{level}:{field}:"
-
+    if registry_key:
         # Search pattern: for better performance we match the whole bucket key
         match_pat = f"*{query}*"
 
@@ -83,7 +96,7 @@ def autocomplete():
     return jsonify(
         {
             "results": final_results,
-            "cardinality": r.scard(registry_key) if r.exists(registry_key) else 0,
+            "cardinality": r.scard(registry_key) if registry_key and r.exists(registry_key) else 0,
         }
     )
 
@@ -99,9 +112,25 @@ def get_field_stats():
 
     r = get_redis()
     stats = {}
+    from bsimvis.app.services.index_config import get_search_paths_for_field
+
     for f in fields:
-        reg_key = f"{col}:reg:{level}:{f}"
-        stats[f] = r.scard(reg_key)
+        paths = get_search_paths_for_field(f, level)
+        reg_key = None
+
+        for path in paths:
+            for lvl, physical_field in path:
+                candidate_reg = f"{col}:reg:{lvl}:{physical_field}"
+                if r.exists(candidate_reg):
+                    reg_key = candidate_reg
+                    break
+            if reg_key:
+                break
+
+        if reg_key:
+            stats[f] = r.scard(reg_key)
+        else:
+            stats[f] = 0
 
     return jsonify(stats)
 

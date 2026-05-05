@@ -682,6 +682,22 @@ def similarity_search():
                         "ex_func_user_tag",
                         _paths_for_source("func", "user_tags"),
                     ),
+                    (
+                        ex_file_tag_filters,
+                        "ex_file_tag",
+                        _paths_for_source("file", "tags")
+                        + _paths_for_source("file", "user_tags"),
+                    ),
+                    (
+                        ex_file_static_tag_filters,
+                        "ex_file_static_tag",
+                        _paths_for_source("file", "tags"),
+                    ),
+                    (
+                        ex_file_user_tag_filters,
+                        "ex_file_user_tag",
+                        _paths_for_source("file", "user_tags"),
+                    ),
                 ]
 
                 for ex_v, label, paths in exclude_configs:

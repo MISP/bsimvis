@@ -3,6 +3,7 @@ import json
 import math
 import time
 import logging
+from bsimvis.app.services.index_service import save_similarity
 
 # --- Shared Lua Scripts ---
 
@@ -298,6 +299,109 @@ class SimilarityService:
         res = persist_pipe.execute()
         logging.debug(f"Persistence executed: {len(res)} commands in pipe")
 
+        # -- Sim-level secondary index --
+        from bsimvis.app.services.index_config import get_propagated_fields
+
+        propagated = get_propagated_fields("sim")
+        needs_func_meta = len(propagated.get("func", [])) > 0
+        needs_file_meta = (
+            len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
+        )
+
+        func_meta_cache = {}
+        file_meta_cache = {}
+
+        if needs_func_meta or needs_file_meta:
+            func_ids_needed = set()
+            file_ids_needed = set()
+
+            for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+                func_ids_needed.add(fid)
+                if needs_file_meta:
+                    md5 = fid.split(":")[2] if ":" in fid else "unknown"
+                    file_ids_needed.add(f"{collection}:file:{md5}")
+
+                for item in candidates:
+                    func_ids_needed.add(item["id"])
+                    if needs_file_meta:
+                        md5 = (
+                            item["id"].split(":")[2] if ":" in item["id"] else "unknown"
+                        )
+                        file_ids_needed.add(f"{collection}:file:{md5}")
+
+            meta_pipe = r.pipeline()
+            func_ids_list = list(func_ids_needed)
+            for fid in func_ids_list:
+                meta_pipe.json().get(f"{fid}:meta", "$")
+
+            file_ids_list = list(file_ids_needed)
+            for fid in file_ids_list:
+                meta_pipe.json().get(f"{fid}:meta", "$")
+
+            raw_metas = meta_pipe.execute()
+
+            # Unpack func metas
+            raw_func = raw_metas[: len(func_ids_list)]
+            for fid, raw in zip(func_ids_list, raw_func):
+                if raw:
+                    m = raw[0] if isinstance(raw, list) else raw
+                    if isinstance(m, str):
+                        import json as _j
+
+                        m = _j.loads(m)
+                    func_meta_cache[fid] = m
+
+            # Unpack file metas
+            raw_file = raw_metas[len(func_ids_list) :]
+            for fid, raw in zip(file_ids_list, raw_file):
+                if raw:
+                    m = raw[0] if isinstance(raw, list) else raw
+                    if isinstance(m, str):
+                        import json as _j
+
+                        m = _j.loads(m)
+                    file_meta_cache[fid] = m
+
+        idx_pipe = r.pipeline()
+        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+            for item in candidates:
+                if fid > item["id"]:
+                    id_a, id_b = fid, item["id"]
+                else:
+                    id_a, id_b = item["id"], fid
+
+                func_prefix = f"{collection}:func:"
+                clean_id_a = (
+                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
+                )
+                clean_id_b = (
+                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
+                )
+                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
+
+                md5_a = clean_id_a.split(":")[0]
+                md5_b = clean_id_b.split(":")[0]
+
+                sim_doc_for_idx = {
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "tags": [],
+                    "user_tags": [],
+                }
+
+                save_similarity(
+                    idx_pipe,
+                    collection,
+                    sid,
+                    sim_doc_for_idx,
+                    func_meta1=func_meta_cache.get(id_a),
+                    func_meta2=func_meta_cache.get(id_b),
+                    file_meta1=file_meta_cache.get(f"{collection}:file:{md5_a}"),
+                    file_meta2=file_meta_cache.get(f"{collection}:file:{md5_b}"),
+                )
+
+        idx_pipe.execute()
+
     def build_function(
         self,
         collection,
@@ -433,6 +537,106 @@ class SimilarityService:
                 )
 
             pipe.execute()
+
+            # -- Sim-level secondary index --
+            from bsimvis.app.services.index_config import get_propagated_fields
+
+            propagated = get_propagated_fields("sim")
+            needs_func_meta = len(propagated.get("func", [])) > 0
+            needs_file_meta = (
+                len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
+            )
+
+            func_meta_cache = {}
+            file_meta_cache = {}
+
+            if needs_func_meta or needs_file_meta:
+                meta_pipe = self.r.pipeline()
+                func_ids_seen = set()
+                file_ids_seen = set()
+
+                for k in range(0, len(candidates_raw), 3):
+                    item_id = candidates_raw[k]
+                    func_ids_seen.add(base_id)
+                    func_ids_seen.add(item_id)
+
+                    if needs_file_meta:
+                        md5_base = (
+                            base_id.split(":")[2] if ":" in base_id else "unknown"
+                        )
+                        md5_item = (
+                            item_id.split(":")[2] if ":" in item_id else "unknown"
+                        )
+                        file_ids_seen.add(f"{collection}:file:{md5_base}")
+                        file_ids_seen.add(f"{collection}:file:{md5_item}")
+
+                fids_list = list(func_ids_seen)
+                for fid in fids_list:
+                    meta_pipe.json().get(f"{fid}:meta", "$")
+
+                file_ids_list = list(file_ids_seen)
+                for fid in file_ids_list:
+                    meta_pipe.json().get(f"{fid}:meta", "$")
+
+                raw_metas = meta_pipe.execute()
+
+                # Unpack func metas
+                raw_func = raw_metas[: len(fids_list)]
+                for fid, raw in zip(fids_list, raw_func):
+                    if raw:
+                        m = raw[0] if isinstance(raw, list) else raw
+                        if isinstance(m, str):
+                            m = json.loads(m)
+                        func_meta_cache[fid] = m
+
+                # Unpack file metas
+                raw_file = raw_metas[len(fids_list) :]
+                for fid, raw in zip(file_ids_list, raw_file):
+                    if raw:
+                        m = raw[0] if isinstance(raw, list) else raw
+                        if isinstance(m, str):
+                            m = json.loads(m)
+                        file_meta_cache[fid] = m
+
+            idx_pipe = self.r.pipeline()
+            func_prefix = f"{collection}:func:"
+            for k in range(0, len(candidates_raw), 3):
+                item_id = candidates_raw[k]
+                if base_id > item_id:
+                    id_a, id_b = base_id, item_id
+                else:
+                    id_a, id_b = item_id, base_id
+
+                clean_id_a = (
+                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
+                )
+                clean_id_b = (
+                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
+                )
+                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
+
+                md5_a = clean_id_a.split(":")[0]
+                md5_b = clean_id_b.split(":")[0]
+                sim_doc_for_idx = {
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "tags": [],
+                    "user_tags": [],
+                }
+
+                save_similarity(
+                    idx_pipe,
+                    collection,
+                    sid,
+                    sim_doc_for_idx,
+                    func_meta1=func_meta_cache.get(id_a),
+                    func_meta2=func_meta_cache.get(id_b),
+                    file_meta1=file_meta_cache.get(f"{collection}:file:{md5_a}"),
+                    file_meta2=file_meta_cache.get(f"{collection}:file:{md5_b}"),
+                )
+
+            idx_pipe.execute()
+
             return True
         except Exception as e:
             logging.error(f"SimilarityService: Error for {base_id}: {e}")
@@ -461,12 +665,20 @@ class SimilarityService:
         r.delete(f"{collection}:sim:min_features")
 
         # 2. Scan and delete involves, tag indexes, and similarity docs
+        from bsimvis.app.services.index_config import get_propagated_fields
+
         patterns = [
             f"{collection}:sim:involves:func:*",
             f"{collection}:sim:involves:file:*",
-            f"{collection}:idx:sim:user_tags:*",
-            f"{collection}:idx:sim:tags:*",
+            f"{collection}:sim:is_cross_binary:*",
         ]
+
+        # Sim-level secondary indexes (from IndexConfig propagation)
+        propagated = get_propagated_fields("sim")
+        for src_level, fields in propagated.items():
+            for orig_field, target_field in fields:
+                patterns.append(f"{collection}:idx:sim:{target_field}:*")
+                r.delete(f"{collection}:reg:sim:{target_field}")
         for a in algos:
             patterns.append(f"{collection}:sim:{a}:*")
 

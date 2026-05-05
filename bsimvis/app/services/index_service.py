@@ -5,6 +5,9 @@ Key naming conventions:
   {coll}:idx:{level}:{field}:{value}  -> SET  of doc IDs  (TAG / exact match)
   {coll}:idx:{level}:{field}          -> ZSET of doc IDs  (NUMERIC)
   {coll}:file_funcs:{md5}             -> SET  of func IDs (file->function relationship)
+
+Field lists (FILE_TAG_FIELDS etc.) are derived from index_config.INDEX_FIELDS.
+To change which fields are indexed and at which levels, edit index_config.py.
 """
 
 import json
@@ -35,44 +38,14 @@ def parse_timestamp(val):
 
 
 # ---------------------------------------------------------------------------
-# TAG fields that get a Set per value
+# Field lists — derived from IndexConfig (edit index_config.py to change)
 # ---------------------------------------------------------------------------
-FILE_TAG_FIELDS = [
-    "type",
-    "collection",
-    "batch_uuid",
-    "file_md5",
-    "language_id",
-    "tags",
-    "user_tags",
-    "file_name",
-]
-FUNC_TAG_FIELDS = [
-    "type",
-    "collection",
-    "batch_uuid",
-    "file_md5",
-    "language_id",
-    "tags",
-    "user_tags",
-    "file_name",
-    "function_name",
-    "decompiler_id",
-    "return_type",
-    "namespace",
-    "parameters",
-    "calling_convention",
-    "entrypoint_address",
-]
-# NUMERIC fields stored in a ZSET (member=doc_id, score=value)
-FILE_NUM_FIELDS = ["batch_order", "entry_date", "file_date"]
-FUNC_NUM_FIELDS = [
-    "batch_order",
-    "instruction_count",
-    "bsim_features_count",
-    "entry_date",
-    "file_date",
-]
+from bsimvis.app.services.index_config import get_native_fields, get_propagated_fields
+
+FILE_TAG_FIELDS = get_native_fields("file", is_num=False)
+FUNC_TAG_FIELDS = get_native_fields("func", is_num=False)
+FILE_NUM_FIELDS = get_native_fields("file", is_num=True)
+FUNC_NUM_FIELDS = get_native_fields("func", is_num=True)
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +142,111 @@ def save_function(pipe, coll, md5, addr, data):
     # relationship links
     pipe.sadd(f"{coll}:idx:file:functions:{md5}", base_id)
     pipe.sadd(f"{coll}:all_functions", base_id)
+
+
+def save_similarity(
+    pipe,
+    coll,
+    sid,
+    sim_doc,
+    func_meta1=None,
+    func_meta2=None,
+    file_meta1=None,
+    file_meta2=None,
+):
+    """Write sim-level secondary indexes for all propagated fields.
+    Pulls data from the sim doc itself, function meta, or file meta based on field source.
+    """
+    propagated = get_propagated_fields("sim")
+
+    # 1. Native Sim Fields (source: sim)
+    for orig_field, target_field in propagated["sim"]:
+        value = sim_doc.get(orig_field)
+        if value is not None:
+            _index_tag(pipe, coll, "sim", target_field, value, sid)
+
+    # 2. Propagated Func Fields (source: func)
+    for orig_field, target_field in propagated["func"]:
+        value = []
+        for meta in [func_meta1, func_meta2]:
+            if meta:
+                v = meta.get(orig_field)
+                if v is not None:
+                    if isinstance(v, list):
+                        value.extend(v)
+                    else:
+                        value.append(v)
+        if value:
+            _index_tag(pipe, coll, "sim", target_field, value, sid)
+
+    # 3. Propagated File Fields (source: file)
+    for orig_field, target_field in propagated["file"]:
+        value = []
+        # Optimization: if propagating file_md5, we don't need file meta, it's in sim_doc
+        if orig_field == "file_md5":
+            value = [v for v in [sim_doc.get("md5_1"), sim_doc.get("md5_2")] if v]
+        else:
+            for meta in [file_meta1, file_meta2]:
+                if meta:
+                    v = meta.get(orig_field)
+                    if v is not None:
+                        if isinstance(v, list):
+                            value.extend(v)
+                        else:
+                            value.append(v)
+        if value:
+            _index_tag(pipe, coll, "sim", target_field, value, sid)
+
+
+def delete_similarity(
+    pipe,
+    coll,
+    sid,
+    sim_doc,
+    func_meta1=None,
+    func_meta2=None,
+    file_meta1=None,
+    file_meta2=None,
+):
+    """Remove sim-level secondary indexes for a similarity document."""
+    propagated = get_propagated_fields("sim")
+
+    # 1. Native Sim Fields
+    for orig_field, target_field in propagated["sim"]:
+        value = sim_doc.get(orig_field)
+        if value is not None:
+            _unindex_tag(pipe, coll, "sim", target_field, value, sid)
+
+    # 2. Propagated Func Fields
+    for orig_field, target_field in propagated["func"]:
+        value = []
+        for meta in [func_meta1, func_meta2]:
+            if meta:
+                v = meta.get(orig_field)
+                if v is not None:
+                    if isinstance(v, list):
+                        value.extend(v)
+                    else:
+                        value.append(v)
+        if value:
+            _unindex_tag(pipe, coll, "sim", target_field, value, sid)
+
+    # 3. Propagated File Fields
+    for orig_field, target_field in propagated["file"]:
+        value = []
+        if orig_field == "file_md5":
+            value = [v for v in [sim_doc.get("md5_1"), sim_doc.get("md5_2")] if v]
+        else:
+            for meta in [file_meta1, file_meta2]:
+                if meta:
+                    v = meta.get(orig_field)
+                    if v is not None:
+                        if isinstance(v, list):
+                            value.extend(v)
+                        else:
+                            value.append(v)
+        if value:
+            _unindex_tag(pipe, coll, "sim", target_field, value, sid)
 
 
 # ---------------------------------------------------------------------------

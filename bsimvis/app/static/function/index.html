@@ -203,7 +203,7 @@
             }
             if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
                 const parts = id.split(':');
-                window.parent.showFeaturePanel(parts[0], parts[2], parts[3]);
+                window.parent.showFeaturePanel(id);
             } else {
                 window.location.href = url;
             }

@@ -12,7 +12,7 @@ BIN_DIR = os.path.expanduser("~/data/malware/mirai/payloads")
 COLLECTIONS = ["bench_10", "bench_20", "bench_30", "bench_40", "bench_50", "bench_60"]
 BIN_COUNTS = [10, 20, 30, 40, 50, 60]
 
-ALGOS = ["unweighted_cosine", "milvus_sparse", "milvus_sparse_wand"]
+ALGOS = ["unweighted_cosine", "milvus_sparse"]
 SCENARIOS = [{"name": "Realistic", "top_k": 100, "min_score": 0.8, "min_features": 10}]
 
 
@@ -169,7 +169,7 @@ def plot_build_results(build_results):
     ax1.set_xlabel("Number of Functions")
     ax1.set_ylabel("Building Sim Time (s)")
     ax2.set_ylabel("Number of Similarities Found")
-    plt.title("BSim Performance Scaling: Lua vs Milvus (Inverted & WAND)")
+    plt.title("BSim Performance Scaling: Lua vs Milvus (Inverted)")
 
     # Combine legends
     lines1, labels1 = ax1.get_legend_handles_labels()

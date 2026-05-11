@@ -108,7 +108,7 @@ def build_similarity():
         "all": data.get("all", False),
     }
 
-    if algo in ["milvus_sparse", "milvus_sparse_wand"]:
+    if algo in ["milvus_sparse"]:
         tasks = [
             (JobType.SYNC_MILVUS, {"collection": collection}),
             (JobType.BUILD_SIM, payload),
@@ -158,7 +158,7 @@ def rebuild_similarity():
         ),
     ]
 
-    if algo in ["milvus_sparse", "milvus_sparse_wand"]:
+    if algo in ["milvus_sparse"]:
         tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
 
     pipeline_id = job_service.create_pipeline(tasks)

@@ -127,7 +127,7 @@ class SimilarityService:
 
     def _process_chunk(self, collection, chunk, algo, top_k, min_score, min_features=0):
         """Processes a chunk of functions using Redis pipelining."""
-        if algo in ["milvus_sparse", "milvus_sparse_wand"]:
+        if algo in ["milvus_sparse"]:
             return self._process_chunk_milvus(
                 collection, chunk, algo, top_k, min_score, min_features
             )
@@ -230,9 +230,7 @@ class SimilarityService:
         """Processes a chunk using Milvus for discovery."""
         r = self.r
         built_set_key = f"{collection}:built:functions:{algo}"
-        index_type = (
-            "SPARSE_WAND" if algo == "milvus_sparse_wand" else "SPARSE_INVERTED_INDEX"
-        )
+        index_type = "SPARSE_INVERTED_INDEX"
 
         # Phase 1: Bulk fetch built status and feature vectors from Kvrocks
         pipe = r.pipeline()
@@ -577,7 +575,7 @@ class SimilarityService:
         algos = (
             [algo]
             if algo
-            else ["jaccard", "unweighted_cosine", "milvus_sparse", "milvus_sparse_wand"]
+            else ["jaccard", "unweighted_cosine", "milvus_sparse"]
         )
 
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
@@ -684,7 +682,7 @@ class SimilarityService:
                     else 0.0
                 )
 
-            elif algo in ["milvus_sparse", "milvus_sparse_wand"]:
+            elif algo in ["milvus_sparse"]:
                 # Cosine Similarity: sum(a*b) / (norm1 * norm2)
                 dot_product = sum(d1[h] * d2[h] for h in common)
                 norm1 = math.sqrt(sum(v**2 for v in d1.values()))

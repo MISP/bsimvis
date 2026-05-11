@@ -36,8 +36,7 @@ class MilvusService:
         """Ensures a collection exists with the correct schema for sparse vectors."""
         self.connect()
         # Use a prefixed name to avoid collisions and indicate type
-        suffix = "inverted" if index_type == "SPARSE_INVERTED_INDEX" else "wand"
-        milvus_coll_name = f"bsimvis_sparse_{suffix}_{collection_name}"
+        milvus_coll_name = collection_name
 
         if milvus_coll_name in self._collections:
             return self._collections[milvus_coll_name]
@@ -156,7 +155,7 @@ class MilvusService:
             f"[*] Syncing {total} functions to Milvus for collection: {collection_name}"
         )
 
-        index_types = ["SPARSE_INVERTED_INDEX", "SPARSE_WAND"]
+        index_types = ["SPARSE_INVERTED_INDEX"]
         chunk_size = 100
         milvus_data = []
 

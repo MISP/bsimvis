@@ -4,6 +4,7 @@ import logging
 import time
 import tomllib
 import os
+from dotenv import load_dotenv
 from bsimvis.cli import (
     bsimvis_index,
     bsimvis_sim,
@@ -15,12 +16,15 @@ from bsimvis.cli import (
 
 
 def main():
+    # Load environment variables from .env if present
+    load_dotenv()
+
     parser = argparse.ArgumentParser(prog="bsimvis", description="Unified BSimVis CLI")
     parser.add_argument(
         "-H",
         "--host",
         default=None,
-        help="API host:port (default: localhost:5000 or from bsimvis_config.toml)",
+        help="API host:port (default: localhost:5000, or from .env, or from bsimvis_config.toml)",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -202,7 +206,11 @@ def main():
     worker_actions = worker_parser.add_subparsers(dest="action", required=True)
     w_start = worker_actions.add_parser("start", help="Start background workers")
     w_start.add_argument(
-        "-n", "--count", type=int, default=1, help="Number of workers to start"
+        "-n",
+        "--count",
+        type=int,
+        default=int(os.getenv("WORKERS_COUNT", 1)),
+        help="Number of workers to start (default: from .env WORKERS_COUNT or 1)",
     )
 
     # --- UPLOAD ---
@@ -344,6 +352,15 @@ def main():
     def resolve_api_host(cli_host):
         if cli_host:
             return cli_host
+
+        env_host = os.getenv("APP_HOST")
+        env_port = os.getenv("APP_PORT")
+        if env_host and env_port:
+            return f"{env_host}:{env_port}"
+        elif env_host:
+            return f"{env_host}:5000"
+        elif env_port:
+            return f"localhost:{env_port}"
 
         config_path = "bsimvis_config.toml"
         if os.path.exists(config_path):

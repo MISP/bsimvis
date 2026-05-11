@@ -4,8 +4,12 @@ import sys
 import signal
 import os
 import json
+from dotenv import load_dotenv
 from bsimvis.app.services.redis_client import get_queue_redis
 from bsimvis.app.services.job_service import JobStatus
+
+# Load environment variables
+load_dotenv()
 
 
 def run_worker(host, port, args):

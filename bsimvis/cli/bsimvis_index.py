@@ -20,8 +20,11 @@ def run_index_status(host, port, args):
     """
     import redis
 
-    # Connect to the Kvrocks data port (6666) instead of the Flask API port (5000)
-    kv_port = 6666 if port == 5000 else port
+    # Connect to the Kvrocks data port (KVROCKS_PORT) instead of the Flask API port (APP_PORT)
+    env_kv_port = int(os.getenv("KVROCKS_PORT", 6666))
+    env_app_port = int(os.getenv("APP_PORT", 5000))
+    kv_port = port if port != env_app_port else env_kv_port
+
     try:
         r = redis.Redis(host=host, port=kv_port, decode_responses=True)
         col = args.collection
@@ -56,9 +59,11 @@ def run_index_reg(host, port, args):
     """
     import redis
 
-    # Connect to the Kvrocks data port (6666) instead of the Flask API port (5000)
-    # For simplicity, if standard API port 5000 is given, we assume Kvrocks is on 6666
-    kv_port = 6666 if port == 5000 else port
+    # Connect to the Kvrocks data port (KVROCKS_PORT) instead of the Flask API port (APP_PORT)
+    env_kv_port = int(os.getenv("KVROCKS_PORT", 6666))
+    env_app_port = int(os.getenv("APP_PORT", 5000))
+    kv_port = port if port != env_app_port else env_kv_port
+
     try:
         r = redis.Redis(host=host, port=kv_port, decode_responses=True)
 

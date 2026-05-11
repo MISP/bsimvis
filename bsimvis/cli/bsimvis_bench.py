@@ -5,9 +5,15 @@ import argparse
 import requests
 import sys
 from tqdm import tqdm
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # --- Defaults ---
-API_BASE = "http://localhost:5000/api"
+APP_HOST = os.getenv("APP_HOST", "localhost")
+APP_PORT = os.getenv("APP_PORT", "5000")
+API_BASE = f"http://{APP_HOST}:{APP_PORT}/api"
 DEFAULT_TEST_DIR = "data/bench"
 DEFAULT_COLLECTION = "test_bench"
 

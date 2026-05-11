@@ -6,8 +6,15 @@ import subprocess
 import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
+from dotenv import load_dotenv
 
-API_URL = "http://localhost:5001/api"
+# Load environment variables
+load_dotenv()
+
+APP_HOST = os.getenv("APP_HOST", "localhost")
+APP_PORT = os.getenv("APP_PORT", "5000")
+API_URL = f"http://{APP_HOST}:{APP_PORT}/api"
+
 BIN_DIR = os.path.expanduser("~/data/malware/mirai/payloads")
 COLLECTIONS = ["bench_10", "bench_20", "bench_30", "bench_40", "bench_50", "bench_60"]
 BIN_COUNTS = [10, 20, 30, 40, 50, 60]

@@ -38,6 +38,8 @@ INDEX_CONFIG = {
         "decompiler_id": ["func", "sim"],
         "instruction_count": ["func", "sim"],  # numeric
         "bsim_features_count": ["func", "sim"],  # numeric
+        "cluster_id": ["func", "sim"],
+        "cluster_stability": ["func", "sim"],
     },
     "sim": {
         "tags": ["sim"],

@@ -22,6 +22,7 @@ class JobType(Enum):
     CLEAR_SIM = "clear_sim"
     CLEAR_FEATURES = "clear_features"
     SYNC_MILVUS = "sync_milvus"
+    CLUSTER_FUNCTIONS = "cluster_functions"
 
 
 class JobService:

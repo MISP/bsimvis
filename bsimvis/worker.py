@@ -243,6 +243,19 @@ class Worker:
                 collection, batch_uuid=batch_uuid, file_md5=md5
             )
 
+        elif jtype == JobType.CLUSTER_FUNCTIONS.value:
+            from bsimvis.app.services.cluster_service import cluster_service
+
+            algo = payload.get("algo", "unweighted_cosine")
+            min_cluster_size = payload.get("min_cluster_size", 5)
+            return cluster_service.run_clustering(
+                collection,
+                algo=algo,
+                min_cluster_size=min_cluster_size,
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
         return False
 
     def _handle_pipeline_next(self, pipeline_id, finished_job_id):

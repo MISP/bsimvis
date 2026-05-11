@@ -12,6 +12,7 @@ from bsimvis.cli import (
     bsimvis_features,
     bsimvis_job,
     bsimvis_worker,
+    bsimvis_cluster,
 )
 
 
@@ -160,6 +161,38 @@ def main():
                 action="store_true",
                 help="Build even for functions not in indexed:functions set",
             )
+
+    # --- CLUSTER ---
+    cluster_parser = subparsers.add_parser("cluster", help="Unsupervised clustering management")
+    cluster_actions = cluster_parser.add_subparsers(dest="action", required=True)
+
+    # cluster build
+    c_build = cluster_actions.add_parser("build", help="Run HDBSCAN clustering discovery")
+    c_build.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_build.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+        help="Algorithm to cluster",
+    )
+    c_build.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=5,
+        help="Minimum cluster size (default: 5)",
+    )
+
+    # cluster list
+    c_list = cluster_actions.add_parser("list", help="List discovered clusters or members")
+    c_list.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_list.add_argument("--cluster-id", help="See members of a specific cluster")
+    c_list.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+    )
+    c_list.add_argument("--limit", type=int, default=100)
+    c_list.add_argument("--offset", type=int, default=0)
 
     # sim list
     sim_list = sim_actions.add_parser("list", help="List similarity builds")
@@ -407,6 +440,8 @@ def main():
             bsimvis_job.run_job(g_host, int(g_port), args)
         elif args.subcommand == "worker":
             bsimvis_worker.run_worker(g_host, int(g_port), args)
+        elif args.subcommand == "cluster":
+            bsimvis_cluster.run_cluster(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

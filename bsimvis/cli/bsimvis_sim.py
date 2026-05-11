@@ -208,3 +208,6 @@ def run_sim(host, port, args):
                 print(f"[+] Success! Job ID: {resp.json().get('job_id')}")
             except Exception as e:
                 print(f"[!] Clear failed for {target}: {e}")
+
+            except Exception as e:
+                print(f"[!] Clear failed for {target}: {e}")

@@ -1,7 +1,9 @@
 from flask import Blueprint, request, jsonify
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.index_service import parse_timestamp
+from bsimvis.app.services.redis_client import get_redis
 import traceback
+import json
 
 function_code_bp = Blueprint("function_code", __name__)
 
@@ -119,6 +121,44 @@ def get_function_code():
                 meta["entry_date"] = parse_timestamp(meta["entry_date"])
             if "file_date" in meta:
                 meta["file_date"] = parse_timestamp(meta["file_date"])
+
+            cluster_id = meta.get("cluster_id")
+            clusters = []
+            if cluster_id is not None and str(cluster_id).lower() != "noise":
+                try:
+                    r = get_redis()
+                    algo = "unweighted_cosine"
+                    cluster_meta_raw = r.json().get(
+                        f"{collection}:cluster:{algo}:{cluster_id}:meta", "$"
+                    )
+                    if cluster_meta_raw:
+                        cluster_meta = (
+                            cluster_meta_raw[0]
+                            if isinstance(cluster_meta_raw, list)
+                            else cluster_meta_raw
+                        )
+                        if isinstance(cluster_meta, str):
+                            cluster_meta = json.loads(cluster_meta)
+                        if cluster_meta:
+                            clusters.append(
+                                {
+                                    "cluster_id": cluster_meta.get(
+                                        "cluster_id", meta.get("cluster_id")
+                                    ),
+                                    "cluster_uuid": cluster_meta.get(
+                                        "cluster_uuid", meta.get("cluster_uuid")
+                                    ),
+                                    "cluster_name": cluster_meta.get("cluster_name"),
+                                    "cohesion_score": cluster_meta.get(
+                                        "cohesion_score", 0
+                                    ),
+                                    "member_count": cluster_meta.get("member_count", 0),
+                                    "avg_features": cluster_meta.get("avg_features", 0),
+                                }
+                            )
+                except Exception as ex:
+                    print(f"Error fetching cluster meta: {ex}")
+            meta["clusters"] = clusters
 
         return jsonify({"rows": rows, "tips": tips, "meta": meta or {}})
     except Exception as e:

@@ -157,7 +157,7 @@ def rebuild_similarity():
             },
         ),
     ]
-
+    
     if algo in ["milvus_sparse"]:
         tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
 
@@ -184,91 +184,6 @@ def clear_similarity():
         {"collection": collection, "md5": md5, "batch_uuid": batch_uuid, "algo": algo},
     )
     return jsonify({"job_id": job_id, "status": "enqueued"})
-
-
-@similarity_bp.route("/api/similarity/cluster", methods=["POST"])
-def cluster_similarity():
-    """Enqueues a clustering job."""
-    data = request.json or {}
-    collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", 5)
-
-    payload = {
-        "collection": collection,
-        "algo": algo,
-        "min_cluster_size": min_cluster_size,
-    }
-
-    job_id = job_service.create_job(JobType.CLUSTER_FUNCTIONS, payload)
-    return jsonify({"job_id": job_id, "status": "enqueued"})
-
-
-@similarity_bp.route("/api/similarity/clusters", methods=["GET"])
-def list_clusters():
-    """Lists discovered clusters and their member counts."""
-    collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
-    
-    r = get_redis()
-    
-    # Clusters are stored as {collection}:cluster:{algo}:cluster_{label}:members
-    pattern = f"{collection}:cluster:{algo}:cluster_*:members"
-    cursor = 0
-    clusters = []
-    
-    while True:
-        cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-        for k in keys:
-            k_str = k.decode() if isinstance(k, bytes) else k
-            cluster_id = k_str.split(":")[-2]
-            count = r.scard(k)
-            clusters.append({"cluster_id": cluster_id, "count": count})
-        if cursor == 0:
-            break
-            
-    # Sort by size descending
-    clusters.sort(key=lambda x: x["count"], reverse=True)
-    
-    return jsonify({"collection": collection, "algo": algo, "total": len(clusters), "results": clusters})
-
-
-@similarity_bp.route("/api/similarity/cluster/members", methods=["GET"])
-def list_cluster_members():
-    """Lists all function IDs in a specific cluster."""
-    collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
-    cluster_id = request.args.get("cluster_id")
-    limit = request.args.get("limit", 100, type=int)
-    offset = request.args.get("offset", 0, type=int)
-    
-    if not cluster_id:
-        return jsonify({"error": "cluster_id required"}), 400
-        
-    r = get_redis()
-    cluster_set_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
-    
-    total = r.scard(cluster_set_key)
-    # Sets don't support offset/limit natively, so we fetch and slice or use SRANDMEMBER
-    # For a deterministic list, we'd need to sort, but let's just grab a chunk
-    members_raw = r.smembers(cluster_set_key)
-    members = [m.decode() if isinstance(m, bytes) else m for m in members_raw]
-    members.sort()
-    
-    page = members[offset : offset + limit]
-    
-    # Enrich with metadata if requested
-    results = []
-    pipe = r.pipeline()
-    for mid in page:
-        pipe.json().get(f"{mid}:meta", "$")
-    raw_metas = pipe.execute()
-    
-    for i, meta in enumerate(raw_metas):
-        m = meta[0] if isinstance(meta, list) and meta else {}
-        results.append({"id": page[i], "meta": m})
-        
-    return jsonify({"cluster_id": cluster_id, "total": total, "results": results})
 
 
 @similarity_bp.route("/api/similarity/tag", methods=["POST"])

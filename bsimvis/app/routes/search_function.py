@@ -117,21 +117,17 @@ def search_functions():
     r = get_redis()
 
     def get_group_targets(lvl, val, allowed_fields=None):
+        from bsimvis.app.services.index_config import INDEX_CONFIG, EXACT_FIELDS
         if not allowed_fields:
-            if lvl == "func":
-                allowed_fields = [
-                    "tags",
-                    "user_tags",
-                    "function_name",
-                    "return_type",
-                    "namespace",
-                    "entrypoint_address",
-                    "file_name",
-                    "file_md5",
-                    "language_id",
-                ]
-            else:  # file level
-                allowed_fields = ["tags", "user_tags", "file_name", "file_md5"]
+            # Dynamically discover all fields allowed at this level from config
+            allowed_fields = []
+            for src_lvl, fields in INDEX_CONFIG.items():
+                for field, targets in fields.items():
+                    if lvl in targets:
+                        from bsimvis.app.services.index_config import resolve_target_field
+                        allowed_fields.append(resolve_target_field(src_lvl, lvl, field))
+            # Deduplicate
+            allowed_fields = list(set(allowed_fields))
 
         val_lower = val.lower()
         matches = []
@@ -140,17 +136,24 @@ def search_functions():
             registry_key = f"{col}:reg:{lvl}:{field}"
             if r.exists(registry_key):
                 matching_buckets = []
-                try:
-                    for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*"):
-                        bucket_str = (
-                            bucket.decode()
-                            if isinstance(bucket, bytes)
-                            else str(bucket)
-                        )
-                        if val_lower in bucket_str.lower():
-                            matching_buckets.append(bucket_str)
-                except Exception as e:
-                    logging.warning(f"SSCAN failed for {registry_key}: {e}")
+                
+                # Check for perfect match fields
+                if field in EXACT_FIELDS:
+                    target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
+                    if r.sismember(registry_key, target_bucket):
+                        matching_buckets = [target_bucket]
+                else:
+                    try:
+                        for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*"):
+                            bucket_str = (
+                                bucket.decode()
+                                if isinstance(bucket, bytes)
+                                else str(bucket)
+                            )
+                            if val_lower in bucket_str.lower():
+                                matching_buckets.append(bucket_str)
+                    except Exception as e:
+                        logging.warning(f"SSCAN failed for {registry_key}: {e}")
 
                 targets = []
                 if matching_buckets:
@@ -221,43 +224,46 @@ def search_functions():
                 path.append((lvl, resolve_target_field(source_lvl, lvl, field)))
         return [path] if path else []
 
-    filter_configs = [
-        (lang_filter, "language_id", _paths("language_id")),
-        (namespace_filter, "namespace", _paths("namespace")),
-        (ret_type_filter, "ret_type", _paths("return_type")),
-        (address_filter, "address", _paths("entrypoint_address")),
-        (md5_filter, "md5", _paths("file_md5")),
-        (file_name_filter, "file_name", _paths("file_name")),
-        (name_filter, "name", _paths("function_name") + _paths("file_name")),
-        # General tag search
+    # Core Filters — fully config-driven
+    filter_configs = []
+    
+    # 1. Native/Propagated fields from INDEX_CONFIG
+    # We want to iterate over all fields that could end up at the 'func' level
+    for src_lvl, fields in INDEX_CONFIG.items():
+        for field, targets in fields.items():
+            if "func" in targets:
+                target_field = resolve_target_field(src_lvl, "func", field)
+                # Check if this field is in request args
+                # We handle both the target name (e.g. file_tags) and common aliases (md5 -> file_md5)
+                val = request.args.get(target_field)
+                
+                # Alias handling (for backward compat or convenience)
+                if not val:
+                    aliases = {
+                        "file_md5": ["md5"],
+                        "entrypoint_address": ["address"],
+                        "function_name": ["name"],
+                        "language_id": ["language"],
+                        "return_type": ["ret_type"]
+                    }
+                    if target_field in aliases:
+                        for alias in aliases[target_field]:
+                            val = request.args.get(alias)
+                            if val: break
+                
+                if val:
+                    filter_configs.append((val, target_field, _paths(field)))
+
+    # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
+    # The existing code had some manual additions for unions, keeping them for now if not redundant.
+    # Actually, the logic below handles tag lists which are distinct from single request.args.get()
+    tag_filter_configs = [
         (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
         (static_tag_filters, "static_tag", _paths("tags")),
         (user_tag_filters, "user_tag", _paths("user_tags")),
-        # Func-scoped
-        (
-            func_tag_filters,
-            "func_tag",
-            _paths_for_source("func", "tags") + _paths_for_source("func", "user_tags"),
-        ),
-        (func_static_tag_filters, "func_static_tag", _paths_for_source("func", "tags")),
-        (
-            func_user_tag_filters,
-            "func_user_tag",
-            _paths_for_source("func", "user_tags"),
-        ),
-        # File-scoped
-        (
-            file_tag_filters,
-            "file_tag",
-            _paths_for_source("file", "tags") + _paths_for_source("file", "user_tags"),
-        ),
-        (file_static_tag_filters, "file_static_tag", _paths_for_source("file", "tags")),
-        (
-            file_user_tag_filters,
-            "file_user_tag",
-            _paths_for_source("file", "user_tags"),
-        ),
     ]
+    for tfc in tag_filter_configs:
+        if tfc[0]: filter_configs.append(tfc)
 
     for f_v, label, paths in filter_configs:
         if not f_v:
@@ -434,12 +440,35 @@ def search_functions():
     raw_file_results = raw_results_all[len(doc_ids) :]
 
     functions_list = []
+    parsed_data_list = []
+
     for i, (doc_id, raw) in enumerate(zip(doc_ids, raw_meta_results)):
         if not raw:
+            parsed_data_list.append(None)
             continue
         data = raw[0] if isinstance(raw, list) and raw else raw
         if isinstance(data, str):
             data = json.loads(data)
+        parsed_data_list.append(data)
+
+    # Secondary pipeline for cluster metadata
+    algo = "unweighted_cosine"  # Default algo used by backend
+    cluster_pipe = r.pipeline()
+    for data in parsed_data_list:
+        if data:
+            cluster_id = data.get("cluster_id")
+            if cluster_id is not None and str(cluster_id).lower() != "noise":
+                cluster_pipe.json().get(f"{col}:cluster:{algo}:{cluster_id}:meta", "$")
+            else:
+                cluster_pipe.get("nonexistent")
+        else:
+            cluster_pipe.get("nonexistent")
+
+    raw_cluster_results = cluster_pipe.execute() if parsed_data_list else []
+
+    for i, data in enumerate(parsed_data_list):
+        if not data:
+            continue
 
         # File metadata
         file_raw = raw_file_results[i]
@@ -470,6 +499,37 @@ def search_functions():
         for field in ["entry_date", "file_date"]:
             if field in data:
                 data[field] = parse_timestamp(data[field])
+
+        # Cluster metadata enrichment
+        cluster_raw = raw_cluster_results[i] if i < len(raw_cluster_results) else None
+        cluster_data = (
+            cluster_raw[0]
+            if isinstance(cluster_raw, list) and cluster_raw
+            else cluster_raw
+        )
+        if isinstance(cluster_data, str):
+            try:
+                cluster_data = json.loads(cluster_data)
+            except:
+                cluster_data = {}
+
+        clusters = []
+        if cluster_data:
+            clusters.append(
+                {
+                    "cluster_id": cluster_data.get(
+                        "cluster_id", data.get("cluster_id")
+                    ),
+                    "cluster_uuid": cluster_data.get(
+                        "cluster_uuid", data.get("cluster_uuid")
+                    ),
+                    "cluster_name": cluster_data.get("cluster_name"),
+                    "cohesion_score": cluster_data.get("cohesion_score", 0),
+                    "member_count": cluster_data.get("member_count", 0),
+                    "avg_features": cluster_data.get("avg_features", 0),
+                }
+            )
+        data["clusters"] = clusters
 
         functions_list.append(data)
 

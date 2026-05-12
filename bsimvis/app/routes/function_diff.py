@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, Blueprint
 
-from flask_cors import CORS
 import difflib
+import json
 
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
@@ -301,6 +301,9 @@ def diff_api():
         s1, f1, s2, f2, common_hashes, tf1, tf2
     )
 
+    algo = "unweighted_cosine"
+    r = get_redis()
+
     if meta1:
         if "function_id" not in meta1:
             meta1["function_id"] = f"{collection1}:func:{md5_1}:{addr_1}"
@@ -313,6 +316,40 @@ def diff_api():
         if "file_date" in meta1:
             meta1["file_date"] = parse_timestamp(meta1["file_date"])
 
+        clusters = []
+        cluster_id = meta1.get("cluster_id")
+        if cluster_id is not None and str(cluster_id).lower() != "noise":
+            try:
+                cluster_meta_raw = r.json().get(
+                    f"{collection1}:cluster:{algo}:{cluster_id}:meta", "$"
+                )
+                if cluster_meta_raw:
+                    cluster_meta = (
+                        cluster_meta_raw[0]
+                        if isinstance(cluster_meta_raw, list)
+                        else cluster_meta_raw
+                    )
+                    if isinstance(cluster_meta, str):
+                        cluster_meta = json.loads(cluster_meta)
+                    if cluster_meta:
+                        clusters.append(
+                            {
+                                "cluster_id": cluster_meta.get(
+                                    "cluster_id", meta1.get("cluster_id")
+                                ),
+                                "cluster_uuid": cluster_meta.get(
+                                    "cluster_uuid", meta1.get("cluster_uuid")
+                                ),
+                                "cluster_name": cluster_meta.get("cluster_name"),
+                                "cohesion_score": cluster_meta.get("cohesion_score", 0),
+                                "member_count": cluster_meta.get("member_count", 0),
+                                "avg_features": cluster_meta.get("avg_features", 0),
+                            }
+                        )
+            except Exception as ex:
+                print(f"Error fetching cluster meta1: {ex}")
+        meta1["clusters"] = clusters
+
     if meta2:
         if "function_id" not in meta2:
             meta2["function_id"] = f"{collection2}:func:{md5_2}:{addr_2}"
@@ -324,6 +361,40 @@ def diff_api():
             meta2["entry_date"] = parse_timestamp(meta2["entry_date"])
         if "file_date" in meta2:
             meta2["file_date"] = parse_timestamp(meta2["file_date"])
+
+        clusters = []
+        cluster_id = meta2.get("cluster_id")
+        if cluster_id is not None and str(cluster_id).lower() != "noise":
+            try:
+                cluster_meta_raw = r.json().get(
+                    f"{collection2}:cluster:{algo}:{cluster_id}:meta", "$"
+                )
+                if cluster_meta_raw:
+                    cluster_meta = (
+                        cluster_meta_raw[0]
+                        if isinstance(cluster_meta_raw, list)
+                        else cluster_meta_raw
+                    )
+                    if isinstance(cluster_meta, str):
+                        cluster_meta = json.loads(cluster_meta)
+                    if cluster_meta:
+                        clusters.append(
+                            {
+                                "cluster_id": cluster_meta.get(
+                                    "cluster_id", meta2.get("cluster_id")
+                                ),
+                                "cluster_uuid": cluster_meta.get(
+                                    "cluster_uuid", meta2.get("cluster_uuid")
+                                ),
+                                "cluster_name": cluster_meta.get("cluster_name"),
+                                "cohesion_score": cluster_meta.get("cohesion_score", 0),
+                                "member_count": cluster_meta.get("member_count", 0),
+                                "avg_features": cluster_meta.get("avg_features", 0),
+                            }
+                        )
+            except Exception as ex:
+                print(f"Error fetching cluster meta2: {ex}")
+        meta2["clusters"] = clusters
 
     # Flask's jsonify handles the dictionary to JSON conversion
     return jsonify(

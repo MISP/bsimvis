@@ -77,7 +77,8 @@ def benchmark():
 
                 # Get Function Count for the collection (actual X-axis)
                 func_resp = requests.get(
-                    f"{API_URL}/function/search", params={"collection": coll, "limit": 1}
+                    f"{API_URL}/function/search",
+                    params={"collection": coll, "limit": 1},
                 )
                 actual_func_count = 0
                 if func_resp.status_code == 200:
@@ -103,9 +104,7 @@ def benchmark():
                     "func_count": actual_func_count,
                 }
 
-        build_results.append(
-            {"count": count, "scenarios": scenario_results}
-        )
+        build_results.append({"count": count, "scenarios": scenario_results})
 
     # Save and Plot Final
     with open("benchmark_final_results.json", "w") as f:

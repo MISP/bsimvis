@@ -1,11 +1,12 @@
 import requests
 import json
 
+
 def run_cluster(host, port, args):
     """
     Thin client for clustering operations via API.
     """
-    api_url = f"http://{host}:{port}/api/similarity"
+    api_url = f"http://{host}:{port}/api/cluster"
     coll = args.collection
 
     if args.action == "build":
@@ -13,14 +14,49 @@ def run_cluster(host, port, args):
             "collection": coll,
             "algo": args.algo or "unweighted_cosine",
             "min_cluster_size": args.min_cluster_size,
+            "min_samples": args.min_samples,
+            "epsilon": args.epsilon,
+            "selection_method": "leaf" if args.leaf_method else "eom",
+            "min_sim": args.min_sim,
         }
         try:
             print(f"[*] Enqueuing HDBSCAN clustering job for {coll}...")
-            resp = requests.post(f"{api_url}/cluster", json=payload)
+            resp = requests.post(f"{api_url}/build", json=payload)
             resp.raise_for_status()
             print(f"[+] Success! Job ID: {resp.json().get('job_id')}")
         except Exception as e:
             print(f"[!] Clustering failed: {e}")
+
+    elif args.action == "rebuild":
+        payload = {
+            "collection": coll,
+            "algo": args.algo or "unweighted_cosine",
+            "min_cluster_size": args.min_cluster_size,
+            "min_samples": args.min_samples,
+            "epsilon": args.epsilon,
+            "selection_method": "leaf" if args.leaf_method else "eom",
+            "min_sim": args.min_sim,
+        }
+        try:
+            print(f"[*] Enqueuing cluster REBUILD pipeline for {coll}...")
+            resp = requests.post(f"{api_url}/rebuild", json=payload)
+            resp.raise_for_status()
+            print(f"[+] Success! Pipeline ID: {resp.json().get('pipeline_id')}")
+        except Exception as e:
+            print(f"[!] Rebuild failed: {e}")
+
+    elif args.action == "clear":
+        payload = {
+            "collection": coll,
+            "algo": args.algo or "unweighted_cosine",
+        }
+        try:
+            print(f"[*] Enqueuing cluster clear job for {coll}...")
+            resp = requests.post(f"{api_url}/clear", json=payload)
+            resp.raise_for_status()
+            print(f"[+] Success! Job ID: {resp.json().get('job_id')}")
+        except Exception as e:
+            print(f"[!] Clear failed: {e}")
 
     elif args.action == "list":
         if args.cluster_id:
@@ -33,11 +69,13 @@ def run_cluster(host, port, args):
                 "offset": args.offset,
             }
             try:
-                resp = requests.get(f"{api_url}/cluster/members", params=params)
+                resp = requests.get(f"{api_url}/members", params=params)
                 resp.raise_for_status()
                 data = resp.json()
                 results = data.get("results", [])
-                print(f"[*] Members for {args.cluster_id} (Total: {data.get('total')}):")
+                print(
+                    f"[*] Members for {args.cluster_id} (Total: {data.get('total')}):"
+                )
                 print(f"{'Function ID':<60} | {'Name':<30}")
                 print("-" * 95)
                 for res in results:
@@ -49,7 +87,7 @@ def run_cluster(host, port, args):
             # List all clusters
             params = {"collection": coll, "algo": args.algo or "unweighted_cosine"}
             try:
-                resp = requests.get(f"{api_url}/clusters", params=params)
+                resp = requests.get(f"{api_url}/list", params=params)
                 resp.raise_for_status()
                 data = resp.json()
                 results = data.get("results", [])

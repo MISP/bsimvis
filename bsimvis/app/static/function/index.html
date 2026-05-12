@@ -209,6 +209,25 @@
             }
         }
 
+        function seeSimilar() {
+            const parts = window.currentFuncId.split(':');
+            if (parts.length < 4) return;
+            const col = parts[0];
+            const md5 = parts[2];
+            const addr = parts[3];
+            const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+
+            if (window.parent && window.parent !== window) {
+                window.parent.location.hash = hash;
+                if (typeof window.parent.hideCodePanel === 'function') {
+                    window.parent.hideCodePanel();
+                }
+            } else {
+                // If standalone, we might want to go to the main dashboard with this hash
+                window.location.href = `/#${hash}`;
+            }
+        }
+
         function showTokenContextMenu(e) {
             const token = e.target.closest('.feature-highlight');
             if (!token) return;
@@ -360,9 +379,11 @@
 
             const tags = (m['tags'] || []);
             const user_tags = (m['user_tags'] || []);
+            const clusters = (m['clusters'] || []);
             const tagsHtml = renderTagEditor('function', window.currentFuncId, tags, user_tags);
+            const clustersHtml = renderClusterCards(clusters);
 
-            const skipKeys = ['function_name', 'return_type', 'namespace', 'parameters', 'entrypoint_address', 'file_name', 'language_id', 'full_id', 'tags', 'user_tags', 'file_tags', 'file_user_tags'];
+            const skipKeys = ['function_name', 'return_type', 'namespace', 'parameters', 'entrypoint_address', 'file_name', 'language_id', 'full_id', 'tags', 'user_tags', 'file_tags', 'file_user_tags', 'clusters'];
             let moreHtml = '';
             Object.keys(m).sort().forEach(k => {
                 if (!skipKeys.includes(k)) {
@@ -400,13 +421,16 @@
                             <button id="add-diff-btn" class="btn-diff-action" onclick="addToDiff(window.currentFuncId, this, window.currentFuncName)">
                                 <span>+</span> Add to Diff
                             </button>
+                            <button class="btn-panel" onclick="seeSimilar()" style="border-color:var(--info); color:var(--info); padding: 4px 10px; font-size: 0.75rem;">
+                                <span>≈</span> See Similar
+                            </button>
                         </div>
                     </span>
                     <div class="meta-row" ${namespace ? '' : 'style="display:none"'}><span class="meta-label">Namespace</span><span class="meta-value">${namespace}</span></div>
                     <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
                     <div class="meta-row"><span class="meta-label">File</span><span class="meta-value" style="display:flex; align-items:center; gap:10px;">${fileName} ${fileTagsHtml}</span></div>
                     <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
-                    <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml}</span></div>
+                    <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml} ${clustersHtml}</span></div>
                     
                     <div class="meta-more-container" id="meta-more-inline">
                         ${moreHtml}

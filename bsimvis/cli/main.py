@@ -163,11 +163,15 @@ def main():
             )
 
     # --- CLUSTER ---
-    cluster_parser = subparsers.add_parser("cluster", help="Unsupervised clustering management")
+    cluster_parser = subparsers.add_parser(
+        "cluster", help="Unsupervised clustering management"
+    )
     cluster_actions = cluster_parser.add_subparsers(dest="action", required=True)
 
     # cluster build
-    c_build = cluster_actions.add_parser("build", help="Run HDBSCAN clustering discovery")
+    c_build = cluster_actions.add_parser(
+        "build", help="Run HDBSCAN clustering discovery"
+    )
     c_build.add_argument("-c", "--collection", required=True, help="Collection name")
     c_build.add_argument(
         "--algo",
@@ -181,9 +185,63 @@ def main():
         default=5,
         help="Minimum cluster size (default: 5)",
     )
+    c_build.add_argument(
+        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+    )
+    c_build.add_argument(
+        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+    )
+    c_build.add_argument(
+        "--leaf-method", action="store_true", help="Use 'leaf' selection method"
+    )
+    c_build.add_argument(
+        "--min-sim", type=float, default=0.0, help="Minimum similarity threshold"
+    )
+
+    # cluster rebuild
+    c_rebuild = cluster_actions.add_parser(
+        "rebuild", help="Clear and run HDBSCAN clustering discovery"
+    )
+    c_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_rebuild.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+        help="Algorithm to cluster",
+    )
+    c_rebuild.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=5,
+        help="Minimum cluster size (default: 5)",
+    )
+    c_rebuild.add_argument(
+        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+    )
+    c_rebuild.add_argument(
+        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+    )
+    c_rebuild.add_argument(
+        "--leaf-method", action="store_true", help="Use 'leaf' selection method"
+    )
+    c_rebuild.add_argument(
+        "--min-sim", type=float, default=0.0, help="Minimum similarity threshold"
+    )
+
+    # cluster clear
+    c_clear = cluster_actions.add_parser("clear", help="Remove clustering data")
+    c_clear.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_clear.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+        help="Algorithm to target",
+    )
 
     # cluster list
-    c_list = cluster_actions.add_parser("list", help="List discovered clusters or members")
+    c_list = cluster_actions.add_parser(
+        "list", help="List discovered clusters or members"
+    )
     c_list.add_argument("-c", "--collection", required=True, help="Collection name")
     c_list.add_argument("--cluster-id", help="See members of a specific cluster")
     c_list.add_argument(

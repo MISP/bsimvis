@@ -10,6 +10,7 @@
     <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.4.min.js"></script>
     <script src="https://cdn.bokeh.org/bokeh/release/bokeh-api-3.3.4.min.js"></script>
     <script src="/js/tags.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
     <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-3.3.4.min.css" type="text/css" />
     <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.4.min.css" type="text/css" />
     <style>
@@ -26,11 +27,16 @@
             height: 100vh;
             overflow: hidden;
             box-sizing: border-box;
+            --sidebar-width: 220px;
+        }
+
+        body.sidebar-collapsed {
+            --sidebar-width: 0px;
         }
 
         /* Sidebar */
         nav {
-            width: 220px;
+            width: var(--sidebar-width);
             background: #000;
             border-right: 1px solid var(--border);
             display: flex;
@@ -345,7 +351,7 @@
             /* Managed by JS */
             position: fixed;
             bottom: 0;
-            left: 220px;
+            left: var(--sidebar-width);
             right: 0;
             height: 60vh;
             background: #0d0f14;
@@ -353,6 +359,7 @@
             z-index: 9999;
             flex-direction: column;
             box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
+            transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         #diff-panel-header,
@@ -421,6 +428,13 @@
             background: rgba(255, 255, 255, 0.15);
             color: #fff;
             border-color: var(--accent);
+        }
+
+        .btn-diff-action.active {
+            background-color: #fd971f !important;
+            color: #000 !important;
+            box-shadow: 0 0 10px rgba(253, 151, 31, 0.5);
+            border-color: #fff !important;
         }
 
         th.sortable {
@@ -686,9 +700,123 @@
                 transform: scale(1);
             }
         }
+
+        /* Reducible Panels */
+        nav {
+            transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease, opacity 0.2s ease;
+            position: relative;
+        }
+
+        body.sidebar-collapsed nav {
+            width: 0 !important;
+            min-width: 0 !important;
+            padding: 20px 0 !important;
+            opacity: 0;
+            pointer-events: none;
+            border-right: none !important;
+        }
+
+        .header {
+            transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin 0.4s ease, opacity 0.3s ease, padding 0.4s ease;
+            overflow: hidden;
+            max-height: 500px;
+        }
+
+        body.header-collapsed .header {
+            max-height: 0 !important;
+            margin-bottom: 0 !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Sidebar Toggle Button */
+        #sidebar-toggle {
+            position: fixed;
+            left: 205px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 20px;
+            height: 60px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-left: none;
+            color: var(--accent);
+            cursor: pointer;
+            z-index: 10001;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0 8px 8px 0;
+            transition: all 0.3s ease;
+            box-shadow: 4px 0 10px rgba(0, 0, 0, 0.3);
+            font-size: 1.2rem;
+            padding: 0;
+        }
+
+        #sidebar-toggle:hover {
+            background: var(--accent);
+            color: #000;
+        }
+
+        body.sidebar-collapsed #sidebar-toggle {
+            left: 0;
+        }
+
+        /* Header Toggle Button */
+        #collapse-header-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--subtle);
+            padding: 5px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.7rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.2s;
+        }
+
+        #collapse-header-btn:hover {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        #expand-header-btn {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-top: none;
+            color: var(--accent);
+            padding: 2px 20px;
+            border-radius: 0 0 10px 10px;
+            cursor: pointer;
+            z-index: 500;
+            font-size: 0.7rem;
+            font-weight: bold;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+            transition: all 0.2s;
+        }
+
+        #expand-header-btn:hover {
+            padding-bottom: 5px;
+            background: var(--accent);
+            color: #000;
+        }
+
+        body.header-collapsed #expand-header-btn {
+            display: block;
+        }
     </style>
 
 <body>
+    <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
     <nav>
         <h2>BSim Vis</h2>
         <a href="#collections" id="nav-collections">Collections</a>
@@ -707,6 +835,7 @@
         <a href="#features-global" id="nav-features-global" style="color:var(--text); display:none">Global Features</a>
         <a href="#function-similarity" id="nav-function-similarity" style="color:var(--text); display:none">Function
             Similarities</a>
+        <a href="#clusters" id="nav-clusters" style="color:var(--text); display:none">Clusters</a>
 
         <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
             <div class="dim" style="padding: 0 20px 10px 20px; font-size: 0.6rem; text-transform: uppercase;">Tools
@@ -717,6 +846,7 @@
     </nav>
 
     <main>
+        <button id="expand-header-btn" onclick="toggleHeader()" title="Expand Header">Expand Header ︾</button>
         <div class="header">
             <div class="header-top">
                 <div style="display:flex; align-items:center; gap:15px;">
@@ -732,6 +862,8 @@
                     <button onclick="clearFilters()"
                         style="background:none; border:1px solid #ff4d8d; color:#ff4d8d; cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Clear
                         Filters</button>
+                    <button id="collapse-header-btn" onclick="toggleHeader()" title="Collapse Header">Collapse
+                        ︽</button>
                 </div>
             </div>
             <p id="view-subtitle" style="margin: 5px 0 0 0; font-size: 0.9rem;"></p>
@@ -759,6 +891,10 @@
                 </div>
             </div>
 
+            <div id="hierarchy-view-container"
+                style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
+            </div>
+
             <div id="pagination-container" class="load-more-container"></div>
         </div>
     </main>
@@ -771,6 +907,32 @@
         let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
         let lastSimilarityQuery = null; // Track filters to detect view switching
         let simSearchRequested = false; // Set to true when user explicitly triggers a search
+
+        function toggleSidebar() {
+            const body = document.body;
+            const isCollapsed = body.classList.toggle('sidebar-collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const btn = document.getElementById('sidebar-toggle');
+            btn.innerHTML = isCollapsed ? '⟩' : '⟨';
+
+            // Trigger window resize for Bokeh/D3 plots
+            setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+        }
+
+        function toggleHeader() {
+            const body = document.body;
+            const isCollapsed = body.classList.toggle('header-collapsed');
+            localStorage.setItem('headerCollapsed', isCollapsed);
+
+            // Trigger window resize for plots
+            setTimeout(() => window.dispatchEvent(new Event('resize')), 400);
+        }
+
+        function getCollectionFromHash() {
+            const [hashPath, queryString] = (window.location.hash || '').split('?');
+            const params = new URLSearchParams(queryString);
+            return params.get('collection') || 'main';
+        }
 
         function toggleSimilaritySelection(event, id1, id2, algo) {
             const pairId = event.target.dataset.pairId || `${id1}|${id2}|${algo}`;
@@ -831,9 +993,10 @@
                 api: '/api/function/search',
                 headers: [
 
-                    { label: 'Function', width: '22%' },
+                    { label: 'Function', width: '20%' },
                     { label: 'Address', width: '8%', sort: 'entrypoint_address' },
-                    { label: 'Function Tags', width: '15%' },
+                    { label: 'Function Tags', width: '12%' },
+                    { label: 'Clusters', width: '10%' },
                     { label: 'Feat', width: '5%', sort: 'bsim_features_count' },
                     { label: 'File Name', width: '10%', sort: 'file_name' },
                     { label: 'MD5', width: '5%', sort: 'file_md5' },
@@ -855,17 +1018,33 @@
                 api: '/api/similarity/search',
                 headers: [
                     { label: 'Similarity', sort: 'score', width: '8%' },
-                    { label: 'Function Pair', width: '20%' },
+                    { label: 'Function Pair', width: '18%' },
                     { label: 'Address', width: '5%' },
-                    { label: 'Function Tags', width: '12%' },
+                    { label: 'Function Tags', width: '10%' },
+                    { label: 'Clusters', width: '10%' },
                     { label: 'Feat', sort: 'feat_count', width: '5%' },
-                    { label: 'File Name', width: '10%' },
+                    { label: 'File Name', width: '9%' },
                     { label: 'MD5', width: '5%' },
-                    { label: 'File Tags', width: '12%' },
-                    { label: 'Language', width: '8%' },
+                    { label: 'File Tags', width: '10%' },
+                    { label: 'Language', width: '5%' },
                     { label: 'Actions / Algo', width: '15%' }
                 ],
                 renderer: renderTopCorrelations
+            },
+            '#clusters': {
+                title: 'Function Clusters',
+                api: '/api/cluster/list',
+                headers: [
+                    { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
+                    { label: 'Name', sort: 'cluster_name', width: '25%' },
+                    { label: 'Functions', sort: 'count', width: '8%' },
+                    { label: 'Stability', sort: 'stability', width: '8%' },
+                    { label: 'Avg Feat', sort: 'features', width: '8%' },
+                    { label: 'Cohesion', sort: 'cohesion', width: '8%' },
+                    { label: 'Created', width: '15%' },
+                    { label: 'Actions', width: '18%' }
+                ],
+                renderer: renderClusters
             }
         };
 
@@ -875,7 +1054,7 @@
             const newParams = new URLSearchParams();
 
             // Preserved context keys
-            const preserved = ['collection', 'batch_uuid', 'file_md5', 'algo', 'view'];
+            const preserved = ['collection', 'batch_uuid', 'file_md5', 'algo', 'view', 'cluster_id', 'cluster_uuid'];
             preserved.forEach(k => {
                 if (params.has(k)) newParams.set(k, params.get(k));
             });
@@ -962,7 +1141,7 @@
                 const data = await response.json();
 
                 // Extract the list of items based on the API response structure
-                const items = data.items || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
+                const items = data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
                 const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
                 const totalEl = document.getElementById('view-total');
@@ -1053,6 +1232,7 @@
                 document.getElementById('nav-functions').href = `#functions?collection=${col}`;
                 document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
                 document.getElementById('nav-function-similarity').href = `#function-similarity?collection=${col}`;
+                document.getElementById('nav-clusters').href = `#clusters?collection=${col}`;
             }
 
             // Table Head
@@ -1160,6 +1340,12 @@
                             <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; })">
                         </div>
                     </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="flt-sim-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="text" id="flt-sim-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; applySimSearch(); })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                        </div>
+                    </th>
                     <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onkeyup="if(event.key==='Enter') applySimSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="width: 100%; box-sizing: border-box;"></th>
@@ -1170,6 +1356,7 @@
                     </th>
                     <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; })" onkeyup="if(event.key==='Enter') applySimSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                     <th style="font-size: 0.65rem;">
+                        
                         <select id="sim-algo" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
                             <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
                             <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
@@ -1185,6 +1372,7 @@
                     </th>
                 </tr>`;
                 thead.innerHTML = headHtml;
+                loadClusterDropdown('flt-sim-cluster-select');
 
                 // --- Inject Tag Cards from URL Params ---
                 const tagFields = [
@@ -1232,6 +1420,12 @@
                             <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; })">
                         </div>
                     </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="flt-function-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="text" id="flt-function-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                        </div>
+                    </th>
                     <th><input type="number" id="flt-function-min_features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-function-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width: 100%; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-function-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="width: 100%; box-sizing: border-box;"></th>
@@ -1243,8 +1437,10 @@
                     <th><input type="text" id="flt-function-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onkeyup="if(event.key==='Enter') applyAdvancedFuncSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
                     <th></th>
                     <th></th>
+                    <th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
+                loadClusterDropdown('flt-function-cluster-select');
 
                 // Re-inject tags
                 const tagFields = [
@@ -1269,12 +1465,52 @@
                     'language_id': 'flt-function-language',
                     'namespace': 'flt-function-namespace'
                 });
+            } else if (path === '#clusters') {
+                const p = new URLSearchParams(params);
+                if (dataTable) dataTable.style.tableLayout = 'fixed';
+                headHtml += `<tr class="filter-row">
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th>
+                        <input type="text" id="flt-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    </th>
+                    <th><input type="number" id="flt-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" title="Min Functions" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" max="1" title="Min Stability" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" title="Min Cohesion" onkeyup="if(event.key==='Enter') applyClusterSearch()" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th></th>
+                    <th><button onclick="applyClusterSearch()" style="width:100%; padding:2px; font-size:0.65rem; cursor:pointer">Search</button></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
             } else {
                 settingsEl.style.display = 'none';
                 settingsEl.innerHTML = '';
                 document.getElementById('table-body').style.display = 'table-row-group';
                 document.getElementById('pagination-container').style.display = 'block';
                 document.getElementById('graph-view-container').style.display = 'none';
+                document.getElementById('hierarchy-view-container').style.display = 'none';
+            }
+
+            if (path === '#clusters') {
+                const viewMode = params.get('view') || 'table';
+                const tbody = document.getElementById('table-body');
+                const hview = document.getElementById('hierarchy-view-container');
+                const pag = document.getElementById('pagination-container');
+
+                if (viewMode === 'hierarchy') {
+                    tbody.style.display = 'none';
+                    pag.style.display = 'none';
+                    hview.style.display = 'flex';
+                    loadHierarchyView(params);
+                } else {
+                    tbody.style.display = 'table-row-group';
+                    pag.style.display = 'block';
+                    hview.style.display = 'none';
+                }
             }
 
             // Search Bar for Files
@@ -1315,9 +1551,15 @@
                         <input type="text" id="sim-search-input" placeholder="Search by Keywords..." value="${p.get('q') || ''}" onkeyup="if(event.key==='Enter') applySimSearch()">
                         <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="sim-color-by-tag" ${localStorage.getItem('sim-color-by-tag') === 'true' ? 'checked' : ''} onchange="localStorage.setItem('sim-color-by-tag', this.checked); refreshAllRowColors()">
-                        <label for="sim-color-by-tag" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Color by Tag</label>
+                    </div>
+                </div>`;
+            } else if (path === '#clusters') {
+                const p = new URLSearchParams(params);
+                const viewMode = p.get('view') || 'table';
+                searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
+                    <div class="view-toggle">
+                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
+                        <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Hierarchy</button>
                     </div>
                 </div>`;
             } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
@@ -1391,7 +1633,12 @@
             const fileNameFlt = document.getElementById('flt-function-file_name')?.value;
             const md5Flt = document.getElementById('flt-function-md5')?.value;
             const langFlt = document.getElementById('flt-function-language')?.value;
+            const clusterFlt = document.getElementById('flt-function-cluster')?.value;
+            const clusterNameFlt = document.getElementById('flt-function-cluster-name')?.value;
             const minFeatFlt = document.getElementById('flt-function-min_features')?.value;
+
+            if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
+            if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
 
             if (nameFlt) params.set('function_name', nameFlt); else params.delete('function_name');
             if (addressFlt) params.set('entrypoint_address', addressFlt); else params.delete('entrypoint_address');
@@ -1483,7 +1730,12 @@
             const addressFlt = document.getElementById('flt-sim-address')?.value;
             const nsFlt = document.getElementById('flt-sim-namespace')?.value;
             const retTypeFlt = document.getElementById('flt-sim-ret_type')?.value;
+            const clusterFlt = document.getElementById('flt-sim-cluster')?.value;
+            const clusterNameFlt = document.getElementById('flt-sim-cluster-name')?.value;
             const fileNameFlt = document.getElementById('flt-sim-file_name')?.value;
+
+            if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
+            if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
 
             if (nameFlt) params.set('name', nameFlt); else params.delete('name');
             if (addressFlt) params.set('address', addressFlt); else params.delete('address');
@@ -1683,10 +1935,20 @@
                                onclick="showFunctionCodeById('${funcId}', '${safeName}')">
                                 ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                             </b>
+                            <div style="display:inline-flex; gap:4px; margin-left: 8px;">
+                                <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(funcId)) ? 'active' : ''}" 
+                                        data-func-id="${normalizeFuncId(funcId)}" 
+                                        onmouseenter="onHoverDiffButton(event, '${funcId}', '${safeName}')"
+                                        onmousemove="moveCodePreview(event)"
+                                        onmouseleave="hideDiffPreview(event)"
+                                        onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px;"><span>±</span></button>
+                                <a class="btn-diff-action" href="#function-similarity?collection=${f.collection || 'main'}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
+                            </div>
                         </div>
                     </td>
                     <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
                     <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
+                    <td>${renderClusterCards(f['clusters'])}</td>
                     <td class="sim-cell" style="text-align:center;">
                         <div style="display:inline-flex; align-items:center; gap:6px;">
                             <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
@@ -1698,8 +1960,8 @@
                     <td>${renderTagEditor('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
                     <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
                     <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
-                    <td>
-                        <button class="btn-diff-action" onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff"><span>+</span> Diff</button>
+                    <td class="sim-cell">
+                        <!-- Actions moved next to name -->
                     </td>
                 </tr>
             `}).join('');
@@ -1871,14 +2133,36 @@
                     <td class="sim-cell">
                         <div style="display:flex; flex-direction:column; gap:8px;">
                             <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f1.fullSig}">
-                                <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" onclick="showFunctionCodeById('${p.id1}', '${name1}')">
+                                <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
+                                   onmouseenter="showCodePreview('${p.id1}', '${name1}', '${addr1}', '${m1}', ${p.meta1?.bsim_features_count || 0}, event, 0, '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}')" 
+                                   onmousemove="moveCodePreview(event)"
+                                   onmouseleave="hideCodePreview(event)"
+                                   onclick="showFunctionCodeById('${p.id1}', '${name1}')">
                                     ${f1.ret ? `<span style="color:#ae81ff">${f1.ret}</span> ` : ''}${f1.ns ? `<span style="color:white; opacity:0.8">${f1.ns}::</span>` : ''}${p.name1 || '---'}<span style="color:white">(</span>${f1.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                                 </b>
+                                <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id1)) ? 'active' : ''}" 
+                                        data-func-id="${normalizeFuncId(p.id1)}" 
+                                        onmouseenter="onHoverDiffButton(event, '${p.id1}', '${name1}', '${p.id2}', ${p.score})"
+                                        onmousemove="moveCodePreview(event)"
+                                        onmouseleave="hideDiffPreview(event)"
+                                        onclick="addToDiff('${p.id1}', '${name1}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
+                                <a class="btn-diff-action" href="#function-similarity?collection=${col}&md5=${m1}&address=${addr1}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
                             </div>
                             <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f2.fullSig}">
-                                <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" onclick="showFunctionCodeById('${p.id2}', '${name2}')">
+                                <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
+                                   onmouseenter="showCodePreview('${p.id2}', '${name2}', '${addr2}', '${m2}', ${p.meta2?.bsim_features_count || 0}, event, 0, '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}')" 
+                                   onmousemove="moveCodePreview(event)"
+                                   onmouseleave="hideCodePreview(event)"
+                                   onclick="showFunctionCodeById('${p.id2}', '${name2}')">
                                     ${f2.ret ? `<span style="color:#ae81ff">${f2.ret}</span> ` : ''}${f2.ns ? `<span style="color:white; opacity:0.8">${f2.ns}::</span>` : ''}${p.name2 || '---'}<span style="color:white">(</span>${f2.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                                 </b>
+                                <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id2)) ? 'active' : ''}" 
+                                        data-func-id="${normalizeFuncId(p.id2)}" 
+                                        onmouseenter="onHoverDiffButton(event, '${p.id2}', '${name2}', '${p.id1}', ${p.score})"
+                                        onmousemove="moveCodePreview(event)"
+                                        onmouseleave="hideDiffPreview(event)"
+                                        onclick="addToDiff('${p.id2}', '${name2}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
+                                <a class="btn-diff-action" href="#function-similarity?collection=${col}&md5=${m2}&address=${addr2}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
                             </div>
                         </div>
                     </td>
@@ -1894,10 +2178,22 @@
                             <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
                         </div>
                     </td>
+                    <td>
+                        <div style="display:flex; flex-direction:column; gap:8px;">
+                            <div style="min-height:24px; display:flex; align-items:center;">${renderClusterCards(p.meta1?.clusters)}</div>
+                            <div style="min-height:24px; display:flex; align-items:center;">${renderClusterCards(p.meta2?.clusters)}</div>
+                        </div>
+                    </td>
                     <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                         <div style="display:flex; flex-direction:column; gap:8px;">
-                            <div style="min-height:24px; display:flex; align-items:center; justify-content:center;"><span class="mono" style="color:var(--accent);">${p.meta1?.bsim_features_count || 0}</span></div>
-                            <div style="min-height:24px; display:flex; align-items:center; justify-content:center;"><span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span></div>
+                            <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
+                                <span class="mono" style="color:var(--accent);">${p.meta1?.bsim_features_count || 0}</span>
+                                <button class="btn-icon" onclick="showFeaturePanel('${p.id1}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                            </div>
+                            <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
+                                <span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span>
+                                <button class="btn-icon" onclick="showFeaturePanel('${p.id2}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                            </div>
                         </div>
                     </td>
                     <td class="sim-cell">
@@ -1930,7 +2226,7 @@
                             onmousemove="moveCodePreview(event)"
                             onmouseleave="hideDiffPreview(event)"
                             onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="padding:4px 8px;">
-                            <span>↔</span> Run Diff
+                            <span>±</span> Run Diff
                         </button>
                     </td>
                 </tr>
@@ -2402,6 +2698,16 @@
                         <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;">&times;</button>
                     </span>`;
             }
+
+            // Sync all buttons on page
+            document.querySelectorAll('.btn-diff-action[data-func-id]').forEach(btn => {
+                const id = btn.dataset.funcId;
+                if (diffSelection.some(item => item.id === id)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
         }
 
         function clearDiffSelection() {
@@ -2483,6 +2789,23 @@
             if (p) p.style.display = 'flex';
             if (title) title.innerText = `Code: ${name}`;
             if (f) f.src = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
+        }
+
+        function seeSimilarFromCode() {
+            const frame = document.getElementById('code-frame');
+            if (!frame || !frame.src) return;
+            const url = new URL(frame.src, window.location.origin);
+            const id = url.searchParams.get('id');
+            if (!id) return;
+
+            const parts = id.split(':');
+            if (parts.length < 4) return;
+            const col = parts[0];
+            const md5 = parts[2];
+            const addr = parts[3];
+
+            window.location.hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+            hideCodePanel();
         }
 
         function hideCodePanel() {
@@ -2676,7 +2999,7 @@
         }
 
         function updateNavVisibility(collection) {
-            const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity'];
+            const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters'];
             navItems.forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.style.display = collection ? 'block' : 'none';
@@ -2692,6 +3015,433 @@
                 }
             }
         });
+
+        function renderClusters(items) {
+            return items.map(c => `
+                <tr data-cluster-id="${c.cluster_id}">
+                    <td class="mono" style="color:var(--accent)">
+                        ${(c.cluster_uuid || '').substring(0, 8)}
+                        <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
+                    </td>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span id="name-display-${c.cluster_id}">${c.cluster_name}</span>
+                            <button class="btn-panel" style="padding: 2px 5px; font-size: 0.6rem;" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')">✎</button>
+                        </div>
+                    </td>
+                    <td style="font-weight:bold">${c.count.toLocaleString()}</td>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                                <div style="height:100%; background:var(--success); width:${(c.avg_stability * 100).toFixed(0)}%"></div>
+                            </div>
+                            <span class="dim">${(c.avg_stability).toFixed(2)}</span>
+                        </div>
+                    </td>
+                    <td class="mono dim">${(c.avg_features || 0).toFixed(1)}</td>
+                    <td>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                                <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
+                            </div>
+                            <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
+                        </div>
+                    </td>
+                    <td class="dim">${formatDate(c.created_at)}</td>
+                    <td>
+                        <div style="display:flex; gap:10px;">
+                            <a href="#functions?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action">View Functions →</a>
+                            <a href="#function-similarity?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">View similarities →</a>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function applyClusterSearch() {
+            const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+            const params = new URLSearchParams(queryString);
+
+            const cid = document.getElementById('flt-cluster-id')?.value;
+            const cuuid = document.getElementById('flt-cluster-uuid')?.value;
+            const cname = document.getElementById('flt-cluster-name')?.value;
+            const cstab = document.getElementById('flt-cluster-min-stability')?.value;
+            const ccount = document.getElementById('flt-cluster-min-count')?.value;
+            const cfeat = document.getElementById('flt-cluster-min-features')?.value;
+            const ccoh = document.getElementById('flt-cluster-min-cohesion')?.value;
+
+            if (cid) params.set('cluster_id', cid); else params.delete('cluster_id');
+            if (cuuid) params.set('cluster_uuid', cuuid); else params.delete('cluster_uuid');
+            if (cname) params.set('cluster_name', cname); else params.delete('cluster_name');
+            if (cstab) params.set('min_stability', cstab); else params.delete('min_stability');
+            if (ccount) params.set('min_count', ccount); else params.delete('min_count');
+            if (cfeat) params.set('min_features', cfeat); else params.delete('min_features');
+            if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
+
+            currentOffset = 0;
+            isEndOfResults = false;
+            window.location.hash = `${hashPath}?${params.toString()}`;
+        }
+
+        async function renameCluster(clusterId, currentName) {
+            const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
+            if (!newName || newName === currentName) return;
+
+            const collection = document.getElementById('side-collection-select').value;
+            const algo = new URLSearchParams(window.location.hash.split('?')[1]).get('algo') || 'unweighted_cosine';
+
+            try {
+                const res = await fetch('/api/cluster/meta', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        collection,
+                        algo,
+                        cluster_id: clusterId,
+                        cluster_name: newName
+                    })
+                });
+                if (res.ok) {
+                    document.getElementById(`name-display-${clusterId}`).innerText = newName;
+                } else {
+                    alert("Failed to rename cluster");
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Error renaming cluster");
+            }
+        }
+
+        function switchClusterView(mode) {
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            params.set('view', mode);
+            window.location.hash = `#clusters?${params.toString()}`;
+        }
+
+        function loadHierarchyView(params) {
+            if (!window.hierarchyInstance) {
+                window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
+            }
+            window.hierarchyInstance.fetch(params);
+        }
+
+        class ClusterHierarchy {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.width = this.container.clientWidth;
+                this.height = this.container.clientHeight || 700;
+                this.root = null;
+                this.svg = null;
+                this.g = null;
+                this.zoom = null;
+                this.memberCache = new Map(); // cluster_id -> [function names]
+            }
+
+            async fetch(params) {
+                const collection = params.get('collection');
+                const algo = params.get('algo') || 'unweighted_cosine';
+                this.container.innerHTML = `
+                    <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.8); padding:15px; border-radius:8px; border:1px solid #333; max-width:300px; display:none;" id="hierarchy-info-panel">
+                        <h4 id="hier-title" style="margin:0 0 10px 0; color:var(--accent);">Cluster Info</h4>
+                        <div id="hier-stats" style="font-size:0.85rem; color:#ccc;"></div>
+                        <div style="margin-top:15px; display:flex; gap:10px;">
+                            <button id="hier-view-btn" class="btn-action" style="flex:1">View Functions</button>
+                        </div>
+                    </div>
+                    <div id="hierarchy-tooltip" style="position:fixed; z-index:100; background:rgba(13,15,20,0.95); padding:12px; border-radius:6px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 10px 30px rgba(0,0,0,0.5); max-width:300px; backdrop-filter:blur(5px);"></div>
+                    <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent)">
+                        <span>Loading Hierarchy Tree...</span>
+                    </div>
+                `;
+
+                try {
+                    const [treeRes, metaRes] = await Promise.all([
+                        fetch(`/api/cluster/tree?collection=${collection}&algo=${algo}`),
+                        fetch(`/api/cluster/list?collection=${collection}&algo=${algo}&limit=1000`)
+                    ]);
+                    if (!treeRes.ok) throw new Error("Tree not found");
+                    const treeData = await treeRes.json();
+                    const metaData = await metaRes.json();
+                    this.stableClusterIds = new Set(metaData.results.map(c => c.cluster_id));
+                    this.render(treeData);
+                } catch (e) {
+                    this.container.innerHTML = `<div style="margin:auto; color:#ff5555">Error loading hierarchy: ${e.message}</div>`;
+                }
+            }
+
+            render(data) {
+                const self = this;
+                const loader = document.getElementById('hierarchy-loader');
+                if (loader) loader.remove();
+                const width = this.container.clientWidth;
+                const height = this.container.offsetHeight || 700;
+
+                this.svg = d3.select(this.container).append("svg")
+                    .attr("width", width)
+                    .attr("height", height)
+                    .attr("style", "background:#0d0f14; cursor:grab;");
+
+                this.g = this.svg.append("g");
+
+                this.zoom = d3.zoom()
+                    .scaleExtent([0.1, 8])
+                    .on("zoom", (event) => {
+                        this.g.attr("transform", event.transform);
+                    });
+
+                this.svg.call(this.zoom);
+
+                // Build hierarchy
+                const children = new Set(data.map(d => d.child));
+                const roots = [...new Set(data.map(d => d.parent))].filter(p => !children.has(p));
+
+                const treeData = this.buildTree(data, roots[0]);
+                this.root = d3.hierarchy(treeData);
+                this.root.x0 = height / 2;
+                this.root.y0 = 0;
+
+                // Horizontal layout
+                this.update(this.root);
+
+                // Initial position (Fixed)
+                const initialTransform = d3.zoomIdentity.translate(100, height / 2).scale(0.8);
+                this.svg.call(this.zoom.transform, initialTransform);
+            }
+
+            fitToFrame() {
+                const bounds = this.g.node().getBBox();
+                const parent = this.container;
+                const fullWidth = parent.clientWidth;
+                const fullHeight = parent.clientHeight || 700;
+                const width = bounds.width;
+                const height = bounds.height;
+                const midX = bounds.x + width / 2;
+                const midY = bounds.y + height / 2;
+                if (width === 0 || height === 0) return;
+
+                const scale = 0.85 / Math.max(width / fullWidth, height / fullHeight);
+                const translate = [fullWidth / 2 - scale * midX, fullHeight / 2 - scale * midY];
+
+                this.svg.transition().duration(750).call(
+                    this.zoom.transform,
+                    d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
+                );
+            }
+
+            update(source) {
+                const self = this;
+                const nodeWidth = 140; // More compact
+                const nodeHeight = 25;
+
+                const treeLayout = d3.tree().nodeSize([nodeHeight, nodeWidth]);
+                treeLayout(this.root);
+
+                const nodes = this.root.descendants();
+                const links = this.root.links();
+
+                // Nodes
+                const node = this.g.selectAll("g.node")
+                    .data(nodes, d => d.data.id || (d.data.id = Math.random()));
+
+                const nodeEnter = node.enter().append("g")
+                    .attr("class", "node")
+                    .attr("transform", d => `translate(${source.y0},${source.x0})`)
+                    .style("cursor", "pointer")
+                    .on("click", (event, d) => {
+                        if (d.children) {
+                            d._children = d.children;
+                            d.children = null;
+                        } else if (d._children) {
+                            d.children = d._children;
+                            d._children = null;
+                        }
+                        self.showInfo(d);
+                        self.update(d);
+                    })
+                    .on("mouseover", async (e, d) => {
+                        d3.select(e.currentTarget).select("circle").attr("r", 12);
+                        self.showTooltip(e, d);
+                    })
+                    .on("mouseout", (e, d) => {
+                        d3.select(e.currentTarget).select("circle").attr("r", d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? 10 : 4);
+                        self.hideTooltip();
+                    });
+
+                nodeEnter.append("circle")
+                    .attr("r", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? 10 : 4)
+                    .attr("stroke", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "#00ff88" : "var(--accent)")
+                    .attr("stroke-width", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? 4 : 1.5)
+                    .style("filter", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "drop-shadow(0 0 8px #00ff88) drop-shadow(0 0 15px #00ff88)" : "none");
+
+                nodeEnter.append("text")
+                    .attr("dy", ".35em")
+                    .attr("x", d => d.children || d._children ? -15 : 15)
+                    .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+                    .text(d => d.data.name)
+                    .style("fill", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "#00ff88" : "#eee")
+                    .style("font-weight", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "bold" : "normal")
+                    .style("font-size", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "14px" : "12px")
+                    .style("pointer-events", "none")
+                    .clone(true).lower()
+                    .attr("stroke", "#000")
+                    .attr("stroke-width", 3);
+
+                const nodeUpdate = nodeEnter.merge(node);
+
+                nodeUpdate.transition().duration(400)
+                    .attr("transform", d => `translate(${d.y},${d.x})`);
+
+                nodeUpdate.select("circle")
+                    .style("fill", d => {
+                        if (d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString())) return "#00ff88";
+                        return d._children ? "var(--accent)" : (d.children ? "#222" : "#555");
+                    });
+
+                const nodeExit = node.exit().transition().duration(400)
+                    .attr("transform", d => `translate(${source.y},${source.x})`)
+                    .remove();
+
+                // Links
+                const link = this.g.selectAll("path.link")
+                    .data(links, d => d.target.data.id);
+
+                const linkEnter = link.enter().insert("path", "g")
+                    .attr("class", "link")
+                    .attr("fill", "none")
+                    .attr("stroke", "#444")
+                    .attr("stroke-width", 1.5)
+                    .attr("d", d => {
+                        const o = { x: source.x0, y: source.y0 };
+                        return diagonal(o, o);
+                    });
+
+                link.merge(linkEnter).transition().duration(400)
+                    .attr("d", d => diagonal(d.source, d.target));
+
+                link.exit().transition().duration(400)
+                    .attr("d", d => {
+                        const o = { x: source.x, y: source.y };
+                        return diagonal(o, o);
+                    })
+                    .remove();
+
+                nodes.forEach(d => {
+                    d.x0 = d.x;
+                    d.y0 = d.y;
+                });
+
+                function diagonal(s, t) {
+                    return `M ${s.y} ${s.x}
+                            C ${(s.y + t.y) / 2} ${s.x},
+                              ${(s.y + t.y) / 2} ${t.x},
+                              ${t.y} ${t.x}`;
+                }
+            }
+
+            showInfo(d) {
+                const panel = document.getElementById('hierarchy-info-panel');
+                const title = document.getElementById('hier-title');
+                const stats = document.getElementById('hier-stats');
+                const btn = document.getElementById('hier-view-btn');
+
+                panel.style.display = 'block';
+                title.innerText = d.data.name;
+                stats.innerHTML = `
+                    <div style="margin-bottom:5px"><b>Size:</b> ${d.data.size} functions</div>
+                    <div><b>Lambda:</b> ${d.data.lambda !== undefined ? d.data.lambda.toFixed(4) : '0.0000'}</div>
+                `;
+
+                btn.onclick = async () => {
+                    const col = document.getElementById('side-collection-select').value;
+                    const cid = d.data.cluster_id || d.data.name.replace('Cluster ', '');
+
+                    // Fetch UUID for more reliable filtering (avoid small numeric ID collisions)
+                    try {
+                        btn.innerText = "Loading...";
+                        const res = await fetch(`/api/cluster/list?collection=${col}&cluster_id=${cid}`);
+                        const data = await res.json();
+                        if (data.results && data.results.length > 0) {
+                            const uuid = data.results[0].cluster_uuid;
+                            window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
+                        } else {
+                            window.location.hash = `#functions?collection=${col}&cluster_id=${cid}`;
+                        }
+                    } catch (e) {
+                        window.location.hash = `#functions?collection=${col}&cluster_id=${cid}`;
+                    } finally {
+                        btn.innerText = "View Functions →";
+                    }
+                };
+            }
+
+            async showTooltip(event, d) {
+                const tooltip = document.getElementById('hierarchy-tooltip');
+                tooltip.style.display = 'block';
+                tooltip.style.left = (event.pageX + 15) + 'px';
+                tooltip.style.top = (event.pageY + 15) + 'px';
+
+                const cid = d.data.cluster_id || d.data.name.replace('Cluster ', '');
+                const col = document.getElementById('side-collection-select').value;
+                const algo = new URLSearchParams(window.location.hash.split('?')[1]).get('algo') || 'unweighted_cosine';
+
+                let content = `
+                    <div style="color:var(--accent); font-weight:bold; margin-bottom:8px; font-size:0.9rem;">${d.data.name}</div>
+                    <div style="margin-bottom:10px; color:#aaa;">Size: ${d.data.size} functions</div>
+                    <div id="tooltip-members" style="color:#eee;">
+                        <div class="spinner" style="width:15px; height:15px; border-width:2px; margin:5px auto;"></div>
+                    </div>
+                `;
+                tooltip.innerHTML = content;
+
+                if (!this.memberCache.has(cid)) {
+                    try {
+                        const res = await fetch(`/api/cluster/members?collection=${col}&algo=${algo}&cluster_id=${cid}&limit=10`);
+                        const data = await res.json();
+                        const names = data.results.map(r => r.meta.function_name || r.id.split(':').pop());
+                        this.memberCache.set(cid, names);
+                    } catch (e) {
+                        this.memberCache.set(cid, ["Error loading functions"]);
+                    }
+                }
+
+                const names = this.memberCache.get(cid);
+                const membersDiv = document.getElementById('tooltip-members');
+                if (membersDiv) {
+                    membersDiv.innerHTML = `
+                        <div style="border-top:1px solid #333; padding-top:8px;">
+                            <div style="font-size:0.7rem; color:#888; margin-bottom:4px;">Sample Functions:</div>
+                            ${names.slice(0, 8).map(n => `<div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px;">• ${n}</div>`).join('')}
+                            ${names.length > 8 ? `<div style="color:#555; font-size:0.7rem; margin-top:4px;">+ ${d.data.size - 8} more...</div>` : ''}
+                        </div>
+                    `;
+                }
+            }
+
+            hideTooltip() {
+                document.getElementById('hierarchy-tooltip').style.display = 'none';
+            }
+
+            buildTree(data, rootId) {
+                const self = this;
+                const nodeData = data.find(d => d.child === rootId) || { child_size: data.reduce((a, b) => a + b.child_size, 0), lambda: 0 };
+
+                const node = {
+                    name: rootId === 0 ? "Root" : `Cluster ${rootId}`,
+                    cluster_id: rootId,
+                    size: nodeData.child_size,
+                    lambda: nodeData.lambda,
+                    children: []
+                };
+
+                const children = data.filter(d => d.parent === rootId && d.child !== rootId);
+                for (const child of children) {
+                    node.children.push(this.buildTree(data, child.child));
+                }
+
+                if (node.children.length === 0) delete node.children;
+                return node;
+            }
+        }
     </script>
 
     <!-- Code Panel -->
@@ -2706,6 +3456,8 @@
                     View</span>
             </div>
             <div class="panel-actions">
+                <button class="btn-panel" onclick="seeSimilarFromCode()"
+                    style="border-color:var(--info); color:var(--info);">≈ See Similar</button>
                 <button class="btn-panel" onclick="launchExternal('code')">Open in New Window ↗</button>
                 <button class="btn-panel" onclick="hideCodePanel()"
                     style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close View</button>
@@ -2966,6 +3718,16 @@
 
             // Attach graph context menu (global to ensure it's not swallowed by Bokeh canvas)
             window.addEventListener('contextmenu', showGraphContextMenu);
+
+            // Reducible Panels Initialization
+            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+                document.body.classList.add('sidebar-collapsed');
+                const btn = document.getElementById('sidebar-toggle');
+                if (btn) btn.innerHTML = '⟩';
+            }
+            if (localStorage.getItem('headerCollapsed') === 'true') {
+                document.body.classList.add('header-collapsed');
+            }
         });
 
         function showTokenTooltip(e) {
@@ -3094,7 +3856,7 @@
                     const cached = previewCache.get(id);
                     window.previewTips = cached.tips;
                     window.previewCollection = collection;
-                    renderPreview(data, name, addr, bin, v_size, extra, file_name);
+                    renderPreview(cached, name, addr, bin, v_size, extra, file_name);
                     return;
                 }
 
@@ -3171,6 +3933,20 @@
             }
         }
 
+        function onHoverDiffButton(e, id, name, partnerId = null, score = -1) {
+            if (diffSelection.length === 1) {
+                const s1 = diffSelection[0];
+                const normalizedId = normalizeFuncId(id);
+                if (s1.id !== normalizedId) {
+                    let finalScore = score;
+                    if (partnerId && normalizeFuncId(partnerId) !== s1.id) {
+                        finalScore = -1; // Wrong partner, fetch it
+                    }
+                    showDiffPreview(s1.id, s1.name, normalizedId, name, finalScore, e);
+                }
+            }
+        }
+
         async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
             const cacheKey = `${id1}::${id2}`;
             if (cacheKey === activeDiffKey) {
@@ -3199,7 +3975,7 @@
                                 <span style="color:#FFF;">${name2}</span>
                             </div>
                             <div style="font-size:1rem; font-weight:bold; color:var(--success); border-top:1px solid #444; padding-top:5px; display:flex; justify-content:space-between; align-items:center;">
-                                <span>${(score * 100).toFixed(2)}% Match</span>
+                                <span>${score >= 0 ? (score * 100).toFixed(2) + '% Match' : '...% Match '}</span>
                                 <span style="color:var(--accent); font-size:0.65rem; font-weight:bold;">LOADING DIFF...</span>
                             </div>
                         </div>
@@ -3212,8 +3988,19 @@
             `;
 
             diffPreviewTimer = setTimeout(async () => {
+                let finalScore = score;
+                if (finalScore < 0) {
+                    try {
+                        const simRes = await fetch(`/api/similarity?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+                        if (simRes.ok) {
+                            const simData = await simRes.json();
+                            finalScore = simData.scores['unweighted_cosine'] || 0;
+                        }
+                    } catch (e) { }
+                }
+
                 if (diffPreviewCache.has(cacheKey)) {
-                    renderDiffPreview(diffPreviewCache.get(cacheKey), name1, name2, score, extra);
+                    renderDiffPreview(diffPreviewCache.get(cacheKey), name1, name2, finalScore, extra);
                     return;
                 }
 
@@ -3222,7 +4009,7 @@
                     if (!res.ok) throw new Error("Diff failed");
                     const data = await res.json();
                     diffPreviewCache.set(cacheKey, data);
-                    renderDiffPreview(data, name1, name2, score, extra);
+                    renderDiffPreview(data, name1, name2, finalScore, extra);
                 } catch (err) {
                     tooltip.innerHTML = `<div class="diff-preview-header" style="color:#ff5555">Error loading diff preview</div>`;
                 }
@@ -3248,7 +4035,7 @@
                                 <span style="color:#FFF;">${name2}</span>
                             </div>
                             <div style="font-size:1rem; font-weight:bold; color:var(--success); border-top:1px solid #444; padding-top:5px; display:flex; justify-content:space-between; align-items:center;">
-                                <span>${(score * 100).toFixed(2)}% Match</span>
+                                <span>${score >= 0 ? (score * 100).toFixed(2) + '% Match' : '....% Match'}</span>
                                 <span style="color:var(--accent); font-size:0.65rem; font-weight:bold;">${data.rows.length} ROWS MATCH</span>
                             </div>
                         </div>
@@ -3339,6 +4126,38 @@
         initResize('feature-panel');
         initResize('global-feature-panel');
         initResize('diff-panel');
+        async function loadClusterDropdown(selectId) {
+            const col = getCollectionFromHash();
+            if (!col) return;
+            try {
+                const res = await fetch(`/api/cluster/list?collection=${col}&limit=50&sort_by=cohesion`);
+                const data = await res.json();
+                const select = document.getElementById(selectId);
+                if (!select) return;
+
+                const firstOpt = select.options[0];
+                select.innerHTML = '';
+                select.appendChild(firstOpt);
+
+                if (data.results) {
+                    data.results.forEach(c => {
+                        const name = c.cluster_name || `Cluster ${c.cluster_id}`;
+                        const opt = document.createElement('option');
+                        opt.value = c.cluster_uuid;
+                        opt.textContent = `${name} (${c.count})`;
+                        if (c.cluster_uuid === new URLSearchParams(window.location.hash.split('?')[1]).get('cluster_uuid')) {
+                            opt.selected = true;
+                        }
+                        select.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.error("Failed to load clusters", e);
+            }
+        }
+
+        window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
+        window.applySimSearch = applySimSearch;
     </script>
 </body>
 

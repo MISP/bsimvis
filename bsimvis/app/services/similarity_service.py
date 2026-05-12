@@ -296,9 +296,13 @@ class SimilarityService:
                 if not candidates:
                     # PROTECTION: If Milvus returned 0 results, check if the collection is empty.
                     # If it's empty, we likely have a sync issue, so don't mark as built yet.
-                    col = milvus_service.ensure_collection(collection, index_type=index_type)
+                    col = milvus_service.ensure_collection(
+                        collection, index_type=index_type
+                    )
                     if col and col.num_entities == 0:
-                        logging.warning(f"[!] Skipping built status for {fid} because Milvus collection {col.name} is EMPTY. Sync required.")
+                        logging.warning(
+                            f"[!] Skipping built status for {fid} because Milvus collection {col.name} is EMPTY. Sync required."
+                        )
                         continue
 
                 if enriched:
@@ -365,7 +369,9 @@ class SimilarityService:
                 }
 
                 persist_pipe.json().set(sid, "$", sim_doc)
-                persist_pipe.zadd(f"{collection}:sim:score:{algo}", {sid: score_rounded})
+                persist_pipe.zadd(
+                    f"{collection}:sim:score:{algo}", {sid: score_rounded}
+                )
                 persist_pipe.zadd(f"{collection}:sim:all", {sid: 0})
                 persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_a}", sid)
                 persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_b}", sid)
@@ -548,13 +554,17 @@ class SimilarityService:
             # Format candidates_raw (Lua flat list) into unified discovery_results format
             enriched_candidates = []
             for k in range(0, len(candidates_raw), 3):
-                enriched_candidates.append({
-                    "id": candidates_raw[k],
-                    "score": float(candidates_raw[k + 1]),
-                    "c_total": float(candidates_raw[k + 2]),
-                })
-            
-            discovery_results = [(base_id, md5, addr, target_feat_total, enriched_candidates)]
+                enriched_candidates.append(
+                    {
+                        "id": candidates_raw[k],
+                        "score": float(candidates_raw[k + 1]),
+                        "c_total": float(candidates_raw[k + 2]),
+                    }
+                )
+
+            discovery_results = [
+                (base_id, md5, addr, target_feat_total, enriched_candidates)
+            ]
             self._persist_and_index_batch(collection, algo, discovery_results)
 
             return True
@@ -572,11 +582,7 @@ class SimilarityService:
     def clear_all(self, collection, algo=None):
         """Clears ALL similarities in the collection safely using SCAN."""
         r = self.r
-        algos = (
-            [algo]
-            if algo
-            else ["jaccard", "unweighted_cosine", "milvus_sparse"]
-        )
+        algos = [algo] if algo else ["jaccard", "unweighted_cosine", "milvus_sparse"]
 
         logging.info(f"[*] Clearing ALL similarities for collection: {collection}")
 

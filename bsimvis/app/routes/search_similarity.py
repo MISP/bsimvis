@@ -28,8 +28,9 @@ def autocomplete():
         return jsonify({"error": "Missing parameters"}), 400
 
     r = get_redis()
-    
+
     from bsimvis.app.services.index_config import get_search_paths_for_field
+
     paths = get_search_paths_for_field(field, level)
 
     registry_key = None
@@ -96,7 +97,9 @@ def autocomplete():
     return jsonify(
         {
             "results": final_results,
-            "cardinality": r.scard(registry_key) if registry_key and r.exists(registry_key) else 0,
+            "cardinality": (
+                r.scard(registry_key) if registry_key and r.exists(registry_key) else 0
+            ),
         }
     )
 
@@ -230,9 +233,13 @@ def similarity_search():
         # Map frontend 'milvus_sparse' to the ZSET name used in Redis
         # Support legacy 'milvus_inverted' if it exists and milvus_sparse doesn't
         if algo == "milvus_sparse":
-            if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(f"{col}:sim:score:milvus_inverted"):
+            if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(
+                f"{col}:sim:score:milvus_inverted"
+            ):
                 algo = "milvus_inverted"
-                logging.info(f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}")
+                logging.info(
+                    f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}"
+                )
 
         algo_zset = f"{col}:sim:score:{algo}"
         min_features_zset = f"{col}:sim:min_features"
@@ -368,18 +375,17 @@ def similarity_search():
                     using the standardized registry->bucket hierarchy.
                     Returns a list of (lvl, targets, field) tuples for all matches.
                     """
+                    from bsimvis.app.services.index_config import INDEX_CONFIG, EXACT_FIELDS
                     if not allowed_fields:
-                        allowed_fields = [
-                            "tags",
-                            "user_tags",
-                            "function_name",
-                            "file_name",
-                            "file_md5",
-                            "language_id",
-                            "namespace",
-                            "return_type",
-                            "entrypoint_address",
-                        ]
+                        # Dynamically discover all fields allowed at this level from config
+                        allowed_fields = []
+                        for src_lvl, fields in INDEX_CONFIG.items():
+                            for field, targets in fields.items():
+                                if lvl in targets:
+                                    from bsimvis.app.services.index_config import resolve_target_field
+                                    allowed_fields.append(resolve_target_field(src_lvl, lvl, field))
+                        # Deduplicate
+                        allowed_fields = list(set(allowed_fields))
 
                     val_lower = val.lower()
                     matches = []
@@ -395,24 +401,31 @@ def similarity_search():
                         #         logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} exact {lvl}-level targets for '{field}:{val}'")
                         #         matches.append((lvl, targets, field))
 
-                        # 2. Try Registry-Based Partial Match (SSCAN)
+                        # 2. Try Registry-Based Match
                         registry_key = f"{col}:reg:{lvl}:{field}"
                         if r.exists(registry_key):
                             matching_buckets = []
-                            try:
-                                for bucket in r.sscan_iter(
-                                    registry_key, match=f"*{val_lower}*"
-                                ):
-                                    bucket_str = (
-                                        bucket.decode()
-                                        if isinstance(bucket, bytes)
-                                        else str(bucket)
-                                    )
-                                    if val_lower in bucket_str.lower():
-                                        matching_buckets.append(bucket_str)
-                            except Exception as e:
-                                logging.warning(f"SSCAN failed for {registry_key}: {e}")
-                                pass
+                            
+                            # NEW: Perfect match fields
+                            if field in EXACT_FIELDS:
+                                target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
+                                if r.sismember(registry_key, target_bucket):
+                                    matching_buckets = [target_bucket]
+                            else:
+                                try:
+                                    for bucket in r.sscan_iter(
+                                        registry_key, match=f"*{val_lower}*"
+                                    ):
+                                        bucket_str = (
+                                            bucket.decode()
+                                            if isinstance(bucket, bytes)
+                                            else str(bucket)
+                                        )
+                                        if val_lower in bucket_str.lower():
+                                            matching_buckets.append(bucket_str)
+                                except Exception as e:
+                                    logging.warning(f"SSCAN failed for {registry_key}: {e}")
+                                    pass
 
                             if matching_buckets:
                                 targets = []
@@ -547,72 +560,46 @@ def similarity_search():
                             )
                     return [path] if path else []
 
-                filter_configs = [
-                    (lang_filter, "language_id", _paths("language_id")),
-                    (namespace_filter, "namespace", _paths("namespace")),
-                    (ret_type_filter, "ret_type", _paths("return_type")),
-                    (address_filter, "address", _paths("entrypoint_address")),
-                    (
-                        name_filter,
-                        "name",
-                        _paths("function_name") + _paths("file_name"),
-                    ),
-                    (file_name_filter, "file_name", _paths("file_name")),
-                    # General tag search (all levels)
+                # Core Filters — fully config-driven
+                filter_configs = []
+                
+                # 1. Native/Propagated fields from INDEX_CONFIG
+                # We want to iterate over all fields that could end up at the 'sim' level
+                for src_lvl, fields in INDEX_CONFIG.items():
+                    for field, targets in fields.items():
+                        # We allow filtering by ANY field in INDEX_CONFIG.
+                        # If not natively at 'sim' level, it will trigger a join/fallback via _paths_for_source.
+                        target_field = resolve_target_field(src_lvl, "sim", field)
+                        
+                        # Check if this field is in request args
+                        # We handle both the target name (e.g. func_tags) and common aliases
+                        val = request.args.get(target_field)
+                        
+                        # Alias handling
+                        if not val:
+                            aliases = {
+                                "file_md5": ["md5"],
+                                "entrypoint_address": ["address"],
+                                "function_name": ["name"],
+                                "language_id": ["language"],
+                                "return_type": ["ret_type"]
+                            }
+                            if target_field in aliases:
+                                for alias in aliases[target_field]:
+                                    val = request.args.get(alias)
+                                    if val: break
+                        
+                        if val:
+                            filter_configs.append((val, target_field, _paths_for_source(src_lvl, field)))
+
+                # 2. Tag-specific logic (for unions)
+                tag_filter_configs = [
                     (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
                     (static_tag_filters, "static_tag", _paths("tags")),
                     (user_tag_filters, "user_tag", _paths("user_tags")),
-                    # Scoped tag searches
-                    (
-                        sim_tag_filters,
-                        "sim_tag",
-                        _paths_for_source("sim", "tags")
-                        + _paths_for_source("sim", "user_tags"),
-                    ),
-                    (
-                        sim_static_tag_filters,
-                        "sim_static_tag",
-                        _paths_for_source("sim", "tags"),
-                    ),
-                    (
-                        sim_user_tag_filters,
-                        "sim_user_tag",
-                        _paths_for_source("sim", "user_tags"),
-                    ),
-                    (
-                        func_tag_filters,
-                        "func_tag",
-                        _paths_for_source("func", "tags")
-                        + _paths_for_source("func", "user_tags"),
-                    ),
-                    (
-                        func_static_tag_filters,
-                        "func_static_tag",
-                        _paths_for_source("func", "tags"),
-                    ),
-                    (
-                        func_user_tag_filters,
-                        "func_user_tag",
-                        _paths_for_source("func", "user_tags"),
-                    ),
-                    (
-                        file_tag_filters,
-                        "file_tag",
-                        _paths_for_source("file", "tags")
-                        + _paths_for_source("file", "user_tags"),
-                    ),
-                    (
-                        file_static_tag_filters,
-                        "file_static_tag",
-                        _paths_for_source("file", "tags"),
-                    ),
-                    (
-                        file_user_tag_filters,
-                        "file_user_tag",
-                        _paths_for_source("file", "user_tags"),
-                    ),
-                    (md5_filters, "md5", _paths("file_md5")),
                 ]
+                for tfc in tag_filter_configs:
+                    if tfc[0]: filter_configs.append(tfc)
 
                 for f_v, label, paths in filter_configs:
                     if not f_v:
@@ -1003,6 +990,29 @@ def similarity_search():
                     else float(other_metric or 0)
                 )
 
+                # Construct 'clusters' list for UI consistency (mirrors search_function.py)
+                clusters1 = []
+                if m1.get("cluster_id") is not None:
+                    clusters1.append(
+                        {
+                            "cluster_id": m1.get("cluster_id"),
+                            "cluster_uuid": m1.get("cluster_uuid"),
+                            "cluster_name": m1.get("cluster_name"),
+                            "cohesion_score": m1.get("cluster_stability", 0),
+                        }
+                    )
+
+                clusters2 = []
+                if m2.get("cluster_id") is not None:
+                    clusters2.append(
+                        {
+                            "cluster_id": m2.get("cluster_id"),
+                            "cluster_uuid": m2.get("cluster_uuid"),
+                            "cluster_name": m2.get("cluster_name"),
+                            "cohesion_score": m2.get("cluster_stability", 0),
+                        }
+                    )
+
                 enriched_pairs.append(
                     {
                         "id1": id1,
@@ -1028,6 +1038,11 @@ def similarity_search():
                             "namespace": m1.get("namespace", ""),
                             "parameters": m1.get("parameters", []),
                             "bsim_features_count": m1.get("bsim_features_count"),
+                            "cluster_id": m1.get("cluster_id"),
+                            "cluster_uuid": m1.get("cluster_uuid"),
+                            "cluster_name": m1.get("cluster_name"),
+                            "cluster_stability": m1.get("cluster_stability"),
+                            "clusters": clusters1,
                             "file_tags": f1.get("tags", []),
                             "file_user_tags": f1.get("user_tags", []),
                         },
@@ -1042,6 +1057,11 @@ def similarity_search():
                             "namespace": m2.get("namespace", ""),
                             "parameters": m2.get("parameters", []),
                             "bsim_features_count": m2.get("bsim_features_count"),
+                            "cluster_id": m2.get("cluster_id"),
+                            "cluster_uuid": m2.get("cluster_uuid"),
+                            "cluster_name": m2.get("cluster_name"),
+                            "cluster_stability": m2.get("cluster_stability"),
+                            "clusters": clusters2,
                             "file_tags": f2.get("tags", []),
                             "file_user_tags": f2.get("user_tags", []),
                         },

@@ -200,10 +200,14 @@ class MilvusService:
             if col:
                 col.flush()
                 final_count = col.num_entities
-                logging.info(f"[*] Milvus collection {col.name} now has {final_count} entities")
+                logging.info(
+                    f"[*] Milvus collection {col.name} now has {final_count} entities"
+                )
 
         if final_count == 0 and total > 0:
-            logging.error(f"[!] Sync completed but Milvus collections for {collection_name} are EMPTY!")
+            logging.error(
+                f"[!] Sync completed but Milvus collections for {collection_name} are EMPTY!"
+            )
             return False
 
         return True

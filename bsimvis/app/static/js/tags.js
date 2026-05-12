@@ -135,6 +135,63 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     `;
 };
 
+window.applyClusterFilter = (uuid) => {
+    const hash = window.location.hash || '#collections';
+    const isSim = hash.startsWith('#function-similarity');
+    const inputId = isSim ? 'flt-sim-cluster' : 'flt-function-cluster';
+    const input = document.getElementById(inputId);
+    if (input) {
+        input.value = uuid;
+        // Trigger the appropriate search function if it exists
+        if (isSim) {
+            if (window.applySimSearch) window.applySimSearch();
+        } else {
+            if (window.applyAdvancedFuncSearch) window.applyAdvancedFuncSearch();
+        }
+    }
+};
+
+const renderClusterCards = (clusters) => {
+    if (!clusters || clusters.length === 0) return '';
+    
+    // Sort clusters by cohesion score descending
+    const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    const toShow = sorted.slice(0, 3);
+    const hasMore = sorted.length > 3;
+
+    const cardsHtml = toShow.map(c => {
+        const name = c.cluster_name || `Cluster ${c.cluster_id}`;
+        const score = (c.cohesion_score || 0).toFixed(2);
+        const uuid = c.cluster_uuid;
+        // Map cohesion score to color (red to green)
+        const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
+        const color = `hsl(${hue}, 100%, 65%)`;
+        
+        return `
+        <span class="tag-card cluster-card" title="Cluster: ${name}\nUUID: ${uuid}\nCohesion: ${score}\nMembers: ${c.member_count || 0}" 
+              onclick="applyClusterFilter('${uuid}')"
+              style="border-color:${color}44; color:${color}; background:${color}11; display:inline-flex; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+                 stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="4"></circle>
+            </svg>
+            <span style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
+            <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${score}</span>
+        </span>`;
+    }).join('');
+
+    const moreHtml = hasMore ? `
+        <span class="analysis-tag-badge cluster-card-more" title="${sorted.slice(3).map(c => c.cluster_name || c.cluster_id).join(', ')}"
+              style="cursor:help;">
+            +${sorted.length - 3} more
+        </span>` : '';
+
+    return `<div class="cluster-cards-container" style="display:inline-flex; align-items:center; flex-wrap:wrap;">
+        ${cardsHtml}${moreHtml}
+    </div>`;
+};
+
 function attachTagAutocomplete(input, onSelect) {
     if (input._acAttached) return;
     input._acAttached = true;

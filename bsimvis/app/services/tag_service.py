@@ -85,7 +85,9 @@ class TagService:
                 r.sadd(registry_key, index_key)
 
                 # 4. Handle Propagation
-                self._propagate_user_tag(collection, entity_type, entity_id, tag, op="add")
+                self._propagate_user_tag(
+                    collection, entity_type, entity_id, tag, op="add"
+                )
 
                 # 5. Ensure metadata
                 self._ensure_tag_metadata(collection, tag)
@@ -172,7 +174,9 @@ class TagService:
                     r.sadd(registry_key, index_key)
 
                     # Handle Propagation
-                    self._propagate_user_tag(collection, entity_type, eid, tag, op="add")
+                    self._propagate_user_tag(
+                        collection, entity_type, eid, tag, op="add"
+                    )
 
             self._ensure_tag_metadata(collection, tag)
             return True
@@ -281,7 +285,6 @@ class TagService:
         meta["priority"] = int(priority)
         self.r.hset(meta_key, tag, json.dumps(meta))
         return True
-
 
     def _propagate_user_tag(self, collection, entity_type, entity_id, tag, op="add"):
         """Propagates a user tag to other levels if configured in INDEX_CONFIG."""

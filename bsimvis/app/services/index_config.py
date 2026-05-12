@@ -21,7 +21,6 @@ INDEX_CONFIG = {
         "language_id": ["file", "func", "sim"],
         "batch_uuid": ["file", "func", "sim"],
         "type": ["file", "func", "sim"],
-        "collection": ["file", "func", "sim"],
         "batch_order": ["file", "func", "sim"],  # numeric
         "entry_date": ["file", "func", "sim"],  # numeric
         "file_date": ["file", "func", "sim"],  # numeric
@@ -38,8 +37,10 @@ INDEX_CONFIG = {
         "decompiler_id": ["func", "sim"],
         "instruction_count": ["func", "sim"],  # numeric
         "bsim_features_count": ["func", "sim"],  # numeric
-        "cluster_id": ["func", "sim"],
-        "cluster_stability": ["func", "sim"],
+        "cluster_id": ["func"],
+        "cluster_uuid": ["func"],
+        "cluster_name": ["func"],
+        "cluster_stability": ["func"],
     },
     "sim": {
         "tags": ["sim"],
@@ -57,7 +58,6 @@ INDEX_CONFIG_legacy = {
         "language_id": ["file", "func", "sim"],
         "batch_uuid": ["file", "func"],
         "type": ["file", "func"],
-        "collection": ["file", "func"],
         "batch_order": ["file", "func"],  # numeric
         "entry_date": ["file", "func"],  # numeric
         "file_date": ["file", "func"],  # numeric
@@ -88,6 +88,14 @@ NUM_FIELDS = {
     "file_date",
     "instruction_count",
     "bsim_features_count",
+    "cluster_stability",
+}
+
+EXACT_FIELDS = {
+    "cluster_id",
+    "cluster_uuid",
+    "file_md5",
+    "batch_uuid",
 }
 
 
@@ -188,6 +196,8 @@ def get_search_paths_for_field(
             paths.append(path)
 
     return paths
+
+
 def get_propagation_targets(source_level: str, field: str) -> list[str]:
     """Returns the list of levels a field should propagate to (excluding source)."""
     cfg = INDEX_CONFIG.get(source_level, {}).get(field, [])

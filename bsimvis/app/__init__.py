@@ -55,6 +55,7 @@ def create_app():
     from .routes.jobs import jobs_bp
     from .routes.file import file_bp
     from .routes.similarity import similarity_bp
+    from .routes.cluster import cluster_bp
     from .routes.features import features_bp
     from .routes.index import index_bp
     from .routes.tags import tags_bp
@@ -71,6 +72,7 @@ def create_app():
     app.register_blueprint(jobs_bp)
     app.register_blueprint(file_bp)
     app.register_blueprint(similarity_bp)
+    app.register_blueprint(cluster_bp)
     app.register_blueprint(features_bp)
     app.register_blueprint(index_bp)
     app.register_blueprint(tags_bp)

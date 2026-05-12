@@ -236,6 +236,9 @@
                     onclick="addToDiff(window.featureId, this, window.featureName)">
                     <span>+</span> Add to Diff
                 </button>
+                <button class="btn-panel" onclick="seeSimilar()" style="border-color:var(--info); color:var(--info); padding: 4px 10px; font-size: 0.75rem;">
+                    <span>≈</span> See Similar
+                </button>
             </div>
         </div>
 
@@ -604,6 +607,27 @@
                 localStorage.setItem('bsim_diff_queue', '[]');
                 updateDiffQueueUI();
             } catch (e) { console.error(e); }
+        }
+
+        function seeSimilar() {
+            const parts = normalizeFuncId(window.featureId).split(':');
+            if (parts.length < 4) return;
+            const col = parts[0];
+            const md5 = parts[2];
+            const addr = parts[3];
+            const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+
+            if (window.parent && window.parent !== window) {
+                window.parent.location.hash = hash;
+                if (typeof window.parent.hideCodePanel === 'function') {
+                    window.parent.hideCodePanel();
+                }
+                if (typeof window.parent.hideFeaturePanel === 'function') {
+                    window.parent.hideFeaturePanel();
+                }
+            } else {
+                window.location.href = `/#${hash}`;
+            }
         }
 
         window.addEventListener('storage', (e) => {

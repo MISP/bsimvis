@@ -248,12 +248,29 @@ class Worker:
 
             algo = payload.get("algo", "unweighted_cosine")
             min_cluster_size = payload.get("min_cluster_size", 5)
+            min_samples = payload.get("min_samples")
+            epsilon = payload.get("epsilon", 0.0)
+            selection_method = payload.get("selection_method", "eom")
+            min_sim = payload.get("min_sim", 0.0)
+
             return cluster_service.run_clustering(
                 collection,
                 algo=algo,
                 min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                cluster_selection_epsilon=epsilon,
+                cluster_selection_method=selection_method,
+                similarity_threshold=min_sim,
                 job_service=self.job_service,
                 job_id=job_id,
+            )
+
+        elif jtype == JobType.CLEAR_CLUSTER.value:
+            from bsimvis.app.services.cluster_service import cluster_service
+
+            algo = payload.get("algo", "unweighted_cosine")
+            return cluster_service.clear_clustering(
+                collection, algo=algo, job_service=self.job_service, job_id=job_id
             )
 
         return False

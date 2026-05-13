@@ -122,43 +122,54 @@ def get_function_code():
             if "file_date" in meta:
                 meta["file_date"] = parse_timestamp(meta["file_date"])
 
-            cluster_id = meta.get("cluster_id")
-            clusters = []
-            if cluster_id is not None and str(cluster_id).lower() != "noise":
-                try:
-                    r = get_redis()
-                    algo = "unweighted_cosine"
-                    cluster_meta_raw = r.json().get(
-                        f"{collection}:cluster:{algo}:{cluster_id}:meta", "$"
-                    )
-                    if cluster_meta_raw:
-                        cluster_meta = (
-                            cluster_meta_raw[0]
-                            if isinstance(cluster_meta_raw, list)
-                            else cluster_meta_raw
-                        )
-                        if isinstance(cluster_meta, str):
-                            cluster_meta = json.loads(cluster_meta)
-                        if cluster_meta:
-                            clusters.append(
-                                {
-                                    "cluster_id": cluster_meta.get(
-                                        "cluster_id", meta.get("cluster_id")
-                                    ),
-                                    "cluster_uuid": cluster_meta.get(
-                                        "cluster_uuid", meta.get("cluster_uuid")
-                                    ),
-                                    "cluster_name": cluster_meta.get("cluster_name"),
-                                    "cohesion_score": cluster_meta.get(
-                                        "cohesion_score", 0
-                                    ),
-                                    "member_count": cluster_meta.get("member_count", 0),
-                                    "avg_features": cluster_meta.get("avg_features", 0),
-                                }
-                            )
-                except Exception as ex:
-                    print(f"Error fetching cluster meta: {ex}")
-            meta["clusters"] = clusters
+            try:
+                r = get_redis()
+                fid = f"{collection}:func:{md5}:{addr}"
+                cluster_ids = r.smembers(f"{fid}:clusters")
+                scores = r.hgetall(f"{fid}:cluster_scores")
+                clusters = []
+                algo = "unweighted_cosine"
+                if cluster_ids:
+                    cluster_pipe = r.pipeline()
+                    for cid_bytes in cluster_ids:
+                        cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
+                        cluster_pipe.json().get(f"{collection}:cluster:{algo}:{cid}:meta", "$")
+                    
+                    raw_cluster_metas = cluster_pipe.execute()
+                    
+                    for raw_cm in raw_cluster_metas:
+                        if raw_cm:
+                            cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                            if isinstance(cm, str):
+                                cm = json.loads(cm)
+                            if cm:
+                                cid = str(cm.get("cluster_id"))
+                                score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+                                if not score and isinstance(scores, dict):
+                                    for k, v in scores.items():
+                                        k_str = k.decode() if isinstance(k, bytes) else k
+                                        if k_str == cid:
+                                            score = float(v)
+                                            break
+                                clusters.append({
+                                    "cluster_id": cm.get("cluster_id"),
+                                    "cluster_uuid": cm.get("cluster_uuid"),
+                                    "cluster_name": cm.get("cluster_name"),
+                                    "cohesion_score": cm.get("cohesion_score", 0),
+                                    "member_count": cm.get("member_count", 0),
+                                    "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                                    "avg_features": cm.get("avg_features", 0),
+                                })
+                    
+                    clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+                
+                meta["clusters"] = clusters
+                
+                for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+                    meta.pop(field, None)
+                    
+            except Exception as ex:
+                print(f"Error fetching clusters: {ex}")
 
         return jsonify({"rows": rows, "tips": tips, "meta": meta or {}})
     except Exception as e:

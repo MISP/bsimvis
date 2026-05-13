@@ -936,6 +936,10 @@ def similarity_search():
                     f_id_map[sid] = (id1, id2, data, enrichment_raw[i * 2 + 1], sort_sc)
                     meta_pipe.json().get(f"{id1}:meta", "$")
                     meta_pipe.json().get(f"{id2}:meta", "$")
+                    meta_pipe.smembers(f"{id1}:clusters")
+                    meta_pipe.smembers(f"{id2}:clusters")
+                    meta_pipe.hgetall(f"{id1}:cluster_scores")
+                    meta_pipe.hgetall(f"{id2}:cluster_scores")
 
                     # Also fetch file-level metadata for tags
                     try:
@@ -949,21 +953,49 @@ def similarity_search():
 
             meta_results = meta_pipe.execute()
 
+            # Collect all cluster IDs to fetch metadata for
+            cluster_id_to_fetch = set()
+            func_clusters_ids = {} # maps sid -> (list1, list2)
+            
+            for i, sid in enumerate(f_id_map.keys()):
+                c1_res = meta_results[i * 8 + 2]
+                c2_res = meta_results[i * 8 + 3]
+                
+                c1_ids = [c.decode() if isinstance(c, bytes) else c for c in c1_res] if c1_res else []
+                c2_ids = [c.decode() if isinstance(c, bytes) else c for c in c2_res] if c2_res else []
+                
+                func_clusters_ids[sid] = (c1_ids, c2_ids)
+                for cid in c1_ids + c2_ids:
+                    cluster_id_to_fetch.add(cid)
+            
+            # Fetch all cluster metadata in one go
+            cluster_meta_map = {}
+            if cluster_id_to_fetch:
+                c_pipe = r.pipeline()
+                algo = "unweighted_cosine"
+                c_list = list(cluster_id_to_fetch)
+                for cid in c_list:
+                    c_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
+                c_results = c_pipe.execute()
+                for cid, res in zip(c_list, c_results):
+                    if res:
+                        cm = res[0] if isinstance(res, list) else res
+                        if isinstance(cm, str): cm = json.loads(cm)
+                        cluster_meta_map[cid] = cm
+
             # Map meta results back
             for i, sid in enumerate(f_id_map.keys()):
                 id1, id2, sim_data, other_metric, sid_sort_sc = f_id_map[sid]
 
-                # Standard ID extraction: {col}:sim:{algo}:id1:id2
-                # id1 is {col}:func:md5:addr (4 parts, wait it doesn't matter)
-                # Standard Key: {col}:sim:{algo}:{col}:func:md5:addr:{col}:func:md5:addr
-                # (Actually, let's keep it robust by getting them from sim_data)
                 id1 = sim_data.get("id1")
                 id2 = sim_data.get("id2")
 
-                m1_json = meta_results[i * 4]
-                m2_json = meta_results[i * 4 + 1]
-                f1_json = meta_results[i * 4 + 2]
-                f2_json = meta_results[i * 4 + 3]
+                m1_json = meta_results[i * 8]
+                m2_json = meta_results[i * 8 + 1]
+                f1_json = meta_results[i * 8 + 6]
+                f2_json = meta_results[i * 8 + 7]
+                s1_res = meta_results[i * 8 + 4] or {}
+                s2_res = meta_results[i * 8 + 5] or {}
 
                 m1 = (m1_json[0] if isinstance(m1_json, list) else m1_json) or {}
                 m2 = (m2_json[0] if isinstance(m2_json, list) else m2_json) or {}
@@ -990,29 +1022,58 @@ def similarity_search():
                     else float(other_metric or 0)
                 )
 
-                # Construct 'clusters' list for UI consistency (mirrors search_function.py)
+                # Construct 'clusters' list for UI consistency
+                c1_ids, c2_ids = func_clusters_ids[sid]
+                
                 clusters1 = []
-                if m1.get("cluster_id") is not None:
-                    clusters1.append(
-                        {
-                            "cluster_id": m1.get("cluster_id"),
-                            "cluster_uuid": m1.get("cluster_uuid"),
-                            "cluster_name": m1.get("cluster_name"),
-                            "cohesion_score": m1.get("cluster_stability", 0),
-                        }
-                    )
+                for cid in c1_ids:
+                    cm = cluster_meta_map.get(cid)
+                    if cm:
+                        cid_str = str(cid)
+                        score = float(s1_res.get(cid_str.encode() if isinstance(cid_str, str) else cid_str, 0.0))
+                        if not score and isinstance(s1_res, dict):
+                            for k, v in s1_res.items():
+                                k_str = k.decode() if isinstance(k, bytes) else k
+                                if k_str == cid_str:
+                                    score = float(v)
+                                    break
+                        clusters1.append({
+                            "cluster_id": cm.get("cluster_id"),
+                            "cluster_uuid": cm.get("cluster_uuid"),
+                            "cluster_name": cm.get("cluster_name"),
+                            "cohesion_score": cm.get("cohesion_score", 0),
+                            "member_count": cm.get("member_count", 0),
+                            "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                            "avg_features": cm.get("avg_features", 0),
+                        })
+                clusters1.sort(key=lambda x: x.get("member_count", 0), reverse=True)
 
                 clusters2 = []
-                if m2.get("cluster_id") is not None:
-                    clusters2.append(
-                        {
-                            "cluster_id": m2.get("cluster_id"),
-                            "cluster_uuid": m2.get("cluster_uuid"),
-                            "cluster_name": m2.get("cluster_name"),
-                            "cohesion_score": m2.get("cluster_stability", 0),
-                        }
-                    )
+                for cid in c2_ids:
+                    cm = cluster_meta_map.get(cid)
+                    if cm:
+                        cid_str = str(cid)
+                        score = float(s2_res.get(cid_str.encode() if isinstance(cid_str, str) else cid_str, 0.0))
+                        if not score and isinstance(s2_res, dict):
+                            for k, v in s2_res.items():
+                                k_str = k.decode() if isinstance(k, bytes) else k
+                                if k_str == cid_str:
+                                    score = float(v)
+                                    break
+                        clusters2.append({
+                            "cluster_id": cm.get("cluster_id"),
+                            "cluster_uuid": cm.get("cluster_uuid"),
+                            "cluster_name": cm.get("cluster_name"),
+                            "cohesion_score": cm.get("cohesion_score", 0),
+                            "member_count": cm.get("member_count", 0),
+                            "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                            "avg_features": cm.get("avg_features", 0),
+                        })
+                clusters2.sort(key=lambda x: x.get("member_count", 0), reverse=True)
 
+                for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+                    m1.pop(field, None)
+                    m2.pop(field, None)
                 enriched_pairs.append(
                     {
                         "id1": id1,
@@ -1038,10 +1099,6 @@ def similarity_search():
                             "namespace": m1.get("namespace", ""),
                             "parameters": m1.get("parameters", []),
                             "bsim_features_count": m1.get("bsim_features_count"),
-                            "cluster_id": m1.get("cluster_id"),
-                            "cluster_uuid": m1.get("cluster_uuid"),
-                            "cluster_name": m1.get("cluster_name"),
-                            "cluster_stability": m1.get("cluster_stability"),
                             "clusters": clusters1,
                             "file_tags": f1.get("tags", []),
                             "file_user_tags": f1.get("user_tags", []),
@@ -1057,10 +1114,6 @@ def similarity_search():
                             "namespace": m2.get("namespace", ""),
                             "parameters": m2.get("parameters", []),
                             "bsim_features_count": m2.get("bsim_features_count"),
-                            "cluster_id": m2.get("cluster_id"),
-                            "cluster_uuid": m2.get("cluster_uuid"),
-                            "cluster_name": m2.get("cluster_name"),
-                            "cluster_stability": m2.get("cluster_stability"),
                             "clusters": clusters2,
                             "file_tags": f2.get("tags", []),
                             "file_user_tags": f2.get("user_tags", []),

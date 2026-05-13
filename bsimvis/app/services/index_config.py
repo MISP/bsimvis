@@ -45,7 +45,7 @@ INDEX_CONFIG = {
     "sim": {
         "tags": ["sim"],
         "user_tags": ["sim"],
-        "cross_binary": ["sim"],
+        "is_cross_binary": ["sim"],
     },
 }
 

@@ -18,6 +18,7 @@ def run_cluster(host, port, args):
             "epsilon": args.epsilon,
             "selection_method": "leaf" if args.leaf_method else "eom",
             "min_sim": args.min_sim,
+            "min_features": args.min_features,
         }
         try:
             print(f"[*] Enqueuing HDBSCAN clustering job for {coll}...")
@@ -36,6 +37,7 @@ def run_cluster(host, port, args):
             "epsilon": args.epsilon,
             "selection_method": "leaf" if args.leaf_method else "eom",
             "min_sim": args.min_sim,
+            "min_features": args.min_features,
         }
         try:
             print(f"[*] Enqueuing cluster REBUILD pipeline for {coll}...")

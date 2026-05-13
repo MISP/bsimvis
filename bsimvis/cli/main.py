@@ -197,6 +197,12 @@ def main():
     c_build.add_argument(
         "--min-sim", type=float, default=0.0, help="Minimum similarity threshold"
     )
+    c_build.add_argument(
+        "--min-features",
+        type=int,
+        default=0,
+        help="Minimum number of features to include a function in clustering",
+    )
 
     # cluster rebuild
     c_rebuild = cluster_actions.add_parser(
@@ -226,6 +232,12 @@ def main():
     )
     c_rebuild.add_argument(
         "--min-sim", type=float, default=0.0, help="Minimum similarity threshold"
+    )
+    c_rebuild.add_argument(
+        "--min-features",
+        type=int,
+        default=0,
+        help="Minimum number of features to include a function in clustering",
     )
 
     # cluster clear

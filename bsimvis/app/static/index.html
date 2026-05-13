@@ -195,6 +195,63 @@
             color: #f8f8f2;
         }
 
+        /* Dual Range Slider */
+        .range-slider-container {
+            position: relative;
+            height: 6px;
+            margin: 12px 0 16px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+
+        .range-slider-container .slider-track {
+            position: absolute;
+            height: 100%;
+            background: var(--accent);
+            border-radius: 3px;
+            z-index: 1;
+        }
+
+        .range-slider-container input[type="range"] {
+            position: absolute;
+            width: 100%;
+            pointer-events: none;
+            appearance: none;
+            background: none;
+            outline: none;
+            margin: 0;
+            z-index: 2;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .range-slider-container input[type="range"]::-webkit-slider-thumb {
+            pointer-events: auto;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: #fff;
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            transition: transform 0.1s ease;
+        }
+
+        .range-slider-container input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        .range-slider-container input[type="range"]::-moz-range-thumb {
+            pointer-events: auto;
+            width: 12px;
+            height: 12px;
+            background: #fff;
+            border: 2px solid var(--accent);
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
         /* Code Preview Tooltip Wrapper */
         #code-preview-tooltip {
             position: fixed;
@@ -1203,6 +1260,15 @@
         }
 
         function updateUI(path, params, route) {
+            // Reset all special view containers and stop active processes
+            document.getElementById('graph-view-container').style.display = 'none';
+            document.getElementById('hierarchy-view-container').style.display = 'none';
+            document.getElementById('table-body').style.display = 'table-row-group';
+            document.getElementById('pagination-container').style.display = 'block';
+
+            if (window.graphInstance) window.graphInstance.stop();
+            if (window.hierarchyInstance) window.hierarchyInstance.stop();
+
             const col = params.get('collection');
 
             // Sidebar
@@ -3134,47 +3200,235 @@
                 this.svg = null;
                 this.g = null;
                 this.zoom = null;
-                this.memberCache = new Map(); // cluster_id -> [function names]
+                this.params = {
+                    min_cluster_size: 5,
+                    stability_threshold: 0.0
+                };
+                this.abortController = null;
+            }
+
+            stop() {
+                if (this.abortController) this.abortController.abort();
             }
 
             async fetch(params) {
+                if (this.abortController) this.abortController.abort();
+                this.abortController = new AbortController();
+                const signal = this.abortController.signal;
+
                 const collection = params.get('collection');
                 const algo = params.get('algo') || 'unweighted_cosine';
-                this.container.innerHTML = `
-                    <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.8); padding:15px; border-radius:8px; border:1px solid #333; max-width:300px; display:none;" id="hierarchy-info-panel">
-                        <h4 id="hier-title" style="margin:0 0 10px 0; color:var(--accent);">Cluster Info</h4>
+                
+                // Template for controls
+                const hierControls = `
+                    <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
+                        <div style="font-size:0.7rem; color:var(--accent); text-transform:uppercase; letter-spacing:1px; font-weight:bold; margin-bottom:15px;">Tree Filters</div>
+                        
+                        <!-- Size Range -->
+                        <div style="margin-bottom:20px;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                                <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
+                                    <span id="val-min-size">${this.params.min_cluster_size}</span>-<span id="val-max-size">${this.params.max_cluster_size || '∞'}</span>
+                                </span>
+                            </div>
+                            <div class="range-slider-container">
+                                <div id="size-track" class="slider-track"></div>
+                                <input type="range" id="input-min-size" min="2" max="100" value="${this.params.min_cluster_size}">
+                                <input type="range" id="input-max-size" min="2" max="100" value="${this.params.max_cluster_size || 100}">
+                            </div>
+                        </div>
+
+                        <!-- Cohesion Range -->
+                        <div style="margin-bottom:20px;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                                <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
+                                    <span id="val-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
+                                </span>
+                            </div>
+                            <div class="range-slider-container">
+                                <div id="coh-track" class="slider-track"></div>
+                                <input type="range" id="input-coh-min" min="0" max="1" step="0.01" value="${this.params.cohesion_min || 0}">
+                                <input type="range" id="input-coh-max" min="0" max="1" step="0.01" value="${this.params.cohesion_max || 1}">
+                            </div>
+                        </div>
+
+                        <!-- Feature Range -->
+                        <div style="margin-bottom:20px;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
+                                <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
+                                    <span id="val-feat-min">${this.params.min_features || 0}</span>-<span id="val-feat-max">${this.params.max_features || '∞'}</span>
+                                </span>
+                            </div>
+                            <div class="range-slider-container">
+                                <div id="feat-track" class="slider-track"></div>
+                                <input type="range" id="input-feat-min" min="0" max="1000" step="10" value="${this.params.min_features || 0}">
+                                <input type="range" id="input-feat-max" min="0" max="1000" step="10" value="${this.params.max_features || 1000}">
+                            </div>
+                        </div>
+
+                        <button id="hier-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
+                    </div>
+
+                    <div style="position:absolute; bottom:20px; right:20px; z-index:10; background:rgba(0,0,0,0.8); padding:15px; border-radius:8px; border:1px solid #333; max-width:300px; display:none;" id="hierarchy-info-panel">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h4 id="hier-cluster-name" style="margin:0; color:var(--accent); font-size:0.9rem;">Cluster Info</h4>
+                            <button onclick="this.parentElement.parentElement.style.display='none'" style="background:none; border:none; color:#666; cursor:pointer;">&times;</button>
+                        </div>
                         <div id="hier-stats" style="font-size:0.85rem; color:#ccc;"></div>
                         <div style="margin-top:15px; display:flex; gap:10px;">
-                            <button id="hier-view-btn" class="btn-action" style="flex:1">View Functions</button>
+                            <button id="hier-view-btn" class="btn-action" style="flex:1">View Functions →</button>
                         </div>
                     </div>
-                    <div id="hierarchy-tooltip" style="position:fixed; z-index:100; background:rgba(13,15,20,0.95); padding:12px; border-radius:6px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 10px 30px rgba(0,0,0,0.5); max-width:300px; backdrop-filter:blur(5px);"></div>
-                    <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent)">
-                        <span>Loading Hierarchy Tree...</span>
+
+                    <div id="hierarchy-tooltip" style="position:fixed; z-index:1000; background:rgba(13,15,20,0.95); padding:12px; border-radius:6px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 10px 30px rgba(0,0,0,0.8); max-width:320px; backdrop-filter:blur(10px);"></div>
+                    
+                    <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
+                        <div style="text-align:center;">
+                            <div class="spinner" style="margin-bottom:15px;"></div>
+                            <div style="font-size:0.9rem; letter-spacing:1px;">Rebuilding Dendrogram...</div>
+                        </div>
                     </div>
                 `;
 
+                this.container.innerHTML = hierControls;
+
+                // Initialize defaults
+                this.params.min_cluster_size = this.params.min_cluster_size || 5;
+                this.params.max_cluster_size = this.params.max_cluster_size || 0;
+                this.params.cohesion_min = this.params.cohesion_min || 0;
+                this.params.cohesion_max = this.params.cohesion_max || 0;
+                this.params.min_features = this.params.min_features || 0;
+                this.params.max_features = this.params.max_features || 0;
+
+                const updateTrack = (idPrefix, minVal, maxVal, minLimit, maxLimit) => {
+                    const minPercent = ((minVal - minLimit) / (maxLimit - minLimit)) * 100;
+                    const maxPercent = ((maxVal - minLimit) / (maxLimit - minLimit)) * 100;
+                    const track = document.getElementById(`${idPrefix}-track`);
+                    track.style.left = minPercent + "%";
+                    track.style.width = (maxPercent - minPercent) + "%";
+                };
+
+                // Wire up controls
+                // Size
+                const sMin = document.getElementById('input-min-size');
+                const sMax = document.getElementById('input-max-size');
+                const sUpdate = () => {
+                    if (parseInt(sMin.value) > parseInt(sMax.value)) sMin.value = sMax.value;
+                    this.params.min_cluster_size = parseInt(sMin.value);
+                    this.params.max_cluster_size = parseInt(sMax.value) === 100 ? 0 : parseInt(sMax.value);
+                    document.getElementById('val-min-size').innerText = this.params.min_cluster_size;
+                    document.getElementById('val-max-size').innerText = this.params.max_cluster_size || '∞';
+                    updateTrack('size', parseInt(sMin.value), parseInt(sMax.value), 2, 100);
+                };
+                sMin.oninput = sUpdate;
+                sMax.oninput = sUpdate;
+                updateTrack('size', this.params.min_cluster_size, this.params.max_cluster_size || 100, 2, 100);
+
+                // Cohesion
+                const cMin = document.getElementById('input-min-coh');
+                const cMax = document.getElementById('input-max-coh');
+                const cUpdate = () => {
+                    const cMinE = document.getElementById('input-coh-min');
+                    const cMaxE = document.getElementById('input-coh-max');
+                    if (parseFloat(cMinE.value) > parseFloat(cMaxE.value)) cMinE.value = cMaxE.value;
+                    this.params.cohesion_min = parseFloat(cMinE.value);
+                    this.params.cohesion_max = parseFloat(cMaxE.value) >= 1 ? 0 : parseFloat(cMaxE.value);
+                    document.getElementById('val-coh-min').innerText = (this.params.cohesion_min * 100).toFixed(0);
+                    document.getElementById('val-coh-max').innerText = this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100';
+                    updateTrack('coh', this.params.cohesion_min, parseFloat(cMaxE.value), 0, 1);
+                };
+                document.getElementById('input-coh-min').oninput = cUpdate;
+                document.getElementById('input-coh-max').oninput = cUpdate;
+                updateTrack('coh', this.params.cohesion_min, this.params.cohesion_max || 1, 0, 1);
+
+                // Features
+                const fMin = document.getElementById('input-feat-min');
+                const fMax = document.getElementById('input-feat-max');
+                const fUpdate = () => {
+                    if (parseInt(fMin.value) > parseInt(fMax.value)) fMin.value = fMax.value;
+                    this.params.min_features = parseInt(fMin.value);
+                    this.params.max_features = parseInt(fMax.value) === 1000 ? 0 : parseInt(fMax.value);
+                    document.getElementById('val-feat-min').innerText = this.params.min_features;
+                    document.getElementById('val-feat-max').innerText = this.params.max_features || '∞';
+                    updateTrack('feat', parseInt(fMin.value), parseInt(fMax.value), 0, 1000);
+                };
+                fMin.oninput = fUpdate;
+                fMax.oninput = fUpdate;
+                updateTrack('feat', this.params.min_features, this.params.max_features || 1000, 0, 1000);
+
+                document.getElementById('hier-refresh-btn').onclick = () => this.fetch(params);
+
                 try {
-                    const [treeRes, metaRes] = await Promise.all([
-                        fetch(`/api/cluster/tree?collection=${collection}&algo=${algo}`),
-                        fetch(`/api/cluster/list?collection=${collection}&algo=${algo}&limit=1000`)
-                    ]);
-                    if (!treeRes.ok) throw new Error("Tree not found");
-                    const treeData = await treeRes.json();
-                    const metaData = await metaRes.json();
-                    this.stableClusterIds = new Set(metaData.results.map(c => c.cluster_id));
-                    this.render(treeData);
+                    const url = `/api/cluster/dendrogram?collection=${collection}&algo=${algo}` + 
+                               `&min_cluster_size=${this.params.min_cluster_size}` +
+                               `&max_cluster_size=${this.params.max_cluster_size}` +
+                               `&cohesion_min=${this.params.cohesion_min}` +
+                               `&cohesion_max=${this.params.cohesion_max}` +
+                               `&min_features=${this.params.min_features}` +
+                               `&max_features=${this.params.max_features}`;
+                    const res = await fetch(url, { signal });
+                    if (!res.ok) throw new Error("Dendrogram not found");
+                    const data = await res.json();
+                    
+                    if (!data.nodes || data.nodes.length === 0) {
+                        this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
+                        const loader = document.getElementById('hierarchy-loader');
+                        if (loader) loader.remove();
+                        return;
+                    }
+
+                    this.render(data.nodes);
                 } catch (e) {
-                    this.container.innerHTML = `<div style="margin:auto; color:#ff5555">Error loading hierarchy: ${e.message}</div>`;
+                    if (e.name === 'AbortError') return;
+                    this.container.innerHTML = `<div style="margin:auto; color:#ff5555; text-align:center;">Error loading hierarchy: ${e.message}</div>`;
                 }
             }
 
-            render(data) {
+            render(nodes) {
                 const self = this;
                 const loader = document.getElementById('hierarchy-loader');
                 if (loader) loader.remove();
+
+                // PATH COMPRESSION: Remove internal nodes with only one child cluster
+                // This solves the "ladder" effect where a cluster peels off one-by-one
+                let compressedNodes = JSON.parse(JSON.stringify(nodes)); // Deep clone
+                let changed = true;
+                while (changed) {
+                    changed = false;
+                    const childCounts = {};
+                    compressedNodes.forEach(n => {
+                        if (n.parent) {
+                            childCounts[n.parent] = (childCounts[n.parent] || 0) + 1;
+                        }
+                    });
+
+                    for (let i = 0; i < compressedNodes.length; i++) {
+                        const node = compressedNodes[i];
+                        const count = childCounts[node.id] || 0;
+                        
+                        // We only compress internal nodes that have exactly one child
+                        // We don't compress roots (parent === null) or leaves (count === 0)
+                        if (count === 1 && node.parent !== null) {
+                            const child = compressedNodes.find(n => n.parent === node.id);
+                            if (child) {
+                                child.parent = node.parent;
+                                compressedNodes.splice(i, 1);
+                                changed = true;
+                                break; // Restart loop to refresh childCounts
+                            }
+                        }
+                    }
+                }
+                nodes = compressedNodes;
+                
                 const width = this.container.clientWidth;
                 const height = this.container.offsetHeight || 700;
+
+                // Cleanup old SVG
+                d3.select(this.container).selectAll("svg").remove();
 
                 this.svg = d3.select(this.container).append("svg")
                     .attr("width", width)
@@ -3184,54 +3438,62 @@
                 this.g = this.svg.append("g");
 
                 this.zoom = d3.zoom()
-                    .scaleExtent([0.1, 8])
+                    .scaleExtent([0.05, 10])
                     .on("zoom", (event) => {
                         this.g.attr("transform", event.transform);
                     });
 
                 this.svg.call(this.zoom);
 
-                // Build hierarchy
-                const children = new Set(data.map(d => d.child));
-                const roots = [...new Set(data.map(d => d.parent))].filter(p => !children.has(p));
+                // Build D3 hierarchy from flat nodes
+                const stratify = d3.stratify()
+                    .id(d => d.id)
+                    .parentId(d => d.parent);
 
-                const treeData = this.buildTree(data, roots[0]);
-                this.root = d3.hierarchy(treeData);
+                const rootNodes = nodes.filter(n => !n.parent || !nodes.find(p => p.id === n.parent));
+                
+                if (rootNodes.length === 0) {
+                    this.root = null;
+                } else if (rootNodes.length === 1) {
+                    this.root = stratify(nodes);
+                } else {
+                    // MULTIPLE ROOTS: Create a Virtual Root to connect all islands
+                    const virtualRootId = "VIRTUAL_ROOT";
+                    const augmentedNodes = [
+                        { 
+                            id: virtualRootId, 
+                            parent: null, 
+                            name: "All Clusters", 
+                            uuid: "root",
+                            size: nodes.reduce((acc, n) => (!n.parent || !nodes.find(p => p.id === n.parent)) ? acc + n.size : acc, 0),
+                            stability: 0,
+                            cohesion: 0,
+                            members: []
+                        },
+                        ...nodes.map(n => {
+                            if (!n.parent || !nodes.find(p => p.id === n.parent)) {
+                                return { ...n, parent: virtualRootId };
+                            }
+                            return n;
+                        })
+                    ];
+                    this.root = stratify(augmentedNodes);
+                }
+
                 this.root.x0 = height / 2;
                 this.root.y0 = 0;
 
-                // Horizontal layout
                 this.update(this.root);
 
-                // Initial position (Fixed)
-                const initialTransform = d3.zoomIdentity.translate(100, height / 2).scale(0.8);
+                // Initial position
+                const initialTransform = d3.zoomIdentity.translate(80, height / 2).scale(0.6);
                 this.svg.call(this.zoom.transform, initialTransform);
-            }
-
-            fitToFrame() {
-                const bounds = this.g.node().getBBox();
-                const parent = this.container;
-                const fullWidth = parent.clientWidth;
-                const fullHeight = parent.clientHeight || 700;
-                const width = bounds.width;
-                const height = bounds.height;
-                const midX = bounds.x + width / 2;
-                const midY = bounds.y + height / 2;
-                if (width === 0 || height === 0) return;
-
-                const scale = 0.85 / Math.max(width / fullWidth, height / fullHeight);
-                const translate = [fullWidth / 2 - scale * midX, fullHeight / 2 - scale * midY];
-
-                this.svg.transition().duration(750).call(
-                    this.zoom.transform,
-                    d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
-                );
             }
 
             update(source) {
                 const self = this;
-                const nodeWidth = 140; // More compact
-                const nodeHeight = 25;
+                const nodeWidth = 240; 
+                const nodeHeight = 35;
 
                 const treeLayout = d3.tree().nodeSize([nodeHeight, nodeWidth]);
                 treeLayout(this.root);
@@ -3241,11 +3503,11 @@
 
                 // Nodes
                 const node = this.g.selectAll("g.node")
-                    .data(nodes, d => d.data.id || (d.data.id = Math.random()));
+                    .data(nodes, d => d.data.id);
 
                 const nodeEnter = node.enter().append("g")
                     .attr("class", "node")
-                    .attr("transform", d => `translate(${source.y0},${source.x0})`)
+                    .attr("transform", d => `translate(${source.y},${source.x})`)
                     .style("cursor", "pointer")
                     .on("click", (event, d) => {
                         if (d.children) {
@@ -3258,33 +3520,47 @@
                         self.showInfo(d);
                         self.update(d);
                     })
-                    .on("mouseover", async (e, d) => {
-                        d3.select(e.currentTarget).select("circle").attr("r", 12);
+                    .on("mouseover", (e, d) => {
+                        d3.select(e.currentTarget).select("circle").attr("r", 14);
                         self.showTooltip(e, d);
                     })
                     .on("mouseout", (e, d) => {
-                        d3.select(e.currentTarget).select("circle").attr("r", d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? 10 : 4);
+                        d3.select(e.currentTarget).select("circle").attr("r", 8);
                         self.hideTooltip();
                     });
 
+                const getCohesionColor = (cohesion) => {
+                    const hue = Math.max(0, Math.min(120, (cohesion || 0) * 120));
+                    return `hsl(${hue}, 100%, 65%)`;
+                };
+
                 nodeEnter.append("circle")
-                    .attr("r", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? 10 : 4)
-                    .attr("stroke", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "#00ff88" : "var(--accent)")
-                    .attr("stroke-width", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? 4 : 1.5)
-                    .style("filter", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "drop-shadow(0 0 8px #00ff88) drop-shadow(0 0 15px #00ff88)" : "none");
+                    .attr("r", 8)
+                    .attr("stroke", d => getCohesionColor(d.data.cohesion))
+                    .attr("stroke-width", 2)
+                    .style("fill", d => d._children ? getCohesionColor(d.data.cohesion) : "#1a1a1a")
+                    .style("filter", d => d.data.stability > 0.8 ? `drop-shadow(0 0 10px ${getCohesionColor(d.data.cohesion)})` : "none");
 
                 nodeEnter.append("text")
                     .attr("dy", ".35em")
                     .attr("x", d => d.children || d._children ? -15 : 15)
                     .attr("text-anchor", d => d.children || d._children ? "end" : "start")
-                    .text(d => d.data.name)
-                    .style("fill", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "#00ff88" : "#eee")
-                    .style("font-weight", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "bold" : "normal")
-                    .style("font-size", d => d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString()) ? "14px" : "12px")
+                    .style("fill", "#fff")
+                    .style("font-size", "12px")
                     .style("pointer-events", "none")
+                    .text(d => d.data.name)
                     .clone(true).lower()
                     .attr("stroke", "#000")
                     .attr("stroke-width", 3);
+
+                nodeEnter.append("text")
+                    .attr("dy", "1.5em")
+                    .attr("x", d => d.children || d._children ? -15 : 15)
+                    .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+                    .style("fill", "#75715e")
+                    .style("font-size", "10px")
+                    .style("pointer-events", "none")
+                    .text(d => d.data.snippet ? `« ${d.data.snippet} »` : "");
 
                 const nodeUpdate = nodeEnter.merge(node);
 
@@ -3292,10 +3568,8 @@
                     .attr("transform", d => `translate(${d.y},${d.x})`);
 
                 nodeUpdate.select("circle")
-                    .style("fill", d => {
-                        if (d.data.cluster_id && self.stableClusterIds.has(d.data.cluster_id.toString())) return "#00ff88";
-                        return d._children ? "var(--accent)" : (d.children ? "#222" : "#555");
-                    });
+                    .style("fill", d => d._children ? getCohesionColor(d.data.cohesion) : "#1a1a1a")
+                    .attr("stroke", d => getCohesionColor(d.data.cohesion));
 
                 const nodeExit = node.exit().transition().duration(400)
                     .attr("transform", d => `translate(${source.y},${source.x})`)
@@ -3308,14 +3582,15 @@
                 const linkEnter = link.enter().insert("path", "g")
                     .attr("class", "link")
                     .attr("fill", "none")
-                    .attr("stroke", "#444")
+                    .attr("stroke", "#333")
                     .attr("stroke-width", 1.5)
                     .attr("d", d => {
-                        const o = { x: source.x0, y: source.y0 };
+                        const o = { x: source.x, y: source.y };
                         return diagonal(o, o);
                     });
 
                 link.merge(linkEnter).transition().duration(400)
+                    .attr("stroke", d => d.target.data.stability > 0.5 ? "rgba(255,171,46,0.3)" : "#333")
                     .attr("d", d => diagonal(d.source, d.target));
 
                 link.exit().transition().duration(400)
@@ -3325,11 +3600,6 @@
                     })
                     .remove();
 
-                nodes.forEach(d => {
-                    d.x0 = d.x;
-                    d.y0 = d.y;
-                });
-
                 function diagonal(s, t) {
                     return `M ${s.y} ${s.x}
                             C ${(s.y + t.y) / 2} ${s.x},
@@ -3338,108 +3608,150 @@
                 }
             }
 
-            showInfo(d) {
+            formatFunctionInline(f) {
+                if (typeof f === 'string') return `<div style="margin-bottom:2px; color:#aaa;">• ${f}</div>`;
+                const sig = formatSigComponent(f.namespace || '', f.return_type || 'void', f.function_name || 'Unknown', f.parameters || []);
+                const featCount = f.bsim_features_count || 0;
+                
+                return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:2px; padding: 2px 0;">
+                        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">
+                            ${sig.ret ? `<span style="color:#ae81ff; font-size:0.7rem;">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white; opacity:0.5; font-size:0.7rem;">${sig.ns}::</span>` : ''}<b style="color:#eee">${f.function_name}</b><span style="color:white; opacity:0.4">(</span>${sig.params.map(t => `<span style="color:#ae81ff; font-size:0.7rem;">${t}</span>`).join('<span style="color:white; opacity:0.2">, </span>')}<span style="color:white; opacity:0.4">)</span>
+                        </span>
+                        <span style="color:var(--accent); font-size:0.65rem; opacity:0.8; white-space:nowrap; flex-shrink:0; font-family:monospace; background:rgba(0,0,0,0.2); padding:1px 4px; border-radius:3px;">
+                            ${featCount} <span style="font-size:0.55rem; color:#666; text-transform:uppercase;">feat.</span>
+                        </span>
+                    </div>
+                `;
+            }
+
+            async showInfo(d) {
                 const panel = document.getElementById('hierarchy-info-panel');
-                const title = document.getElementById('hier-title');
+                const title = document.getElementById('hier-cluster-name');
                 const stats = document.getElementById('hier-stats');
                 const btn = document.getElementById('hier-view-btn');
 
                 panel.style.display = 'block';
                 title.innerText = d.data.name;
-                stats.innerHTML = `
-                    <div style="margin-bottom:5px"><b>Size:</b> ${d.data.size} functions</div>
-                    <div><b>Lambda:</b> ${d.data.lambda !== undefined ? d.data.lambda.toFixed(4) : '0.0000'}</div>
-                `;
+                
+                const updatePanel = () => {
+                    const members = d.data.runtime_members || (d.data.snippet ? [d.data.snippet] : []);
+                    const isLoading = !d.data.runtime_members;
 
-                btn.onclick = async () => {
-                    const col = document.getElementById('side-collection-select').value;
-                    const cid = d.data.cluster_id || d.data.name.replace('Cluster ', '');
+                    stats.innerHTML = `
+                        <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
+                            <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #555;">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
+                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
+                                <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
+                                <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
+                                <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:15px; border-top:1px solid #333; padding-top:10px;">
+                            <div style="font-size:0.65rem; color:#666; margin-bottom:6px; text-transform:uppercase;">
+                                ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Loading Members...' : 'Sample Members (Live):'}
+                            </div>
+                            <div style="color:#eee; font-family:monospace; font-size:0.75rem; line-height:1.4;">
+                                ${members.map(m => this.formatFunctionInline(m)).join('')}
+                                ${d.data.size > members.length ? `<div style="color:#444; margin-top:4px; font-size:0.7rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                };
 
-                    // Fetch UUID for more reliable filtering (avoid small numeric ID collisions)
+                updatePanel();
+
+                if (!d.data.runtime_members && d.data.uuid) {
                     try {
-                        btn.innerText = "Loading...";
-                        const res = await fetch(`/api/cluster/list?collection=${col}&cluster_id=${cid}`);
+                        const col = document.getElementById('side-collection-select').value;
+                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
                         const data = await res.json();
-                        if (data.results && data.results.length > 0) {
-                            const uuid = data.results[0].cluster_uuid;
-                            window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
-                        } else {
-                            window.location.hash = `#functions?collection=${col}&cluster_id=${cid}`;
-                        }
+                        d.data.runtime_members = data.functions;
+                        updatePanel();
                     } catch (e) {
-                        window.location.hash = `#functions?collection=${col}&cluster_id=${cid}`;
-                    } finally {
-                        btn.innerText = "View Functions →";
+                        console.error("Failed to fetch runtime members", e);
                     }
+                }
+
+                btn.onclick = () => {
+                    const col = document.getElementById('side-collection-select').value;
+                    const uuid = d.data.uuid;
+                    window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
                 };
             }
 
             async showTooltip(event, d) {
                 const tooltip = document.getElementById('hierarchy-tooltip');
                 tooltip.style.display = 'block';
-                tooltip.style.left = (event.pageX + 15) + 'px';
-                tooltip.style.top = (event.pageY + 15) + 'px';
+                tooltip.style.left = (event.clientX + 20) + 'px';
+                tooltip.style.top = (event.clientY + 20) + 'px';
 
-                const cid = d.data.cluster_id || d.data.name.replace('Cluster ', '');
-                const col = document.getElementById('side-collection-select').value;
-                const algo = new URLSearchParams(window.location.hash.split('?')[1]).get('algo') || 'unweighted_cosine';
+                this.renderTooltip(tooltip, d);
 
-                let content = `
-                    <div style="color:var(--accent); font-weight:bold; margin-bottom:8px; font-size:0.9rem;">${d.data.name}</div>
-                    <div style="margin-bottom:10px; color:#aaa;">Size: ${d.data.size} functions</div>
-                    <div id="tooltip-members" style="color:#eee;">
-                        <div class="spinner" style="width:15px; height:15px; border-width:2px; margin:5px auto;"></div>
-                    </div>
-                `;
-                tooltip.innerHTML = content;
-
-                if (!this.memberCache.has(cid)) {
+                if (!d.data.runtime_members && d.data.uuid) {
                     try {
-                        const res = await fetch(`/api/cluster/members?collection=${col}&algo=${algo}&cluster_id=${cid}&limit=10`);
+                        const col = document.getElementById('side-collection-select').value;
+                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
                         const data = await res.json();
-                        const names = data.results.map(r => r.meta.function_name || r.id.split(':').pop());
-                        this.memberCache.set(cid, names);
+                        d.data.runtime_members = data.functions;
+                        this.renderTooltip(tooltip, d);
                     } catch (e) {
-                        this.memberCache.set(cid, ["Error loading functions"]);
+                        console.error("Failed to fetch runtime members", e);
                     }
                 }
+            }
 
-                const names = this.memberCache.get(cid);
-                const membersDiv = document.getElementById('tooltip-members');
-                if (membersDiv) {
-                    membersDiv.innerHTML = `
-                        <div style="border-top:1px solid #333; padding-top:8px;">
-                            <div style="font-size:0.7rem; color:#888; margin-bottom:4px;">Sample Functions:</div>
-                            ${names.slice(0, 8).map(n => `<div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:2px;">• ${n}</div>`).join('')}
-                            ${names.length > 8 ? `<div style="color:#555; font-size:0.7rem; margin-top:4px;">+ ${d.data.size - 8} more...</div>` : ''}
+            renderTooltip(tooltip, d) {
+                const members = d.data.runtime_members || (d.data.snippet ? [d.data.snippet] : []);
+                const isLoading = !d.data.runtime_members;
+
+                tooltip.innerHTML = `
+                    <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
+                    <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace;">${d.data.uuid}</div>
+                    
+                    <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
+                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
+                            <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
                         </div>
-                    `;
-                }
+                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
+                            <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
+                        </div>
+                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
+                            <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
+                        </div>
+                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
+                            <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
+                        </div>
+                    </div>
+
+                    <div style="border-top:1px solid #333; padding-top:10px;">
+                        <div style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                            ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : 'Sample Members (Live):'}
+                        </div>
+                        <div style="color:#eee; font-family:monospace; font-size:0.75rem; line-height:1.2;">
+                            ${members.map(m => this.formatFunctionInline(m)).join('')}
+                            ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem; padding-left:35px;">... and ${d.data.size - members.length} more</div>` : ''}
+                        </div>
+                    </div>
+                `;
             }
 
             hideTooltip() {
                 document.getElementById('hierarchy-tooltip').style.display = 'none';
-            }
-
-            buildTree(data, rootId) {
-                const self = this;
-                const nodeData = data.find(d => d.child === rootId) || { child_size: data.reduce((a, b) => a + b.child_size, 0), lambda: 0 };
-
-                const node = {
-                    name: rootId === 0 ? "Root" : `Cluster ${rootId}`,
-                    cluster_id: rootId,
-                    size: nodeData.child_size,
-                    lambda: nodeData.lambda,
-                    children: []
-                };
-
-                const children = data.filter(d => d.parent === rootId && d.child !== rootId);
-                for (const child of children) {
-                    node.children.push(this.buildTree(data, child.child));
-                }
-
-                if (node.children.length === 0) delete node.children;
-                return node;
             }
         }
     </script>

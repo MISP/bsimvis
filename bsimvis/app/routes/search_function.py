@@ -435,9 +435,16 @@ def search_functions():
         except:
             pipe.json().get("nonexistent", "$")
 
+    # Fetch clusters SET and scores
+    for doc_id in doc_ids:
+        pipe.smembers(f"{doc_id}:clusters")
+        pipe.hgetall(f"{doc_id}:cluster_scores")
+
     raw_results_all = pipe.execute()
     raw_meta_results = raw_results_all[: len(doc_ids)]
-    raw_file_results = raw_results_all[len(doc_ids) :]
+    raw_file_results = raw_results_all[len(doc_ids) : 2 * len(doc_ids)]
+    raw_cluster_sets = raw_results_all[2 * len(doc_ids) : 4 * len(doc_ids) : 2]
+    raw_cluster_scores = raw_results_all[2 * len(doc_ids) + 1 : 4 * len(doc_ids) : 2]
 
     functions_list = []
     parsed_data_list = []
@@ -454,17 +461,34 @@ def search_functions():
     # Secondary pipeline for cluster metadata
     algo = "unweighted_cosine"  # Default algo used by backend
     cluster_pipe = r.pipeline()
-    for data in parsed_data_list:
+    
+    # We will track which index in the pipeline corresponds to which function and cluster
+    # cluster_queries = [(function_index, cluster_id), ...]
+    cluster_queries = []
+    
+    for i, data in enumerate(parsed_data_list):
         if data:
-            cluster_id = data.get("cluster_id")
-            if cluster_id is not None and str(cluster_id).lower() != "noise":
-                cluster_pipe.json().get(f"{col}:cluster:{algo}:{cluster_id}:meta", "$")
-            else:
-                cluster_pipe.get("nonexistent")
-        else:
-            cluster_pipe.get("nonexistent")
+            c_set = raw_cluster_sets[i]
+            if c_set:
+                for c_bytes in c_set:
+                    cid = c_bytes.decode() if isinstance(c_bytes, bytes) else c_bytes
+                    cluster_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
+                    cluster_queries.append((i, cid))
 
-    raw_cluster_results = cluster_pipe.execute() if parsed_data_list else []
+    if cluster_queries:
+        raw_cluster_meta_results = cluster_pipe.execute()
+    else:
+        raw_cluster_meta_results = []
+
+    # Map back the cluster metadata to the respective functions
+    func_clusters_map = {i: [] for i in range(len(parsed_data_list))}
+    for (func_idx, cid), raw_cm in zip(cluster_queries, raw_cluster_meta_results):
+        if raw_cm:
+            cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+            if isinstance(cm, str):
+                cm = json.loads(cm)
+            if cm:
+                func_clusters_map[func_idx].append(cm)
 
     for i, data in enumerate(parsed_data_list):
         if not data:
@@ -501,36 +525,41 @@ def search_functions():
                 data[field] = parse_timestamp(data[field])
 
         # Cluster metadata enrichment
-        cluster_raw = raw_cluster_results[i] if i < len(raw_cluster_results) else None
-        cluster_data = (
-            cluster_raw[0]
-            if isinstance(cluster_raw, list) and cluster_raw
-            else cluster_raw
-        )
-        if isinstance(cluster_data, str):
-            try:
-                cluster_data = json.loads(cluster_data)
-            except:
-                cluster_data = {}
+        c_metas = func_clusters_map[i]
+        
+        # Sort clusters by member_count or cohesion descending, so UI can just pick the first
+        # We can sort by member_count descending
+        c_metas.sort(key=lambda x: x.get("member_count", 0), reverse=True)
 
         clusters = []
-        if cluster_data:
+        scores = raw_cluster_scores[i] or {}
+        for cm in c_metas:
+            cid = str(cm.get("cluster_id"))
+            # The user wants 'cluster_stability' to be the per-function score
+            score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+            if not score and isinstance(scores, dict):
+                # Try decoding keys
+                for k, v in scores.items():
+                    k_str = k.decode() if isinstance(k, bytes) else k
+                    if k_str == cid:
+                        score = float(v)
+                        break
+
             clusters.append(
                 {
-                    "cluster_id": cluster_data.get(
-                        "cluster_id", data.get("cluster_id")
-                    ),
-                    "cluster_uuid": cluster_data.get(
-                        "cluster_uuid", data.get("cluster_uuid")
-                    ),
-                    "cluster_name": cluster_data.get("cluster_name"),
-                    "cohesion_score": cluster_data.get("cohesion_score", 0),
-                    "member_count": cluster_data.get("member_count", 0),
-                    "avg_features": cluster_data.get("avg_features", 0),
+                    "cluster_id": cm.get("cluster_id"),
+                    "cluster_uuid": cm.get("cluster_uuid"),
+                    "cluster_name": cm.get("cluster_name"),
+                    "cohesion_score": cm.get("cohesion_score", 0),
+                    "member_count": cm.get("member_count", 0),
+                    "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                    "avg_features": cm.get("avg_features", 0),
                 }
             )
         data["clusters"] = clusters
 
+        for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+            data.pop(field, None)
         functions_list.append(data)
 
     total_time = time.perf_counter() - t_req_start

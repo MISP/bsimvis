@@ -26,8 +26,9 @@ class ClusterService:
         min_cluster_size=5,
         min_samples=None,
         cluster_selection_epsilon=0.0,
-        cluster_selection_method="eom",
-        similarity_threshold=0.0,
+        selection_method="eom",
+        min_sim=0.0,
+        min_features=0,
         job_service=None,
         job_id=None,
     ):
@@ -64,13 +65,51 @@ class ClusterService:
             logging.warning(f"No similarity pairs found for {collection}:{algo}")
             return True
 
+        prefix = f"{collection}:sim:{algo}:"
+
+        # 1.5 Feature Filtering
+        allowed_fids = None
+        if min_features > 0:
+            msg = f"Filtering functions by min_features={min_features}..."
+            logging.info(f"[*] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
+            unique_fids = set()
+            for sid, _ in pairs:
+                if not sid.startswith(prefix):
+                    continue
+                ids_part = sid[len(prefix) :]
+                if "::" not in ids_part:
+                    continue
+                c1, c2 = ids_part.split("::")
+                unique_fids.add(f"{collection}:func:{c1}")
+                unique_fids.add(f"{collection}:func:{c2}")
+
+            allowed_fids = set()
+            fids_list = list(unique_fids)
+            # Bulk fetch bsim_features_count
+            pipe = r.pipeline()
+            for fid in fids_list:
+                pipe.json().get(f"{fid}:meta", "$.bsim_features_count")
+            
+            raw_res = pipe.execute()
+            for fid, res in zip(fids_list, raw_res):
+                try:
+                    # JSON.GET with path returns list of results
+                    val = res[0] if isinstance(res, list) and res else 0
+                    if int(val) >= min_features:
+                        allowed_fids.add(fid)
+                except (ValueError, TypeError, IndexError):
+                    continue
+            
+            logging.info(f"[+] {len(allowed_fids)} functions passed feature filter.")
+
         # 2. Build identity mapping and edge list
         # We need a numeric mapping for HDBSCAN
         id_to_idx = {}
         idx_to_id = {}
         edges = []
-
-        prefix = f"{collection}:sim:{algo}:"
 
         for sid, score in pairs:
             # sid format: {coll}:sim:{algo}:{clean_id1}::{clean_id2}
@@ -85,6 +124,11 @@ class ClusterService:
             fid1 = f"{collection}:func:{c1}"
             fid2 = f"{collection}:func:{c2}"
 
+            # Apply Feature Filter
+            if allowed_fids is not None:
+                if fid1 not in allowed_fids or fid2 not in allowed_fids:
+                    continue
+
             for fid in [fid1, fid2]:
                 if fid not in id_to_idx:
                     idx = len(id_to_idx)
@@ -93,7 +137,7 @@ class ClusterService:
 
             # 2.5 Apply similarity threshold if provided
             score_val = float(score)
-            if similarity_threshold > 0 and score_val < similarity_threshold:
+            if min_sim > 0 and score_val < min_sim:
                 continue
 
             # HDBSCAN works with distance. Distance = 1 - score (for normalized cosine)
@@ -107,7 +151,7 @@ class ClusterService:
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"Error: No valid similarity edges found after parsing {len(pairs)} pairs. Check key format.",
+                    f"Error: No valid similarity edges found after parsing {len(pairs)} pairs. Check filters.",
                 )
             return True
 
@@ -143,118 +187,196 @@ class ClusterService:
             min_cluster_size=min_cluster_size,
             min_samples=min_samples,
             cluster_selection_epsilon=cluster_selection_epsilon,
-            cluster_selection_method=cluster_selection_method,
+            cluster_selection_method=selection_method,
             metric="precomputed",
             gen_min_span_tree=True,
         )
-        cluster_labels = clusterer.fit_predict(dist_matrix.astype(np.float64))
+        # Only fit to get the condensed tree (no flat clustering)
+        clusterer.fit(dist_matrix.astype(np.float64))
+        # Calculate HDBSCAN stabilities and per-function membership strengths
+        # We use the condensed tree to calculate persistence for all nodes
+        tree_df = clusterer.condensed_tree_.to_pandas()
+        
+        # 1. Birth lambdas for all clusters
+        # Root birth is 0
+        root_id = tree_df['parent'].min()
+        birth_lambdas = {root_id: 0.0}
+        for _, row in tree_df.iterrows():
+            if row['child_size'] > 1:
+                birth_lambdas[int(row['child'])] = float(row["lambda_val"])
+        
+        # 2. Death lambdas for all clusters (max lambda of any child)
+        death_lambdas = {}
+        for _, row in tree_df.iterrows():
+            p = int(row['parent'])
+            l = float(row["lambda_val"])
+            if p not in death_lambdas or l > death_lambdas[p]:
+                death_lambdas[p] = l
+        
+        # Stability and per-point strengths will be calculated after extracting members
+        pass
 
-        # 4. Extract Condensed Tree for UI
-        tree = clusterer.condensed_tree_.to_pandas()
-        tree_json = tree.to_json(orient="records")
+
+
+        # 4. Extract Condensed Tree for UI and Hierarchical Storage
+        tree_df = clusterer.condensed_tree_.to_pandas()
+        tree_json = tree_df.to_json(orient="records")
         tree_key = f"{collection}:cluster:tree:{algo}"
         r.set(tree_key, tree_json)
+        
+        # Store cluster parent-child relationships for dendrogram
+        cluster_tree_key = f"{collection}:cluster:tree_links:{algo}"
+        tree_links = []
+        for _, row in tree_df.iterrows():
+            if int(row['child_size']) > 1:
+                tree_links.append({
+                    "parent": int(row['parent']),
+                    "child": int(row['child']),
+                    "lambda": float(row['lambda_val']),
+                    "size": int(row['child_size'])
+                })
+        r.set(cluster_tree_key, json.dumps(tree_links))
 
-        # 5. Persist results
-        logging.info(f"[*] Persisting {len(cluster_labels)} function assignments...")
+        logging.info("[*] Extracting hierarchical clusters from tree...")
+        if job_service and job_id:
+            job_service.add_log(job_id, "Extracting hierarchical clusters from tree...")
+
+        # Build tree traversal mapping
+        child_to_parent = dict(zip(tree_df['child'], tree_df['parent']))
+        
+        leaf_to_clusters = {}
+        for leaf in range(num_nodes):
+            clusters = set()
+            curr = leaf
+            while curr in child_to_parent:
+                p = child_to_parent[curr]
+                clusters.add(int(p))
+                curr = p
+            leaf_to_clusters[leaf] = list(clusters)
+
+        # Reverse map to find cluster members
+        cluster_members = {}
+        for leaf, clusters in leaf_to_clusters.items():
+            for c in clusters:
+                if c not in cluster_members:
+                    cluster_members[c] = []
+                cluster_members[c].append(idx_to_id[leaf])
+
+        label_to_uuid = {
+            c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()
+        }
+
+        # 5. Calculate Stability for all hierarchical nodes
+        # Stability S(C) = sum_{p in C} (lambda_p_death - lambda_C_birth)
+        stabilities = {}
+        
+        # Pre-calculate leaf deaths
+        leaf_death_lambdas = {}
+        for _, row in tree_df.iterrows():
+            if row['child_size'] == 1:
+                leaf_death_lambdas[int(row['child'])] = float(row["lambda_val"])
+        
+        # Calculate stability for each hierarchical cluster
+        for label, members in cluster_members.items():
+            b_lambda = birth_lambdas.get(label, 0.0)
+            total_area = 0.0
+            for fid in members:
+                leaf_idx = id_to_idx[fid]
+                d_lambda = leaf_death_lambdas.get(leaf_idx, b_lambda)
+                total_area += max(0.0, d_lambda - b_lambda)
+            stabilities[label] = total_area
+
+        # 5. Persist function assignments
+        logging.info(f"[*] Persisting {len(cluster_members)} hierarchical clusters...")
         if job_service and job_id:
             job_service.add_log(
                 job_id,
-                f"Persisting {len(cluster_labels)} cluster assignments and calculating metadata...",
+                f"Persisting {len(cluster_members)} hierarchical clusters and assigning functions...",
             )
 
-        from bsimvis.app.services.index_service import (
-            _index_tag,
-            _unindex_tag,
-            _index_num,
-        )
+        from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
-        cluster_stabilities = clusterer.probabilities_
         pipe = r.pipeline()
 
-        # Maps for enrichment
-        cluster_members = {}  # label -> list of fids
-        label_to_uuid = {
-            int(l): f"{uuid.uuid4().hex[:12]}" for l in set(cluster_labels) if l != -1
-        }
+        # Save members set for each cluster
+        for c, members in cluster_members.items():
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:members", *members)
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
 
-        # 5. Persist function assignments
-        # Discover fields from config
         func_tag_fields = [f for f in self.get_native_fields("func", False) if f.startswith("cluster_")]
-        func_num_fields = [f for f in self.get_native_fields("func", True) if f.startswith("cluster_")]
 
-        for i, label in enumerate(cluster_labels):
-            fid = idx_to_id[i]
-            stability = float(cluster_stabilities[i])
-            label = int(label)
-
-            if label != -1:
-                cluster_uuid = label_to_uuid[label]
-                cluster_id = label  # Use numerical label as cluster_id
-
-                if label not in cluster_members:
-                    cluster_members[label] = []
-                cluster_members[label].append(fid)
-
-                # Update function metadata
-                pipe.json().set(f"{fid}:meta", "$.cluster_id", cluster_id)
-                pipe.json().set(f"{fid}:meta", "$.cluster_uuid", cluster_uuid)
-                pipe.json().set(f"{fid}:meta", "$.cluster_stability", stability)
-
-                # Update Secondary Indexes (Config-driven)
-                m_vals = {"cluster_id": cluster_id, "cluster_uuid": cluster_uuid, "cluster_stability": stability}
-                for f in func_tag_fields:
-                    if f in m_vals:
-                        _index_tag(pipe, collection, "func", f, m_vals[f], fid)
-                for f in func_num_fields:
-                    if f in m_vals:
-                        _index_num(pipe, collection, "func", f, m_vals[f], fid)
-
-                # Add to cluster membership set
-                pipe.sadd(f"{collection}:cluster:{algo}:{cluster_id}:members", fid)
-            else:
-                # Noise
-                pipe.json().set(f"{fid}:meta", "$.cluster_id", "noise")
-                pipe.json().set(f"{fid}:meta", "$.cluster_uuid", "noise")
-                pipe.json().set(f"{fid}:meta", "$.cluster_name", "noise")
-                pipe.json().set(f"{fid}:meta", "$.cluster_stability", 0.0)
+        # Ensure noise functions are cleared if they were previously noise
+        for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
+            fid = idx_to_id[leaf]
+            clusters_key = f"{fid}:clusters"
+            scores_key = f"{fid}:cluster_scores"
+            
+            if clusters:
+                pipe.delete(clusters_key)
+                pipe.sadd(clusters_key, *clusters)
                 
-                # Index noise
-                for f in func_tag_fields:
-                    _index_tag(pipe, collection, "func", f, "noise", fid)
-                for f in func_num_fields:
-                    _index_num(pipe, collection, "func", f, 0.0, fid)
+                # Calculate scores for each cluster membership
+                # Score = (lambda_death(leaf) - lambda_birth(cluster)) / (lambda_death(cluster) - lambda_birth(cluster))
+                # This is a common way to define membership strength in HDBSCAN
+                scores = {}
+                l_death_leaf = leaf_death_lambdas.get(leaf, 0.0)
+                for c in clusters:
+                    l_birth_c = birth_lambdas.get(c, 0.0)
+                    l_death_c = death_lambdas.get(c, l_death_leaf)
+                    
+                    if l_death_c > l_birth_c:
+                        score = (l_death_leaf - l_birth_c) / (l_death_c - l_birth_c)
+                    else:
+                        score = 1.0
+                    scores[str(c)] = float(max(0.0, min(1.0, score)))
+                
+                pipe.delete(scores_key)
+                pipe.hset(scores_key, mapping=scores)
+            else:
+                pipe.delete(clusters_key)
+                pipe.delete(scores_key)
 
-            # Periodically execute pipeline
+            # Per-function scores and membership lists are updated here
             if i % 500 == 0:
                 pipe.execute()
                 if job_service and job_id:
-                    pct = int((i / num_nodes) * 100)
+                    pct = int((i / num_nodes) * 50) # First 50% for per-function persistence
                     job_service.update_progress(job_id, pct)
 
-        # Final execute for functions
         pipe.execute()
 
-        # 6. Calculate Cluster Metadata & Similarity Metrics
-        logging.info(
-            f"[*] Calculating enriched metadata for {len(cluster_members)} clusters..."
-        )
+        # Update secondary index for 'cluster_id', 'cluster_uuid', 'cluster_name'
+        # Optimized: Iterate over clusters, not functions
+        logging.info(f"[*] Updating secondary indexes for {len(cluster_members)} clusters...")
+        for idx, (label, members) in enumerate(cluster_members.items()):
+            if "cluster_id" in func_tag_fields:
+                bucket_key = f"{collection}:idx:func:cluster_id:{str(label).lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_id", bucket_key)
+            
+            if "cluster_uuid" in func_tag_fields:
+                c_uuid = label_to_uuid[label]
+                bucket_key = f"{collection}:idx:func:cluster_uuid:{c_uuid.lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_uuid", bucket_key)
 
-        # Pre-calculate internal similarities for each cluster
-        cluster_similarities = {l: [] for l in cluster_members.keys()}
-        for idx1, idx2, dist in edges:
-            l1 = cluster_labels[idx1]
-            l2 = cluster_labels[idx2]
-            if l1 != -1 and l1 == l2:
-                cluster_similarities[l1].append(1.0 - float(dist))
+            if idx % 100 == 0:
+                pipe.execute()
+        pipe.execute()
 
-        # Pre-fetch metadata for ALL cluster members in one batched pipeline
-        # (avoids N sequential round-trips to Kvrocks, one per cluster)
-        all_member_fids = [fid for members in cluster_members.values() for fid in members]
+        pipe.execute()
+
+        # 6. Calculate Cluster Metadata
+        logging.info(f"[*] Calculating enriched metadata for {len(cluster_members)} clusters...")
+
+        all_member_fids = list(id_to_idx.keys())
         all_member_meta = {}
         total_members = len(all_member_fids)
         if job_service and job_id:
-            job_service.add_log(job_id, f"Pre-fetching metadata for {total_members} cluster members...")
+            job_service.add_log(job_id, f"Pre-fetching metadata for {total_members} functions...")
+        
         for i in range(0, total_members, 1000):
             chunk = all_member_fids[i : i + 1000]
             m_pipe = r.pipeline()
@@ -266,12 +388,11 @@ class ClusterService:
 
         total_clusters = len(cluster_members)
         if job_service and job_id:
-            job_service.add_log(job_id, f"Enriching metadata for {total_clusters} clusters...")
+            job_service.add_log(job_id, f"Enriching metadata for {total_clusters} hierarchical clusters...")
 
         for idx, (label, members) in enumerate(cluster_members.items()):
             names = []
             feature_counts = []
-            stabilities = []
 
             for fid in members:
                 m = all_member_meta.get(fid, {})
@@ -279,47 +400,58 @@ class ClusterService:
                     names.append(m["function_name"])
                 if "bsim_features_count" in m:
                     feature_counts.append(m.get("bsim_features_count", 0))
-                if "cluster_stability" in m:
-                    stabilities.append(m.get("cluster_stability", 0.0))
 
-            # Most common name
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
-            )
+            default_name = Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
             avg_features = np.mean(feature_counts) if feature_counts else 0
-            avg_stability = np.mean(stabilities) if stabilities else 0
+            
+            # Cohesion Score based on Birth Lambda (Threshold at which cluster forms)
+            # Higher lambda means higher density/similarity.
+            # sim = 1 - 1/lambda
+            b_lambda = birth_lambdas.get(label, 0.0)
+            cohesion_score = 1.0 - (1.0 / b_lambda) if b_lambda > 1.0 else 0.0
+            
+            # Cap cohesion score at 1.0 and ensure it's not negative
+            cohesion_score = max(0.0, min(1.0, cohesion_score))
 
-            # Cohesion score (average similarity of internal edges)
-            sims = cluster_similarities.get(label, [])
-            cohesion_score = np.mean(sims) if sims else 0.0
+            # Find representative function name/snippet
+            rep_fid = members[0] if members else None
+            rep_meta = all_member_meta.get(rep_fid, {}) if rep_fid else {}
+            snippet = rep_meta.get("function_name", "unknown")
 
             meta = {
-                "cluster_id": label,
+                "cluster_id": int(label),
+                "snippet": snippet,
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
-                "avg_stability": float(avg_stability),
                 "avg_features": float(avg_features),
                 "cohesion_score": float(cohesion_score),
+                "avg_stability": float(stabilities.get(label, 0.0)),
+                "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
+                "sample_members": names[:5],  # Include a few actual function names
                 "created_at": int(time.time() * 1000),
             }
-            pipe.json().set(f"{collection}:cluster:{algo}:{label}:meta", "$", meta)
 
-            # Index members for cluster_name and update function metadata
-            for fid in members:
-                pipe.json().set(f"{fid}:meta", "$.cluster_name", default_name)
-                if "cluster_name" in func_tag_fields:
-                    _index_tag(pipe, collection, "func", "cluster_name", default_name, fid)
+            # Sanitize metadata to ensure no NaN/inf values (invalid JSON)
+            for k, v in meta.items():
+                if isinstance(v, float):
+                    if not np.isfinite(v):
+                        meta[k] = 0.0
+            pipe.json().set(f"{collection}:cluster:{algo}:{label}:meta", "$", meta)
+            
+            if "cluster_name" in func_tag_fields:
+                bucket_key = f"{collection}:idx:func:cluster_name:{default_name.lower()}"
+                pipe.sadd(bucket_key, *members)
+                pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
 
             if job_service and job_id and (idx + 1) % 50 == 0:
-                pct = int(((idx + 1) / total_clusters) * 100)
+                pct = 50 + int(((idx + 1) / total_clusters) * 50)
                 job_service.update_progress(
                     job_id, pct, f"Enriching clusters: {idx + 1}/{total_clusters}"
                 )
 
         if job_service and job_id:
             job_service.add_log(job_id, f"Writing cluster metadata to database...")
-        # Final execute for metadata
         pipe.execute()
 
         # 7. Update all similarities in the collection to propagate cluster info
@@ -327,7 +459,8 @@ class ClusterService:
             collection, algo, job_service=job_service, job_id=job_id
         )
 
-        summary = f"Clustering complete. Found {len(cluster_members)} clusters. Noise: {list(cluster_labels).count(-1)} functions."
+        noise_count = sum(1 for clusters in leaf_to_clusters.values() if not clusters)
+        summary = f"Clustering complete. Found {len(cluster_members)} hierarchical clusters. Noise: {noise_count} functions."
         logging.info(f"[+] {summary}")
         if job_service and job_id:
             job_service.add_log(job_id, summary)
@@ -381,59 +514,22 @@ class ClusterService:
         # 3. For each cluster, clear members
         for i, cid in enumerate(cluster_ids):
             members_key = f"{collection}:cluster:{algo}:{cid}:members"
-
-            # Fallback for noise: use the index itself if the members set doesn't exist
             if cid == "noise" and not r.exists(members_key):
                 members_key = f"{collection}:idx:func:cluster_id:noise"
 
             members = r.smembers(members_key)
-
             if members:
-                # Fetch metadata for all members to get their cluster_id and cluster_uuid
-                m_pipe = r.pipeline()
-                for mid_raw in members:
-                    mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
-                    m_pipe.json().get(f"{mid}:meta", "$")
-
-                meta_results = m_pipe.execute()
-
                 pipe = r.pipeline()
-                for j, (mid_raw, res) in enumerate(zip(members, meta_results)):
+                for j, mid_raw in enumerate(members):
                     mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
 
-                    if res and isinstance(res, list) and res[0]:
-                        m = res[0]
-                        old_cid = m.get("cluster_id")
-                        old_uuid = m.get("cluster_uuid")
-                        old_name = m.get("cluster_name")
-
-                        # Remove from secondary indexes
-                        if old_cid is not None:
-                            _unindex_tag(
-                                pipe, collection, "func", "cluster_id", old_cid, mid
-                            )
-                        if old_uuid is not None:
-                            _unindex_tag(
-                                pipe, collection, "func", "cluster_uuid", old_uuid, mid
-                            )
-                        if old_name is not None:
-                            _unindex_tag(
-                                pipe, collection, "func", "cluster_name", old_name, mid
-                            )
-
-                        _unindex_num(pipe, collection, "func", "cluster_stability", mid)
-
-                    # Update function metadata
-                    pipe.json().set(f"{mid}:meta", "$.cluster_id", None)
-                    pipe.json().set(f"{mid}:meta", "$.cluster_uuid", None)
-                    pipe.json().set(f"{mid}:meta", "$.cluster_name", None)
-                    pipe.json().set(f"{mid}:meta", "$.cluster_stability", None)
+                    _unindex_tag(pipe, collection, "func", "cluster_id", cid, mid)
+                    pipe.delete(f"{mid}:clusters")
 
                     if j % 500 == 0:
                         pipe.execute()
                 pipe.execute()
 
-            # Delete cluster-specific keys
             if cid != "noise":
                 r.delete(f"{collection}:cluster:{algo}:{cid}:members")
                 r.delete(f"{collection}:cluster:{algo}:{cid}:meta")
@@ -530,21 +626,37 @@ class ClusterService:
         for i in range(0, len(funcs_list), 1000):
             chunk = funcs_list[i : i + 1000]
             pipe = r.pipeline()
+            # We now fetch clusters from the SET and meta from JSON
             for fid_raw in chunk:
                 fid = fid_raw.decode() if isinstance(fid_raw, bytes) else fid_raw
+                pipe.smembers(f"{fid}:clusters")
                 pipe.json().get(f"{fid}:meta", "$")
+                
             results = pipe.execute()
-            for fid_raw, res in zip(chunk, results):
+            
+            # Since we have 2 commands per chunk item, results are grouped
+            for idx, fid_raw in enumerate(chunk):
                 fid = fid_raw.decode() if isinstance(fid_raw, bytes) else fid_raw
-                if res:
-                    m = res[0] if isinstance(res, list) else res
+                clusters_res = results[idx * 2]
+                meta_res = results[idx * 2 + 1]
+                
+                # Decode cluster IDs
+                cluster_ids = [int(c) for c in clusters_res] if clusters_res else []
+                
+                meta_entry = {}
+                if meta_res:
+                    m = meta_res[0] if isinstance(meta_res, list) else meta_res
                     if isinstance(m, str):
                         m = json.loads(m)
-                    # Only keep configured fields to save memory
-                    meta_entry = {}
                     for f in fields_to_fetch:
-                        meta_entry[f] = m.get(f)
-                    func_meta[fid] = meta_entry
+                        if f != "cluster_id":
+                            meta_entry[f] = m.get(f)
+                
+                # Add cluster_id to meta_entry explicitly
+                if cluster_ids:
+                    meta_entry["cluster_id"] = cluster_ids
+                    
+                func_meta[fid] = meta_entry
 
         # 2. Scan all similarities and rebuild cluster indexes from function metadata
         # Build a set of clean IDs for functions that actually have cluster info.

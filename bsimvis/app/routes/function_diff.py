@@ -252,6 +252,7 @@ def diff_api():
     id2 = request.args.get("id2")
 
     if not id1 or not id2:
+
         return jsonify({"detail": "Missing id1 or id2"}), 400
 
     # Business logic
@@ -260,6 +261,7 @@ def diff_api():
         parts2 = id2.split(":")
 
         if len(parts1) < 4 or len(parts2) < 4:
+
             return jsonify({"detail": "Invalid ID format"}), 400
 
         # Standard Robust Resolution
@@ -273,6 +275,7 @@ def diff_api():
         else:
             collection2, md5_2, addr_2 = parts2[0], parts2[2], parts2[3]
     except Exception:
+
         return jsonify({"detail": "Malformed ID"}), 400
 
     if (
@@ -283,6 +286,7 @@ def diff_api():
         or not md5_2
         or not addr_2
     ):
+
         return jsonify({"detail": "Invalid ID components"}), 400
 
     s1, f1, meta1, tf1 = fetch_function_data(collection1, md5_1, addr_1)
@@ -290,6 +294,7 @@ def diff_api():
 
     if s1 is None or s2 is None:
         # In fetch_function_data, s1 being None usually means the Redis fetch failed
+
         return jsonify({"detail": "Failed to fetch data from Redis"}), 500
 
     h1 = set(f["hash"] for f in (f1 or []))
@@ -317,37 +322,51 @@ def diff_api():
             meta1["file_date"] = parse_timestamp(meta1["file_date"])
 
         clusters = []
-        cluster_id = meta1.get("cluster_id")
-        if cluster_id is not None and str(cluster_id).lower() != "noise":
-            try:
-                cluster_meta_raw = r.json().get(
-                    f"{collection1}:cluster:{algo}:{cluster_id}:meta", "$"
-                )
-                if cluster_meta_raw:
-                    cluster_meta = (
-                        cluster_meta_raw[0]
-                        if isinstance(cluster_meta_raw, list)
-                        else cluster_meta_raw
-                    )
-                    if isinstance(cluster_meta, str):
-                        cluster_meta = json.loads(cluster_meta)
-                    if cluster_meta:
-                        clusters.append(
-                            {
-                                "cluster_id": cluster_meta.get(
-                                    "cluster_id", meta1.get("cluster_id")
-                                ),
-                                "cluster_uuid": cluster_meta.get(
-                                    "cluster_uuid", meta1.get("cluster_uuid")
-                                ),
-                                "cluster_name": cluster_meta.get("cluster_name"),
-                                "cohesion_score": cluster_meta.get("cohesion_score", 0),
-                                "member_count": cluster_meta.get("member_count", 0),
-                                "avg_features": cluster_meta.get("avg_features", 0),
-                            }
-                        )
-            except Exception as ex:
-                print(f"Error fetching cluster meta1: {ex}")
+        try:
+            r = get_redis()
+            fid = f"{collection1}:func:{md5_1}:{addr_1}"
+            cluster_ids = r.smembers(f"{fid}:clusters")
+            clusters = []
+            algo = "unweighted_cosine"
+            if cluster_ids:
+                scores = r.hgetall(f"{fid}:cluster_scores") or {}
+                cluster_pipe = r.pipeline()
+                for cid_bytes in cluster_ids:
+                    cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
+                    cluster_pipe.json().get(f"{collection1}:cluster:{algo}:{cid}:meta", "$")
+                
+                raw_cluster_metas = cluster_pipe.execute()
+                
+                for raw_cm in raw_cluster_metas:
+                    if raw_cm:
+                        cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                        if isinstance(cm, str):
+                            import json
+                            cm = json.loads(cm)
+                        if cm:
+                            cid = str(cm.get("cluster_id"))
+                            score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+                            if not score and isinstance(scores, dict):
+                                for k, v in scores.items():
+                                    k_str = k.decode() if isinstance(k, bytes) else k
+                                    if k_str == cid:
+                                        score = float(v)
+                                        break
+                            clusters.append({
+                                "cluster_id": cm.get("cluster_id"),
+                                "cluster_uuid": cm.get("cluster_uuid"),
+                                "cluster_name": cm.get("cluster_name"),
+                                "cohesion_score": cm.get("cohesion_score", 0),
+                                "member_count": cm.get("member_count", 0),
+                                "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                                "avg_features": cm.get("avg_features", 0),
+                            })
+                
+                clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+            
+        except Exception as ex:
+            print(f"Error fetching clusters: {ex}")
+            clusters = []
         meta1["clusters"] = clusters
 
     if meta2:
@@ -363,40 +382,55 @@ def diff_api():
             meta2["file_date"] = parse_timestamp(meta2["file_date"])
 
         clusters = []
-        cluster_id = meta2.get("cluster_id")
-        if cluster_id is not None and str(cluster_id).lower() != "noise":
-            try:
-                cluster_meta_raw = r.json().get(
-                    f"{collection2}:cluster:{algo}:{cluster_id}:meta", "$"
-                )
-                if cluster_meta_raw:
-                    cluster_meta = (
-                        cluster_meta_raw[0]
-                        if isinstance(cluster_meta_raw, list)
-                        else cluster_meta_raw
-                    )
-                    if isinstance(cluster_meta, str):
-                        cluster_meta = json.loads(cluster_meta)
-                    if cluster_meta:
-                        clusters.append(
-                            {
-                                "cluster_id": cluster_meta.get(
-                                    "cluster_id", meta2.get("cluster_id")
-                                ),
-                                "cluster_uuid": cluster_meta.get(
-                                    "cluster_uuid", meta2.get("cluster_uuid")
-                                ),
-                                "cluster_name": cluster_meta.get("cluster_name"),
-                                "cohesion_score": cluster_meta.get("cohesion_score", 0),
-                                "member_count": cluster_meta.get("member_count", 0),
-                                "avg_features": cluster_meta.get("avg_features", 0),
-                            }
-                        )
-            except Exception as ex:
-                print(f"Error fetching cluster meta2: {ex}")
+        try:
+            r = get_redis()
+            fid = f"{collection2}:func:{md5_2}:{addr_2}"
+            cluster_ids = r.smembers(f"{fid}:clusters")
+            clusters = []
+            algo = "unweighted_cosine"
+            if cluster_ids:
+                scores = r.hgetall(f"{fid}:cluster_scores") or {}
+                cluster_pipe = r.pipeline()
+                for cid_bytes in cluster_ids:
+                    cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
+                    cluster_pipe.json().get(f"{collection2}:cluster:{algo}:{cid}:meta", "$")
+                
+                raw_cluster_metas = cluster_pipe.execute()
+                
+                for raw_cm in raw_cluster_metas:
+                    if raw_cm:
+                        cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                        if isinstance(cm, str):
+                            import json
+                            cm = json.loads(cm)
+                        if cm:
+                            cid = str(cm.get("cluster_id"))
+                            score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+                            if not score and isinstance(scores, dict):
+                                for k, v in scores.items():
+                                    k_str = k.decode() if isinstance(k, bytes) else k
+                                    if k_str == cid:
+                                        score = float(v)
+                                        break
+                            clusters.append({
+                                "cluster_id": cm.get("cluster_id"),
+                                "cluster_uuid": cm.get("cluster_uuid"),
+                                "cluster_name": cm.get("cluster_name"),
+                                "cohesion_score": cm.get("cohesion_score", 0),
+                                "member_count": cm.get("member_count", 0),
+                                "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                                "avg_features": cm.get("avg_features", 0),
+                            })
+                
+                clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+            
+        except Exception as ex:
+            print(f"Error fetching clusters: {ex}")
+            clusters = []
         meta2["clusters"] = clusters
 
     # Flask's jsonify handles the dictionary to JSON conversion
+
     return jsonify(
         {
             "rows": rows,

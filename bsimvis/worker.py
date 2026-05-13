@@ -252,6 +252,7 @@ class Worker:
             epsilon = payload.get("epsilon", 0.0)
             selection_method = payload.get("selection_method", "eom")
             min_sim = payload.get("min_sim", 0.0)
+            min_features = payload.get("min_features", 0)
 
             return cluster_service.run_clustering(
                 collection,
@@ -259,8 +260,9 @@ class Worker:
                 min_cluster_size=min_cluster_size,
                 min_samples=min_samples,
                 cluster_selection_epsilon=epsilon,
-                cluster_selection_method=selection_method,
-                similarity_threshold=min_sim,
+                selection_method=selection_method,
+                min_sim=min_sim,
+                min_features=min_features,
                 job_service=self.job_service,
                 job_id=job_id,
             )

@@ -835,3 +835,51 @@ body {
     height: 8px;
     border-radius: 50%;
 }
+
+
+/* Cluster Cards */
+.cluster-cards-container {
+    display: inline-flex;
+    align-items: center;
+    position: relative;
+}
+
+.cluster-card {
+    display: inline-flex;
+    align-items: center;
+}
+
+.cluster-card.cluster-hidden {
+    display: none !important;
+}
+
+.cluster-overflow-box {
+    display: none;
+    position: absolute;
+    top: 110%;
+    left: 0;
+    background: rgba(20, 20, 20, 0.95);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 10px;
+    z-index: 10000;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    flex-direction: column;
+    min-width: 180px;
+    gap: 4px;
+    animation: clusterFadeInScale 0.2s ease-out;
+}
+
+@keyframes clusterFadeInScale {
+    from { opacity: 0; transform: scale(0.95) translateY(-5px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.cluster-cards-container:hover .cluster-overflow-box {
+    display: flex;
+}
+
+.cluster-cards-container:hover .cluster-card-more {
+    opacity: 0.5;
+}

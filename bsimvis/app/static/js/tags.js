@@ -156,21 +156,19 @@ const renderClusterCards = (clusters) => {
     
     // Sort clusters by cohesion score descending
     const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
-    const toShow = sorted.slice(0, 3);
-    const hasMore = sorted.length > 3;
-
-    const cardsHtml = toShow.map(c => {
+    const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;
         const score = (c.cohesion_score || 0).toFixed(2);
         const uuid = c.cluster_uuid;
-        // Map cohesion score to color (red to green)
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
         const color = `hsl(${hue}, 100%, 65%)`;
         
+        const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
+        
         return `
-        <span class="tag-card cluster-card" title="Cluster: ${name}\nUUID: ${uuid}\nCohesion: ${score}\nMembers: ${c.member_count || 0}" 
+        <span class="${cardClass}" title="Cluster: ${name}\nUUID: ${uuid}\nCohesion: ${score}\nMembers: ${c.member_count || 0}" 
               onclick="applyClusterFilter('${uuid}')"
-              style="border-color:${color}44; color:${color}; background:${color}11; display:inline-flex; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
+              style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
                  stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
@@ -179,16 +177,24 @@ const renderClusterCards = (clusters) => {
             <span style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
             <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${score}</span>
         </span>`;
-    }).join('');
+    };
 
+    const hasMore = sorted.length > 1;
     const moreHtml = hasMore ? `
-        <span class="analysis-tag-badge cluster-card-more" title="${sorted.slice(3).map(c => c.cluster_name || c.cluster_id).join(', ')}"
-              style="cursor:help;">
-            +${sorted.length - 3} more
+        <span class="analysis-tag-badge cluster-card-more" 
+              style="cursor:help; margin:2px; font-size:0.65rem; padding: 2px 6px;">
+            +${sorted.length - 1}
         </span>` : '';
 
-    return `<div class="cluster-cards-container" style="display:inline-flex; align-items:center; flex-wrap:wrap;">
-        ${cardsHtml}${moreHtml}
+    const othersHtml = sorted.slice(1).map(c => renderCard(c, false)).join('');
+    const overflowBox = hasMore ? `
+        <div class="cluster-overflow-box">
+            <div style="font-size:0.6rem; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Other Clusters</div>
+            ${othersHtml}
+        </div>` : '';
+
+    return `<div class="cluster-cards-container" style="position:relative; display:inline-flex; align-items:center;">
+        ${renderCard(sorted[0])}${moreHtml}${overflowBox}
     </div>`;
 };
 

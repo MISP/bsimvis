@@ -100,8 +100,21 @@ class JobService:
         return pipeline_id
 
     def enqueue_job(self, job_id):
-        """Pushes a job ID onto the pending queue."""
-        self.r.lpush("jobs:pending", job_id)
+        """Pushes a job ID onto the appropriate priority queue."""
+        job = self.r.hgetall(f"job:{job_id}")
+        jtype = job.get("type") if job else None
+
+        high_priority_types = [
+            JobType.CLEAR_SIM.value,
+            JobType.CLEAR_FEATURES.value,
+            JobType.CLEAR_CLUSTER.value,
+            JobType.SYNC_MILVUS.value,
+        ]
+
+        if jtype in high_priority_types:
+            self.r.lpush("jobs:pending:high", job_id)
+        else:
+            self.r.lpush("jobs:pending", job_id)
 
     def get_job_status(self, job_id):
         """Returns the full job or pipeline status."""
@@ -235,7 +248,9 @@ class JobService:
     def get_global_stats(self):
         """Returns aggregate stats across all active and pending jobs."""
         processing_ids = self.r.lrange("jobs:processing", 0, -1)
-        pending_count = self.r.llen("jobs:pending")
+        pending_count = self.r.llen("jobs:pending") + self.r.llen(
+            "jobs:pending:high"
+        )
 
         total_speed = 0.0
         active_jobs_count = 0

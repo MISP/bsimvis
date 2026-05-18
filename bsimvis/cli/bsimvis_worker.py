@@ -6,7 +6,7 @@ import os
 import json
 from dotenv import load_dotenv
 from bsimvis.app.services.redis_client import get_queue_redis
-from bsimvis.app.services.job_service import JobStatus
+from bsimvis.app.services.job_service import JobStatus, JobType
 
 # Load environment variables
 load_dotenv()
@@ -43,10 +43,22 @@ def rescue_jobs():
         log_entry = f"[{timestamp}] Job rescued from stale worker processing queue and returned to pending."
         r.lpush(f"job_log:{job_id}", log_entry)
 
-        # 3. Move back to pending queue
+        # 3. Move back to appropriate pending queue
+        job = r.hgetall(f"job:{job_id}")
+        jtype = job.get("type") if job else None
+        high_priority_types = [
+            JobType.CLEAR_SIM.value,
+            JobType.CLEAR_FEATURES.value,
+            JobType.CLEAR_CLUSTER.value,
+            JobType.SYNC_MILVUS.value,
+        ]
+        target_queue = (
+            "jobs:pending:high" if jtype in high_priority_types else "jobs:pending"
+        )
+
         # Use a transaction or pipeline for atomicity
         pipe = r.pipeline()
-        pipe.lpush("jobs:pending", job_id)
+        pipe.lpush(target_queue, job_id)
         pipe.lrem("jobs:processing", 1, job_id)
         pipe.execute()
 

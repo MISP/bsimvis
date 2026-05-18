@@ -49,12 +49,17 @@ class Worker:
 
         while self.running:
             try:
-                # Reliable Queue Pattern: BLMOVE from pending to processing
-                # BLMOVE <source> <destination> <LEFT|RIGHT> <LEFT|RIGHT> <timeout>
-                # We move from the right of pending to the left of processing (FIFO)
+                # Reliable Priority Queue Pattern
+                # 1. First check High-Priority Queue (Non-blocking)
                 job_id = self.r_queue.execute_command(
-                    "BLMOVE", "jobs:pending", "jobs:processing", "RIGHT", "LEFT", 2
+                    "LMOVE", "jobs:pending:high", "jobs:processing", "RIGHT", "LEFT"
                 )
+
+                # 2. If empty, fall back to Default Queue (Blocking for 2s)
+                if not job_id:
+                    job_id = self.r_queue.execute_command(
+                        "BLMOVE", "jobs:pending", "jobs:processing", "RIGHT", "LEFT", 2
+                    )
 
                 if not job_id:
                     continue

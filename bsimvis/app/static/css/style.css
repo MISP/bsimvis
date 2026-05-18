@@ -883,3 +883,80 @@ body {
 .cluster-cards-container:hover .cluster-card-more {
     opacity: 0.5;
 }
+
+/* Dendrogram Tooltip Enhancements */
+.hier-tooltip-container {
+    display: flex;
+    gap: 0;
+    min-height: 400px;
+    max-height: 600px;
+}
+
+.hier-left-col {
+    width: 350px;
+    display: flex;
+    flex-direction: column;
+    padding-right: 15px;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.hier-right-col {
+    width: 500px;
+    padding-left: 15px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.hier-function-list {
+    margin-top: 10px;
+    height: 150px; /* 5 items * 30px */
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+}
+
+.hier-function-item {
+    height: 30px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    color: #aaa;
+    white-space: nowrap;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.hier-function-item.selected {
+    background: rgba(102, 217, 239, 0.15);
+    color: var(--accent);
+    border-left: 3px solid var(--accent);
+    padding-left: 7px; /* Adjusted for border */
+}
+
+.hier-code-snippet {
+    flex: 1;
+    font-size: 0.7rem;
+    overflow: hidden;
+    background: #0d0f14;
+    border-radius: 4px;
+}
+
+.hier-code-snippet .c-code-container {
+    padding: 10px;
+    background: transparent;
+}
+
+.hier-code-snippet .code-line {
+    height: 18px;
+    line-height: 18px;
+}
+
+.hier-code-snippet .gutter {
+    min-width: 30px;
+}

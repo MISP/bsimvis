@@ -308,6 +308,8 @@ def get_cluster_dendrogram():
         cohesion_max = float(request.args.get("cohesion_max", 0.0))
         features_min = float(request.args.get("min_features", 0.0))
         features_max = float(request.args.get("max_features", 0.0))
+        stability_threshold = float(request.args.get("stability_threshold", 0.0))
+        show_parents = request.args.get("show_parents", "true").lower() == "true"
     except ValueError:
         return jsonify({"error": "Invalid numeric parameter"}), 400
 
@@ -355,6 +357,9 @@ def get_cluster_dendrogram():
         if feat < features_min: continue
         if features_max > 0 and feat > features_max: continue
 
+        stab = m.get("avg_stability", 0.0)
+        if stab < stability_threshold: continue
+
         valid_nodes.add(cid)
     
     # If a node is valid, all its ancestors must be in the response to form a tree
@@ -362,11 +367,12 @@ def get_cluster_dendrogram():
     child_to_parent = {l["child"]: l["parent"] for l in links}
     
     expanded_nodes = set(valid_nodes)
-    for node in valid_nodes:
-        curr = node
-        while curr in child_to_parent:
-            curr = child_to_parent[curr]
-            expanded_nodes.add(curr)
+    if show_parents:
+        for node in valid_nodes:
+            curr = node
+            while curr in child_to_parent:
+                curr = child_to_parent[curr]
+                expanded_nodes.add(curr)
     
     # 4. Construct response nodes
     nodes = []

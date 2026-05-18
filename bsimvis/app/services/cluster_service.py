@@ -404,14 +404,19 @@ class ClusterService:
             default_name = Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
             avg_features = np.mean(feature_counts) if feature_counts else 0
             
-            # Cohesion Score based on Birth Lambda (Threshold at which cluster forms)
-            # Higher lambda means higher density/similarity.
-            # sim = 1 - 1/lambda
-            b_lambda = birth_lambdas.get(label, 0.0)
-            cohesion_score = 1.0 - (1.0 / b_lambda) if b_lambda > 1.0 else 0.0
-            
-            # Cap cohesion score at 1.0 and ensure it's not negative
-            cohesion_score = max(0.0, min(1.0, cohesion_score))
+            # Exact Average Internal Similarity (Cohesion)
+            if len(members) > 1:
+                member_indices = [id_to_idx[fid] for fid in members]
+                sub_matrix = dist_matrix[np.ix_(member_indices, member_indices)]
+                
+                n_members = len(members)
+                total_dist = np.sum(sub_matrix)
+                # Exclude the diagonal (distance to self is 0)
+                avg_dist = float(total_dist) / (n_members * (n_members - 1))
+                
+                cohesion_score = max(0.0, min(1.0, 1.0 - avg_dist))
+            else:
+                cohesion_score = 1.0
 
             # Find representative function name/snippet
             rep_fid = members[0] if members else None

@@ -3099,7 +3099,7 @@
                     <td>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
-                                <div style="height:100%; background:var(--success); width:${(c.avg_stability * 100).toFixed(0)}%"></div>
+                                <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                             </div>
                             <span class="dim">${(c.avg_stability).toFixed(2)}</span>
                         </div>
@@ -3202,7 +3202,9 @@
                 this.zoom = null;
                 this.params = {
                     min_cluster_size: 5,
-                    stability_threshold: 0.0
+                    stability_threshold: 0.0,
+                    show_parents: true,
+                    path_compression: true
                 };
                 this.abortController = null;
             }
@@ -3269,6 +3271,32 @@
                             </div>
                         </div>
 
+                        <!-- Stability Range -->
+                        <div style="margin-bottom:20px;">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                                <label style="font-size:0.75rem; color:#aaa;">Stability</label>
+                                <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
+                                    <span id="val-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
+                                </span>
+                            </div>
+                            <div class="range-slider-container">
+                                <div id="stab-track" class="slider-track" style="width:100%; left:0%;"></div>
+                                <input type="range" id="input-stab-min" min="0" max="100" step="1" value="${this.params.stability_threshold || 0}" style="z-index: 3;">
+                            </div>
+                        </div>
+
+                        <!-- Checkboxes -->
+                        <div style="margin-bottom:20px; display:flex; flex-direction:column; gap:8px;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="input-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                                <label for="input-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                                <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                            </div>
+                        </div>
+
                         <button id="hier-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
                     </div>
 
@@ -3283,7 +3311,7 @@
                         </div>
                     </div>
 
-                    <div id="hierarchy-tooltip" style="position:fixed; z-index:1000; background:rgba(13,15,20,0.95); padding:12px; border-radius:6px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 10px 30px rgba(0,0,0,0.8); max-width:320px; backdrop-filter:blur(10px);"></div>
+                    <div id="hierarchy-tooltip" style="position:fixed; z-index:1000; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;"></div>
                     
                     <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
                         <div style="text-align:center;">
@@ -3302,6 +3330,8 @@
                 this.params.cohesion_max = this.params.cohesion_max || 0;
                 this.params.min_features = this.params.min_features || 0;
                 this.params.max_features = this.params.max_features || 0;
+                if (this.params.show_parents === undefined) this.params.show_parents = true;
+                if (this.params.path_compression === undefined) this.params.path_compression = true;
 
                 const updateTrack = (idPrefix, minVal, maxVal, minLimit, maxLimit) => {
                     const minPercent = ((minVal - minLimit) / (maxLimit - minLimit)) * 100;
@@ -3359,6 +3389,26 @@
                 fMax.oninput = fUpdate;
                 updateTrack('feat', this.params.min_features, this.params.max_features || 1000, 0, 1000);
 
+                // Stability
+                const stMin = document.getElementById('input-stab-min');
+                const stUpdate = () => {
+                    this.params.stability_threshold = parseFloat(stMin.value);
+                    document.getElementById('val-stab-min').innerText = this.params.stability_threshold.toFixed(1) + '+';
+                    updateTrack('stab', this.params.stability_threshold, 100, 0, 100);
+                };
+                stMin.oninput = stUpdate;
+                updateTrack('stab', this.params.stability_threshold, 100, 0, 100);
+
+                const spCheck = document.getElementById('input-show-parents');
+                spCheck.onchange = () => {
+                    this.params.show_parents = spCheck.checked;
+                };
+
+                const pcCheck = document.getElementById('input-path-compression');
+                pcCheck.onchange = () => {
+                    this.params.path_compression = pcCheck.checked;
+                };
+
                 document.getElementById('hier-refresh-btn').onclick = () => this.fetch(params);
 
                 try {
@@ -3368,7 +3418,9 @@
                                `&cohesion_min=${this.params.cohesion_min}` +
                                `&cohesion_max=${this.params.cohesion_max}` +
                                `&min_features=${this.params.min_features}` +
-                               `&max_features=${this.params.max_features}`;
+                               `&max_features=${this.params.max_features}` +
+                               `&stability_threshold=${this.params.stability_threshold}` +
+                               `&show_parents=${this.params.show_parents}`;
                     const res = await fetch(url, { signal });
                     if (!res.ok) throw new Error("Dendrogram not found");
                     const data = await res.json();
@@ -3394,35 +3446,37 @@
 
                 // PATH COMPRESSION: Remove internal nodes with only one child cluster
                 // This solves the "ladder" effect where a cluster peels off one-by-one
-                let compressedNodes = JSON.parse(JSON.stringify(nodes)); // Deep clone
-                let changed = true;
-                while (changed) {
-                    changed = false;
-                    const childCounts = {};
-                    compressedNodes.forEach(n => {
-                        if (n.parent) {
-                            childCounts[n.parent] = (childCounts[n.parent] || 0) + 1;
-                        }
-                    });
+                if (this.params.path_compression !== false) {
+                    let compressedNodes = JSON.parse(JSON.stringify(nodes)); // Deep clone
+                    let changed = true;
+                    while (changed) {
+                        changed = false;
+                        const childCounts = {};
+                        compressedNodes.forEach(n => {
+                            if (n.parent) {
+                                childCounts[n.parent] = (childCounts[n.parent] || 0) + 1;
+                            }
+                        });
 
-                    for (let i = 0; i < compressedNodes.length; i++) {
-                        const node = compressedNodes[i];
-                        const count = childCounts[node.id] || 0;
-                        
-                        // We only compress internal nodes that have exactly one child
-                        // We don't compress roots (parent === null) or leaves (count === 0)
-                        if (count === 1 && node.parent !== null) {
-                            const child = compressedNodes.find(n => n.parent === node.id);
-                            if (child) {
-                                child.parent = node.parent;
-                                compressedNodes.splice(i, 1);
-                                changed = true;
-                                break; // Restart loop to refresh childCounts
+                        for (let i = 0; i < compressedNodes.length; i++) {
+                            const node = compressedNodes[i];
+                            const count = childCounts[node.id] || 0;
+                            
+                            // We only compress internal nodes that have exactly one child
+                            // We don't compress roots (parent === null) or leaves (count === 0)
+                            if (count === 1 && node.parent !== null) {
+                                const child = compressedNodes.find(n => n.parent === node.id);
+                                if (child) {
+                                    child.parent = node.parent;
+                                    compressedNodes.splice(i, 1);
+                                    changed = true;
+                                    break; // Restart loop to refresh childCounts
+                                }
                             }
                         }
                     }
+                    nodes = compressedNodes;
                 }
-                nodes = compressedNodes;
                 
                 const width = this.container.clientWidth;
                 const height = this.container.offsetHeight || 700;
@@ -3449,6 +3503,13 @@
                 const stratify = d3.stratify()
                     .id(d => d.id)
                     .parentId(d => d.parent);
+
+                // Ensure any node whose parent is not in nodes has its parent set to null
+                nodes.forEach(n => {
+                    if (n.parent && !nodes.find(p => p.id === n.parent)) {
+                        n.parent = null;
+                    }
+                });
 
                 const rootNodes = nodes.filter(n => !n.parent || !nodes.find(p => p.id === n.parent));
                 
@@ -3510,15 +3571,11 @@
                     .attr("transform", d => `translate(${source.y},${source.x})`)
                     .style("cursor", "pointer")
                     .on("click", (event, d) => {
-                        if (d.children) {
-                            d._children = d.children;
-                            d.children = null;
-                        } else if (d._children) {
-                            d.children = d._children;
-                            d._children = null;
+                        const col = document.getElementById('side-collection-select').value;
+                        const uuid = d.data.uuid;
+                        if (uuid && uuid !== 'root') {
+                            window.location.hash = '#functions?collection=' + col + '&cluster_uuid=' + uuid;
                         }
-                        self.showInfo(d);
-                        self.update(d);
                     })
                     .on("mouseover", (e, d) => {
                         d3.select(e.currentTarget).select("circle").attr("r", 14);
@@ -3696,12 +3753,30 @@
                 tooltip.style.left = (event.clientX + 20) + 'px';
                 tooltip.style.top = (event.clientY + 20) + 'px';
 
+                // SNAPPY SCROLL Logic
+                if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
+                
+                const nodeEl = event.currentTarget;
+                if (!nodeEl._hasWheelListener) {
+                    nodeEl._hasWheelListener = true;
+                    nodeEl.addEventListener('wheel', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const delta = Math.sign(e.deltaY);
+                        const members = d.data.runtime_members || [];
+                        if (members.length === 0) return;
+                        
+                        d.data.scrollOffset = Math.max(0, Math.min(members.length - 1, d.data.scrollOffset + delta));
+                        this.renderTooltip(tooltip, d);
+                    }, { passive: false });
+                }
+
                 this.renderTooltip(tooltip, d);
 
                 if (!d.data.runtime_members && d.data.uuid) {
                     try {
                         const col = document.getElementById('side-collection-select').value;
-                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
+                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
                         const data = await res.json();
                         d.data.runtime_members = data.functions;
                         this.renderTooltip(tooltip, d);
@@ -3712,42 +3787,114 @@
             }
 
             renderTooltip(tooltip, d) {
-                const members = d.data.runtime_members || (d.data.snippet ? [d.data.snippet] : []);
+                const members = d.data.runtime_members || [];
                 const isLoading = !d.data.runtime_members;
+                const scrollOffset = d.data.scrollOffset || 0;
+                const selectedFunc = members[scrollOffset];
 
                 tooltip.innerHTML = `
-                    <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                    <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace;">${d.data.uuid}</div>
-                    
-                    <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                            <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
-                            <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
-                            <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
-                            <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
-                        </div>
-                    </div>
+                    <div class="hier-tooltip-container">
+                        <div class="hier-left-col" style="padding: 12px;">
+                            <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
+                            <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                            
+                            <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
+                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
+                                    <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                                </div>
+                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
+                                    <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
+                                </div>
+                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
+                                    <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
+                                </div>
+                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
+                                    <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
+                                </div>
+                            </div>
 
-                    <div style="border-top:1px solid #333; padding-top:10px;">
-                        <div style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-                            ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : 'Sample Members (Live):'}
+                            <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                                <div style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                                    ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
+                                </div>
+                                <div class="hier-function-list">
+                                    <div style="transform: translateY(-${scrollOffset * 30}px); transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
+                                        ${members.map((m, i) => `
+                                            <div class="hier-function-item ${i === scrollOffset ? 'selected' : ''}">
+                                                ${m.function_name}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                                ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                            </div>
                         </div>
-                        <div style="color:#eee; font-family:monospace; font-size:0.75rem; line-height:1.2;">
-                            ${members.map(m => this.formatFunctionInline(m)).join('')}
-                            ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem; padding-left:35px;">... and ${d.data.size - members.length} more</div>` : ''}
+                        <div class="hier-right-col" id="hier-snippet-container">
+                            <div style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                                ${selectedFunc ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a function to preview'}
+                            </div>
                         </div>
                     </div>
                 `;
+
+                if (selectedFunc) {
+                    this.updateSnippet(selectedFunc);
+                }
+            }
+
+            async updateSnippet(func) {
+                const container = document.getElementById('hier-snippet-container');
+                if (!container) return;
+                
+                const funcId = func.function_id;
+                
+                if (window.previewCache && window.previewCache.has(funcId)) {
+                    this.renderSnippet(window.previewCache.get(funcId), func, container);
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`/api/function/code?id=${encodeURIComponent(funcId)}`);
+                    if (!res.ok) throw new Error("Failed");
+                    const data = await res.json();
+                    if (window.previewCache) window.previewCache.set(funcId, data);
+                    this.renderSnippet(data, func, container);
+                } catch (e) {
+                    container.innerHTML = `<div style="padding: 20px; color: #ff5555; text-align: center;">Preview Error</div>`;
+                }
+            }
+
+            renderSnippet(data, func, container) {
+                const rows = data.rows.slice(0, 20);
+                const m = data.meta || {};
+                
+                let html = `
+                    <div class="hier-code-snippet">
+                        <div style="padding: 10px 15px; border-bottom: 1px solid #222; background: rgba(0,0,0,0.3);">
+                            <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
+                            </div>
+                            <div style="font-size: 0.6rem; color: #555; font-family: monospace; margin-top: 2px;">
+                                Addr: ${func.entrypoint_address} | Feat: ${func.bsim_features_count}
+                            </div>
+                        </div>
+                        <div class="c-code-container">`;
+                
+                rows.forEach(row => {
+                    let lineHtml = '';
+                    row.tokens.forEach(t => {
+                        const featClass = t.has_features ? 'feature-highlight' : '';
+                        lineHtml += `<span class="token token-${t.type} ${featClass}">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                    });
+                    html += `<div class="code-line"><div class="gutter"><div class="line-num" style="font-size: 0.6rem;">${row.line_idx}</div></div><div class="line-content">${lineHtml}</div></div>`;
+                });
+                
+                html += `</div></div>`;
+                container.innerHTML = html;
             }
 
             hideTooltip() {
@@ -3853,6 +4000,7 @@
             const token = e.target.closest('.feature-highlight');
             if (!token) return;
             e.preventDefault();
+                        e.stopPropagation();
 
             const hashesStr = token.dataset.hashes;
             if (!hashesStr) return;
@@ -3942,6 +4090,7 @@
             if (linkIndices.length === 0 && nodeIndices.length === 0) return;
 
             e.preventDefault();
+                        e.stopPropagation();
             e.stopPropagation();
 
             // Hide tooltips to avoid overlap

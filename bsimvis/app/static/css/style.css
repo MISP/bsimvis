@@ -300,6 +300,20 @@ body {
     color: #66d9ef;
 }
 
+.func-call-clickable {
+    cursor: pointer !important;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+}
+
+.func-call-clickable:hover {
+    background: rgba(102, 217, 239, 0.2) !important;
+    color: #66d9ef !important;
+    text-decoration: underline;
+    text-decoration-style: solid;
+}
+
 .token-type {
     color: #ae81ff;
 }

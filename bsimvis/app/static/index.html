@@ -5305,6 +5305,28 @@
         }
         document.addEventListener('mousemove', moveCodePreview);
 
+        window.showCodePreviewFromIframe = function(iframeId, id, name, e) {
+            const iframe = document.getElementById(iframeId);
+            if (!iframe) return;
+            const rect = iframe.getBoundingClientRect();
+            const fakeEvent = {
+                clientX: e.clientX + rect.left,
+                clientY: e.clientY + rect.top
+            };
+            showCodePreview(id, name, null, null, null, fakeEvent);
+        };
+
+        window.moveCodePreviewFromIframe = function(iframeId, e) {
+            const iframe = document.getElementById(iframeId);
+            if (!iframe) return;
+            const rect = iframe.getBoundingClientRect();
+            const fakeEvent = {
+                clientX: e.clientX + rect.left,
+                clientY: e.clientY + rect.top
+            };
+            moveCodePreview(fakeEvent);
+        };
+
         function hideCodePreview(e) {
             if (previewTimer) clearTimeout(previewTimer);
             if (e && e.relatedTarget && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
@@ -5381,14 +5403,19 @@
             const paramsStr = parameters.length > 0 ? `(${parameters.join(', ')})` : '()';
             const retType = m.return_type || '';
 
+            const displayAddr = addr || m.entrypoint_address || '---';
+            const displayBin = file_name || bin || m.file_name || '---';
+            const displayFeat = v_size || m.bsim_features_count || 0;
+            const displayName = name || m.function_name || 'Function';
+
             const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
 
             let html = `
                 <div class="preview-card" style="max-height: 450px; display: flex; flex-direction: column;">
                     <div style="flex-shrink: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 8px; margin-bottom: 8px;">
-                        <div class="preview-header" style="border: none; margin-bottom: 4px; padding: 0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${name || 'Function'}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
+                        <div class="preview-header" style="border: none; margin-bottom: 4px; padding: 0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${displayName}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">(</span></div>
                         <div style="font-size:0.65rem; color:var(--accent); font-family:monospace; padding:0 8px;">
-                            Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
+                            Addr: ${displayAddr} | Bin: ${displayBin} | Feat: ${displayFeat}
                         </div>
                     </div>
                     <div class="c-code-container code-preview-scroll" style="border:none; margin:0; padding:0; background:transparent; overflow-y:auto; overflow-x:auto; flex: 1; min-height: 0;">`;

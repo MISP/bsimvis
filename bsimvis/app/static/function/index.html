@@ -269,9 +269,38 @@
                         tooltipEl.style.top = (e.clientY + 15) + "px";
                     }
                 });
+                function navigateToFunction(funcId, isExternal, e) {
+                    if (isExternal) return;  // no navigation for external functions
+                    const url = `/function/index.html?id=${encodeURIComponent(funcId)}`;
+                    if (e && (e.ctrlKey || e.metaKey)) {
+                        window.open(url, '_blank');
+                        return;
+                    }
+                    if (window.parent && window.parent !== window && typeof window.parent.showFunctionCodeById === 'function') {
+                        const name = funcId.split(':').pop();
+                        window.parent.showFunctionCodeById(funcId, name);
+                    } else {
+                        window.location.href = url;
+                    }
+                }
+
                 scrollEl.addEventListener('click', e => {
                     const token = findToken(e);
-                    if (token) toggleLock(token.getAttribute('data-hashes'), token);
+                    if (token) {
+                        const calledFuncId = token.getAttribute('data-called-func-id');
+                        if (calledFuncId) {
+                            const isExternal = token.getAttribute('data-is-external') === 'true';
+                            navigateToFunction(calledFuncId, isExternal, e);
+                            return;
+                        }
+                        toggleLock(token.getAttribute('data-hashes'), token);
+                    }
+                });
+
+                scrollEl.addEventListener('pointermove', e => {
+                    if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
+                        window.parent.moveCodePreviewFromIframe('code-frame', e);
+                    }
                 });
 
                 scrollToLine();
@@ -412,8 +441,11 @@
                     const hashes = t.hash_list.join(' ');
                     const featClasses = t.hash_list.map(h => `feat-${h}`).join(' ');
 
-                    content += `<span class="token token-${t.type} ${t.diff_class} ${t.has_features ? 'feature-highlight' : ''} ${featClasses}" ` +
-                        `data-idx="${t.global_idx}" data-hashes="${hashes}">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                    const calledAttr = t.called_func_id ? `data-called-func-id="${t.called_func_id}" data-is-external="${t.is_external}" data-target-name="${t.target_name || ''}"` : '';
+                    const clickClass = t.called_func_id ? (t.is_external ? 'func-call-external' : 'func-call-clickable') : '';
+
+                    content += `<span class="token token-${t.type} ${t.diff_class} ${t.has_features ? 'feature-highlight' : ''} ${clickClass} ${featClasses}" ` +
+                        `data-idx="${t.global_idx}" data-hashes="${hashes}" ${calledAttr}>${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
                 }
                 html += `<div class="code-line ${isTarget ? 'target-highlight' : ''}">
                     <div class="gutter"><div class="line-num">${row.line_idx}</div></div>
@@ -439,21 +471,50 @@
             const hashes = token.getAttribute('data-hashes');
             if (hashes) setHighlight(hashes, state, token);
 
+            const calledFuncId = token.getAttribute('data-called-func-id');
+            const isExternal = token.getAttribute('data-is-external') === 'true';
+
             if (state) {
-                const idx = token.getAttribute('data-idx');
-                const data = funcTips[idx];
-                if (data) {
-                    let h = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<hr>`;
-                    for (const f of data[2]) {
-                        h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Type: ${f[3]}<br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
-                    }
-                    tooltipEl.innerHTML = h;
+                if (calledFuncId && isExternal) {
+                    // External function: show badge tooltip
+                    const extName = token.getAttribute('data-target-name') || calledFuncId.replace('ext:', '');
+                    tooltipEl.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">
+                        <span style="background:rgba(253,151,31,0.2);color:#fd971f;border:1px solid rgba(253,151,31,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                        <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
+                    </div>`;
                     tooltipEl.style.display = 'block';
-                    tooltipEl.style.left = (e.clientX + 15) + "px";
-                    tooltipEl.style.top = (e.clientY + 15) + "px";
+                    tooltipEl.style.left = (e.clientX + 15) + 'px';
+                    tooltipEl.style.top = (e.clientY + 15) + 'px';
+                } else if (calledFuncId && !isExternal) {
+                    // Internal function: delegate to parent dashboard preview
+                    tooltipEl.style.display = 'none';
+                    const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
+                    if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
+                        window.parent.showCodePreviewFromIframe('code-frame', calledFuncId, targetName, e);
+                    }
+                } else {
+                    // Feature tooltip
+                    const idx = token.getAttribute('data-idx');
+                    const data = funcTips[idx];
+                    if (data) {
+                        let h = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<hr>`;
+                        for (const f of data[2]) {
+                            h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Type: ${f[3]}<br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
+                        }
+                        tooltipEl.innerHTML = h;
+                        tooltipEl.style.display = 'block';
+                        tooltipEl.style.left = (e.clientX + 15) + 'px';
+                        tooltipEl.style.top = (e.clientY + 15) + 'px';
+                    }
                 }
             } else {
                 tooltipEl.style.display = 'none';
+                // Hide parent preview if it was shown for an internal func_call
+                if (calledFuncId && !isExternal) {
+                    if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
+                        window.parent.hideCodePreview();
+                    }
+                }
             }
         }
 

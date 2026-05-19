@@ -167,6 +167,34 @@ class ProcessingService:
             vec_raw = func_features.get("bsim_features_raw", [])
             pipe.json().set(f"{base_func_key}:vec:raw", "$", vec_raw)
 
+            # --- Store Call Graph Sets ---
+            callees_key = f"{base_func_key}:callees"
+            callers_key = f"{base_func_key}:callers"
+            pipe.delete(callees_key)
+            pipe.delete(callers_key)
+
+            callees = func_meta.get("callees", [])
+            for callee in callees:
+                callee_entry = callee.get("entrypoint")
+                callee_name = callee.get("name")
+                is_ext = callee.get("is_external", False)
+                if is_ext or not callee_entry:
+                    callee_id = f"ext:{callee_name}"
+                else:
+                    callee_id = f"{collection}:func:{file_md5}:{callee_entry}"
+                pipe.sadd(callees_key, callee_id)
+
+            callers = func_meta.get("callers", [])
+            for caller in callers:
+                caller_entry = caller.get("entrypoint")
+                caller_name = caller.get("name")
+                is_ext = caller.get("is_external", False)
+                if is_ext or not caller_entry:
+                    caller_id = f"ext:{caller_name}"
+                else:
+                    caller_id = f"{collection}:func:{file_md5}:{caller_entry}"
+                pipe.sadd(callers_key, caller_id)
+
             # Add to batch-to-functions mapping SET (using base key)
             if batch_uuid:
                 pipe.sadd(f"{collection}:batch:{batch_uuid}:functions", base_func_key)

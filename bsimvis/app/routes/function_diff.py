@@ -42,11 +42,18 @@ def get_lines_data(source, f_map, common_hashes):
 
 
 def render_line_content(
-    line_tokens, common_hashes, feature_map, tf_map, side="l", side_tips=None
+    line_tokens, common_hashes, feature_map, tf_map, side="l", side_tips=None, collection=None, md5=None, meta=None
 ):
     tokens_json = []
     if side_tips is None:
         side_tips = {}
+
+    callees_map = {}
+    if meta and "callees" in meta:
+        for callee in meta["callees"]:
+            name = callee.get("name")
+            if name:
+                callees_map[name] = callee
 
     for global_idx, token in line_tokens:
         token_features = feature_map.get(global_idx, [])
@@ -75,6 +82,24 @@ def render_line_content(
                 )
             side_tips[global_idx] = [token.get("type"), token.get("seq"), tip_features]
 
+        called_func_id = None
+        target_name = token.get("target_name")
+        is_external = token.get("is_external", False)
+
+        if token.get("type") == "func_call":
+            target_addr = token.get("target_addr")
+            if not target_addr and token.get("t") in callees_map:
+                callee = callees_map[token.get("t")]
+                target_addr = callee.get("entrypoint")
+                target_name = callee.get("name")
+                is_external = callee.get("is_external", False)
+
+            if collection and md5:
+                if is_external:
+                    called_func_id = f"ext:{target_name or token.get('t', '')}"
+                elif target_addr:
+                    called_func_id = f"{collection}:func:{md5}:{target_addr}"
+
         tokens_json.append(
             {
                 "type": token.get("type"),
@@ -84,13 +109,16 @@ def render_line_content(
                 "global_idx": global_idx,
                 "text": token["t"],
                 "side": side,
+                "called_func_id": called_func_id,
+                "target_name": target_name,
+                "is_external": is_external,
             }
         )
 
     return tokens_json
 
 
-def render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2):
+def render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2, collection1=None, md5_1=None, collection2=None, md5_2=None, meta1=None, meta2=None):
     f_map1 = get_feature_map(f1)
     f_map2 = get_feature_map(f2)
 
@@ -125,8 +153,11 @@ def render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2):
         addr = addr_map.get(str(line_idx), [""])[0] if addr_map else ""
 
         line_tokens = lines_dict.get(line_idx, [])
+        coll = collection1 if side == "l" else collection2
+        m = md5_1 if side == "l" else md5_2
+        meta = meta1 if side == "l" else meta2
         tokens_json = render_line_content(
-            line_tokens, common_hashes, f_map, tf_map, side, side_tips
+            line_tokens, common_hashes, f_map, tf_map, side, side_tips, coll, m, meta
         )
 
         tooltip_text = (
@@ -303,7 +334,7 @@ def diff_api():
 
     # Reusing your alignment logic
     rows, left_tips, right_tips = render_aligned_diff(
-        s1, f1, s2, f2, common_hashes, tf1, tf2
+        s1, f1, s2, f2, common_hashes, tf1, tf2, collection1, md5_1, collection2, md5_2, meta1, meta2
     )
 
     algo = "unweighted_cosine"

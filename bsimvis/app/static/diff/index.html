@@ -302,6 +302,20 @@
         window.lockedHashes = new Set();
         let tooltipEl = null;
 
+        function navigateToFunction(funcId, e) {
+            const url = `/function/index.html?id=${encodeURIComponent(funcId)}`;
+            if (e && (e.ctrlKey || e.metaKey)) {
+                window.open(url, '_blank');
+                return;
+            }
+            if (window.parent && window.parent !== window && typeof window.parent.showFunctionCodeById === 'function') {
+                const name = funcId.split(':').pop();
+                window.parent.showFunctionCodeById(funcId, name);
+            } else {
+                window.location.href = url;
+            }
+        }
+
         // Data Globals
         window.bsimRows = [];
         window.tokenTipsL = {};
@@ -561,10 +575,14 @@
                 const feat_classes = token.hash_list.map(h => `feat-${h}`).join(' ');
                 const t_text = token.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+                const calledAttr = token.called_func_id ? `data-called-func-id="${token.called_func_id}"` : '';
+                const clickClass = token.called_func_id ? 'func-call-clickable' : '';
+                const titleAttr = token.called_func_id ? `title="Click to navigate to ${token.target_name || 'called function'}"` : '';
+
                 content += `<span class="token token-${token.type} ` +
                     `${token.has_features ? "feature-highlight" : ""} ` +
-                    `${token.diff_class} ${feat_classes}" ` +
-                    `data-side="${token.side}" data-idx="${token.global_idx}">` +
+                    `${token.diff_class} ${clickClass} ${feat_classes}" ` +
+                    `data-side="${token.side}" data-idx="${token.global_idx}" ${calledAttr} ${titleAttr}>` +
                     `${t_text}</span>`;
             }
 
@@ -627,10 +645,19 @@
                 scrollEl.addEventListener('contextmenu', showTokenContextMenu, true);
                 scrollEl.addEventListener('click', function (event) {
                     const target = event.composedPath ? event.composedPath()[0] : event.target;
-                    const tokenTarget = target?.closest?.('.feature-highlight');
+                    const tokenTarget = target?.closest?.('.token');
                     if (tokenTarget) {
-                        const hashes = getHashesForToken(tokenTarget);
-                        if (hashes) window.toggleLock(hashes, tokenTarget);
+                        const calledFuncId = tokenTarget.getAttribute('data-called-func-id');
+                        if (calledFuncId) {
+                            navigateToFunction(calledFuncId, event);
+                            return;
+                        }
+                        if (tokenTarget.classList.contains('feature-highlight')) {
+                            const hashes = getHashesForToken(tokenTarget);
+                            if (hashes) window.toggleLock(hashes, tokenTarget);
+                        } else {
+                            window.clearAllLocks();
+                        }
                     } else {
                         window.clearAllLocks();
                     }

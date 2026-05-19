@@ -8,7 +8,7 @@ import json
 function_code_bp = Blueprint("function_code", __name__)
 
 
-def render_single_function(source, features, tf_map):
+def render_single_function(source, features, tf_map, collection=None, md5=None, meta=None):
     """
     Renders the semantic tokens for a single function without any diffing logic.
     """
@@ -17,12 +17,19 @@ def render_single_function(source, features, tf_map):
     if not tokens:
         return []
 
-    max_line = max(t["line"] for t in tokens)
+    max_line = max(t["line"] for t in tokens) if tokens else 0
     lines_dict = {i: [] for i in range(max_line + 1)}
     for idx, t in enumerate(tokens):
         lines_dict[t["line"]].append((idx, t))
 
     addr_map = source.get("line_to_addr", {})
+
+    callees_map = {}
+    if meta and "callees" in meta:
+        for callee in meta["callees"]:
+            name = callee.get("name")
+            if name:
+                callees_map[name] = callee
 
     rows = []
     tips = {}
@@ -57,6 +64,24 @@ def render_single_function(source, features, tf_map):
                     )
                 tips[global_idx] = [token.get("type"), token.get("seq"), tip_features]
 
+            called_func_id = None
+            target_name = token.get("target_name")
+            is_external = token.get("is_external", False)
+
+            if token.get("type") == "func_call":
+                target_addr = token.get("target_addr")
+                if not target_addr and token.get("t") in callees_map:
+                    callee = callees_map[token.get("t")]
+                    target_addr = callee.get("entrypoint")
+                    target_name = callee.get("name")
+                    is_external = callee.get("is_external", False)
+
+                if collection and md5:
+                    if is_external:
+                        called_func_id = f"ext:{target_name or token.get('t', '')}"
+                    elif target_addr:
+                        called_func_id = f"{collection}:func:{md5}:{target_addr}"
+
             tokens_json.append(
                 {
                     "type": token.get("type"),
@@ -65,6 +90,9 @@ def render_single_function(source, features, tf_map):
                     "hash_list": hash_list,
                     "global_idx": global_idx,
                     "text": token["t"],
+                    "called_func_id": called_func_id,
+                    "target_name": target_name,
+                    "is_external": is_external,
                 }
             )
 
@@ -101,7 +129,7 @@ def get_function_code():
         if not source:
             return jsonify({"detail": "Function not found"}), 404
 
-        rows, tips = render_single_function(source, features, tf_map)
+        rows, tips = render_single_function(source, features, tf_map, collection, md5, meta)
 
         # Ensure MD5 and Decompiler ID are in meta if missing, but otherwise keep full meta
         if meta:
@@ -210,3 +238,168 @@ def get_function_code():
             ),
             500,
         )
+
+
+@function_code_bp.route("/api/function/call_graph/local", methods=["GET"])
+def get_local_call_graph():
+    func_id = request.args.get("id")
+    if not func_id:
+        return jsonify({"detail": "Missing function id"}), 400
+
+    try:
+        parts = func_id.split(":")
+        if len(parts) < 4:
+            return jsonify({"detail": f"Invalid ID format: {func_id}"}), 400
+
+        if parts[0] == "idx":
+            collection = parts[1]
+            md5 = parts[3]
+            addr = parts[4]
+        else:
+            collection = parts[0]
+            md5 = parts[2]
+            addr = parts[3]
+
+        r = get_redis()
+        base_func_key = f"{collection}:func:{md5}:{addr}"
+
+        caller_ids_bytes = r.smembers(f"{base_func_key}:callers") or []
+        callee_ids_bytes = r.smembers(f"{base_func_key}:callees") or []
+
+        caller_ids = [cid.decode() if isinstance(cid, bytes) else cid for cid in caller_ids_bytes]
+        callee_ids = [cid.decode() if isinstance(cid, bytes) else cid for cid in callee_ids_bytes]
+
+        # Pipeline to fetch names for internal functions
+        all_ids = list(set(caller_ids + callee_ids))
+        pipe = r.pipeline()
+        for fid in all_ids:
+            if not fid.startswith("ext:"):
+                pipe.json().get(f"{fid}:meta", "$")
+            else:
+                pipe.exists("dummy") # keep pipeline aligned
+        
+        meta_results = pipe.execute()
+        meta_map = {}
+        for fid, raw_meta in zip(all_ids, meta_results):
+            if fid.startswith("ext:"):
+                continue
+            if raw_meta:
+                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+                if meta:
+                    meta_map[fid] = {
+                        "name": meta.get("function_name"),
+                        "entrypoint": meta.get("entrypoint_address"),
+                        "is_external": False
+                    }
+
+        def build_node_info(fid):
+            if fid.startswith("ext:"):
+                name = fid.split(":", 1)[1]
+                return {
+                    "id": fid,
+                    "name": name,
+                    "entrypoint": None,
+                    "is_external": True
+                }
+            info = meta_map.get(fid)
+            if info:
+                return {
+                    "id": fid,
+                    "name": info["name"],
+                    "entrypoint": info["entrypoint"],
+                    "is_external": False
+                }
+            # Fallback
+            addr_part = fid.split(":")[-1]
+            return {
+                "id": fid,
+                "name": f"func_{addr_part}",
+                "entrypoint": addr_part,
+                "is_external": False
+            }
+
+        return jsonify({
+            "callers": [build_node_info(cid) for cid in caller_ids],
+            "callees": [build_node_info(cid) for cid in callee_ids]
+        })
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 500
+
+
+@function_code_bp.route("/api/file/call_graph", methods=["GET"])
+def get_file_call_graph():
+    collection = request.args.get("collection")
+    file_md5 = request.args.get("file_md5")
+
+    if not collection or not file_md5:
+        return jsonify({"detail": "Missing collection or file_md5"}), 400
+
+    try:
+        r = get_redis()
+        # Get all functions in file
+        func_ids_bytes = r.smembers(f"{collection}:idx:file:functions:{file_md5}") or []
+        func_ids = [fid.decode() if isinstance(fid, bytes) else fid for fid in func_ids_bytes]
+
+        if not func_ids:
+            return jsonify({"nodes": [], "edges": []})
+
+        pipe = r.pipeline()
+        for fid in func_ids:
+            pipe.json().get(f"{fid}:meta", "$")
+            pipe.smembers(f"{fid}:callees")
+
+        results = pipe.execute()
+
+        nodes = []
+        edges = []
+        node_ids_in_graph = set()
+        external_nodes = {}
+
+        for i, fid in enumerate(func_ids):
+            raw_meta = results[2 * i]
+            callee_bytes = results[2 * i + 1] or []
+
+            meta = None
+            if raw_meta:
+                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+
+            func_name = meta.get("function_name") if meta else f"func_{fid.split(':')[-1]}"
+            addr = fid.split(":")[-1]
+
+            nodes.append({
+                "id": fid,
+                "name": func_name,
+                "entrypoint": addr,
+                "is_external": False
+            })
+            node_ids_in_graph.add(fid)
+
+            callees = [c.decode() if isinstance(c, bytes) else c for c in callee_bytes]
+            for callee_id in callees:
+                edges.append({
+                    "source": fid,
+                    "target": callee_id
+                })
+                if callee_id.startswith("ext:") and callee_id not in external_nodes:
+                    name = callee_id.split(":", 1)[1]
+                    external_nodes[callee_id] = name
+
+        # Add external nodes to the node list
+        for ext_id, ext_name in external_nodes.items():
+            nodes.append({
+                "id": ext_id,
+                "name": ext_name,
+                "entrypoint": None,
+                "is_external": True
+            })
+
+        return jsonify({
+            "nodes": nodes,
+            "edges": edges
+        })
+    except Exception as e:
+        return jsonify({"detail": str(e)}), 500

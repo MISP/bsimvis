@@ -123,7 +123,7 @@ def get_token_type(clazz):
     return "text"
 
 
-def build_semantic_source(markup):
+def build_semantic_source(markup, program=None):
     c_lines = []
     c_tokens = []
     addr_to_line = {}
@@ -204,6 +204,24 @@ def build_semantic_source(markup):
             # Map the sequence string to this specific token counter
             seq_to_token_idx.setdefault(seq_str, []).append(token_counter)
 
+        # --- FUNCTION CALL RESOLUTION ---
+        target_addr = None
+        target_name = None
+        is_external = False
+
+        if clazz == "ClangFuncNameToken" and program:
+            try:
+                from ghidra.app.decompiler import DecompilerUtils
+                called_func = DecompilerUtils.getFunction(program, node)
+                if called_func:
+                    target_name = called_func.getName()
+                    is_external = called_func.isExternal() or called_func.isThunk()
+                    target_entry = called_func.getEntryPoint()
+                    if target_entry:
+                        target_addr = str(target_entry).split(":")[-1]
+            except Exception:
+                pass
+
         token_obj = {
             "t": token_text,
             "type": get_token_type(clazz),
@@ -212,6 +230,13 @@ def build_semantic_source(markup):
             "pcode_time": pcode_time,
             "seq": seq_str,
         }
+        if target_addr:
+            token_obj["target_addr"] = target_addr
+        if target_name:
+            token_obj["target_name"] = target_name
+        if is_external:
+            token_obj["is_external"] = is_external
+
         c_tokens.append(token_obj)
 
         # Structural mappings
@@ -561,7 +586,7 @@ def get_bsim_data(program, args, config, batch_order):
                 line_to_token_idx,
                 line_to_addr,
                 seq_to_token_idx,
-            ) = build_semantic_source(markup)
+            ) = build_semantic_source(markup, program)
             total_semantic_time += time.time() - t_sem
 
             t_ext = time.time()
@@ -579,6 +604,35 @@ def get_bsim_data(program, args, config, batch_order):
             total_ext_pcode_time += ext_times["pcode"]
             total_ext_sigs_time += ext_times["sigs"]
             total_ext_loop_time += ext_times["loop"]
+
+        # Extract callers and callees lists
+        callees_list = []
+        try:
+            for callee in func.getCalledFunctions(monitor):
+                if callee:
+                    callee_entry = callee.getEntryPoint()
+                    callee_entry_str = str(callee_entry).split(":")[-1] if callee_entry else None
+                    callees_list.append({
+                        "name": callee.getName(),
+                        "entrypoint": callee_entry_str,
+                        "is_external": callee.isExternal() or callee.isThunk()
+                    })
+        except Exception as e:
+            logging.warning(f"Error getting called functions: {e}")
+
+        callers_list = []
+        try:
+            for caller in func.getCallingFunctions(monitor):
+                if caller:
+                    caller_entry = caller.getEntryPoint()
+                    caller_entry_str = str(caller_entry).split(":")[-1] if caller_entry else None
+                    callers_list.append({
+                        "name": caller.getName(),
+                        "entrypoint": caller_entry_str,
+                        "is_external": caller.isExternal() or caller.isThunk()
+                    })
+        except Exception as e:
+            logging.warning(f"Error getting calling functions: {e}")
 
         t2 = time.time()
         func_meta = {
@@ -604,6 +658,8 @@ def get_bsim_data(program, args, config, batch_order):
             "entrypoint_address": entry_str,
             "bsim_features_count": len(bsim_raw),
             "bsim_unique_features_count": len(bsim_tf),
+            "callees": callees_list,
+            "callers": callers_list,
         }
 
         bsim_features = {

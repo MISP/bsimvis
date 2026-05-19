@@ -134,7 +134,8 @@
 
         table {
             width: 100%;
-            border-collapse: collapse;
+            border-collapse: separate;
+            border-spacing: 0;
             text-align: left;
             font-size: 0.85rem;
         }
@@ -153,6 +154,7 @@
             font-size: 0.7rem;
             letter-spacing: 1px;
             border-bottom: 2px solid var(--border);
+            background: #000;
         }
 
         td {
@@ -1008,7 +1010,9 @@
         }
 
         let currentOffset = 0;
-        const PAGE_SIZE = 20;
+        const DEFAULT_PAGE_LIMIT = 50;
+        const DEFAULT_GRAPH_LIMIT = 500;
+        const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
         let isEndOfResults = false;
         let lastHashPath = '';
         let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
@@ -1233,7 +1237,7 @@
             }
 
             // Standard pagination for all search routes
-            const countLimit = params.get('limit') || (params.get('view') === 'graph' ? '1000' : '20');
+            const countLimit = params.get('limit') || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
             params.set('offset', currentOffset);
             params.set('limit', countLimit);
 
@@ -1275,7 +1279,7 @@
                     }
 
                     if (limitIcon) {
-                        const currentLimit = parseInt(params.get('limit')) || 20;
+                        const currentLimit = parseInt(params.get('limit')) || DEFAULT_PAGE_LIMIT;
                         if (total >= currentLimit && hashPath === '#function-similarity') {
                             limitIcon.style.display = 'inline-block';
                             limitIcon.title = `ℹ️ Result Limit Reached (${currentLimit.toLocaleString()}). Not all pairs are shown.`;
@@ -1401,7 +1405,7 @@
                 settingsEl.style.display = 'flex';
                 const viewMode = params.get('view') || 'table';
                 const currentLimit = params.get('pool_limit') || '1000000';
-                const countLimit = params.get('limit') || (viewMode === 'graph' ? '1000' : '20');
+                const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
 
                 settingsEl.innerHTML = `
                     <div class="view-toggle">
@@ -1837,7 +1841,7 @@
             if (crossBinary) params.set('cross_binary', crossBinary);
             else params.delete('cross_binary');
             params.set('pool_limit', poolLimit || '1000000');
-            params.set('limit', countLimit || (params.get('view') === 'graph' ? '1000' : '20'));
+            params.set('limit', countLimit || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT));
 
             // Caching is now automated in refreshData
 
@@ -2549,7 +2553,7 @@
                 const streamInfo = document.getElementById('graph-stream-info');
                 const loadingText = document.getElementById('graph-loading-text');
                 const stopBtn = document.getElementById('graph-stop-btn');
-                const MAX_TOTAL = parseInt(params.get('limit')) || 1000;
+                const MAX_TOTAL = parseInt(params.get('limit')) || DEFAULT_GRAPH_LIMIT;
 
                 overlay.style.display = 'flex';
                 loadingText.innerText = "Building Similarity Map...";

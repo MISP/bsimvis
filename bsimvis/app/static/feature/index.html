@@ -284,7 +284,8 @@
             document.body.classList.add('in-panel');
         }
         const CONTEXT_WINDOW = 2;
-        const PAGE_SIZE = 20;
+        const DEFAULT_PAGE_LIMIT = 50;
+        const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
         const params = new URLSearchParams(window.location.search);
         const featureHash = params.get('hash');
         const collection = params.get('collection');

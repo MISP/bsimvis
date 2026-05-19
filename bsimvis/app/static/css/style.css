@@ -575,7 +575,7 @@ body {
 /* Context Menu */
 .context-menu {
     position: fixed;
-    z-index: 10000;
+    z-index: 20004;
     background: rgba(30, 30, 30, 0.95);
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -855,7 +855,7 @@ body {
     border-radius: 4px;
     max-height: 200px;
     overflow-y: auto;
-    z-index: 10001;
+    z-index: 20002;
     min-width: 150px;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8);
     display: none;
@@ -1069,7 +1069,7 @@ body {
 #diff-preview-tooltip {
     position: fixed;
     display: none;
-    z-index: 10002;
+    z-index: 20001;
     pointer-events: none;
     width: 800px;
     max-height: 800px;
@@ -1160,4 +1160,58 @@ body {
     filter: brightness(1.1);
     box-shadow: 0 0 12px rgba(253, 151, 31, 0.6);
     transform: translateY(-1px);
+}
+
+/* --- Shared Code Preview Tooltip --- */
+#code-preview-tooltip {
+    position: fixed;
+    display: none;
+    z-index: 20000;
+    pointer-events: none;
+    max-width: 600px;
+    max-height: 800px;
+    overflow: visible;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* code-preview-scroll scrollbar (also used in index.html inline, but putting in shared CSS for standalone pages) */
+.code-preview-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.code-preview-scroll::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+.code-preview-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+}
+.code-preview-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+.preview-header {
+    color: #75715e;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 4px;
+}
+
+#token-tooltip {
+    position: fixed;
+    pointer-events: none;
+    z-index: 20002;
+    background: #121212;
+    color: #fff;
+    border: 1px solid #a6e22e;
+    border-radius: 4px;
+    padding: 10px;
+    font-size: 0.8em;
+    line-height: 1.2;
+    max-width: 320px;
+    box-shadow: 0 4px 10px black;
+    display: none;
 }

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/tags.js"></script>
     <script src="/js/diff_queue.js"></script>
+    <script src="/js/previews.js"></script>
     <style>
         body {
             background-color: #121212;
@@ -486,11 +487,13 @@
                     tooltipEl.style.left = (e.clientX + 15) + 'px';
                     tooltipEl.style.top = (e.clientY + 15) + 'px';
                 } else if (calledFuncId && !isExternal) {
-                    // Internal function: delegate to parent dashboard preview
+                    // Internal function: show code preview (delegate to parent dashboard if available, otherwise show locally)
                     tooltipEl.style.display = 'none';
                     const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
                     if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
                         window.parent.showCodePreviewFromIframe('code-frame', calledFuncId, targetName, e);
+                    } else if (typeof window.showCodePreview === 'function') {
+                        window.showCodePreview(calledFuncId, targetName, null, null, null, e);
                     }
                 } else {
                     // Feature tooltip
@@ -513,6 +516,8 @@
                 if (calledFuncId && !isExternal) {
                     if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
                         window.parent.hideCodePreview();
+                    } else if (typeof window.hideCodePreview === 'function') {
+                        window.hideCodePreview();
                     }
                 }
             }

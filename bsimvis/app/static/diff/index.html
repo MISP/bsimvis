@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/tags.js"></script>
     <script src="/js/diff_queue.js"></script>
+    <script src="/js/previews.js"></script>
     <style>
         #selection-tool {
             display: none;
@@ -524,6 +525,27 @@
         const handleHover = (event, state) => {
             const token = findInPath(event, '.feature-highlight');
             const tooltipTarget = findInPath(event, '[data-side]');
+            const funcCallToken = findInPath(event, '[data-called-func-id]');
+
+            // Code preview on func_call hover
+            if (funcCallToken) {
+                const calledFuncId = funcCallToken.getAttribute('data-called-func-id');
+                const isExternal = funcCallToken.getAttribute('data-is-external') === 'true';
+                const targetName = funcCallToken.getAttribute('data-target-name') || calledFuncId.split(':').pop();
+                if (state && calledFuncId && !isExternal) {
+                    if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
+                        window.parent.showCodePreviewFromIframe('diff-frame', calledFuncId, targetName, event);
+                    } else if (typeof window.showCodePreview === 'function') {
+                        window.showCodePreview(calledFuncId, targetName, null, null, null, event);
+                    }
+                } else if (!state && calledFuncId && !isExternal) {
+                    if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
+                        window.parent.hideCodePreview();
+                    } else if (typeof window.hideCodePreview === 'function') {
+                        window.hideCodePreview();
+                    }
+                }
+            }
 
             if (token) {
                 const hashes = getHashesForToken(token);
@@ -575,8 +597,12 @@
                 const feat_classes = token.hash_list.map(h => `feat-${h}`).join(' ');
                 const t_text = token.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-                const calledAttr = token.called_func_id ? `data-called-func-id="${token.called_func_id}"` : '';
-                const clickClass = token.called_func_id ? 'func-call-clickable' : '';
+                const calledAttr = token.called_func_id
+                    ? `data-called-func-id="${token.called_func_id}" data-is-external="${token.is_external || false}" data-target-name="${token.target_name || ''}"`
+                    : '';
+                const clickClass = token.called_func_id
+                    ? (token.is_external ? 'func-call-external' : 'func-call-clickable')
+                    : '';
                 const titleAttr = token.called_func_id ? `title="Click to navigate to ${token.target_name || 'called function'}"` : '';
 
                 content += `<span class="token token-${token.type} ` +

@@ -14,6 +14,7 @@
     <script src="https://cdn.bokeh.org/bokeh/release/bokeh-api-3.3.4.min.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/diff_queue.js"></script>
+    <script src="/js/previews.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-3.3.4.min.css" type="text/css" />
     <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.4.min.css" type="text/css" />
@@ -295,7 +296,7 @@
         #code-preview-tooltip {
             position: fixed;
             display: none;
-            z-index: 9999;
+            z-index: 20000;
             pointer-events: none;
             max-width: 600px;
             max-height: 800px;
@@ -308,7 +309,7 @@
         #token-tooltip {
             position: fixed;
             pointer-events: none;
-            z-index: 10001;
+            z-index: 20002;
             background: #121212;
             color: #fff;
             border: 1px solid #a6e22e;
@@ -4955,7 +4956,7 @@
     <div id="token-tooltip"></div>
     <div id="diff-preview-tooltip"></div>
     <div id="hierarchy-tooltip"
-        style="position:fixed; z-index:1000; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;">
+        style="position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;">
     </div>
 
 

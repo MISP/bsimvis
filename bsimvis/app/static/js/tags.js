@@ -162,6 +162,9 @@ window.hideClusterCardTooltip = function(event) {
     if (typeof window.hideClusterTableTooltip === 'function') {
         window.hideClusterTableTooltip(event);
     }
+    // Also hide cluster tooltip element directly if available
+    const el = document.getElementById('hierarchy-tooltip');
+    if (el) el.style.display = 'none';
 };
 
 window.moveClusterCardTooltip = function(e) {

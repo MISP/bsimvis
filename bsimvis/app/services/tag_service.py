@@ -160,11 +160,15 @@ class TagService:
                 doc_id = self._resolve_doc_id(collection, entity_type, eid)
                 # Note: Still need to check if tag exists to avoid duplicates
                 # For simplicity in bulk, we'll do it sequentially but we could optimize further with Lua
-                doc = r.json().get(doc_id, "$.user_tags")
+                doc = r.json().get(doc_id, "$")
                 if not doc or not isinstance(doc, list) or len(doc) == 0:
                     continue
 
-                user_tags = doc[0]
+                data = doc[0] if isinstance(doc, list) else doc
+                user_tags = data.get("user_tags", [])
+                if not isinstance(user_tags, list):
+                    user_tags = []
+
                 if tag not in user_tags:
                     user_tags.append(tag)
                     r.json().set(doc_id, "$.user_tags", user_tags)
@@ -199,11 +203,15 @@ class TagService:
 
             for eid in entity_ids:
                 doc_id = self._resolve_doc_id(collection, entity_type, eid)
-                doc = r.json().get(doc_id, "$.user_tags")
+                doc = r.json().get(doc_id, "$")
                 if not doc or not isinstance(doc, list) or len(doc) == 0:
                     continue
 
-                user_tags = doc[0]
+                data = doc[0] if isinstance(doc, list) else doc
+                user_tags = data.get("user_tags", [])
+                if not isinstance(user_tags, list):
+                    continue
+
                 if tag in user_tags:
                     user_tags.remove(tag)
                     r.json().set(doc_id, "$.user_tags", user_tags)

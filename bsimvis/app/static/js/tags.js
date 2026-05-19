@@ -151,11 +151,53 @@ window.applyClusterFilter = (uuid) => {
     }
 };
 
+window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features) {
+    if (typeof window.showClusterTableTooltip === 'function') {
+        window.showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features);
+        window.moveClusterCardTooltip(event);
+    }
+};
+
+window.hideClusterCardTooltip = function(event) {
+    if (typeof window.hideClusterTableTooltip === 'function') {
+        window.hideClusterTableTooltip(event);
+    }
+};
+
+window.moveClusterCardTooltip = function(e) {
+    const tooltip = document.getElementById('hierarchy-tooltip');
+    if (!tooltip || tooltip.style.display !== 'block') return;
+    
+    const container = e.target.closest('.cluster-cards-container');
+    if (container) {
+        const overflow = container.querySelector('.cluster-overflow-box');
+        const isOverflowVisible = overflow && window.getComputedStyle(overflow).display !== 'none';
+        const boxRect = (isOverflowVisible && overflow) ? overflow.getBoundingClientRect() : container.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        
+        let x = boxRect.right + 15;
+        let y = boxRect.top;
+        
+        if (x + tooltipRect.width > window.innerWidth) {
+            x = boxRect.left - tooltipRect.width - 15;
+        }
+        if (y + tooltipRect.height > window.innerHeight) {
+            y = Math.max(10, window.innerHeight - tooltipRect.height - 15);
+        }
+        
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+    }
+};
+
 const renderClusterCards = (clusters) => {
     if (!clusters || clusters.length === 0) return '';
     
+    const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= 0.50);
+    if (validClusters.length === 0) return '';
+    
     // Sort clusters by cohesion score descending
-    const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;
         const score = (c.cohesion_score || 0).toFixed(2);
@@ -166,7 +208,10 @@ const renderClusterCards = (clusters) => {
         const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
         
         return `
-        <span class="${cardClass}" title="Cluster: ${name}\nUUID: ${uuid}\nCohesion: ${score}\nMembers: ${c.member_count || 0}" 
+        <span class="${cardClass}"
+              onmouseenter="showClusterCardTooltip(event, '${uuid}', '${name.replace(/'/g, "\\'")}', ${c.member_count || 0}, ${c.cluster_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})"
+              onmouseleave="hideClusterCardTooltip(event)"
+              onmousemove="moveClusterCardTooltip(event)"
               onclick="applyClusterFilter('${uuid}')"
               style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
@@ -175,7 +220,7 @@ const renderClusterCards = (clusters) => {
                 <circle cx="12" cy="12" r="4"></circle>
             </svg>
             <span style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
-            <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${score}</span>
+            <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${c.member_count || 0}</span>
         </span>`;
     };
 
@@ -186,14 +231,14 @@ const renderClusterCards = (clusters) => {
             +${sorted.length - 1}
         </span>` : '';
 
-    const othersHtml = sorted.slice(1).map(c => renderCard(c, false)).join('');
-    const overflowBox = hasMore ? `
+    const allHtml = sorted.map(c => renderCard(c, false)).join('');
+    const overflowBox = `
         <div class="cluster-overflow-box">
-            <div style="font-size:0.6rem; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Other Clusters</div>
-            ${othersHtml}
-        </div>` : '';
+            <div style="font-size:0.6rem; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
+            ${allHtml}
+        </div>`;
 
-    return `<div class="cluster-cards-container" style="position:relative; display:inline-flex; align-items:center;">
+    return `<div class="cluster-cards-container" style="position:relative; display:inline-flex; align-items:center; padding:6px; margin:-6px; cursor:default;">
         ${renderCard(sorted[0])}${moreHtml}${overflowBox}
     </div>`;
 };

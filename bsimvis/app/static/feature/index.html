@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <title>Global Feature Browser</title>
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/diff_queue.js"></script>
     <style>
         :root {
             --bg: #121212;
@@ -159,62 +160,6 @@
             display: none;
         }
 
-        /* Standalone Diff Bar */
-        .standalone-diff-bar {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: #111;
-            border-top: 2px solid var(--accent);
-            padding: 10px 20px;
-            display: none;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.6);
-            z-index: 1000;
-            animation: slideUp 0.3s ease-out;
-        }
-
-        @keyframes slideUp {
-            from {
-                transform: translateY(100%);
-            }
-
-            to {
-                transform: translateY(0);
-            }
-        }
-
-        .diff-status-text {
-            color: var(--accent);
-            font-size: 0.85rem;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .btn-compare {
-            background: var(--accent);
-            color: #000;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 4px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-compare:hover {
-            filter: brightness(1.1);
-            transform: translateY(-1px);
-        }
-
-        body {
-            padding-bottom: 60px;
-        }
-
         /* Fixed Column Support */
         .code-cell {
             overflow: hidden;
@@ -282,9 +227,12 @@
 </head>
 
 <body>
-    <div class="header">
-        <h1 id="title-text">Global Feature Analysis</h1>
-        <div id="meta-info" style="margin-top: 8px;"></div>
+    <div class="header" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+            <h1 id="title-text">Global Feature Analysis</h1>
+            <div id="meta-info" style="margin-top: 8px;"></div>
+        </div>
+        <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
     </div>
 
     <div class="feature-table-container">
@@ -324,11 +272,6 @@
 
     <div id="bsim-tooltip"></div>
 
-    <div id="standalone-diff-bar" class="standalone-diff-bar">
-        <div id="standalone-diff-status" class="diff-status-text"></div>
-        <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions →</button>
-    </div>
-
     <script>
         function copyToClipboard(text, btn) {
             navigator.clipboard.writeText(text).then(() => {
@@ -337,29 +280,6 @@
                 setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
             }).catch(err => console.error('Failed to copy', err));
         }
-
-        function normalizeFuncId(id) {
-            if (!id || typeof id !== 'string') return id;
-            if (id.includes(':function:')) return id;
-
-            // Pattern for raw BSim ID: collection:#md5::funcName:@addr
-            const parts = id.split(':');
-            if (parts.length >= 4) {
-                const addrPart = parts.pop(); // "@004bef80"
-                const funcPart = parts.pop(); // "name"
-                const emptyPart = parts.pop(); // ""
-                const md5Part = parts.pop(); // "#md5"
-                const colPart = parts.join(':');
-
-                if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
-                    const cleanAddr = addrPart.substring(1);
-                    const cleanMd5 = md5Part.substring(1);
-                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
-                }
-            }
-            return id;
-        }
-
         if (window.parent !== window) {
             document.body.classList.add('in-panel');
         }
@@ -493,8 +413,12 @@
                             <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', ''); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}'), '_blank'); }">
                                 <span>↗</span> Code
                             </button>
-                            <button class="btn-diff-action" onclick="addToDiff('${funcId}', this, '${funcName.replace(/'/g, "\\'")}')">
-                                <span>+</span> Add to Diff
+                            <button class="btn-diff-action" data-func-id="${funcId}" data-full-text="true"
+                                onmouseenter="onHoverDiffButton(event, '${funcId}', '${funcName.replace(/'/g, "\\'")}')"
+                                onmouseleave="hideDiffPreview(event)"
+                                onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"
+                                onclick="addToDiff('${funcId}', '${funcName.replace(/'/g, "\\'")}')">
+                                <span>±</span> Add to Diff
                             </button>
                             <button class="btn-sim-action" onclick="seeSimilar('${funcId}')">
                                 <span>≈</span> See Similar
@@ -602,6 +526,7 @@
                 } else {
                     loadMoreContainer.style.display = 'none';
                 }
+                updateDiffQueueUI();
 
             } catch (err) {
                 console.error(err);
@@ -732,78 +657,6 @@
             return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
-        function addToDiff(id, btn, name) {
-            if (window.parent && window.parent !== window && typeof window.parent.addToDiff === 'function') {
-                window.parent.addToDiff(id, name);
-                btn.innerHTML = '<span>✓</span> Added to Queue';
-                btn.style.color = '#a6e22e';
-                btn.style.borderColor = 'rgba(166,226,46,0.3)';
-                btn.style.background = 'rgba(166,226,46,0.1)';
-                btn.disabled = true;
-            } else {
-                // Standalone mode: sync via localStorage
-                try {
-                    let queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
-                    const existing = queue.findIndex(item => item.id === id);
-                    if (existing !== -1) {
-                        queue.splice(existing, 1);
-                        btn.innerHTML = '<span>+</span> Queue for Diff';
-                        btn.style.color = ''; btn.style.borderColor = ''; btn.style.background = '';
-                    } else {
-                        queue.push({ id, name });
-                        if (queue.length > 2) queue.shift();
-                        btn.innerHTML = '<span>✓</span> Queued (Tab Sync)';
-                        btn.style.color = '#a6e22e';
-                        btn.style.borderColor = 'rgba(166,226,46,0.3)';
-                        btn.style.background = 'rgba(166,226,46,0.1)';
-                    }
-                    localStorage.setItem('bsim_diff_queue', JSON.stringify(queue));
-                    updateDiffQueueUI();
-                } catch (e) {
-                    console.error("Standalone diff queue error", e);
-                }
-            }
-        }
-
-        function loadDiffQueue() {
-            if (window.parent && window.parent !== window) return;
-            const bar = document.getElementById('standalone-diff-bar');
-            bar.style.display = 'flex';
-            updateDiffQueueUI();
-        }
-
-        function updateDiffQueueUI() {
-            if (window.parent && window.parent !== window) return;
-            const status = document.getElementById('standalone-diff-status');
-            const btn = document.getElementById('standalone-diff-btn');
-
-            try {
-                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
-                if (queue.length === 0) {
-                    status.innerHTML = '<span class="dim">Diff Queue is empty. Select functions to compare.</span>';
-                    btn.style.display = 'none';
-                } else if (queue.length === 1) {
-                    status.innerHTML = `<span>1/2 Ready: <b>${queue[0].name}</b></span>`;
-                    btn.style.display = 'none';
-                } else {
-                    status.innerHTML = `<span style="color:var(--success)">2/2 Ready: <b>${queue[0].name}</b> vs <b>${queue[1].name}</b></span>`;
-                    btn.style.display = 'block';
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        function openStandaloneDiff() {
-            try {
-                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
-                if (queue.length < 2) return;
-                window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
-
-                // Clear queue after opening in new tab
-                localStorage.setItem('bsim_diff_queue', '[]');
-                updateDiffQueueUI();
-            } catch (e) { console.error(e); }
-        }
-
         function seeSimilar(funcId) {
             const parts = normalizeFuncId(funcId).split(':');
             if (parts.length < 4) return;
@@ -825,11 +678,7 @@
             }
         }
 
-        window.addEventListener('storage', (e) => {
-            if (e.key === 'bsim_diff_queue') updateDiffQueueUI();
-        });
-
-        loadDiffQueue();
+        updateDiffQueueUI();
         fetchPage();
     </script>
 </body>

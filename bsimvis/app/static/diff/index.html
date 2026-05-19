@@ -7,6 +7,7 @@
     <title>BSim Aligned Diff</title>
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/tags.js"></script>
+    <script src="/js/diff_queue.js"></script>
     <style>
         #selection-tool {
             display: none;
@@ -207,7 +208,10 @@
                     <option value="milvus_sparse">Milvus Sparse</option>
                 </select>
             </div>
-            <div id="similarity-tags-container" style="display:flex; align-items:center;"></div>
+            <div style="display:flex; align-items:center; gap:15px;">
+                <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
+                <div id="similarity-tags-container" style="display:flex; align-items:center;"></div>
+            </div>
         </div>
     </div>
 
@@ -722,6 +726,14 @@
                         </button>
                         <button class="meta-more-btn" onclick="toggleBothDetail()">Details</button>
                         <a href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" class="meta-more-btn" style="text-decoration:none; display:inline-flex; align-items:center;">Code ↗</a>
+                        <button class="btn-diff-action" data-func-id="${normalizeFuncId(fullId)}"
+                            onmouseenter="onHoverDiffButton(event, '${fullId}', '${label}')"
+                            onmouseleave="hideDiffPreview(event)"
+                            onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"
+                            onclick="addToDiff('${fullId}', '${label}')"
+                            title="Add to Diff Queue" style="padding: 2px 6px;">
+                            <span>±</span>
+                        </button>
                     </div>
                     ${swapBtnHtml}
                 </span>
@@ -815,6 +827,7 @@
                 await fetchTagMetadata(id1.split(':')[0]);
                 metaContainer.innerHTML = formatMetaCard(data.meta1, id1, true) + formatMetaCard(data.meta2, id2, false);
                 fetchSimilarity(id1, id2);
+                if (typeof updateDiffQueueUI === 'function') updateDiffQueueUI();
 
                 window.bsimRows = data.rows;
                 window.tokenTipsL = data.left_tips || {};

@@ -891,7 +891,7 @@ body {
 .cluster-overflow-box {
     display: none;
     position: absolute;
-    top: 110%;
+    top: 100%;
     left: 0;
     background: rgba(20, 20, 20, 0.95);
     backdrop-filter: blur(8px);
@@ -994,4 +994,152 @@ body {
 
 .hier-code-snippet .gutter {
     min-width: 30px;
+}
+
+/* --- Diff Queue & Diff Preview Styles --- */
+.preview-card {
+    background: #1A1A1A;
+    color: #fff;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    padding: 0;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#code-preview-tooltip .preview-card {
+    padding: 10px;
+    border-width: 1px;
+    border-color: #66d9ef;
+}
+
+.others-count-card {
+    background: rgba(26, 26, 26, 0.95);
+    border-left: 4px solid var(--accent);
+    padding: 8px 15px;
+    border-radius: 4px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    color: var(--accent);
+    font-weight: bold;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+}
+
+.diff-queue-badge,
+.code-view-badge {
+    background: var(--accent);
+    color: #000;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    margin-right: 10px;
+}
+
+.btn-diff-action.active {
+    background-color: #fd971f !important;
+    color: #000 !important;
+    box-shadow: 0 0 10px rgba(253, 151, 31, 0.5);
+    border-color: #fff !important;
+}
+
+#diff-preview-tooltip {
+    position: fixed;
+    display: none;
+    z-index: 10002;
+    pointer-events: none;
+    width: 800px;
+    max-height: 800px;
+    overflow: visible;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.diff-preview-header {
+    background: #1a1a1a;
+    padding: 8px 15px;
+    font-size: 0.75rem;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.diff-preview-scroll {
+    max-height: 350px;
+}
+
+.diff-preview-scroll::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.diff-preview-scroll::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.diff-preview-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+}
+
+.diff-preview-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+}
+
+/* Standalone Diff Bar */
+.standalone-diff-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #111;
+    border-top: 2px solid #fd971f;
+    padding: 10px 20px;
+    display: none;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.6);
+    z-index: 1000;
+    animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+.diff-status-text {
+    color: #fd971f;
+    font-size: 0.85rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.btn-compare {
+    background: #fd971f;
+    color: #000;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-compare:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 0 12px rgba(253, 151, 31, 0.6);
+    transform: translateY(-1px);
 }

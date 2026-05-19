@@ -3735,6 +3735,16 @@
                     nodeEl.addEventListener('wheel', (e) => {
                         e.preventDefault();
                         e.stopPropagation();
+
+                        if (e.ctrlKey) {
+                            const codeScrollEl = document.querySelector('#hier-snippet-container .c-code-container');
+                            if (codeScrollEl) {
+                                codeScrollEl.scrollTop += e.deltaY;
+                                this._codeScrollTop = codeScrollEl.scrollTop;
+                            }
+                            return;
+                        }
+
                         const delta = Math.sign(e.deltaY);
                         const members = d.data.runtime_members || [];
                         if (members.length === 0) return;
@@ -3765,61 +3775,98 @@
                 const scrollOffset = d.data.scrollOffset || 0;
                 const selectedFunc = members[scrollOffset];
 
-                tooltip.innerHTML = `
-                    <div class="hier-tooltip-container">
-                        <div class="hier-left-col" style="padding: 12px;">
-                            <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                            <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
-                            
-                            <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
-                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                    <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
-                                </div>
-                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
-                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
-                                    <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
-                                </div>
-                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
-                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
-                                    <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
-                                </div>
-                                <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
-                                    <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
-                                    <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
-                                </div>
-                            </div>
+                const isSameNode = tooltip.querySelector('.hier-tooltip-container') && this._renderedNodeUuid === d.data.uuid;
 
-                            <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-                                <div style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-                                    ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
-                                </div>
-                                <div class="hier-function-list">
-                                    <div style="transform: translateY(-${scrollOffset * 30}px); transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
-                                        ${members.map((m, i) => {
-                                            const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
-                                            const isSelected = i === scrollOffset;
-                                            return `
-                                                <div class="hier-function-item ${isSelected ? 'selected' : ''}">
-                                                    <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
-                                                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
-                                                        ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span style="color:var(--accent); font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                                                    </span>
-                                                </div>
-                                            `;
-                                        }).join('')}
+                if (!isSameNode) {
+                    this._renderedNodeUuid = d.data.uuid;
+                    tooltip.innerHTML = `
+                        <div class="hier-tooltip-container">
+                            <div class="hier-left-col" style="padding: 12px;">
+                                <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
+                                <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                                
+                                <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
+                                    <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                                        <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
+                                        <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                                    </div>
+                                    <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                                        <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
+                                        <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
+                                    </div>
+                                    <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                                        <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
+                                        <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
+                                    </div>
+                                    <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                                        <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
+                                        <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                                     </div>
                                 </div>
-                                ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+
+                                <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                                    <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                                        ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
+                                    </div>
+                                    <div class="hier-function-list">
+                                        <div class="hier-function-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
+                                            ${members.map((m, i) => {
+                                                const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                                                return `
+                                                    <div class="hier-function-item" data-index="${i}">
+                                                        <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
+                                                        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
+                                                            ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                                        </span>
+                                                    </div>
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                    </div>
+                                    ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                                </div>
+                            </div>
+                            <div class="hier-right-col" id="hier-snippet-container">
+                                <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                                    ${selectedFunc ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a function to preview'}
+                                </div>
                             </div>
                         </div>
-                        <div class="hier-right-col" id="hier-snippet-container">
-                            <div style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
-                                ${selectedFunc ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a function to preview'}
-                            </div>
-                        </div>
-                    </div>
-                `;
+                    `;
+                } else {
+                    const samplesTitle = tooltip.querySelector('.hier-samples-title');
+                    if (samplesTitle) {
+                        samplesTitle.innerHTML = isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`;
+                    }
+
+                    const listScroll = tooltip.querySelector('.hier-function-list-scroll');
+                    if (listScroll && listScroll.children.length === 0 && members.length > 0) {
+                        listScroll.innerHTML = members.map((m, i) => {
+                            const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                            return `
+                                <div class="hier-function-item" data-index="${i}">
+                                    <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
+                                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
+                                        ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                    </span>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                }
+
+                const listScroll = tooltip.querySelector('.hier-function-list-scroll');
+                if (listScroll) {
+                    listScroll.style.transform = `translateY(-${scrollOffset * 30}px)`;
+                    Array.from(listScroll.children).forEach((itemEl, idx) => {
+                        const isSelected = idx === scrollOffset;
+                        itemEl.classList.toggle('selected', isSelected);
+                        const nameSpan = itemEl.querySelector('.func-name-span');
+                        if (nameSpan) {
+                            nameSpan.style.color = isSelected ? 'var(--accent)' : '#eee';
+                        }
+                    });
+                }
 
                 if (selectedFunc) {
                     this.updateSnippet(selectedFunc);
@@ -3837,24 +3884,50 @@
                     return;
                 }
 
+                const existingSnippet = container.querySelector('.hier-code-snippet');
+                if (existingSnippet) {
+                    existingSnippet.style.opacity = '0.4';
+                } else {
+                    container.innerHTML = `
+                        <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                            <i class="fas fa-spinner fa-spin"></i> Loading Preview...
+                        </div>
+                    `;
+                }
+
                 try {
                     const res = await fetch(`/api/function/code?id=${encodeURIComponent(funcId)}`);
                     if (!res.ok) throw new Error("Failed");
                     const data = await res.json();
                     if (window.previewCache) window.previewCache.set(funcId, data);
-                    this.renderSnippet(data, func, container);
+                    
+                    if (this._activeD && this._activeD.data.runtime_members) {
+                        const currentMembers = this._activeD.data.runtime_members;
+                        const currentScrollOffset = this._activeD.data.scrollOffset || 0;
+                        const currentSelected = currentMembers[currentScrollOffset];
+                        if (currentSelected && currentSelected.function_id === funcId) {
+                            this.renderSnippet(data, func, container);
+                        }
+                    }
                 } catch (e) {
-                    container.innerHTML = `<div style="padding: 20px; color: #ff5555; text-align: center;">Preview Error</div>`;
+                    if (this._activeD && this._activeD.data.runtime_members) {
+                        const currentMembers = this._activeD.data.runtime_members;
+                        const currentScrollOffset = this._activeD.data.scrollOffset || 0;
+                        const currentSelected = currentMembers[currentScrollOffset];
+                        if (currentSelected && currentSelected.function_id === funcId) {
+                            container.innerHTML = `<div style="padding: 20px; color: #ff5555; text-align: center;">Preview Error</div>`;
+                        }
+                    }
                 }
             }
 
             renderSnippet(data, func, container) {
-                const rows = data.rows.slice(0, 20);
+                const rows = data.rows;
                 const m = data.meta || {};
 
                 let html = `
-                    <div class="hier-code-snippet">
-                        <div style="padding: 10px 15px; border-bottom: 1px solid #222; background: rgba(0,0,0,0.3);">
+                    <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
+                        <div style="padding: 10px 15px; border-bottom: 1px solid #222; background: rgba(0,0,0,0.3); flex-shrink: 0;">
                             <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                 ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
                             </div>
@@ -3862,7 +3935,7 @@
                                 Addr: ${func.entrypoint_address} | Feat: ${func.bsim_features_count}
                             </div>
                         </div>
-                        <div class="c-code-container">`;
+                        <div class="c-code-container" style="overflow-y: auto; flex: 1; padding: 10px;">`;
 
                 rows.forEach(row => {
                     let lineHtml = '';
@@ -3875,10 +3948,17 @@
 
                 html += `</div></div>`;
                 container.innerHTML = html;
+
+                // Restore last scroll position
+                const codeScrollEl = container.querySelector('.c-code-container');
+                if (codeScrollEl && this._codeScrollTop !== undefined) {
+                    codeScrollEl.scrollTop = this._codeScrollTop;
+                }
             }
 
             hideTooltip() {
                 this._activeD = null;
+                this._renderedNodeUuid = null;
                 const el = document.getElementById('hierarchy-tooltip');
                 if (el) el.style.display = 'none';
             }
@@ -4211,6 +4291,15 @@
                     e.preventDefault();
                     e.stopPropagation();
                     if (window.hierarchyInstance && window.hierarchyInstance._activeD) {
+                        if (e.ctrlKey) {
+                            const codeScrollEl = document.querySelector('#hier-snippet-container .c-code-container');
+                            if (codeScrollEl) {
+                                codeScrollEl.scrollTop += e.deltaY;
+                                window.hierarchyInstance._codeScrollTop = codeScrollEl.scrollTop;
+                            }
+                            return;
+                        }
+
                         const members = window.hierarchyInstance._activeD.data.runtime_members || [];
                         if (members.length > 0) {
                             const delta = Math.sign(e.deltaY);

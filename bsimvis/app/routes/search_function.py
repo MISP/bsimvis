@@ -118,13 +118,17 @@ def search_functions():
 
     def get_group_targets(lvl, val, allowed_fields=None):
         from bsimvis.app.services.index_config import INDEX_CONFIG, EXACT_FIELDS
+
         if not allowed_fields:
             # Dynamically discover all fields allowed at this level from config
             allowed_fields = []
             for src_lvl, fields in INDEX_CONFIG.items():
                 for field, targets in fields.items():
                     if lvl in targets:
-                        from bsimvis.app.services.index_config import resolve_target_field
+                        from bsimvis.app.services.index_config import (
+                            resolve_target_field,
+                        )
+
                         allowed_fields.append(resolve_target_field(src_lvl, lvl, field))
             # Deduplicate
             allowed_fields = list(set(allowed_fields))
@@ -136,7 +140,7 @@ def search_functions():
             registry_key = f"{col}:reg:{lvl}:{field}"
             if r.exists(registry_key):
                 matching_buckets = []
-                
+
                 # Check for perfect match fields
                 if field in EXACT_FIELDS:
                     target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
@@ -144,7 +148,9 @@ def search_functions():
                         matching_buckets = [target_bucket]
                 else:
                     try:
-                        for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*"):
+                        for bucket in r.sscan_iter(
+                            registry_key, match=f"*{val_lower}*"
+                        ):
                             bucket_str = (
                                 bucket.decode()
                                 if isinstance(bucket, bytes)
@@ -226,7 +232,7 @@ def search_functions():
 
     # Core Filters — fully config-driven
     filter_configs = []
-    
+
     # 1. Native/Propagated fields from INDEX_CONFIG
     # We want to iterate over all fields that could end up at the 'func' level
     for src_lvl, fields in INDEX_CONFIG.items():
@@ -236,7 +242,7 @@ def search_functions():
                 # Check if this field is in request args
                 # We handle both the target name (e.g. file_tags) and common aliases (md5 -> file_md5)
                 val = request.args.get(target_field)
-                
+
                 # Alias handling (for backward compat or convenience)
                 if not val:
                     aliases = {
@@ -244,13 +250,14 @@ def search_functions():
                         "entrypoint_address": ["address"],
                         "function_name": ["name"],
                         "language_id": ["language"],
-                        "return_type": ["ret_type"]
+                        "return_type": ["ret_type"],
                     }
                     if target_field in aliases:
                         for alias in aliases[target_field]:
                             val = request.args.get(alias)
-                            if val: break
-                
+                            if val:
+                                break
+
                 if val:
                     filter_configs.append((val, target_field, _paths(field)))
 
@@ -263,7 +270,8 @@ def search_functions():
         (user_tag_filters, "user_tag", _paths("user_tags")),
     ]
     for tfc in tag_filter_configs:
-        if tfc[0]: filter_configs.append(tfc)
+        if tfc[0]:
+            filter_configs.append(tfc)
 
     for f_v, label, paths in filter_configs:
         if not f_v:
@@ -461,11 +469,11 @@ def search_functions():
     # Secondary pipeline for cluster metadata
     algo = "unweighted_cosine"  # Default algo used by backend
     cluster_pipe = r.pipeline()
-    
+
     # We will track which index in the pipeline corresponds to which function and cluster
     # cluster_queries = [(function_index, cluster_id), ...]
     cluster_queries = []
-    
+
     for i, data in enumerate(parsed_data_list):
         if data:
             c_set = raw_cluster_sets[i]
@@ -526,7 +534,7 @@ def search_functions():
 
         # Cluster metadata enrichment
         c_metas = func_clusters_map[i]
-        
+
         # Sort clusters by member_count or cohesion descending, so UI can just pick the first
         # We can sort by member_count descending
         c_metas.sort(key=lambda x: x.get("member_count", 0), reverse=True)
@@ -536,7 +544,9 @@ def search_functions():
         for cm in c_metas:
             cid = str(cm.get("cluster_id"))
             # The user wants 'cluster_stability' to be the per-function score
-            score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+            score = float(
+                scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0)
+            )
             if not score and isinstance(scores, dict):
                 # Try decoding keys
                 for k, v in scores.items():
@@ -558,7 +568,12 @@ def search_functions():
             )
         data["clusters"] = clusters
 
-        for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+        for field in [
+            "cluster_id",
+            "cluster_name",
+            "cluster_uuid",
+            "cluster_stability",
+        ]:
             data.pop(field, None)
         functions_list.append(data)
 

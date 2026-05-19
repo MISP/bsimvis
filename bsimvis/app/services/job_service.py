@@ -248,9 +248,7 @@ class JobService:
     def get_global_stats(self):
         """Returns aggregate stats across all active and pending jobs."""
         processing_ids = self.r.lrange("jobs:processing", 0, -1)
-        pending_count = self.r.llen("jobs:pending") + self.r.llen(
-            "jobs:pending:high"
-        )
+        pending_count = self.r.llen("jobs:pending") + self.r.llen("jobs:pending:high")
 
         total_speed = 0.0
         active_jobs_count = 0

@@ -551,6 +551,25 @@
             font-weight: bold;
         }
 
+        .code-preview-scroll::-webkit-scrollbar,
+        .diff-preview-scroll::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .code-preview-scroll::-webkit-scrollbar-track,
+        .diff-preview-scroll::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+        }
+        .code-preview-scroll::-webkit-scrollbar-thumb,
+        .diff-preview-scroll::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+        }
+        .code-preview-scroll::-webkit-scrollbar-thumb:hover,
+        .diff-preview-scroll::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
         /* View Toggle Switch */
         .view-toggle {
             display: flex;
@@ -2008,7 +2027,7 @@
                                         onmousemove="moveCodePreview(event)"
                                         onmouseleave="hideDiffPreview(event)"
                                         onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px;"><span>±</span></button>
-                                <a class="btn-diff-action" href="#function-similarity?collection=${f.collection || 'main'}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
+                                <a class="btn-sim-action" href="#function-similarity?collection=${f.collection || 'main'}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
                             </div>
                         </div>
                     </td>
@@ -2212,7 +2231,7 @@
                                         onmousemove="moveCodePreview(event)"
                                         onmouseleave="hideDiffPreview(event)"
                                         onclick="addToDiff('${p.id1}', '${name1}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
-                                <a class="btn-diff-action" href="#function-similarity?collection=${col}&md5=${m1}&address=${addr1}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
+                                <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m1}&address=${addr1}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
                             </div>
                             <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f2.fullSig}">
                                 <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
@@ -2228,7 +2247,7 @@
                                         onmousemove="moveCodePreview(event)"
                                         onmouseleave="hideDiffPreview(event)"
                                         onclick="addToDiff('${p.id2}', '${name2}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
-                                <a class="btn-diff-action" href="#function-similarity?collection=${col}&md5=${m2}&address=${addr2}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
+                                <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m2}&address=${addr2}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><span>≈</span></a>
                             </div>
                         </div>
                     </td>
@@ -3002,6 +3021,21 @@
         }
 
         window.addEventListener('hashchange', (e) => {
+            // Ensure all tooltips are hidden when navigating/switching views
+            [
+                document.getElementById('code-preview-tooltip'),
+                document.getElementById('token-tooltip'),
+                document.getElementById('diff-preview-tooltip'),
+                document.getElementById('hierarchy-tooltip'),
+                document.getElementById('binary-preview-tooltip')
+            ].forEach(el => {
+                if (el) {
+                    el.style.display = 'none';
+                    el.classList.remove('showing');
+                }
+            });
+            if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
+
             const [newHash] = (window.location.hash || '#collections').split('?');
             const [oldHash] = (e.oldURL ? new URL(e.oldURL).hash : '').split('?');
             // Apply defaults only when entering sim view from a different view
@@ -3116,7 +3150,7 @@
                     <td class="dim">${formatDate(c.created_at)}</td>
                     <td>
                         <div style="display:flex; gap:10px;">
-                            <a href="#functions?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action">View Functions →</a>
+                            <a href="#functions?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">View Functions →</a>
                             <a href="#function-similarity?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">View similarities →</a>
                         </div>
                     </td>
@@ -3311,7 +3345,6 @@
                         </div>
                     </div>
 
-                    <div id="hierarchy-tooltip" style="position:fixed; z-index:1000; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;"></div>
                     
                     <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
                         <div style="text-align:center;">
@@ -3748,10 +3781,16 @@
             }
 
             async showTooltip(event, d) {
+                this._activeD = d;
                 const tooltip = document.getElementById('hierarchy-tooltip');
                 tooltip.style.display = 'block';
-                tooltip.style.left = (event.clientX + 20) + 'px';
-                tooltip.style.top = (event.clientY + 20) + 'px';
+                let x = event.clientX + 20;
+                let y = event.clientY + 20;
+                const rect = tooltip.getBoundingClientRect();
+                if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
+                if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+                tooltip.style.left = x + 'px';
+                tooltip.style.top = y + 'px';
 
                 // SNAPPY SCROLL Logic
                 if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
@@ -3898,7 +3937,41 @@
             }
 
             hideTooltip() {
-                document.getElementById('hierarchy-tooltip').style.display = 'none';
+                this._activeD = null;
+                const el = document.getElementById('hierarchy-tooltip');
+                if (el) el.style.display = 'none';
+            }
+        }
+
+        const clusterTooltipMockCache = new Map();
+
+        function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features) {
+            if (!window.hierarchyInstance) {
+                window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
+            }
+            if (!clusterTooltipMockCache.has(uuid)) {
+                clusterTooltipMockCache.set(uuid, {
+                    data: { uuid, name, size, stability, cohesion, avg_features, scrollOffset: 0 }
+                });
+            }
+            const mockD = clusterTooltipMockCache.get(uuid);
+            window.hierarchyInstance.showTooltip(event, mockD);
+        }
+
+        function hideClusterTableTooltip() {
+            if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
+        }
+
+        function moveClusterTableTooltip(e) {
+            const tooltip = document.getElementById('hierarchy-tooltip');
+            if (tooltip && tooltip.style.display === 'block') {
+                let x = e.clientX + 20;
+                let y = e.clientY + 20;
+                const rect = tooltip.getBoundingClientRect();
+                if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - 20;
+                if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - 20;
+                tooltip.style.left = x + 'px';
+                tooltip.style.top = y + 'px';
             }
         }
     </script>
@@ -3915,8 +3988,7 @@
                     View</span>
             </div>
             <div class="panel-actions">
-                <button class="btn-panel" onclick="seeSimilarFromCode()"
-                    style="border-color:var(--info); color:var(--info);">≈ See Similar</button>
+                <button class="btn-sim-action" onclick="seeSimilarFromCode()"><span>≈</span> See Similar</button>
                 <button class="btn-panel" onclick="launchExternal('code')">Open in New Window ↗</button>
                 <button class="btn-panel" onclick="hideCodePanel()"
                     style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close View</button>
@@ -3986,6 +4058,8 @@
     <div id="code-preview-tooltip"></div>
     <div id="token-tooltip"></div>
     <div id="diff-preview-tooltip"></div>
+    <div id="hierarchy-tooltip" style="position:fixed; z-index:1000; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:none; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;"></div>
+
 
     <script>
         // --- Code Preview Logic ---
@@ -4180,6 +4254,45 @@
             // Attach graph context menu (global to ensure it's not swallowed by Bokeh canvas)
             window.addEventListener('contextmenu', showGraphContextMenu);
 
+            // Intercept wheel events for scrolling code/diff preview tooltips while hovering trigger elements
+            window.addEventListener('wheel', e => {
+                const codeTooltip = document.getElementById('code-preview-tooltip');
+                const diffTooltip = document.getElementById('diff-preview-tooltip');
+                const hierTooltip = document.getElementById('hierarchy-tooltip');
+
+                const isCodeActive = codeTooltip && (codeTooltip.style.display === 'flex' || codeTooltip.classList.contains('showing'));
+                const isDiffActive = diffTooltip && (diffTooltip.style.display === 'flex' || diffTooltip.classList.contains('showing'));
+                const isHierActive = hierTooltip && hierTooltip.style.display === 'block';
+
+                if (isHierActive) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.hierarchyInstance && window.hierarchyInstance._activeD) {
+                        const members = window.hierarchyInstance._activeD.data.runtime_members || [];
+                        if (members.length > 0) {
+                            const delta = Math.sign(e.deltaY);
+                            window.hierarchyInstance._activeD.data.scrollOffset = Math.max(0, Math.min(members.length - 1, (window.hierarchyInstance._activeD.data.scrollOffset || 0) + delta));
+                            window.hierarchyInstance.renderTooltip(hierTooltip, window.hierarchyInstance._activeD);
+                        }
+                    }
+                    return;
+                }
+
+                if (isCodeActive || isDiffActive) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const activeTooltip = isDiffActive ? diffTooltip : codeTooltip;
+                    const scrollContainer = activeTooltip.querySelector('.code-preview-scroll, .diff-preview-scroll');
+                    if (scrollContainer) {
+                        scrollContainer.scrollTop += e.deltaY;
+                        if (e.deltaX) {
+                            scrollContainer.scrollLeft += e.deltaX;
+                        }
+                    }
+                }
+            }, { passive: false, capture: true });
+
             // Reducible Panels Initialization
             if (localStorage.getItem('sidebarCollapsed') === 'true') {
                 document.body.classList.add('sidebar-collapsed');
@@ -4337,7 +4450,7 @@
 
         function renderPreview(data, name, addr, bin, v_size, extra = 0, file_name = '') {
             if (!tooltip) return;
-            const rows = data.rows.slice(0, 18);
+            const rows = data.rows;
             const m = data.meta || {};
             const ns = m.namespace || '';
             const parameters = m.parameters || [];
@@ -4347,12 +4460,14 @@
             const extraHtml = extra > 0 ? `<div class="others-count-card"><span>⚡</span> And ${extra} other functions...</div>` : '';
 
             let html = `
-                <div class="preview-card">
-                    <div class="preview-header">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${name || 'Function'}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
-                    <div style="font-size:0.65rem; color:var(--accent); font-family:monospace; padding:0 8px; margin-bottom:5px;">
-                        Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
+                <div class="preview-card" style="max-height: 450px; display: flex; flex-direction: column;">
+                    <div style="flex-shrink: 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 8px; margin-bottom: 8px;">
+                        <div class="preview-header" style="border: none; margin-bottom: 4px; padding: 0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${name || 'Function'}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
+                        <div style="font-size:0.65rem; color:var(--accent); font-family:monospace; padding:0 8px;">
+                            Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
+                        </div>
                     </div>
-                    <div class="c-code-container" style="border:none; margin:0; padding:0; background:transparent;">`;
+                    <div class="c-code-container code-preview-scroll" style="border:none; margin:0; padding:0; background:transparent; overflow-y:auto; overflow-x:auto; flex: 1; min-height: 0;">`;
 
             rows.forEach(row => {
                 let lineHtml = '';
@@ -4365,8 +4480,11 @@
                 html += `<div class="code-line"><div class="gutter" style="background:transparent;"><div class="line-num">${row.line_idx}</div></div><div class="line-content">${lineHtml}</div></div>`;
             });
             html += '</div>';
-            if (data.rows.length > 18) html += '<div class="preview-header" style="border:none; margin-top:5px;">...</div>';
-            html += '</div>'; // End c-code-container content
+
+            if (data.rows.length > 18) {
+                html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle); padding-top:8px; border-top:1px solid rgba(255, 255, 255, 0.05); flex-shrink:0;">💡 Use scroll wheel to view all ${data.rows.length} lines</div>`;
+            }
+
             html += '</div>'; // End preview-card
             html += extraHtml;
             tooltip.innerHTML = html;
@@ -4481,15 +4599,14 @@
             const tooltip = document.getElementById('diff-preview-tooltip');
             if (!tooltip) return;
 
-            const maxRows = 12;
-            const rows = data.rows.slice(0, maxRows);
+            const rows = data.rows;
 
             const extraHtml = extra > 0 ? `<div class="others-count-card" style="width:100%; box-sizing:border-box;"><span>⚡</span> And ${extra} other matches...</div>` : '';
 
             let html = `
-                <div class="preview-card" style="width:100%">
-                    <div class="diff-preview-header" style="background:#252525; border-bottom:1px solid #333; padding:10px 15px;">
-                        <div style="display:flex; flex-direction:column; gap:5px;">
+                <div class="preview-card" style="width:100%; max-height: 450px; display: flex; flex-direction: column;">
+                    <div class="diff-preview-header" style="background:#252525; border-bottom:1px solid #333; padding:10px 15px; flex-shrink: 0;">
+                        <div style="display:flex; flex-direction:column; gap:5px; width: 100%;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <span style="color:#FFF;">${name1}</span>
                                 <span style="color:var(--subtle); margin:0 5px;">vs</span>
@@ -4501,16 +4618,15 @@
                             </div>
                         </div>
                     </div>
-                    <div style="flex:1; overflow:hidden; display:flex; background:#0d0f14; font-family:'JetBrains Mono', monospace; font-size:0.7rem;">
-                    <div style="flex:1; border-right:1px solid #333; overflow:hidden; border-left:4px solid var(--accent);">
-                        ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
+                    <div class="diff-preview-scroll" style="flex:1; overflow-y:auto; overflow-x:hidden; display:flex; align-items:flex-start; background:#0d0f14; font-family:'JetBrains Mono', monospace; font-size:0.7rem; min-height:0;">
+                        <div style="flex:1; border-right:1px solid #333; border-left:4px solid var(--accent); min-width:0;">
+                            ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
+                        </div>
+                        <div style="flex:1; border-left:4px solid var(--success); min-width:0;">
+                            ${rows.map(r => renderPreviewSide(r.r, 'r')).join('')}
+                        </div>
                     </div>
-                    <div style="flex:1; overflow:hidden; border-left:4px solid var(--success);">
-                        ${rows.map(r => renderPreviewSide(r.r, 'r')).join('')}
-                    </div>
-                </div>
-                </div>
-                ${data.rows.length > maxRows ? `<div style="background:#111; text-align:center; font-size:0.6rem; color:var(--subtle); padding:4px; border-top:1px solid #333;">... ${data.rows.length - maxRows} more rows (click 'Run Diff' for full view) ...</div>` : ''}
+                    ${data.rows.length > 12 ? `<div style="background:#111; text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top:1px solid #333; flex-shrink:0;">💡 Use scroll wheel to view all ${data.rows.length} matching rows</div>` : ''}
                 </div>
                 ${extraHtml}
             `;

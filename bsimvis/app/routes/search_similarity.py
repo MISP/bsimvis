@@ -375,15 +375,24 @@ def similarity_search():
                     using the standardized registry->bucket hierarchy.
                     Returns a list of (lvl, targets, field) tuples for all matches.
                     """
-                    from bsimvis.app.services.index_config import INDEX_CONFIG, EXACT_FIELDS
+                    from bsimvis.app.services.index_config import (
+                        INDEX_CONFIG,
+                        EXACT_FIELDS,
+                    )
+
                     if not allowed_fields:
                         # Dynamically discover all fields allowed at this level from config
                         allowed_fields = []
                         for src_lvl, fields in INDEX_CONFIG.items():
                             for field, targets in fields.items():
                                 if lvl in targets:
-                                    from bsimvis.app.services.index_config import resolve_target_field
-                                    allowed_fields.append(resolve_target_field(src_lvl, lvl, field))
+                                    from bsimvis.app.services.index_config import (
+                                        resolve_target_field,
+                                    )
+
+                                    allowed_fields.append(
+                                        resolve_target_field(src_lvl, lvl, field)
+                                    )
                         # Deduplicate
                         allowed_fields = list(set(allowed_fields))
 
@@ -405,7 +414,7 @@ def similarity_search():
                         registry_key = f"{col}:reg:{lvl}:{field}"
                         if r.exists(registry_key):
                             matching_buckets = []
-                            
+
                             # NEW: Perfect match fields
                             if field in EXACT_FIELDS:
                                 target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
@@ -424,7 +433,9 @@ def similarity_search():
                                         if val_lower in bucket_str.lower():
                                             matching_buckets.append(bucket_str)
                                 except Exception as e:
-                                    logging.warning(f"SSCAN failed for {registry_key}: {e}")
+                                    logging.warning(
+                                        f"SSCAN failed for {registry_key}: {e}"
+                                    )
                                     pass
 
                             if matching_buckets:
@@ -562,7 +573,7 @@ def similarity_search():
 
                 # Core Filters — fully config-driven
                 filter_configs = []
-                
+
                 # 1. Native/Propagated fields from INDEX_CONFIG
                 # We want to iterate over all fields that could end up at the 'sim' level
                 for src_lvl, fields in INDEX_CONFIG.items():
@@ -570,11 +581,11 @@ def similarity_search():
                         # We allow filtering by ANY field in INDEX_CONFIG.
                         # If not natively at 'sim' level, it will trigger a join/fallback via _paths_for_source.
                         target_field = resolve_target_field(src_lvl, "sim", field)
-                        
+
                         # Check if this field is in request args
                         # We handle both the target name (e.g. func_tags) and common aliases
                         val = request.args.get(target_field)
-                        
+
                         # Alias handling
                         if not val:
                             aliases = {
@@ -582,24 +593,76 @@ def similarity_search():
                                 "entrypoint_address": ["address"],
                                 "function_name": ["name"],
                                 "language_id": ["language"],
-                                "return_type": ["ret_type"]
+                                "return_type": ["ret_type"],
                             }
                             if target_field in aliases:
                                 for alias in aliases[target_field]:
                                     val = request.args.get(alias)
-                                    if val: break
-                        
+                                    if val:
+                                        break
+
                         if val:
-                            filter_configs.append((val, target_field, _paths_for_source(src_lvl, field)))
+                            filter_configs.append(
+                                (val, target_field, _paths_for_source(src_lvl, field))
+                            )
 
                 # 2. Tag-specific logic (for unions)
                 tag_filter_configs = [
                     (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
                     (static_tag_filters, "static_tag", _paths("tags")),
                     (user_tag_filters, "user_tag", _paths("user_tags")),
+                    (
+                        sim_tag_filters,
+                        "sim_tag",
+                        _paths_for_source("sim", "tags")
+                        + _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        sim_static_tag_filters,
+                        "sim_static_tag",
+                        _paths_for_source("sim", "tags"),
+                    ),
+                    (
+                        sim_user_tag_filters,
+                        "sim_user_tag",
+                        _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        func_tag_filters,
+                        "func_tag",
+                        _paths_for_source("func", "tags")
+                        + _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        func_static_tag_filters,
+                        "func_static_tag",
+                        _paths_for_source("func", "tags"),
+                    ),
+                    (
+                        func_user_tag_filters,
+                        "func_user_tag",
+                        _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        file_tag_filters,
+                        "file_tag",
+                        _paths_for_source("file", "tags")
+                        + _paths_for_source("file", "user_tags"),
+                    ),
+                    (
+                        file_static_tag_filters,
+                        "file_static_tag",
+                        _paths_for_source("file", "tags"),
+                    ),
+                    (
+                        file_user_tag_filters,
+                        "file_user_tag",
+                        _paths_for_source("file", "user_tags"),
+                    ),
                 ]
                 for tfc in tag_filter_configs:
-                    if tfc[0]: filter_configs.append(tfc)
+                    if tfc[0]:
+                        filter_configs.append(tfc)
 
                 for f_v, label, paths in filter_configs:
                     if not f_v:
@@ -955,19 +1018,27 @@ def similarity_search():
 
             # Collect all cluster IDs to fetch metadata for
             cluster_id_to_fetch = set()
-            func_clusters_ids = {} # maps sid -> (list1, list2)
-            
+            func_clusters_ids = {}  # maps sid -> (list1, list2)
+
             for i, sid in enumerate(f_id_map.keys()):
                 c1_res = meta_results[i * 8 + 2]
                 c2_res = meta_results[i * 8 + 3]
-                
-                c1_ids = [c.decode() if isinstance(c, bytes) else c for c in c1_res] if c1_res else []
-                c2_ids = [c.decode() if isinstance(c, bytes) else c for c in c2_res] if c2_res else []
-                
+
+                c1_ids = (
+                    [c.decode() if isinstance(c, bytes) else c for c in c1_res]
+                    if c1_res
+                    else []
+                )
+                c2_ids = (
+                    [c.decode() if isinstance(c, bytes) else c for c in c2_res]
+                    if c2_res
+                    else []
+                )
+
                 func_clusters_ids[sid] = (c1_ids, c2_ids)
                 for cid in c1_ids + c2_ids:
                     cluster_id_to_fetch.add(cid)
-            
+
             # Fetch all cluster metadata in one go
             cluster_meta_map = {}
             if cluster_id_to_fetch:
@@ -980,7 +1051,8 @@ def similarity_search():
                 for cid, res in zip(c_list, c_results):
                     if res:
                         cm = res[0] if isinstance(res, list) else res
-                        if isinstance(cm, str): cm = json.loads(cm)
+                        if isinstance(cm, str):
+                            cm = json.loads(cm)
                         cluster_meta_map[cid] = cm
 
             # Map meta results back
@@ -1024,28 +1096,40 @@ def similarity_search():
 
                 # Construct 'clusters' list for UI consistency
                 c1_ids, c2_ids = func_clusters_ids[sid]
-                
+
                 clusters1 = []
                 for cid in c1_ids:
                     cm = cluster_meta_map.get(cid)
                     if cm:
                         cid_str = str(cid)
-                        score = float(s1_res.get(cid_str.encode() if isinstance(cid_str, str) else cid_str, 0.0))
+                        score = float(
+                            s1_res.get(
+                                (
+                                    cid_str.encode()
+                                    if isinstance(cid_str, str)
+                                    else cid_str
+                                ),
+                                0.0,
+                            )
+                        )
                         if not score and isinstance(s1_res, dict):
                             for k, v in s1_res.items():
                                 k_str = k.decode() if isinstance(k, bytes) else k
                                 if k_str == cid_str:
                                     score = float(v)
                                     break
-                        clusters1.append({
-                            "cluster_id": cm.get("cluster_id"),
-                            "cluster_uuid": cm.get("cluster_uuid"),
-                            "cluster_name": cm.get("cluster_name"),
-                            "cohesion_score": cm.get("cohesion_score", 0),
-                            "member_count": cm.get("member_count", 0),
-                            "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                            "avg_features": cm.get("avg_features", 0),
-                        })
+                        clusters1.append(
+                            {
+                                "cluster_id": cm.get("cluster_id"),
+                                "cluster_uuid": cm.get("cluster_uuid"),
+                                "cluster_name": cm.get("cluster_name"),
+                                "cohesion_score": cm.get("cohesion_score", 0),
+                                "member_count": cm.get("member_count", 0),
+                                "cluster_stability": score
+                                or cm.get("cluster_stability", 0.0),
+                                "avg_features": cm.get("avg_features", 0),
+                            }
+                        )
                 clusters1.sort(key=lambda x: x.get("member_count", 0), reverse=True)
 
                 clusters2 = []
@@ -1053,25 +1137,42 @@ def similarity_search():
                     cm = cluster_meta_map.get(cid)
                     if cm:
                         cid_str = str(cid)
-                        score = float(s2_res.get(cid_str.encode() if isinstance(cid_str, str) else cid_str, 0.0))
+                        score = float(
+                            s2_res.get(
+                                (
+                                    cid_str.encode()
+                                    if isinstance(cid_str, str)
+                                    else cid_str
+                                ),
+                                0.0,
+                            )
+                        )
                         if not score and isinstance(s2_res, dict):
                             for k, v in s2_res.items():
                                 k_str = k.decode() if isinstance(k, bytes) else k
                                 if k_str == cid_str:
                                     score = float(v)
                                     break
-                        clusters2.append({
-                            "cluster_id": cm.get("cluster_id"),
-                            "cluster_uuid": cm.get("cluster_uuid"),
-                            "cluster_name": cm.get("cluster_name"),
-                            "cohesion_score": cm.get("cohesion_score", 0),
-                            "member_count": cm.get("member_count", 0),
-                            "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                            "avg_features": cm.get("avg_features", 0),
-                        })
+                        clusters2.append(
+                            {
+                                "cluster_id": cm.get("cluster_id"),
+                                "cluster_uuid": cm.get("cluster_uuid"),
+                                "cluster_name": cm.get("cluster_name"),
+                                "cohesion_score": cm.get("cohesion_score", 0),
+                                "member_count": cm.get("member_count", 0),
+                                "cluster_stability": score
+                                or cm.get("cluster_stability", 0.0),
+                                "avg_features": cm.get("avg_features", 0),
+                            }
+                        )
                 clusters2.sort(key=lambda x: x.get("member_count", 0), reverse=True)
 
-                for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+                for field in [
+                    "cluster_id",
+                    "cluster_name",
+                    "cluster_uuid",
+                    "cluster_stability",
+                ]:
                     m1.pop(field, None)
                     m2.pop(field, None)
                 enriched_pairs.append(

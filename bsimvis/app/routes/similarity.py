@@ -157,7 +157,7 @@ def rebuild_similarity():
             },
         ),
     ]
-    
+
     if algo in ["milvus_sparse"]:
         tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
 

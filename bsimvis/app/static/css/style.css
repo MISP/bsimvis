@@ -5,6 +5,7 @@
     --accent: #66d9ef;
     --subtle: #75715e;
     --success: #a6e22e;
+    --info: #ae81ff;
     --border: #3e3d32;
     --hover: #2d2d2d;
 }
@@ -430,6 +431,40 @@ body {
 .btn-code-action span {
     font-size: 1.1rem;
     line-height: 1;
+}
+
+.btn-sim-action {
+    background-color: rgba(174, 129, 255, 0.15); /* Purple hint */
+    color: var(--info);
+    border: 1px solid rgba(174, 129, 255, 0.3);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+.btn-sim-action:hover {
+    background-color: rgba(174, 129, 255, 0.25);
+    border-color: var(--info);
+}
+.btn-sim-action span {
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+/* Ensure consistent width across button groups */
+.btn-diff-action, .btn-feat-action, .btn-code-action, .btn-sim-action {
+    min-width: 115px;
+    justify-content: center;
+    box-sizing: border-box;
+}
+/* Except for small square inline table action buttons */
+.sim-row .btn-diff-action, .sim-row .btn-sim-action {
+    min-width: 0;
 }
 .code-card {
     background: #272822 !important;

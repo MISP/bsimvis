@@ -292,6 +292,7 @@ def list_cluster_members():
 
     return jsonify({"cluster_id": cluster_id, "total": total, "results": results})
 
+
 @cluster_bp.route("/api/cluster/dendrogram", methods=["GET"])
 def get_cluster_dendrogram():
     """
@@ -300,7 +301,7 @@ def get_cluster_dendrogram():
     """
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
-    
+
     try:
         min_size = int(request.args.get("min_cluster_size", 0))
         max_size = int(request.args.get("max_cluster_size", 0))
@@ -318,27 +319,29 @@ def get_cluster_dendrogram():
     links_raw = r.get(links_key)
     if not links_raw:
         return jsonify({"error": "No dendrogram data found"}), 404
-    
+
     import json
+
     links = json.loads(links_raw)
-    
+
     # 1. Gather all unique cluster IDs in the tree
     cluster_ids = set()
     for l in links:
         cluster_ids.add(l["parent"])
         cluster_ids.add(l["child"])
-    
+
     # 2. Fetch metadata for all these clusters
     pipe = r.pipeline()
     for cid in cluster_ids:
         pipe.json().get(f"{collection}:cluster:{algo}:{cid}:meta", "$")
-    
+
     raw_metas = pipe.execute()
     meta_map = {}
     for cid, res in zip(cluster_ids, raw_metas):
         if res:
             m = res[0] if isinstance(res, list) else res
-            if isinstance(m, str): m = json.loads(m)
+            if isinstance(m, str):
+                m = json.loads(m)
             meta_map[cid] = m
 
     # 3. Build tree and apply cut
@@ -346,26 +349,33 @@ def get_cluster_dendrogram():
     valid_nodes = set()
     for cid, m in meta_map.items():
         sz = m.get("member_count", 0)
-        if sz < min_size: continue
-        if max_size > 0 and sz > max_size: continue
+        if sz < min_size:
+            continue
+        if max_size > 0 and sz > max_size:
+            continue
 
         coh = m.get("cohesion_score", 0)
-        if coh < cohesion_min: continue
-        if cohesion_max > 0 and coh > cohesion_max: continue
+        if coh < cohesion_min:
+            continue
+        if cohesion_max > 0 and coh > cohesion_max:
+            continue
 
         feat = m.get("avg_features", 0)
-        if feat < features_min: continue
-        if features_max > 0 and feat > features_max: continue
+        if feat < features_min:
+            continue
+        if features_max > 0 and feat > features_max:
+            continue
 
         stab = m.get("avg_stability", 0.0)
-        if stab < stability_threshold: continue
+        if stab < stability_threshold:
+            continue
 
         valid_nodes.add(cid)
-    
+
     # If a node is valid, all its ancestors must be in the response to form a tree
     # child_to_parent map for traversal
     child_to_parent = {l["child"]: l["parent"] for l in links}
-    
+
     expanded_nodes = set(valid_nodes)
     if show_parents:
         for node in valid_nodes:
@@ -373,27 +383,25 @@ def get_cluster_dendrogram():
             while curr in child_to_parent:
                 curr = child_to_parent[curr]
                 expanded_nodes.add(curr)
-    
+
     # 4. Construct response nodes
     nodes = []
     for cid in expanded_nodes:
         m = meta_map.get(cid, {"cluster_id": cid})
-        
-        nodes.append({
-            "id": cid,
-            "parent": child_to_parent.get(cid),
-            "name": m.get("cluster_name", f"Cluster {cid}"),
-            "uuid": m.get("cluster_uuid"),
-            "size": m.get("member_count", 0),
-            "stability": m.get("avg_stability", 0.0),
-            "cohesion": m.get("cohesion_score", 0.0),
-            "avg_features": m.get("avg_features", 0.0),
-            "snippet": m.get("snippet", ""),
-            "members": m.get("sample_members", [])
-        })
-    
-    return jsonify({
-        "collection": collection,
-        "algo": algo,
-        "nodes": nodes
-    })
+
+        nodes.append(
+            {
+                "id": cid,
+                "parent": child_to_parent.get(cid),
+                "name": m.get("cluster_name", f"Cluster {cid}"),
+                "uuid": m.get("cluster_uuid"),
+                "size": m.get("member_count", 0),
+                "stability": m.get("avg_stability", 0.0),
+                "cohesion": m.get("cohesion_score", 0.0),
+                "avg_features": m.get("avg_features", 0.0),
+                "snippet": m.get("snippet", ""),
+                "members": m.get("sample_members", []),
+            }
+        )
+
+    return jsonify({"collection": collection, "algo": algo, "nodes": nodes})

@@ -332,38 +332,52 @@ def diff_api():
                 scores = r.hgetall(f"{fid}:cluster_scores") or {}
                 cluster_pipe = r.pipeline()
                 for cid_bytes in cluster_ids:
-                    cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
-                    cluster_pipe.json().get(f"{collection1}:cluster:{algo}:{cid}:meta", "$")
-                
+                    cid = (
+                        cid_bytes.decode()
+                        if isinstance(cid_bytes, bytes)
+                        else cid_bytes
+                    )
+                    cluster_pipe.json().get(
+                        f"{collection1}:cluster:{algo}:{cid}:meta", "$"
+                    )
+
                 raw_cluster_metas = cluster_pipe.execute()
-                
+
                 for raw_cm in raw_cluster_metas:
                     if raw_cm:
                         cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
                         if isinstance(cm, str):
                             import json
+
                             cm = json.loads(cm)
                         if cm:
                             cid = str(cm.get("cluster_id"))
-                            score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+                            score = float(
+                                scores.get(
+                                    cid.encode() if isinstance(cid, str) else cid, 0.0
+                                )
+                            )
                             if not score and isinstance(scores, dict):
                                 for k, v in scores.items():
                                     k_str = k.decode() if isinstance(k, bytes) else k
                                     if k_str == cid:
                                         score = float(v)
                                         break
-                            clusters.append({
-                                "cluster_id": cm.get("cluster_id"),
-                                "cluster_uuid": cm.get("cluster_uuid"),
-                                "cluster_name": cm.get("cluster_name"),
-                                "cohesion_score": cm.get("cohesion_score", 0),
-                                "member_count": cm.get("member_count", 0),
-                                "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                                "avg_features": cm.get("avg_features", 0),
-                            })
-                
+                            clusters.append(
+                                {
+                                    "cluster_id": cm.get("cluster_id"),
+                                    "cluster_uuid": cm.get("cluster_uuid"),
+                                    "cluster_name": cm.get("cluster_name"),
+                                    "cohesion_score": cm.get("cohesion_score", 0),
+                                    "member_count": cm.get("member_count", 0),
+                                    "cluster_stability": score
+                                    or cm.get("cluster_stability", 0.0),
+                                    "avg_features": cm.get("avg_features", 0),
+                                }
+                            )
+
                 clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
-            
+
         except Exception as ex:
             print(f"Error fetching clusters: {ex}")
             clusters = []
@@ -392,38 +406,52 @@ def diff_api():
                 scores = r.hgetall(f"{fid}:cluster_scores") or {}
                 cluster_pipe = r.pipeline()
                 for cid_bytes in cluster_ids:
-                    cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
-                    cluster_pipe.json().get(f"{collection2}:cluster:{algo}:{cid}:meta", "$")
-                
+                    cid = (
+                        cid_bytes.decode()
+                        if isinstance(cid_bytes, bytes)
+                        else cid_bytes
+                    )
+                    cluster_pipe.json().get(
+                        f"{collection2}:cluster:{algo}:{cid}:meta", "$"
+                    )
+
                 raw_cluster_metas = cluster_pipe.execute()
-                
+
                 for raw_cm in raw_cluster_metas:
                     if raw_cm:
                         cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
                         if isinstance(cm, str):
                             import json
+
                             cm = json.loads(cm)
                         if cm:
                             cid = str(cm.get("cluster_id"))
-                            score = float(scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0))
+                            score = float(
+                                scores.get(
+                                    cid.encode() if isinstance(cid, str) else cid, 0.0
+                                )
+                            )
                             if not score and isinstance(scores, dict):
                                 for k, v in scores.items():
                                     k_str = k.decode() if isinstance(k, bytes) else k
                                     if k_str == cid:
                                         score = float(v)
                                         break
-                            clusters.append({
-                                "cluster_id": cm.get("cluster_id"),
-                                "cluster_uuid": cm.get("cluster_uuid"),
-                                "cluster_name": cm.get("cluster_name"),
-                                "cohesion_score": cm.get("cohesion_score", 0),
-                                "member_count": cm.get("member_count", 0),
-                                "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                                "avg_features": cm.get("avg_features", 0),
-                            })
-                
+                            clusters.append(
+                                {
+                                    "cluster_id": cm.get("cluster_id"),
+                                    "cluster_uuid": cm.get("cluster_uuid"),
+                                    "cluster_name": cm.get("cluster_name"),
+                                    "cohesion_score": cm.get("cohesion_score", 0),
+                                    "member_count": cm.get("member_count", 0),
+                                    "cluster_stability": score
+                                    or cm.get("cluster_stability", 0.0),
+                                    "avg_features": cm.get("avg_features", 0),
+                                }
+                            )
+
                 clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
-            
+
         except Exception as ex:
             print(f"Error fetching clusters: {ex}")
             clusters = []

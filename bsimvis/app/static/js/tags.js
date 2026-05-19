@@ -301,8 +301,25 @@ function attachTagAutocomplete(input, onSelect) {
     dropdown.className = 'tag-autocomplete-dropdown';
     parent.appendChild(dropdown);
 
+    let activeIndex = -1;
+    let currentSuggestions = [];
+
+    const updateActiveStyle = () => {
+        const items = dropdown.querySelectorAll('.tag-suggestion-item');
+        items.forEach((item, index) => {
+            if (index === activeIndex) {
+                item.classList.add('active');
+                item.scrollIntoView({ block: 'nearest' });
+            } else {
+                item.classList.remove('active');
+            }
+        });
+    };
+
     const renderSuggestions = (tags) => {
         dropdown.innerHTML = '';
+        currentSuggestions = tags;
+        activeIndex = -1;
         tags.forEach(t => {
             const item = document.createElement('div');
             item.className = 'tag-suggestion-item';
@@ -334,15 +351,54 @@ function attachTagAutocomplete(input, onSelect) {
             renderSuggestions(tags);
         } else {
             dropdown.style.display = 'none';
+            currentSuggestions = [];
+            activeIndex = -1;
         }
     };
 
     input.onfocus = () => showSuggestions(input.value);
     input.oninput = () => showSuggestions(input.value);
     input.onblur = () => {
-        setTimeout(() => { dropdown.style.display = 'none'; }, 200);
+        setTimeout(() => {
+            dropdown.style.display = 'none';
+            activeIndex = -1;
+        }, 200);
     };
 
+    const originalOnKeyDown = input.onkeydown;
+    input.onkeydown = (e) => {
+        if (dropdown.style.display === 'block' && currentSuggestions.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIndex = (activeIndex + 1) % currentSuggestions.length;
+                updateActiveStyle();
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIndex = (activeIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
+                updateActiveStyle();
+                return;
+            } else if (e.key === 'Enter') {
+                if (activeIndex >= 0 && activeIndex < currentSuggestions.length) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const selectedValue = currentSuggestions[activeIndex];
+                    onSelect(selectedValue);
+                    dropdown.style.display = 'none';
+                    activeIndex = -1;
+                    return;
+                }
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                dropdown.style.display = 'none';
+                activeIndex = -1;
+                return;
+            }
+        }
+        if (originalOnKeyDown) {
+            originalOnKeyDown.call(input, e);
+        }
+    };
 
     if (document.activeElement === input) showSuggestions(input.value);
 }
@@ -359,9 +415,25 @@ function attachAutocomplete(input, level, field, onSelect) {
     dropdown.className = 'tag-autocomplete-dropdown';
     parent.appendChild(dropdown);
 
+    let activeIndex = -1;
+    let currentSuggestions = [];
+
+    const updateActiveStyle = () => {
+        const items = dropdown.querySelectorAll('.tag-suggestion-item');
+        items.forEach((item, index) => {
+            if (index === activeIndex) {
+                item.classList.add('active');
+                item.scrollIntoView({ block: 'nearest' });
+            } else {
+                item.classList.remove('active');
+            }
+        });
+    };
 
     const renderSuggestions = (items) => {
         dropdown.innerHTML = '';
+        currentSuggestions = items;
+        activeIndex = -1;
         items.forEach(item => {
             const div = document.createElement('div');
             div.className = 'tag-suggestion-item';
@@ -393,6 +465,8 @@ function attachAutocomplete(input, level, field, onSelect) {
                     renderSuggestions(items);
                 } else {
                     dropdown.style.display = 'none';
+                    currentSuggestions = [];
+                    activeIndex = -1;
                 }
             }
         } catch (err) {
@@ -403,7 +477,45 @@ function attachAutocomplete(input, level, field, onSelect) {
     input.onfocus = () => showSuggestions(input.value);
     input.oninput = () => showSuggestions(input.value);
     input.onblur = () => {
-        setTimeout(() => { dropdown.style.display = 'none'; }, 200);
+        setTimeout(() => {
+            dropdown.style.display = 'none';
+            activeIndex = -1;
+        }, 200);
+    };
+
+    const originalOnKeyDown = input.onkeydown;
+    input.onkeydown = (e) => {
+        if (dropdown.style.display === 'block' && currentSuggestions.length > 0) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIndex = (activeIndex + 1) % currentSuggestions.length;
+                updateActiveStyle();
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIndex = (activeIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
+                updateActiveStyle();
+                return;
+            } else if (e.key === 'Enter') {
+                if (activeIndex >= 0 && activeIndex < currentSuggestions.length) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const selectedValue = currentSuggestions[activeIndex].value;
+                    onSelect(selectedValue);
+                    dropdown.style.display = 'none';
+                    activeIndex = -1;
+                    return;
+                }
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                dropdown.style.display = 'none';
+                activeIndex = -1;
+                return;
+            }
+        }
+        if (originalOnKeyDown) {
+            originalOnKeyDown.call(input, e);
+        }
     };
 
     if (document.activeElement === input) showSuggestions(input.value);

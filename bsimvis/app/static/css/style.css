@@ -879,6 +879,11 @@ body {
     color: var(--accent);
 }
 
+.tag-suggestion-item.active {
+    background: rgba(102, 217, 239, 0.25);
+    color: var(--accent);
+}
+
 .tag-color-dot {
     width: 8px;
     height: 8px;

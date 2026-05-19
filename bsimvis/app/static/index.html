@@ -3720,7 +3720,7 @@
                 if (!d.data.runtime_members && d.data.uuid) {
                     try {
                         const col = document.getElementById('side-collection-select').value;
-                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
+                        const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
                         const data = await res.json();
                         d.data.runtime_members = data.functions;
                         updatePanel();
@@ -3794,7 +3794,7 @@
                 if (!d.data.runtime_members && d.data.uuid) {
                     try {
                         const col = document.getElementById('side-collection-select').value;
-                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
+                        const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
                         const data = await res.json();
                         d.data.runtime_members = data.functions;
                         this.renderTooltip(tooltip, d);
@@ -4548,7 +4548,7 @@
                 if (!d.data.runtime_members && d.data.uuid) {
                     try {
                         const col = document.getElementById('side-collection-select').value;
-                        const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
+                        const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
                         const data = await res.json();
                         d.data.runtime_members = data.functions;
                         updatePanel();
@@ -4628,7 +4628,7 @@
                     if (!d.data.runtime_members && d.data.uuid) {
                         try {
                             const col = document.getElementById('side-collection-select').value;
-                            const res = await fetch(`/api/function/search?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
+                            const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
                             if (this._activeD !== d) return;
                             const data = await res.json();
                             if (this._activeD !== d) return;

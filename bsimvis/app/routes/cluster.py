@@ -312,6 +312,97 @@ def list_cluster_members():
     return jsonify({"cluster_id": cluster_id, "total": total, "results": results})
 
 
+@cluster_bp.route("/api/cluster/functions", methods=["GET"])
+def get_cluster_functions():
+    """Returns a quick sample of function metadata for a given cluster_uuid."""
+    collection = request.args.get("collection")
+    cluster_uuid = request.args.get("cluster_uuid")
+    algo = request.args.get("algo", "unweighted_cosine")
+    if not collection or not cluster_uuid:
+        return jsonify({"error": "collection and cluster_uuid required"}), 400
+
+    limit = request.args.get("limit", 100, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    r = get_redis()
+    # Resolve the cluster_uuid by reading the Redis index set directly
+    bucket_key = f"{collection}:idx:func:cluster_uuid:{cluster_uuid.lower()}"
+    fids_raw = r.smembers(bucket_key)
+
+    # Fallback to scanning metadata if the index is not populated
+    if not fids_raw:
+        pattern = f"{collection}:cluster:{algo}:*:meta"
+        cursor = 0
+        matching_cluster_id = None
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+            if keys:
+                pipe = r.pipeline()
+                for k in keys:
+                    pipe.json().get(k, "$.cluster_uuid")
+                uuids = pipe.execute()
+                for k, u_res in zip(keys, uuids):
+                    u = u_res[0] if isinstance(u_res, list) and u_res else u_res
+                    if isinstance(u, bytes):
+                        u = u.decode()
+                    if u == cluster_uuid:
+                        k_str = k.decode() if isinstance(k, bytes) else k
+                        parts = k_str.split(":")
+                        if len(parts) >= 4:
+                            matching_cluster_id = parts[3]
+                            break
+            if matching_cluster_id or cursor == 0:
+                break
+
+        if matching_cluster_id:
+            cluster_set_key = f"{collection}:cluster:{algo}:{matching_cluster_id}:members"
+            fids_raw = r.smembers(cluster_set_key)
+
+    if not fids_raw:
+        return jsonify({"functions": [], "total": 0})
+
+    fids = [fid.decode() if isinstance(fid, bytes) else fid for fid in fids_raw]
+    fids.sort()
+
+    total = len(fids)
+    page = fids[offset : offset + limit]
+
+    # Bulk fetch function metadata
+    pipe = r.pipeline()
+    for fid in page:
+        pipe.json().get(f"{fid}:meta", "$")
+    raw_metas = pipe.execute()
+
+    import json
+    functions = []
+    for fid, meta in zip(page, raw_metas):
+        m = meta[0] if isinstance(meta, list) and meta else meta
+        if isinstance(m, str):
+            m = json.loads(m)
+        if not m:
+            m = {}
+
+        functions.append({
+            "function_id": m.get("function_id") or fid,
+            "function_name": m.get("function_name", "Unknown"),
+            "parameters": m.get("parameters", []),
+            "return_type": m.get("return_type", "void"),
+            "namespace": m.get("namespace", ""),
+            "entrypoint_address": m.get("entrypoint_address", "0x0"),
+            "bsim_features_count": m.get("bsim_features_count", 0),
+        })
+
+    return jsonify({
+        "functions": functions,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "collection": collection,
+        "cluster_uuid": cluster_uuid
+    })
+
+
+
 @cluster_bp.route("/api/cluster/dendrogram", methods=["GET"])
 def get_cluster_dendrogram():
     """

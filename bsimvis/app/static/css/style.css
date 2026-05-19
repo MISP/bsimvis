@@ -911,6 +911,10 @@ body {
     to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
+.cluster-cards-container:hover {
+    z-index: 100;
+}
+
 .cluster-cards-container:hover .cluster-overflow-box {
     display: flex;
 }

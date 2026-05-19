@@ -268,6 +268,36 @@ def search_functions():
         (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
         (static_tag_filters, "static_tag", _paths("tags")),
         (user_tag_filters, "user_tag", _paths("user_tags")),
+        (
+            func_tag_filters,
+            "func_tag",
+            _paths_for_source("func", "tags") + _paths_for_source("func", "user_tags"),
+        ),
+        (
+            func_static_tag_filters,
+            "func_static_tag",
+            _paths_for_source("func", "tags"),
+        ),
+        (
+            func_user_tag_filters,
+            "func_user_tag",
+            _paths_for_source("func", "user_tags"),
+        ),
+        (
+            file_tag_filters,
+            "file_tag",
+            _paths_for_source("file", "tags") + _paths_for_source("file", "user_tags"),
+        ),
+        (
+            file_static_tag_filters,
+            "file_static_tag",
+            _paths_for_source("file", "tags"),
+        ),
+        (
+            file_user_tag_filters,
+            "file_user_tag",
+            _paths_for_source("file", "user_tags"),
+        ),
     ]
     for tfc in tag_filter_configs:
         if tfc[0]:

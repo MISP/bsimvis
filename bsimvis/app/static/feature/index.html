@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <title>Global Feature Browser</title>
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/utils.js"></script>
+    <script src="/js/code_renderer.js"></script>
     <script src="/js/diff_queue.js"></script>
     <style>
         :root {
@@ -273,13 +275,7 @@
     <div id="bsim-tooltip"></div>
 
     <script>
-        function copyToClipboard(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const originalHtml = btn.innerHTML;
-                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-            }).catch(err => console.error('Failed to copy', err));
-        }
+
         if (window.parent !== window) {
             document.body.classList.add('in-panel');
         }
@@ -538,22 +534,14 @@
         }
 
         function renderTokens(tokens, funcId) {
-            const colorMap = {
-                'variable': 'tok-variable', 'func_call': 'tok-func_call', 'type': 'tok-type',
-                'keyword': 'tok-keyword', 'comment': 'tok-comment', 'string': 'tok-string', 'number': 'tok-number'
-            };
-
-            return tokens.map((t, idx) => {
-                const cls = colorMap[t.type] || 'tok-default';
+            return tokens.map(t => {
                 const isPrimary = t.hash_list && t.hash_list.includes(featureHash);
                 const hasOthers = t.hash_list && t.hash_list.some(h => h !== featureHash);
+                const highlightClass = isPrimary ? 'feature-primary' : (hasOthers ? 'feature-secondary' : '');
 
-                const highlightClass = isPrimary ? 'feature-primary feature-highlight' : (hasOthers ? 'feature-secondary feature-highlight' : '');
-                const hashes = (t.hash_list || []).join(' ');
-
-                return `<span class="token ${highlightClass} ${cls}" 
-                    data-hashes="${hashes}" data-idx="${t.global_idx}" data-func-id="${funcId}"
-                    onmouseenter="handleHoverMove(event, true); setGlobalHighlight(true)" onmouseleave="handleHoverMove(event, false); setGlobalHighlight(false)">${escapeHtml(t.text)}</span>`;
+                return renderTokenHtml(t)
+                    .replace('class="token ', `class="token ${highlightClass} `)
+                    .replace('<span ', `<span data-func-id="${funcId}" onmouseenter="handleHoverMove(event, true); setGlobalHighlight(true)" onmouseleave="handleHoverMove(event, false); setGlobalHighlight(false)" `);
             }).join('');
         }
 
@@ -654,9 +642,7 @@
             });
         }
 
-        function escapeHtml(text) {
-            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        }
+
 
         function seeSimilar(funcId) {
             const parts = normalizeFuncId(funcId).split(':');

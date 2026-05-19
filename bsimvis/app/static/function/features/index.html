@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Function Features Browser</title>
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/utils.js"></script>
+    <script src="/js/code_renderer.js"></script>
     <script src="/js/diff_queue.js"></script>
     <style>
         body {
@@ -219,16 +221,7 @@
     </div>
 
     <div id="bsim-tooltip"></div>
-
     <script>
-        function copyToClipboard(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const originalHtml = btn.innerHTML;
-                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-            }).catch(err => console.error('Failed to copy', err));
-        }
-
         const API_URL = "/api/function/features";
         const params = new URLSearchParams(window.location.search);
         const id = normalizeFuncId(params.get('id'));
@@ -338,18 +331,7 @@
                             <div class="line-content" style="padding-left:8px;">`;
 
                         row.tokens.forEach(t => {
-                            const colorMap = {
-                                'variable': '#f92672', 'func_call': '#66d9ef', 'type': '#ae81ff',
-                                'keyword': '#f92672', 'comment': '#75715e', 'string': '#e6db74', 'number': '#ae81ff'
-                            };
-                            const color = colorMap[t.type] || '#f8f8f2';
-                            const hasFeatures = t.hash_list && t.hash_list.length > 0;
-                            const highlightClass = hasFeatures ? 'feature-highlight' : '';
-                            const hashes = (t.hash_list || []).join(' ');
-
-                            rowHtml += `<span class="token ${highlightClass}" style="color:${color}" 
-                                data-hashes="${hashes}" data-idx="${t.global_idx}"
-                                onmouseenter="handleHoverMove(event, true)" onmouseleave="handleHoverMove(event, false)">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                            rowHtml += renderTokenHtml(t);
                         });
 
                         rowHtml += `</div></div>`;
@@ -490,6 +472,10 @@
                 showTokenContextMenu(e);
             }
         });
+
+        const featuresBody = document.getElementById('features-body');
+        featuresBody.addEventListener('pointerover', e => handleHoverMove(e, true));
+        featuresBody.addEventListener('pointerout', e => handleHoverMove(e, false));
 
         updateDiffQueueUI();
     </script>

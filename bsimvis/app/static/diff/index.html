@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BSim Aligned Diff</title>
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/utils.js"></script>
+    <script src="/js/code_renderer.js"></script>
+    <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/diff_queue.js"></script>
     <script src="/js/previews.js"></script>
@@ -321,16 +324,7 @@
         window.bsimRows = [];
         window.tokenTipsL = {};
         window.tokenTipsR = {};
-        
-        function formatDate(iso) {
-            if (!iso || iso === 'N/A') return '---';
-            if (typeof iso === 'string' && /^\d+$/.test(iso)) {
-                iso = parseInt(iso, 10);
-            }
-            const d = new Date(iso);
-            if (isNaN(d.getTime())) return iso;
-            return d.toLocaleString();
-        }
+
 
         function ensureTooltip() {
             if (!tooltipEl) tooltipEl = document.getElementById("bsim-tooltip");
@@ -594,22 +588,9 @@
 
             let content = '';
             for (const token of tokens) {
-                const feat_classes = token.hash_list.map(h => `feat-${h}`).join(' ');
-                const t_text = token.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-                const calledAttr = token.called_func_id
-                    ? `data-called-func-id="${token.called_func_id}" data-is-external="${token.is_external || false}" data-target-name="${token.target_name || ''}"`
-                    : '';
-                const clickClass = token.called_func_id
-                    ? (token.is_external ? 'func-call-external' : 'func-call-clickable')
-                    : '';
                 const titleAttr = token.called_func_id ? `title="Click to navigate to ${token.target_name || 'called function'}"` : '';
-
-                content += `<span class="token token-${token.type} ` +
-                    `${token.has_features ? "feature-highlight" : ""} ` +
-                    `${token.diff_class} ${clickClass} ${feat_classes}" ` +
-                    `data-side="${token.side}" data-idx="${token.global_idx}" ${calledAttr} ${titleAttr}>` +
-                    `${t_text}</span>`;
+                content += renderTokenHtml(token, token.diff_class || '')
+                    .replace('<span ', `<span data-side="${token.side}" ${titleAttr} `);
             }
 
             return `<div class="code-line ${chunk_class}" ${data_attrs}>` +
@@ -708,99 +689,22 @@
             });
         }
 
-        function copyToClipboard(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const originalHtml = btn.innerHTML;
-                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-            }).catch(err => console.error('Failed to copy', err));
-        }
 
         // --- Application Logic ---
         function formatMetaCard(m, fullId, isLeft) {
             if (!m) return "";
-            const label = m['function_name'] || 'unknown_func';
-            const returnType = m['return_type'] || 'N/A';
-            const namespace = m['namespace'] || '';
-            const parameters = m['parameters'] || [];
-            const paramsStr = parameters.length > 0 ? `(${parameters.join(', ')})` : '()';
-
-            const addr = fullId ? fullId.split(':').pop() : 'N/A';
-            const fileName = m['file_name'] || 'N/A';
-            const lang = m['language_id'] || 'N/A';
-
             const swapIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>`;
             const swapBtnHtml = isLeft ? `<button class="swap-btn" id="swap-btn" title="Swap Sides">${swapIcon}</button>` : '';
 
-            const collection = fullId ? fullId.split(':')[0] : 'main';
-            const fileId = m['file_md5'] ? `${collection}:file:${m['file_md5']}` : null;
-            const fileTagsHtml = fileId ? renderTagEditor('file', fileId, m['file_tags'] || [], m['file_user_tags'] || []) : '';
-
-            // Extract tags for default display
-            const tags = (m['tags'] || []);
-            const user_tags = (m['user_tags'] || []);
-            const clusters = (m['clusters'] || []);
-            const tagsHtml = renderTagEditor('function', fullId, tags, user_tags);
-            const clustersHtml = renderClusterCards(clusters);
-
-            // Generate "More Info" rows for all other keys (excluding what we show by default)
-            const skipKeys = ['function_name', 'return_type', 'namespace', 'parameters', 'entrypoint_address', 'file_name', 'language_id', 'full_id', 'tags', 'user_tags', 'file_tags', 'file_user_tags', 'clusters'];
-            let moreHtml = '';
-            Object.keys(m).sort().forEach(k => {
-                if (!skipKeys.includes(k)) {
-                    let val = m[k];
-                    
-                    // Format dates if the key implies it
-                    if (k.endsWith('_date') || k === 'created_at' || k === 'last_updated') {
-                        val = formatDate(val);
-                    }
-
-                    if (Array.isArray(val)) {
-                        val = val.length > 0 ? val.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
-                    } else if (typeof val === 'object' && val !== null) {
-                        val = JSON.stringify(val);
-                    }
-                    moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value">${val}</span></div>`;
-                }
+            return renderFunctionMetadata(null, m, fullId, {
+                showDiffBtn: true,
+                showCodeLink: true,
+                side: isLeft ? 'l' : 'r',
+                detailId: `meta-more-${isLeft ? 'l' : 'r'}`,
+                detailsToggleFn: 'toggleBothDetail()',
+                rightHeaderHtml: swapBtnHtml
             });
-
-            return `
-            <div class="func-meta-card" data-side="${isLeft ? 'l' : 'r'}">
-                <span class="meta-title">
-                    <div style="display:flex; align-items:center; gap:8px">
-                        <span>
-                            <span class="meta-return-type">${returnType}</span>
-                            ${namespace ? `<span style="color:white; opacity:0.8">${namespace}::</span>` : ''}
-                            <span style="color:var(--accent)">${label}</span>
-                            <span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                        </span>
-                        <button class="btn-copy" title="Copy Function ID: ${fullId}" onclick="copyToClipboard('${fullId}', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </button>
-                        <button class="meta-more-btn" onclick="toggleBothDetail()">Details</button>
-                        <a href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" class="meta-more-btn" style="text-decoration:none; display:inline-flex; align-items:center;">Code ↗</a>
-                        <button class="btn-diff-action" data-func-id="${normalizeFuncId(fullId)}"
-                            onmouseenter="onHoverDiffButton(event, '${fullId}', '${label}')"
-                            onmouseleave="hideDiffPreview(event)"
-                            onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"
-                            onclick="addToDiff('${fullId}', '${label}')"
-                            title="Add to Diff Queue" style="padding: 2px 6px;">
-                            <span>±</span>
-                        </button>
-                    </div>
-                    ${swapBtnHtml}
-                </span>
-                <div class="meta-row" ${namespace ? '' : 'style="display:none"'}><span class="meta-label">Namespace</span><span class="meta-value">${namespace}</span></div>
-                <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
-                <div class="meta-row"><span class="meta-label">File</span><span class="meta-value" style="display:flex; align-items:center; gap:10px;">${fileName} ${fileTagsHtml}</span></div>
-                <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
-                <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml} ${clustersHtml}</span></div>
-                
-                <div class="meta-more-container" id="meta-more-${isLeft ? 'l' : 'r'}">
-                    ${moreHtml}
-                </div>
-            </div>
-        `;
+        }
         }
 
         window.currentScores = {};

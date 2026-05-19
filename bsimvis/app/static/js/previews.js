@@ -237,79 +237,7 @@
     };
 
     // --- Cluster Preview (standalone, no ClusterHierarchy required) ---
-    const _clusterCache = new Map();
 
-    window.showClusterTableTooltip = function (event, uuid, name, size, stability, cohesion, avg_features) {
-        const tooltip = getClusterTooltip();
-
-        const hue = Math.max(0, Math.min(120, (cohesion || 0) * 120));
-        const cohColor = `hsl(${hue}, 100%, 65%)`;
-        const stabColor = `hsl(${Math.max(0, Math.min(120, (stability || 0) * 120))}, 100%, 65%)`;
-
-        const cohPct = ((cohesion || 0) * 100).toFixed(1);
-        const stabFmt = (stability || 0).toFixed(2);
-        const featFmt = (avg_features || 0).toFixed(1);
-        const shortUuid = (uuid || '').substring(0, 8);
-
-        tooltip.innerHTML = `
-            <div style="padding:14px 18px; min-width:240px; max-width:320px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <div style="font-weight:bold; font-size:0.95rem; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:180px;" title="${name}">${name || 'Cluster'}</div>
-                    <span style="font-family:monospace; font-size:0.65rem; color:var(--subtle,#75715e); background:rgba(255,255,255,0.05); padding:2px 6px; border-radius:4px;">${shortUuid}</span>
-                </div>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="color:var(--subtle,#75715e); font-size:0.7rem; width:70px; flex-shrink:0;">Members</span>
-                        <span style="font-weight:bold; color:#fff; font-size:0.85rem;">${size || 0}</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="color:var(--subtle,#75715e); font-size:0.7rem; width:70px; flex-shrink:0;">Cohesion</span>
-                        <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden;">
-                            <div style="height:100%; background:${cohColor}; width:${cohPct}%;"></div>
-                        </div>
-                        <span style="font-family:monospace; font-size:0.75rem; color:${cohColor}; min-width:38px; text-align:right;">${cohPct}%</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="color:var(--subtle,#75715e); font-size:0.7rem; width:70px; flex-shrink:0;">Stability</span>
-                        <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden;">
-                            <div style="height:100%; background:${stabColor}; width:${Math.min(100,(stability||0)*100).toFixed(0)}%;"></div>
-                        </div>
-                        <span style="font-family:monospace; font-size:0.75rem; color:${stabColor}; min-width:38px; text-align:right;">${stabFmt}</span>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="color:var(--subtle,#75715e); font-size:0.7rem; width:70px; flex-shrink:0;">Avg Feat</span>
-                        <span style="font-family:monospace; font-size:0.75rem; color:var(--info,#ae81ff);">${featFmt}</span>
-                    </div>
-                </div>
-            </div>`;
-
-        tooltip.style.display = 'block';
-        _positionClusterTooltip(tooltip, event);
-    };
-
-    window.hideClusterTableTooltip = function () {
-        const tooltip = document.getElementById('hierarchy-tooltip');
-        if (tooltip) {
-            tooltip.style.display = 'none';
-        }
-    };
-
-    window.moveClusterTableTooltip = function (e) {
-        const tooltip = document.getElementById('hierarchy-tooltip');
-        if (tooltip && tooltip.style.display === 'block') {
-            _positionClusterTooltip(tooltip, e);
-        }
-    };
-
-    function _positionClusterTooltip(tooltip, e) {
-        let x = e.clientX + 20;
-        let y = e.clientY + 20;
-        const rect = tooltip.getBoundingClientRect();
-        if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - 20;
-        if (y + rect.height > window.innerHeight) y = Math.max(10, e.clientY - rect.height - 20);
-        tooltip.style.left = x + 'px';
-        tooltip.style.top = y + 'px';
-    }
 
     // --- Token tooltip (shared) ---
     window.showTokenTooltip = function (e) {
@@ -360,13 +288,43 @@
     window.addEventListener('wheel', e => {
         const codeTooltip = document.getElementById('code-preview-tooltip');
         const diffTooltip = document.getElementById('diff-preview-tooltip');
+        
+        const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+        const hierTooltip = targetWindow.document.getElementById('hierarchy-tooltip');
 
         const isCodeActive = codeTooltip && (codeTooltip.style.display === 'flex' || codeTooltip.classList.contains('showing'));
         const isDiffActive = diffTooltip && (diffTooltip.style.display === 'flex' || diffTooltip.classList.contains('showing'));
+        const isHierActive = hierTooltip && hierTooltip.style.display === 'block';
 
-        if (isCodeActive || isDiffActive) {
+        if (isCodeActive || isDiffActive || isHierActive) {
             e.preventDefault();
             e.stopPropagation();
+            
+            if (isHierActive) {
+                if (e.ctrlKey) {
+                    const codeScrollEl = hierTooltip.querySelector('#hier-snippet-container .c-code-container');
+                    if (codeScrollEl) {
+                        codeScrollEl.scrollTop += e.deltaY;
+                        if (targetWindow.hierarchyInstance) {
+                            targetWindow.hierarchyInstance._codeScrollTop = codeScrollEl.scrollTop;
+                        }
+                    }
+                    return;
+                }
+
+                if (targetWindow.hierarchyInstance && targetWindow.hierarchyInstance._activeD) {
+                    const d = targetWindow.hierarchyInstance._activeD;
+                    const delta = Math.sign(e.deltaY);
+                    const members = d.data.runtime_members || [];
+                    if (members.length === 0) return;
+
+                    if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
+                    d.data.scrollOffset = Math.max(0, Math.min(members.length - 1, d.data.scrollOffset + delta));
+                    targetWindow.hierarchyInstance.renderTooltip(hierTooltip, d);
+                }
+                return;
+            }
+
             const activeTooltip = isDiffActive ? diffTooltip : codeTooltip;
             const scrollContainer = activeTooltip.querySelector('.code-preview-scroll, .diff-preview-scroll');
             if (scrollContainer) {

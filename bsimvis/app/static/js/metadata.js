@@ -96,7 +96,8 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
         <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
         <div class="meta-row"><span class="meta-label">File</span><span class="meta-value" style="display:flex; align-items:center; gap:10px;">${fileName} ${fileTagsHtml}</span></div>
         <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
-        <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml} ${clustersHtml}</span></div>
+        <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal; overflow:visible;">${tagsHtml}</span></div>
+        <div class="meta-row" ${clustersHtml ? '' : 'style="display:none"'}><span class="meta-label">Clusters</span><span class="meta-value" style="white-space:normal; overflow:visible;">${clustersHtml}</span></div>
         
         <div class="meta-more-container" id="${detailId}">
             ${moreHtml}

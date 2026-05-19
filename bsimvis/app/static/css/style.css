@@ -916,6 +916,8 @@ body {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
     flex-direction: column;
     min-width: 180px;
+    max-height: 160px;
+    overflow-y: auto;
     gap: 4px;
     animation: clusterFadeInScale 0.2s ease-out;
 }

@@ -1,5 +1,40 @@
 // Cluster Hierarchy (Dendrogram) and Packing Visualizations for BSimVis
 
+function getCurrentCollection() {
+    const selectEl = document.getElementById('side-collection-select') || (window.parent && window.parent.document.getElementById('side-collection-select'));
+    if (selectEl) return selectEl.value;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('collection')) return params.get('collection');
+    
+    // Fallback to parse from function IDs
+    const id = params.get('id') || params.get('id1') || params.get('id2') || window.currentFuncId;
+    if (id && id.includes(':')) {
+        return id.split(':')[0];
+    }
+    
+    if (window.parent && window.parent.location) {
+        const parentParams = new URLSearchParams(window.parent.location.hash.split('?')[1] || '');
+        if (parentParams.has('collection')) return parentParams.get('collection');
+        const parentId = parentParams.get('id') || parentParams.get('id1') || parentParams.get('id2');
+        if (parentId && parentId.includes(':')) {
+            return parentId.split(':')[0];
+        }
+    }
+    return 'main';
+}
+
+function getHierarchyTooltip() {
+    let el = document.getElementById('hierarchy-tooltip');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'hierarchy-tooltip';
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;";
+        document.body.appendChild(el);
+    }
+    return el;
+}
+
 function loadHierarchyView(params) {
     if (!window.hierarchyInstance) {
         window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
@@ -17,8 +52,8 @@ function loadPackingView(params) {
 class ClusterHierarchy {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
-        this.width = this.container.clientWidth;
-        this.height = this.container.clientHeight || 700;
+        this.width = this.container ? this.container.clientWidth : 800;
+        this.height = this.container ? (this.container.clientHeight || 700) : 700;
         this.root = null;
         this.svg = null;
         this.g = null;
@@ -378,7 +413,7 @@ class ClusterHierarchy {
             .attr("transform", d => `translate(${source.y},${source.x})`)
             .style("cursor", "pointer")
             .on("click", (event, d) => {
-                const col = document.getElementById('side-collection-select').value;
+                const col = getCurrentCollection();
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
                     window.location.hash = '#functions?collection=' + col + '&cluster_uuid=' + uuid;
@@ -390,7 +425,7 @@ class ClusterHierarchy {
             })
             .on("mouseout", (e, d) => {
                 const relatedTarget = e.relatedTarget;
-                const tooltip = document.getElementById('hierarchy-tooltip');
+                const tooltip = getHierarchyTooltip();
                 if (tooltip && (tooltip === relatedTarget || tooltip.contains(relatedTarget))) {
                     return;
                 }
@@ -541,7 +576,7 @@ class ClusterHierarchy {
 
         if (!d.data.runtime_members && d.data.uuid) {
             try {
-                const col = document.getElementById('side-collection-select').value;
+                const col = getCurrentCollection();
                 const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
                 const data = await res.json();
                 d.data.runtime_members = data.functions;
@@ -552,7 +587,7 @@ class ClusterHierarchy {
         }
 
         btn.onclick = () => {
-            const col = document.getElementById('side-collection-select').value;
+            const col = getCurrentCollection();
             const uuid = d.data.uuid;
             window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
         };
@@ -561,7 +596,7 @@ class ClusterHierarchy {
     async showTooltip(event, d) {
         this._activeD = d;
         this._hoveredNodeEl = event.currentTarget;
-        const tooltip = document.getElementById('hierarchy-tooltip');
+        const tooltip = getHierarchyTooltip();
         tooltip.style.display = 'block';
         let x = event.clientX + 20;
         let y = event.clientY + 20;
@@ -614,7 +649,7 @@ class ClusterHierarchy {
 
         if (!d.data.runtime_members && d.data.uuid) {
             try {
-                const col = document.getElementById('side-collection-select').value;
+                const col = getCurrentCollection();
                 const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
                 const data = await res.json();
                 d.data.runtime_members = data.functions;
@@ -814,7 +849,7 @@ class ClusterHierarchy {
     hideTooltip() {
         this._activeD = null;
         this._renderedNodeUuid = null;
-        const el = document.getElementById('hierarchy-tooltip');
+        const el = getHierarchyTooltip();
         if (el) el.style.display = 'none';
     }
 }
@@ -822,8 +857,8 @@ class ClusterHierarchy {
 class ClusterPacking {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
-        this.width = this.container.clientWidth;
-        this.height = this.container.clientHeight || 700;
+        this.width = this.container ? this.container.clientWidth : 800;
+        this.height = this.container ? (this.container.clientHeight || 700) : 700;
         this.root = null;
         this.svg = null;
         this.params = {
@@ -1199,7 +1234,7 @@ class ClusterPacking {
                 if (d.data.id === "VIRTUAL_ROOT") return;
 
                 const relatedTarget = event.relatedTarget;
-                const tooltip = document.getElementById('hierarchy-tooltip');
+                const tooltip = getHierarchyTooltip();
                 if (tooltip && (tooltip === relatedTarget || tooltip.contains(relatedTarget))) {
                     return;
                 }
@@ -1353,7 +1388,7 @@ class ClusterPacking {
 
         if (!d.data.runtime_members && d.data.uuid) {
             try {
-                const col = document.getElementById('side-collection-select').value;
+                const col = getCurrentCollection();
                 const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=5`);
                 const data = await res.json();
                 d.data.runtime_members = data.functions;
@@ -1364,7 +1399,7 @@ class ClusterPacking {
         }
 
         btn.onclick = () => {
-            const col = document.getElementById('side-collection-select').value;
+            const col = getCurrentCollection();
             const uuid = d.data.uuid;
             window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
         };
@@ -1377,7 +1412,7 @@ class ClusterPacking {
         this._tooltipTimeout = setTimeout(async () => {
             if (this._activeD !== d) return;
 
-            const tooltip = document.getElementById('hierarchy-tooltip');
+            const tooltip = getHierarchyTooltip();
             tooltip.style.display = 'block';
 
             tooltip.onmouseleave = (e) => {
@@ -1433,7 +1468,7 @@ class ClusterPacking {
 
             if (!d.data.runtime_members && d.data.uuid) {
                 try {
-                    const col = document.getElementById('side-collection-select').value;
+                    const col = getCurrentCollection();
                     const res = await fetch(`/api/cluster/functions?collection=${col}&cluster_uuid=${d.data.uuid}&limit=100`);
                     if (this._activeD !== d) return;
                     const data = await res.json();
@@ -1640,7 +1675,7 @@ class ClusterPacking {
             clearTimeout(this._tooltipTimeout);
             this._tooltipTimeout = null;
         }
-        const el = document.getElementById('hierarchy-tooltip');
+        const el = getHierarchyTooltip();
         if (el) el.style.display = 'none';
     }
 }
@@ -1665,7 +1700,7 @@ function hideClusterTableTooltip() {
 }
 
 function moveClusterTableTooltip(e) {
-    const tooltip = document.getElementById('hierarchy-tooltip');
+    const tooltip = getHierarchyTooltip();
     if (tooltip && tooltip.style.display === 'block') {
         let x = e.clientX + 20;
         let y = e.clientY + 20;

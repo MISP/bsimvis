@@ -136,40 +136,87 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 };
 
 window.applyClusterFilter = (uuid) => {
-    const hash = window.location.hash || '#collections';
+    const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+    const hash = targetWindow.location.hash || '#collections';
     const isSim = hash.startsWith('#function-similarity');
+    
+    const targetHashPath = isSim ? '#function-similarity' : '#functions';
     const inputId = isSim ? 'flt-sim-cluster' : 'flt-function-cluster';
-    const input = document.getElementById(inputId);
-    if (input) {
+    
+    let input = targetWindow.document.getElementById(inputId);
+    if (!input) {
+        const currentHash = targetWindow.location.hash || `#functions`;
+        const [path, query] = currentHash.split('?');
+        const params = new URLSearchParams(query || '');
+        params.set('cluster_uuid', uuid);
+        
+        const currentParams = new URLSearchParams(targetWindow.location.hash.split('?')[1] || '');
+        if (currentParams.has('collection')) {
+            params.set('collection', currentParams.get('collection'));
+        }
+        
+        targetWindow.location.hash = `${targetHashPath}?${params.toString()}`;
+    } else {
         input.value = uuid;
-        // Trigger the appropriate search function if it exists
         if (isSim) {
-            if (window.applySimSearch) window.applySimSearch();
+            if (targetWindow.applySimSearch) targetWindow.applySimSearch();
         } else {
-            if (window.applyAdvancedFuncSearch) window.applyAdvancedFuncSearch();
+            if (targetWindow.applyAdvancedFuncSearch) targetWindow.applyAdvancedFuncSearch();
         }
     }
 };
 
 window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features) {
-    if (typeof window.showClusterTableTooltip === 'function') {
-        window.showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features);
-        window.moveClusterCardTooltip(event);
+    const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+    if (typeof targetWindow.showClusterTableTooltip === 'function') {
+        let adjustedEvent = event;
+        if (targetWindow !== window) {
+            let iframeId = 'code-frame';
+            if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
+            const iframe = targetWindow.document.getElementById(iframeId);
+            if (iframe) {
+                const rect = iframe.getBoundingClientRect();
+                adjustedEvent = {
+                    clientX: event.clientX + rect.left,
+                    clientY: event.clientY + rect.top,
+                    target: event.target
+                };
+            }
+        }
+        targetWindow.showClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features);
     }
 };
 
 window.hideClusterCardTooltip = function(event) {
-    if (typeof window.hideClusterTableTooltip === 'function') {
-        window.hideClusterTableTooltip(event);
+    const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+    if (typeof targetWindow.hideClusterTableTooltip === 'function') {
+        targetWindow.hideClusterTableTooltip(event);
     }
-    // Also hide cluster tooltip element directly if available
-    const el = document.getElementById('hierarchy-tooltip');
+    const el = targetWindow.document.getElementById('hierarchy-tooltip');
     if (el) el.style.display = 'none';
 };
 
 window.moveClusterCardTooltip = function(e) {
-    const tooltip = document.getElementById('hierarchy-tooltip');
+    const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+    const tooltip = targetWindow.document.getElementById('hierarchy-tooltip');
     if (!tooltip || tooltip.style.display !== 'block') return;
+    
+    if (targetWindow !== window) {
+        let iframeId = 'code-frame';
+        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
+        const iframe = targetWindow.document.getElementById(iframeId);
+        if (iframe) {
+            const rect = iframe.getBoundingClientRect();
+            const adjustedEvent = {
+                clientX: e.clientX + rect.left,
+                clientY: e.clientY + rect.top
+            };
+            if (typeof targetWindow.moveClusterTableTooltip === 'function') {
+                targetWindow.moveClusterTableTooltip(adjustedEvent);
+            }
+            return;
+        }
+    }
     
     const container = e.target.closest('.cluster-cards-container');
     if (container) {
@@ -193,13 +240,12 @@ window.moveClusterCardTooltip = function(e) {
     }
 };
 
-const renderClusterCards = (clusters) => {
+window.renderClusterCards = (clusters) => {
     if (!clusters || clusters.length === 0) return '';
     
     const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= 0.50);
     if (validClusters.length === 0) return '';
     
-    // Sort clusters by cohesion score descending
     const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;

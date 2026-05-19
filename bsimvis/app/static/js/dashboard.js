@@ -157,7 +157,7 @@ const routes = {
             { label: 'MD5', width: '5%' },
             { label: 'File Tags', width: '10%' },
             { label: 'Language', width: '5%' },
-            { label: 'Actions / Algo', width: '15%' }
+            { label: 'Date', sort: 'entry_date', width: '15%' }
         ],
         renderer: renderTopCorrelations
     },
@@ -1202,7 +1202,18 @@ function renderTopCorrelations(items) {
                         onchange="toggleSimilaritySelection(event, '${p.id1}', '${p.id2}', '${p.algo}')">
             </td>
             <td>
-                <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
+                    <button class="btn-diff-action" 
+                        onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
+                        onmousemove="moveCodePreview(event)"
+                        onmouseleave="hideDiffPreview(event)"
+                        onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" 
+                        title="Run Aligned Diff" 
+                        style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
+                        <span>±</span>
+                    </button>
+                </div>
                 ${renderTagEditor('similarity', pairId, tags, user_tags)}
             </td>
             <td>
@@ -1295,14 +1306,11 @@ function renderTopCorrelations(items) {
                     <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta2?.language_id || '---'}</span></div>
                 </div>
             </td>
-            <td>
-                <button class="btn-diff-action" 
-                    onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
-                    onmousemove="moveCodePreview(event)"
-                    onmouseleave="hideDiffPreview(event)"
-                    onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" style="padding:4px 8px;">
-                    <span>±</span> Run Diff
-                </button>
+            <td class="sim-cell">
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.7rem;">${formatDate(p.meta1?.entry_date)}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.7rem;">${formatDate(p.meta2?.entry_date)}</span></div>
+                </div>
             </td>
         </tr>
     `}).join('');

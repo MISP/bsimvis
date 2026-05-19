@@ -1204,6 +1204,7 @@ def similarity_search():
                             "clusters": clusters1,
                             "file_tags": f1.get("tags", []),
                             "file_user_tags": f1.get("user_tags", []),
+                            "entry_date": parse_timestamp(m1.get("entry_date") or m1.get("file_date")),
                         },
                         "meta2": {
                             "file_md5": m2.get("file_md5"),
@@ -1219,6 +1220,7 @@ def similarity_search():
                             "clusters": clusters2,
                             "file_tags": f2.get("tags", []),
                             "file_user_tags": f2.get("user_tags", []),
+                            "entry_date": parse_timestamp(m2.get("entry_date") or m2.get("file_date")),
                         },
                         "tags": sim_data.get("tags", []),
                         "user_tags": sim_data.get("user_tags", []),

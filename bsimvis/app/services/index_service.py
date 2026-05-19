@@ -27,6 +27,15 @@ def parse_timestamp(val):
         return int(val * 1000)
     if isinstance(val, str):
         try:
+            # Try parsing as float first (e.g. string representation of timestamp)
+            fval = float(val)
+            if fval > 1e12:
+                return int(fval)
+            return int(fval * 1000)
+        except (ValueError, TypeError):
+            pass
+
+        try:
             # Handle ISO 8601: 2026-03-26T11:48:07.851317Z or 2026-03-26T10:48:02.623Z
             return int(
                 datetime.datetime.fromisoformat(val.replace("Z", "+00:00")).timestamp()

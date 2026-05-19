@@ -22,17 +22,41 @@ def search_collections():
 
     pipe = r.pipeline()
     for name in page_names:
+        pipe.scard(f"{name}:all_files")
+        pipe.scard(f"{name}:all_functions")
+        pipe.zrange(f"{name}:idx:file:entry_date", -1, -1, withscores=True)
         pipe.hgetall(f"global:collection:{name}:meta")
-    metas = pipe.execute()
+    pipe_results = pipe.execute()
 
     results = []
-    for name, meta in zip(page_names, metas):
+    for i, name in enumerate(page_names):
+        idx = i * 4
+        total_files = pipe_results[idx]
+        total_functions = pipe_results[idx + 1]
+        zrange_res = pipe_results[idx + 2]
+        meta = pipe_results[idx + 3] or {}
+
+        # Determine last_updated from latest file entry_date
+        last_updated = 0
+        if zrange_res:
+            try:
+                # zrange_res is a list of tuples: [(member, score)]
+                last_updated = int(zrange_res[0][1])
+            except (ValueError, TypeError, IndexError):
+                pass
+
+        # Fallback to meta hash last_updated if zrange_res was empty
+        if not last_updated:
+            last_updated_raw = meta.get("last_updated")
+            if last_updated_raw:
+                last_updated = parse_timestamp(last_updated_raw)
+
         results.append(
             {
                 "name": name,
-                "total_files": int(meta.get("total_files", 0)),
-                "total_functions": int(meta.get("total_functions", 0)),
-                "last_updated": parse_timestamp(meta.get("last_updated")),
+                "total_files": int(total_files) if total_files else 0,
+                "total_functions": int(total_functions) if total_functions else 0,
+                "last_updated": last_updated,
             }
         )
 

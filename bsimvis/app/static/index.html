@@ -3640,7 +3640,7 @@
                 return `
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:2px; padding: 2px 0;">
                         <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">
-                            ${sig.ret ? `<span style="color:#ae81ff; font-size:0.7rem;">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white; opacity:0.5; font-size:0.7rem;">${sig.ns}::</span>` : ''}<b style="color:#eee">${f.function_name}</b><span style="color:white; opacity:0.4">(</span>${sig.params.map(t => `<span style="color:#ae81ff; font-size:0.7rem;">${t}</span>`).join('<span style="color:white; opacity:0.2">, </span>')}<span style="color:white; opacity:0.4">)</span>
+                            ${sig.ret ? `<span style="color:#ae81ff; font-size:0.7rem;">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white; font-size:0.7rem;">${sig.ns}::</span>` : ''}<span style="color:var(--accent); font-weight:bold; font-size:0.75rem;">${f.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff; font-size:0.7rem;">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                         </span>
                         <span style="color:var(--accent); font-size:0.65rem; opacity:0.8; white-space:nowrap; flex-shrink:0; font-family:monospace; background:rgba(0,0,0,0.2); padding:1px 4px; border-radius:3px;">
                             ${featCount} <span style="font-size:0.55rem; color:#666; text-transform:uppercase;">feat.</span>
@@ -3796,11 +3796,18 @@
                                 </div>
                                 <div class="hier-function-list">
                                     <div style="transform: translateY(-${scrollOffset * 30}px); transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
-                                        ${members.map((m, i) => `
-                                            <div class="hier-function-item ${i === scrollOffset ? 'selected' : ''}">
-                                                ${m.function_name}
-                                            </div>
-                                        `).join('')}
+                                        ${members.map((m, i) => {
+                                            const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
+                                            const isSelected = i === scrollOffset;
+                                            return `
+                                                <div class="hier-function-item ${isSelected ? 'selected' : ''}">
+                                                    <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
+                                                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
+                                                        ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span style="color:var(--accent); font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                                                    </span>
+                                                </div>
+                                            `;
+                                        }).join('')}
                                     </div>
                                 </div>
                                 ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}

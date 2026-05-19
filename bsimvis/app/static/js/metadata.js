@@ -31,11 +31,73 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 if (typeof formatDate === 'function') val = formatDate(val);
             }
             if (Array.isArray(val)) {
-                val = val.length > 0 ? val.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
+                if (val.length === 0) {
+                    val = '<span style="color:#75715e">none</span>';
+                } else {
+                    val = val.map(t => {
+                        if (typeof t === 'object' && t !== null && t.name) {
+                            const isExt = t.is_external;
+                            const fid = t.id || '';
+                            const name = t.name;
+                            const addr = t.entrypoint || '';
+                            const ns = t.namespace || '';
+                            const ret = t.return_type || '';
+                            const params = t.parameters || [];
+                            
+                            let labelHtml = '';
+                            if (typeof formatSigComponent === 'function') {
+                                const sig = formatSigComponent(ns, ret, name, params);
+                                labelHtml = `${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="opacity:0.7">${sig.ns}::</span>` : ''}${name}<span style="opacity:0.7">(</span>${sig.params.map(p => `<span style="color:#ae81ff">${p}</span>`).join(', ')}<span style="opacity:0.7">)</span>`;
+                            } else {
+                                labelHtml = name;
+                            }
+                            
+                            if (addr) labelHtml += ` <span style="opacity:0.5; font-size:0.9em;">@${addr}</span>`;
+                            
+                            const color = isExt ? '#f92672' : 'var(--accent)';
+                            const cursor = (isExt || !fid) ? 'default' : 'pointer';
+                            const previewAttrs = (isExt || !fid) ? '' : `
+                                onmouseenter="
+                                    const fid='${fid}'; const n='${name.replace(/'/g, "\\'")}'; const a='${addr}';
+                                    if(window.showCodePreview) { showCodePreview(fid, n, a, '', 0, event); }
+                                    else if(window.parent && window.parent.showCodePreview) { window.parent.showCodePreview(fid, n, a, '', 0, event); }
+                                "
+                                onmousemove="
+                                    if(window.moveCodePreview) { moveCodePreview(event); }
+                                    else if(window.parent && window.parent.moveCodePreview) { window.parent.moveCodePreview(event); }
+                                "
+                                onmouseleave="
+                                    if(window.hideCodePreview) { hideCodePreview(event); }
+                                    else if(window.parent && window.parent.hideCodePreview) { window.parent.hideCodePreview(event); }
+                                "
+                            `;
+                            const clickAttr = (isExt || !fid) ? '' : `onclick="
+                                const fid='${fid}'; 
+                                const name='${name.replace(/'/g, "\\'")}';
+                                if(window.showFunctionCodeById) { 
+                                    showFunctionCodeById(fid, name); 
+                                } else if(window.parent && window.parent.showFunctionCodeById) { 
+                                    window.parent.showFunctionCodeById(fid, name); 
+                                } else { 
+                                    window.location.href='/function/index.html?id='+encodeURIComponent(fid); 
+                                }"`;
+                            
+                            return `<span class="tag-card" style="border-color:${color}; color:${color}; cursor:${cursor}; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;" ${previewAttrs} ${clickAttr}>
+                                ${labelHtml}
+                                ${isExt ? '<span style="opacity:0.6; font-size:0.7em; background:rgba(249,38,114,0.1); padding:1px 4px; border-radius:3px;">EXT</span>' : ''}
+                            </span>`;
+                        }
+                        return typeof t === 'object' && t !== null ? `<span class="tag-card">${JSON.stringify(t)}</span>` : `<span class="tag-card">${t}</span>`;
+                    }).join('');
+                }
             } else if (typeof val === 'object' && val !== null) {
                 val = JSON.stringify(val);
             }
-            moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value">${val}</span></div>`;
+            let rowStyle = "";
+            if (Array.isArray(m[k])) {
+                rowStyle = 'style="white-space:normal; overflow:visible;"';
+            }
+            moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value" ${rowStyle}>${val}</span></div>`;
         }
     });
 
@@ -83,7 +145,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 <span class="meta-return-type">${returnType}</span>
                 ${namespace ? `<span style="color:white; opacity:0.8">${namespace}::</span>` : ''}
                 <span style="color:var(--accent)">${label}</span>
-                <span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                <span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                 <button class="btn-copy" title="Copy Function ID: ${fullId}" onclick="copyToClipboard('${fullId}', this)">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                 </button>

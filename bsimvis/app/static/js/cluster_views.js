@@ -765,8 +765,8 @@ class ClusterHierarchy {
     }
 
     async updateSnippet(func) {
-        const container = document.getElementById('hier-snippet-container');
-        if (!container) return;
+        const container = document.getElementById('hier-snippet-container') || document.getElementById('packing-snippet-container');
+        if (!container || !func || !func.function_id) return;
 
         const funcId = func.function_id;
 
@@ -1587,8 +1587,8 @@ class ClusterPacking {
     }
 
     async updateSnippet(func) {
-        const container = document.getElementById('hier-snippet-container');
-        if (!container) return;
+        const container = document.getElementById('hier-snippet-container') || document.getElementById('packing-snippet-container');
+        if (!container || !func || !func.function_id) return;
 
         const funcId = func.function_id;
 

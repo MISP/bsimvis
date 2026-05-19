@@ -6,6 +6,7 @@ import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
+from bsimvis.app.services.node_service import get_enriched_nodes
 
 function_diff_bp = Blueprint("function_diff", __name__)
 
@@ -327,6 +328,16 @@ def diff_api():
         # In fetch_function_data, s1 being None usually means the Redis fetch failed
 
         return jsonify({"detail": "Failed to fetch data from Redis"}), 500
+
+    # Enrich with callers/callees
+    nodes1 = get_enriched_nodes(collection1, md5_1, addr_1)
+    nodes2 = get_enriched_nodes(collection2, md5_2, addr_2)
+    if meta1:
+        meta1["callers"] = nodes1["callers"]
+        meta1["callees"] = nodes1["callees"]
+    if meta2:
+        meta2["callers"] = nodes2["callers"]
+        meta2["callees"] = nodes2["callees"]
 
     h1 = set(f["hash"] for f in (f1 or []))
     h2 = set(f["hash"] for f in (f2 or []))

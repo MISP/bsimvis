@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.node_service import get_enriched_nodes
 import traceback
 import json
 
@@ -129,6 +130,12 @@ def get_function_code():
         if not source:
             return jsonify({"detail": "Function not found"}), 404
 
+        # Dynamically fetch callers/callees
+        nodes = get_enriched_nodes(collection, md5, addr)
+        if meta:
+            meta["callers"] = nodes["callers"]
+            meta["callees"] = nodes["callees"]
+
         rows, tips = render_single_function(source, features, tf_map, collection, md5, meta)
 
         # Ensure MD5 and Decompiler ID are in meta if missing, but otherwise keep full meta
@@ -238,94 +245,6 @@ def get_function_code():
             ),
             500,
         )
-
-
-@function_code_bp.route("/api/function/call_graph/local", methods=["GET"])
-def get_local_call_graph():
-    func_id = request.args.get("id")
-    if not func_id:
-        return jsonify({"detail": "Missing function id"}), 400
-
-    try:
-        parts = func_id.split(":")
-        if len(parts) < 4:
-            return jsonify({"detail": f"Invalid ID format: {func_id}"}), 400
-
-        if parts[0] == "idx":
-            collection = parts[1]
-            md5 = parts[3]
-            addr = parts[4]
-        else:
-            collection = parts[0]
-            md5 = parts[2]
-            addr = parts[3]
-
-        r = get_redis()
-        base_func_key = f"{collection}:func:{md5}:{addr}"
-
-        caller_ids_bytes = r.smembers(f"{base_func_key}:callers") or []
-        callee_ids_bytes = r.smembers(f"{base_func_key}:callees") or []
-
-        caller_ids = [cid.decode() if isinstance(cid, bytes) else cid for cid in caller_ids_bytes]
-        callee_ids = [cid.decode() if isinstance(cid, bytes) else cid for cid in callee_ids_bytes]
-
-        # Pipeline to fetch names for internal functions
-        all_ids = list(set(caller_ids + callee_ids))
-        pipe = r.pipeline()
-        for fid in all_ids:
-            if not fid.startswith("ext:"):
-                pipe.json().get(f"{fid}:meta", "$")
-            else:
-                pipe.exists("dummy") # keep pipeline aligned
-        
-        meta_results = pipe.execute()
-        meta_map = {}
-        for fid, raw_meta in zip(all_ids, meta_results):
-            if fid.startswith("ext:"):
-                continue
-            if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
-                if isinstance(meta, str):
-                    meta = json.loads(meta)
-                if meta:
-                    meta_map[fid] = {
-                        "name": meta.get("function_name"),
-                        "entrypoint": meta.get("entrypoint_address"),
-                        "is_external": False
-                    }
-
-        def build_node_info(fid):
-            if fid.startswith("ext:"):
-                name = fid.split(":", 1)[1]
-                return {
-                    "id": fid,
-                    "name": name,
-                    "entrypoint": None,
-                    "is_external": True
-                }
-            info = meta_map.get(fid)
-            if info:
-                return {
-                    "id": fid,
-                    "name": info["name"],
-                    "entrypoint": info["entrypoint"],
-                    "is_external": False
-                }
-            # Fallback
-            addr_part = fid.split(":")[-1]
-            return {
-                "id": fid,
-                "name": f"func_{addr_part}",
-                "entrypoint": addr_part,
-                "is_external": False
-            }
-
-        return jsonify({
-            "callers": [build_node_info(cid) for cid in caller_ids],
-            "callees": [build_node_info(cid) for cid in callee_ids]
-        })
-    except Exception as e:
-        return jsonify({"detail": str(e)}), 500
 
 
 @function_code_bp.route("/api/file/call_graph", methods=["GET"])

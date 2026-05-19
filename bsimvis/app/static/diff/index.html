@@ -528,17 +528,31 @@
                 const calledFuncId = funcCallToken.getAttribute('data-called-func-id');
                 const isExternal = funcCallToken.getAttribute('data-is-external') === 'true';
                 const targetName = funcCallToken.getAttribute('data-target-name') || calledFuncId.split(':').pop();
-                if (state && calledFuncId && !isExternal) {
-                    if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                        window.parent.showCodePreviewFromIframe('diff-frame', calledFuncId, targetName, event);
-                    } else if (typeof window.showCodePreview === 'function') {
-                        window.showCodePreview(calledFuncId, targetName, null, null, null, event);
+                
+                if (state) {
+                    if (calledFuncId && isExternal) {
+                        // External function: show badge tooltip
+                        const extName = targetName || calledFuncId.replace('ext:', '');
+                        showTooltip(`<div style="display:flex;align-items:center;gap:6px;">
+                            <span style="background:rgba(249,38,114,0.2);color:#f92672;border:1px solid rgba(249,38,114,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                            <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
+                        </div>`, event.clientX, event.clientY);
+                    } else if (calledFuncId && !isExternal) {
+                        if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
+                            window.parent.showCodePreviewFromIframe('diff-frame', calledFuncId, targetName, event);
+                        } else if (typeof window.showCodePreview === 'function') {
+                            window.showCodePreview(calledFuncId, targetName, null, null, null, event);
+                        }
                     }
-                } else if (!state && calledFuncId && !isExternal) {
-                    if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
-                        window.parent.hideCodePreview();
-                    } else if (typeof window.hideCodePreview === 'function') {
-                        window.hideCodePreview();
+                } else {
+                    if (calledFuncId && isExternal) {
+                        hideTooltip();
+                    } else if (calledFuncId && !isExternal) {
+                        if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
+                            window.parent.hideCodePreview();
+                        } else if (typeof window.hideCodePreview === 'function') {
+                            window.hideCodePreview();
+                        }
                     }
                 }
             }

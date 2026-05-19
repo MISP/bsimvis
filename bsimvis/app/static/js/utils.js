@@ -39,12 +39,13 @@ function formatSigComponent(ns, ret, name, params) {
         truncatedParams = [...params.slice(0, 2), "...", params[params.length - 1]];
     }
 
-    const fullSig = `${ret ? ret + ' ' : ''}${ns ? ns + '::' : ''}${name}(${(params || []).join(', ')})`;
+    const paramList = (params || []).map(p => (typeof p === 'object' && p !== null) ? (p.name || JSON.stringify(p)) : p);
+    const fullSig = `${ret ? ret + ' ' : ''}${ns ? ns + '::' : ''}${name}(${paramList.join(', ')})`;
 
     return {
         ns: truncatedNs,
         ret: truncatedRet,
-        params: truncatedParams,
+        params: truncatedParams.map(p => (typeof p === 'object' && p !== null) ? (p.name || JSON.stringify(p)) : p),
         fullSig: fullSig
     };
 }

@@ -293,6 +293,7 @@
         const tooltipEl = document.getElementById('bsim-tooltip');
 
         async function fetchSource(funcId) {
+            if (!funcId) return null;
             if (sourceCache.has(funcId)) return sourceCache.get(funcId);
             try {
                 const res = await fetch(`/api/function/code?id=${encodeURIComponent(funcId)}`);

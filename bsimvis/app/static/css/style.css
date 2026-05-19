@@ -314,6 +314,18 @@ body {
     text-decoration-style: solid;
 }
 
+.func-call-external {
+    color: #f92672 !important;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+    cursor: default;
+}
+
+.func-call-external:hover {
+    background: rgba(249, 38, 114, 0.1) !important;
+}
+
 .token-type {
     color: #ae81ff;
 }

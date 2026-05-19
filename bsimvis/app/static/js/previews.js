@@ -111,6 +111,7 @@
     };
 
     window.showCodePreview = async function (id, name, addr, bin, v_size, e, extra = 0, file_name = '') {
+        if (!id) return;
         const tooltip = getCodeTooltip();
         if (id === activePreviewId) {
             window.moveCodePreview(e);
@@ -181,7 +182,7 @@
         let html = `
             <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
                 <div style="flex-shrink:0; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:8px; margin-bottom:8px;">
-                    <div class="preview-header" style="border:none; margin-bottom:4px; padding:0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${displayName}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
+                    <div class="preview-header" style="border:none; margin-bottom:4px; padding:0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${displayName}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
                     <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px;">
                         Addr: ${displayAddr} | Bin: ${displayBin} | Feat: ${displayFeat}
                     </div>

@@ -106,16 +106,35 @@ def list_clusters():
 
     r = get_redis()
 
-    # 1. Discover all cluster meta keys
-    pattern = f"{collection}:cluster:{algo}:*:meta"
-    cursor = 0
+    cluster_list_key = f"{collection}:cluster:list:{algo}"
+    cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
 
-    while True:
-        cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-        all_meta_keys.extend([k.decode() if isinstance(k, bytes) else k for k in keys])
-        if cursor == 0:
-            break
+    if cids_raw:
+        all_meta_keys = [
+            f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+            for cid in cids_raw
+        ]
+    else:
+        # 1. Fallback to discover all cluster meta keys
+        pattern = f"{collection}:cluster:{algo}:*:meta"
+        cursor = 0
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+            all_meta_keys.extend(
+                [k.decode() if isinstance(k, bytes) else k for k in keys]
+            )
+            if cursor == 0:
+                break
+
+        # Populate the set for future fast lookups
+        if all_meta_keys:
+            cids_to_add = [
+                k[len(f"{collection}:cluster:{algo}:") : -len(":meta")]
+                for k in all_meta_keys
+            ]
+            if cids_to_add:
+                r.sadd(cluster_list_key, *cids_to_add)
 
     # 2. Fetch all metadata
     results = []

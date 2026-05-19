@@ -79,6 +79,27 @@ if not producer then
     producer = {type="score_range", key=algo_zset, min=min_score, max=max_score, idx=0}
 end
 
+-- Fast Path: If there is exactly 1 group (the score_range or feature_range producer) and we are sorting on it
+local is_sorting_on_producer = (sort_by == "score" and producer.type == "score_range") or ((sort_by == "min_features" or sort_by == "feat_count") and producer.type == "feature_range")
+
+if #groups <= 1 and (producer.type == "score_range" or producer.type == "feature_range") and is_sorting_on_producer then
+    local total_count = redis.call('ZCOUNT', producer.key, producer.min or "-inf", producer.max or "+inf")
+    local first, second, range_cmd
+    if sort_order == "desc" then
+        range_cmd = "ZREVRANGEBYSCORE"; first = producer.max or "+inf"; second = producer.min or "-inf"
+    else
+        range_cmd = "ZRANGEBYSCORE"; first = producer.min or "-inf"; second = producer.max or "+inf"
+    end
+    -- We fetch exactly offset + limit items directly from Redis ZSET
+    local slice = redis.call(range_cmd, producer.key, first, second, 'WITHSCORES', 'LIMIT', offset, limit)
+    local res_ids, res_scores = {}, {}
+    for j=1, #slice, 2 do
+        table.insert(res_ids, slice[j])
+        table.insert(res_scores, slice[j+1])
+    end
+    return {total_count, 0, res_ids, res_scores}
+end
+
 local refined = {}
 local total_found = 0
 local pool_truncated = false
@@ -181,12 +202,14 @@ for i=1, #raw, 2 do
 end
 
 -- 4. Result Finalization
-table.sort(refined, function(a, b)
-    if a[2] ~= b[2] then
-        if sort_order == "desc" then return a[2] > b[2] else return a[2] < b[2] end
-    end
-    return a[1] < b[1]
-end)
+if not sorting_on_producer then
+    table.sort(refined, function(a, b)
+        if a[2] ~= b[2] then
+            if sort_order == "desc" then return tonumber(a[2]) > tonumber(b[2]) else return tonumber(a[2]) < tonumber(b[2]) end
+        end
+        return a[1] < b[1]
+    end)
+end
 
 local res_ids, res_scores = {}, {}
 for i=1, math.min(#refined, limit+offset) do

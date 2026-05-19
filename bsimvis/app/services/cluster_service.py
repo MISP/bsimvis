@@ -478,6 +478,12 @@ class ClusterService:
             job_service.add_log(job_id, f"Writing cluster metadata to database...")
         pipe.execute()
 
+        # Maintain a set of all active cluster IDs for fast listing
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        r.delete(cluster_list_key)
+        if cluster_members:
+            r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
+
         logging.info(f"Update sim indexes...")
 
         # 7. Update all similarities in the collection to propagate cluster info
@@ -502,16 +508,24 @@ class ClusterService:
         r = self.r
 
         # 1. Discover all cluster meta keys
-        pattern = f"{collection}:cluster:{algo}:*:meta"
-        cursor = 0
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        cids_raw = r.smembers(cluster_list_key)
         all_meta_keys = []
-        while True:
-            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-            all_meta_keys.extend(
-                [k.decode() if isinstance(k, bytes) else k for k in keys]
-            )
-            if cursor == 0:
-                break
+        if cids_raw:
+            all_meta_keys = [
+                f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                for cid in cids_raw
+            ]
+        else:
+            pattern = f"{collection}:cluster:{algo}:*:meta"
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+                all_meta_keys.extend(
+                    [k.decode() if isinstance(k, bytes) else k for k in keys]
+                )
+                if cursor == 0:
+                    break
 
         # 2. Extract cluster IDs
         cluster_ids = []
@@ -566,8 +580,9 @@ class ClusterService:
                 pct = int((i / total_clusters) * 100)
                 job_service.update_progress(job_id, pct)
 
-        # 4. Delete tree
+        # 4. Delete tree and cluster list
         r.delete(f"{collection}:cluster:tree:{algo}")
+        r.delete(f"{collection}:cluster:list:{algo}")
 
         if job_service and job_id:
             job_service.add_log(job_id, "Clustering data cleared successfully.")
@@ -654,15 +669,27 @@ class ClusterService:
             job_service.add_log(job_id, "Pre-fetching cluster metadata records...")
 
         cluster_meta_map = {}
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        cids_raw = r.smembers(cluster_list_key)
         meta_keys = []
-        cursor = 0
-        while True:
-            cursor, keys = r.scan(
-                cursor=cursor, match=f"{collection}:cluster:{algo}:*:meta", count=1000
-            )
-            meta_keys.extend([k.decode() if isinstance(k, bytes) else k for k in keys])
-            if cursor == 0:
-                break
+        if cids_raw:
+            meta_keys = [
+                f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                for cid in cids_raw
+            ]
+        else:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(
+                    cursor=cursor,
+                    match=f"{collection}:cluster:{algo}:*:meta",
+                    count=1000,
+                )
+                meta_keys.extend(
+                    [k.decode() if isinstance(k, bytes) else k for k in keys]
+                )
+                if cursor == 0:
+                    break
 
         if meta_keys:
             c_pipe = r.pipeline()
@@ -772,7 +799,8 @@ class ClusterService:
 
         if job_service and job_id:
             job_service.add_log(
-                job_id, f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions..."
+                job_id,
+                f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions...",
             )
 
         prefix = f"{collection}:sim:{algo}:"
@@ -788,7 +816,9 @@ class ClusterService:
             for res in results:
                 if res:
                     for sid_raw in res:
-                        sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                        sid = (
+                            sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                        )
                         if sid.startswith(prefix):
                             candidate_sids.add(sid)
 
@@ -810,7 +840,7 @@ class ClusterService:
         # Batch aggregators to compress Redis pipeline commands by over 99%
         tag_buckets = {}  # bucket_key -> set of sids
         reg_buckets = {}  # reg_key -> set of bucket_keys
-        num_zsets = {}    # zset_key -> dict of sid: val
+        num_zsets = {}  # zset_key -> dict of sid: val
 
         def flush_batch():
             for b_key, sids in tag_buckets.items():
@@ -883,7 +913,11 @@ class ClusterService:
                 flush_batch()
                 update_pipe = r.pipeline()
                 if job_service and job_id:
-                    pct = int((processed / total_candidates) * 100) if total_candidates > 0 else 100
+                    pct = (
+                        int((processed / total_candidates) * 100)
+                        if total_candidates > 0
+                        else 100
+                    )
                     job_service.update_progress(
                         job_id,
                         pct,

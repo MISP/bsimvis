@@ -364,6 +364,7 @@ def similarity_search():
                 # --- LUA SCRIPT SETUP ---
                 from bsimvis.app.services.lua_manager import lua_manager
 
+                lua_manager.register_all()
                 search_script = lua_manager.get_script("search_similarity")
 
                 t_lua_prep = time.perf_counter()

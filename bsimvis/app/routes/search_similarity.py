@@ -786,10 +786,13 @@ def similarity_search():
                             )
 
                 if search_q:
+                    from bsimvis.app.services.index_config import INDEX_CONFIG
+                    all_levels = list(INDEX_CONFIG.keys())
+
                     for word in [w for w in search_q.split() if w.strip()]:
                         all_matches = []
                         # q search always checks all levels and does an OR between them
-                        for lvl in ["sim", "func", "file"]:
+                        for lvl in all_levels:
                             matches = get_group_targets(lvl, word)
                             if matches:
                                 all_matches.extend(matches)

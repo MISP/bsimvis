@@ -16,6 +16,77 @@ function handleFilterKey(e, searchFn) {
     }
 }
 
+// --- Column Resizing & Persistence ---
+function getSavedColumnWidth(path, label) {
+    try {
+        const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
+        return saved[path] ? saved[path][label] : null;
+    } catch(e) { return null; }
+}
+
+function saveColumnWidth(path, label, width) {
+    try {
+        const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
+        if (!saved[path]) saved[path] = {};
+        saved[path][label] = width;
+        localStorage.setItem('columnWidths', JSON.stringify(saved));
+    } catch(e) {}
+}
+
+function resetColumnWidths() {
+    const [hashPath] = (window.location.hash || '#collections').split('?');
+    try {
+        const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
+        delete saved[hashPath];
+        localStorage.setItem('columnWidths', JSON.stringify(saved));
+    } catch(e) {}
+    refreshData(false, true);
+}
+
+function initColumnResize(th, path, label) {
+    const resizer = th.querySelector('.resizer');
+    if (!resizer) return;
+
+    let startX, startWidth;
+
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        startX = e.clientX;
+        startWidth = th.getBoundingClientRect().width;
+        
+        document.body.classList.add('resizing');
+        
+        // Disable pointer events on iframes during resize
+        document.querySelectorAll('iframe').forEach(ifrm => {
+            ifrm.style.pointerEvents = 'none';
+        });
+
+        const onMouseMove = (e) => {
+            const width = startWidth + (e.clientX - startX);
+            if (width > 30) {
+                th.style.width = width + 'px';
+                th.style.minWidth = width + 'px';
+            }
+        };
+
+        const onMouseUp = () => {
+            document.body.classList.remove('resizing');
+            document.querySelectorAll('iframe').forEach(ifrm => {
+                ifrm.style.pointerEvents = 'auto';
+            });
+            saveColumnWidth(path, label, th.style.width);
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    });
+}
+// ------------------------------------
+
 let currentOffset = 0;
 const DEFAULT_PAGE_LIMIT = 50;
 const DEFAULT_GRAPH_LIMIT = 500;
@@ -220,6 +291,8 @@ async function refreshData(appendArg = false, force = false) {
     const route = routes[hashPath];
     if (!route) return;
 
+    populateCollectionDropdown();
+
     if (full_hash !== lastHashPath || !append) {
         currentOffset = 0;
         isEndOfResults = false;
@@ -284,7 +357,7 @@ async function refreshData(appendArg = false, force = false) {
             totalEl.style.display = 'inline-block';
 
             if (poolIcon) {
-                if (data.pool_truncated) {
+                if (data.pool_truncated && (hashPath === '#function-similarity' || hashPath === '#functions')) {
                     document.getElementById('pool-warn-icon').style.display = 'inline-block';
                     document.getElementById('pool-warn-icon').title = `⚠️ Pool Truncated to first ${data.pool_limit || '---'} matches. Results may be incomplete.`;
                     if (poolInput) poolInput.style.borderColor = '#ffab2e';
@@ -296,7 +369,7 @@ async function refreshData(appendArg = false, force = false) {
 
             if (limitIcon) {
                 const currentLimit = parseInt(params.get('limit')) || DEFAULT_PAGE_LIMIT;
-                if (total >= currentLimit && hashPath === '#function-similarity') {
+                if (total >= currentLimit && (hashPath === '#function-similarity' || hashPath === '#functions')) {
                     limitIcon.style.display = 'inline-block';
                     limitIcon.title = `ℹ️ Result Limit Reached (${currentLimit.toLocaleString()}). Not all pairs are shown.`;
                     if (limitInput) limitInput.style.borderColor = '#60a5fa';
@@ -371,8 +444,6 @@ function updateUI(path, params, route) {
     }
 
     // Side Collections Info
-    const sideSelect = document.getElementById('side-collection-select');
-    if (sideSelect) sideSelect.value = col || '';
     updateNavVisibility(col);
 
     if (col) {
@@ -396,8 +467,16 @@ function updateUI(path, params, route) {
     const thead = document.getElementById('table-head');
     const dataTable = document.getElementById('data-table');
     let headHtml = '<tr>';
+    
+    const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[path];
+    const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
+    const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
+
     if (path === '#function-similarity') {
         headHtml += `<th style="width:30px; text-align:center;"><input type="checkbox" id="select-all-sim" onchange="toggleAllSimilaritySelection(this)"></th>`;
+    }
+
+    if (hasWidths) {
         if (dataTable) dataTable.style.tableLayout = 'fixed';
     } else {
         if (dataTable) dataTable.style.tableLayout = 'auto';
@@ -405,16 +484,22 @@ function updateUI(path, params, route) {
     route.headers.forEach(h => {
         const label = typeof h === 'string' ? h : h.label;
         const sortKey = typeof h === 'object' ? h.sort : null;
-        const width = typeof h === 'object' ? h.width : 'auto';
+        let width = typeof h === 'object' ? h.width : 'auto';
+
+        // Apply saved width if exists
+        const savedWidth = getSavedColumnWidth(path, label);
+        if (savedWidth) width = savedWidth;
 
         let style = width !== 'auto' ? `style="width:${width}"` : '';
+        const resizerHtml = `<div class="resizer"></div>`;
+
         if (sortKey) {
             const currentSort = params.get('sort_by');
             const currentOrder = params.get('sort_order') || 'desc';
             const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-            headHtml += `<th ${style} class="sortable" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small></th>`;
+            headHtml += `<th ${style} class="sortable resizable-th" data-label="${label}" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small>${resizerHtml}</th>`;
         } else {
-            headHtml += `<th ${style}>${label}</th>`;
+            headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
         }
     });
     headHtml += '</tr>';
@@ -430,23 +515,30 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
 
-    if (path === '#function-similarity') {
+    if (path === '#function-similarity' || path === '#functions') {
         settingsEl.style.display = 'flex';
         const viewMode = params.get('view') || 'table';
         const currentLimit = params.get('pool_limit') || '1000000';
         const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
 
-        settingsEl.innerHTML = `
-            <div class="view-toggle">
-                <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
-                <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
-            </div>
+        let settingsHtml = '';
+        if (path === '#function-similarity') {
+            settingsHtml += `
+                <div class="view-toggle">
+                    <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
+                    <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
+                </div>`;
+        }
+
+        const applyFn = path === '#function-similarity' ? 'applySimSearch' : 'applyAdvancedFuncSearch';
+
+        settingsHtml += `
             <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
             <div style="position:relative; display:inline-flex; align-items:center;">
                 <input type="number" id="sim-pool-limit" value="${currentLimit}" step="100000" min="1000" max="1000000" 
-                    title="Max candidates to score" 
+                    title="Max candidates to score / filter" 
                     style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                    onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                    onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                 <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
             </div>
             <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
@@ -454,52 +546,75 @@ function updateUI(path, params, route) {
                 <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
                     title="Max results to display (Output Limit)" 
                     style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                    onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                    onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                 <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
             </div>
         `;
+        settingsEl.innerHTML = settingsHtml;
 
         const tbody = document.getElementById('table-body');
         const pag = document.getElementById('pagination-container');
         const gview = document.getElementById('graph-view-container');
 
-        if (viewMode === 'graph') {
-            tbody.style.display = 'none';
-            pag.style.display = 'none';
-            gview.style.display = 'flex';
-            console.log("updateUI: Loading Graph...");
-            loadGraphView(params);
+        if (path === '#function-similarity') {
+            if (viewMode === 'graph') {
+                tbody.style.display = 'none';
+                pag.style.display = 'none';
+                gview.style.display = 'flex';
+                console.log("updateUI: Loading Graph...");
+                loadGraphView(params);
+            } else {
+                tbody.style.display = 'table-row-group';
+                pag.style.display = 'block';
+                gview.style.display = 'none';
+            }
         } else {
+            // Functions view
             tbody.style.display = 'table-row-group';
             pag.style.display = 'block';
             gview.style.display = 'none';
         }
 
         const p = new URLSearchParams(params);
-        headHtml += `<tr class="filter-row">
-            <th></th>
-            <th style="vertical-align: middle;">
-                <div style="display:flex; align-items:center; gap:2px;">
-                    <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                    <span class="dim" style="font-size:0.6rem">-</span>
-                    <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                </div>
-                <div class="tag-filter-container" id="tag-container-sim">
-                    <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })">
-                </div>
-            </th>
+        headHtml += `<tr class="filter-row">`;
+        
+        if (path === '#function-similarity') {
+            headHtml += `
+                <th></th>
+                <th style="vertical-align: middle;">
+                    <div style="display:flex; align-items:center; gap:2px;">
+                        <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                        <span class="dim" style="font-size:0.6rem">-</span>
+                        <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                    </div>
+                    <div class="tag-filter-container" id="tag-container-sim">
+                        <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })">
+                    </div>
+                </th>`;
+        }
+
+        // Common Fields (Function Name, Namespace, Return Type)
+        const nameVal = path === '#function-similarity' ? p.get('name') : p.get('function_name');
+        headHtml += `
             <th>
                 <div style="display:flex; flex-direction:column; gap:4px;">
-                    <input type="text" id="flt-sim-name" placeholder="Name..." value="${p.get('name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    <input type="text" id="flt-func-name" placeholder="Name..." value="${nameVal || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                     <div style="display:flex; gap:2px;">
-                        <input type="text" id="flt-sim-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                        <input type="text" id="flt-sim-ret_type" placeholder="Return Type..." value="${p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                        <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                        <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${p.get('return_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
                     </div>
                 </div>
-            </th>
+            </th>`;
+
+        // Address
+        const addrVal = path === '#function-similarity' ? p.get('address') : p.get('entrypoint_address');
+        headHtml += `
             <th>
-                <input type="text" id="flt-sim-address" placeholder="Addr..." value="${p.get('address') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-            </th>
+                <input type="text" id="flt-func-address" placeholder="Addr..." value="${addrVal || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+            </th>`;
+
+        // Tags, Clusters, Features, File Info
+        headHtml += `
             <th style="position:relative">
                 <div class="tag-filter-container" id="tag-container-func">
                     <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })">
@@ -507,43 +622,49 @@ function updateUI(path, params, route) {
             </th>
             <th>
                 <div style="display:flex; flex-direction:column; gap:2px;">
-                    <input type="text" id="flt-sim-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                    <input type="text" id="flt-sim-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                    <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                    <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                 </div>
             </th>
-            <th><input type="number" id="sim-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th><input type="text" id="flt-sim-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="width: 100%; box-sizing: border-box;"></th>
-            <th><input type="text" id="flt-sim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="width: 100%; box-sizing: border-box;"></th>
+            <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+            <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+            <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
             <th style="position:relative">
                 <div class="tag-filter-container" id="tag-container-file">
                     <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
                 </div>
             </th>
-            <th><input type="text" id="flt-sim-language" placeholder="Lang..." value="${p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applySimSearch(); })" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-            <th style="font-size: 0.65rem;">
-                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
-                    <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
-                    <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                    <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
-                </select>
-                <div style="margin-top:4px;">
-                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
-                        <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
-                        <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
-                        <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
+            <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${p.get('language_id') || p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+
+        if (path === '#function-similarity') {
+            headHtml += `
+                <th style="font-size: 0.65rem;">
+                    <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                        <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
+                        <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                        <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
                     </select>
-                </div>
-            </th>
-        </tr>`;
+                    <div style="margin-top:4px;">
+                        <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                            <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
+                            <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
+                            <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
+                        </select>
+                    </div>
+                </th>`;
+        } else {
+            headHtml += `<th></th><th></th>`;
+        }
+        
+        headHtml += `</tr>`;
         thead.innerHTML = headHtml;
 
-        // --- Inject Tag Cards from URL Params ---
+        // Re-inject tags
         const tagFields = [
             { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
             { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
             { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
         ];
-
         tagFields.forEach(col => {
             col.fields.forEach(f => {
                 const values = p.getAll(f);
@@ -554,77 +675,14 @@ function updateUI(path, params, route) {
                 });
             });
         });
-        loadFieldCardinalities(col, 'func', {
-            'function_name': 'flt-sim-name',
-            'namespace': 'flt-sim-namespace',
-            'return_type': 'flt-sim-ret_type',
-            'file_md5': 'flt-sim-md5',
-            'file_name': 'flt-sim-file_name',
-            'language_id': 'flt-sim-language'
-        });
-    } else if (path === '#functions') {
-        const p = new URLSearchParams(params);
-        if (dataTable) dataTable.style.tableLayout = 'fixed';
-        headHtml += `<tr class="filter-row">
-            <th>
-                <div style="display:flex; flex-direction:column; gap:4px;">
-                    <input type="text" id="flt-function-name" placeholder="Name..." value="${p.get('function_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    <div style="display:flex; gap:2px;">
-                        <input type="text" id="flt-function-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                        <input type="text" id="flt-function-ret_type" placeholder="Return Type..." value="${p.get('return_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                    </div>
-                </div>
-            </th>
-            <th>
-                <input type="text" id="flt-function-address" placeholder="Addr..." value="${p.get('entrypoint_address') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-            </th>
-            <th style="position:relative">
-                <div class="tag-filter-container" id="tag-container-func">
-                    <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })">
-                </div>
-            </th>
-            <th>
-                <div style="display:flex; flex-direction:column; gap:2px;">
-                    <input type="text" id="flt-function-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                    <input type="text" id="flt-function-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                </div>
-            </th>
-            <th><input type="number" id="flt-function-min_features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th><input type="text" id="flt-function-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="width: 100%; box-sizing: border-box;"></th>
-            <th><input type="text" id="flt-function-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="width: 100%; box-sizing: border-box;"></th>
-            <th style="position:relative">
-                <div class="tag-filter-container" id="tag-container-file">
-                    <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
-                </div>
-            </th>
-            <th><input type="text" id="flt-function-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; applyAdvancedFuncSearch(); })" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-            <th></th>
-            <th></th>
-        </tr>`;
-        thead.innerHTML = headHtml;
 
-        // Re-inject tags
-        const tagFields = [
-            { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
-            { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
-        ];
-        tagFields.forEach(col => {
-            col.fields.forEach(f => {
-                const values = p.getAll(f);
-                const isEx = f.startsWith('exclude_');
-                const baseType = isEx ? f.substring(8) : f;
-                values.forEach(v => {
-                    if (v) createTagCard(col.key, baseType, v, isEx);
-                });
-            });
-        });
         loadFieldCardinalities(col, 'func', {
-            'function_name': 'flt-function-name',
-            'file_name': 'flt-function-file_name',
-            'file_md5': 'flt-function-md5',
-            'return_type': 'flt-function-ret_type',
-            'language_id': 'flt-function-language',
-            'namespace': 'flt-function-namespace'
+            'function_name': 'flt-func-name',
+            'file_name': 'flt-func-file_name',
+            'file_md5': 'flt-func-md5',
+            'return_type': 'flt-func-ret_type',
+            'language_id': 'flt-func-language',
+            'namespace': 'flt-func-namespace'
         });
     } else if (path === '#clusters') {
         const p = new URLSearchParams(params);
@@ -766,6 +824,11 @@ function updateUI(path, params, route) {
     } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
         searchArea.innerHTML = '';
     }
+
+    // Initialize resizers - MUST BE DONE AFTER ALL thead.innerHTML UPDATES
+    thead.querySelectorAll('.resizable-th').forEach(th => {
+        initColumnResize(th, path, th.dataset.label);
+    });
 }
 
 function applySearch() {
@@ -818,16 +881,16 @@ function applyAdvancedFuncSearch() {
     const globalQ = document.getElementById('func-search-input')?.value;
     params.set('q', globalQ || '');
 
-    const nameFlt = document.getElementById('flt-function-name')?.value;
-    const addressFlt = document.getElementById('flt-function-address')?.value;
-    const nsFlt = document.getElementById('flt-function-namespace')?.value;
-    const retTypeFlt = document.getElementById('flt-function-ret_type')?.value;
-    const fileNameFlt = document.getElementById('flt-function-file_name')?.value;
-    const md5Flt = document.getElementById('flt-function-md5')?.value;
-    const langFlt = document.getElementById('flt-function-language')?.value;
-    const clusterFlt = document.getElementById('flt-function-cluster')?.value;
-    const clusterNameFlt = document.getElementById('flt-function-cluster-name')?.value;
-    const minFeatFlt = document.getElementById('flt-function-min_features')?.value;
+    const nameFlt = document.getElementById('flt-func-name')?.value;
+    const addressFlt = document.getElementById('flt-func-address')?.value;
+    const nsFlt = document.getElementById('flt-func-namespace')?.value;
+    const retTypeFlt = document.getElementById('flt-func-ret_type')?.value;
+    const fileNameFlt = document.getElementById('flt-func-file_name')?.value;
+    const md5Flt = document.getElementById('flt-func-md5')?.value;
+    const langFlt = document.getElementById('flt-func-language')?.value;
+    const clusterFlt = document.getElementById('flt-func-cluster')?.value;
+    const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
+    const minFeatFlt = document.getElementById('flt-func-min-features')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
@@ -840,6 +903,11 @@ function applyAdvancedFuncSearch() {
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (minFeatFlt) params.set('min_features', minFeatFlt); else params.delete('min_features');
+
+    const poolLimit = document.getElementById('sim-pool-limit')?.value;
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('pool_limit', poolLimit || '1000000');
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
 
     const tagCols = ['func', 'file'];
     const allPossibleTagKeys = [
@@ -895,10 +963,10 @@ function applySimSearch() {
     const minScore = document.getElementById('sim-min-score')?.value;
     const maxScore = document.getElementById('sim-max-score')?.value;
     const algo = document.getElementById('sim-algo')?.value;
-    const minFeatures = document.getElementById('sim-min-features')?.value;
+    const minFeatures = document.getElementById('flt-func-min-features')?.value;
     const crossBinary = document.getElementById('sim-cross-binary')?.value;
     const globalQ = document.getElementById('sim-search-input')?.value;
-    const lang = document.getElementById('flt-sim-language')?.value;
+    const lang = document.getElementById('flt-func-language')?.value;
     const poolLimit = document.getElementById('sim-pool-limit')?.value;
     const countLimit = document.getElementById('sim-limit')?.value;
 
@@ -914,13 +982,13 @@ function applySimSearch() {
     params.set('pool_limit', poolLimit || '1000000');
     params.set('limit', countLimit || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT));
 
-    const nameFlt = document.getElementById('flt-sim-name')?.value;
-    const addressFlt = document.getElementById('flt-sim-address')?.value;
-    const nsFlt = document.getElementById('flt-sim-namespace')?.value;
-    const retTypeFlt = document.getElementById('flt-sim-ret_type')?.value;
-    const clusterFlt = document.getElementById('flt-sim-cluster')?.value;
-    const clusterNameFlt = document.getElementById('flt-sim-cluster-name')?.value;
-    const fileNameFlt = document.getElementById('flt-sim-file_name')?.value;
+    const nameFlt = document.getElementById('flt-func-name')?.value;
+    const addressFlt = document.getElementById('flt-func-address')?.value;
+    const nsFlt = document.getElementById('flt-func-namespace')?.value;
+    const retTypeFlt = document.getElementById('flt-func-ret_type')?.value;
+    const clusterFlt = document.getElementById('flt-func-cluster')?.value;
+    const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
+    const fileNameFlt = document.getElementById('flt-func-file_name')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
@@ -953,7 +1021,7 @@ function applySimSearch() {
         });
     });
 
-    const md5Flt = document.getElementById('flt-sim-md5')?.value;
+    const md5Flt = document.getElementById('flt-func-md5')?.value;
     params.delete('md5');
     if (md5Flt) {
         const md5s = md5Flt.split(/[\s,]+/).filter(x => x.length > 0);
@@ -1128,7 +1196,7 @@ function renderFunctions(data) {
                        onmouseenter="showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
                        onmousemove="moveCodePreview(event)"
                        onmouseleave="hideCodePreview(event)"
-                       onclick="showFunctionCodeById('${funcId}', '${safeName}')">
+                       onclick="showFunctionCodeById('${funcId}', '${safeName}', '', event)">
                         ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                     </b>
                     <div style="display:inline-flex; gap:4px; margin-left: 8px;">
@@ -1149,7 +1217,7 @@ function renderFunctions(data) {
 
                 <div style="display:inline-flex; align-items:center; gap:6px;">
                     <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
-                    <button class="btn-icon" onclick="showFeaturePanel('${funcId}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
+                    <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                 </div>
             </td>
             <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
@@ -1186,7 +1254,7 @@ function renderGlobalFeatures(items) {
 
             const displayLine = (ctx.line_idxs && ctx.line_idxs.length > 0) ? ctx.line_idxs[0] + 1 : 1;
             cCodeHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
-                     onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}')">
+                     onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event)">
                 <div class="code-card-line">
                     <div class="code-card-ln">${displayLine}</div>
                     <div class="code-card-text">`;
@@ -1227,9 +1295,10 @@ function renderGlobalFeatures(items) {
             <td class="mono" style="color:var(--accent)">${f.tf_score !== undefined ? Math.round(f.tf_score) : '<span class="dim">-</span>'}</td>
             <td class="mono">${f.frequency}</td>
             <td>
-                <button class="btn-action" style="background:none; border:none; padding:0; font-size:0.8rem; text-align:left; color:var(--accent);" 
-                    onclick="showGlobalFeaturePanel('${f.hash}', '${col}')">Analyze →</button>
+                <button class="btn-action" style="background:none; border:none; padding:0; font-size:0.8rem; text-align:left; color:var(--accent);"
+                    onclick="showGlobalFeaturePanel('${f.hash}', '${col}', event)">Analyze →</button>
             </td>
+
         </tr>
     `}).join('');
 }
@@ -1276,7 +1345,7 @@ function renderTopCorrelations(items) {
                         onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}')" 
+                        onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}', event)" 
                         title="Run Aligned Diff" 
                         style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
                         <span>±</span>
@@ -1291,7 +1360,7 @@ function renderTopCorrelations(items) {
                            onmouseenter="showCodePreview('${p.id1}', '${name1}', '${addr1}', '${m1}', ${p.meta1?.bsim_features_count || 0}, event, 0, '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}')" 
                            onmousemove="moveCodePreview(event)"
                            onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id1}', '${name1}')">
+                           onclick="showFunctionCodeById('${p.id1}', '${name1}', '', event)">
                             ${f1.ret ? `<span style="color:#ae81ff">${f1.ret}</span> ` : ''}${f1.ns ? `<span style="color:white; opacity:0.8">${f1.ns}::</span>` : ''}${p.name1 || '---'}<span style="color:white">(</span>${f1.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                         </b>
                         <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id1)) ? 'active' : ''}" 
@@ -1307,7 +1376,7 @@ function renderTopCorrelations(items) {
                            onmouseenter="showCodePreview('${p.id2}', '${name2}', '${addr2}', '${m2}', ${p.meta2?.bsim_features_count || 0}, event, 0, '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}')" 
                            onmousemove="moveCodePreview(event)"
                            onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id2}', '${name2}')">
+                           onclick="showFunctionCodeById('${p.id2}', '${name2}', '', event)">
                             ${f2.ret ? `<span style="color:#ae81ff">${f2.ret}</span> ` : ''}${f2.ns ? `<span style="color:white; opacity:0.8">${f2.ns}::</span>` : ''}${p.name2 || '---'}<span style="color:white">(</span>${f2.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
                         </b>
                         <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id2)) ? 'active' : ''}" 
@@ -1342,11 +1411,11 @@ function renderTopCorrelations(items) {
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta1?.bsim_features_count || 0}</span>
-                        <button class="btn-icon" onclick="showFeaturePanel('${p.id1}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                        <button class="btn-icon" onclick="showFeaturePanel('${p.id1}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span>
-                        <button class="btn-icon" onclick="showFeaturePanel('${p.id2}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                        <button class="btn-icon" onclick="showFeaturePanel('${p.id2}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
                 </div>
             </td>
@@ -1413,7 +1482,13 @@ function showDiffPanel(force = false) {
     if (f) f.src = url;
 }
 
-function openDiffDirectly(id1, name1, id2, name2) {
+function openDiffDirectly(id1, name1, id2, name2, e) {
+    const url = `/diff/index.html?id1=${encodeURIComponent(normalizeFuncId(id1))}&id2=${encodeURIComponent(normalizeFuncId(id2))}`;
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(url, '_blank');
+        return;
+    }
+
     hideCodePanel();
     hideFeaturePanel();
     hideGlobalFeaturePanel();
@@ -1421,8 +1496,6 @@ function openDiffDirectly(id1, name1, id2, name2) {
     const p = document.getElementById('diff-panel');
     const f = document.getElementById('diff-frame');
     const title = document.getElementById('diff-title');
-
-    const url = `/diff/index.html?id1=${encodeURIComponent(normalizeFuncId(id1))}&id2=${encodeURIComponent(normalizeFuncId(id2))}`;
 
     if (p) p.style.display = 'flex';
     if (title) title.innerText = `Diff: ${name1} vs ${name2}`;
@@ -1447,7 +1520,13 @@ function showDiffView() {
     window.open(url, '_blank');
 }
 
-function showFunctionCodeById(id, name, lineHash = '') {
+function showFunctionCodeById(id, name, lineHash = '', e) {
+    const url = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(url, '_blank');
+        return;
+    }
+
     hideFeaturePanel();
     hideGlobalFeaturePanel();
     const p = document.getElementById('code-panel');
@@ -1456,7 +1535,7 @@ function showFunctionCodeById(id, name, lineHash = '') {
 
     if (p) p.style.display = 'flex';
     if (title) title.innerText = `Code: ${name}`;
-    if (f) f.src = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
+    if (f) f.src = url;
 }
 
 function seeSimilarFromCode() {
@@ -1481,7 +1560,13 @@ function hideCodePanel() {
     if (p) p.style.display = 'none';
 }
 
-function showFeaturePanel(id) {
+function showFeaturePanel(id, e) {
+    const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(url, '_blank');
+        return;
+    }
+
     hideCodePanel();
     const p = document.getElementById('feature-panel');
     const f = document.getElementById('feature-frame');
@@ -1491,7 +1576,7 @@ function showFeaturePanel(id) {
 
     if (p) p.style.display = 'flex';
     if (title) title.innerText = `Features: ${addr}`;
-    if (f) f.src = `/function/features/index.html?id=${encodeURIComponent(id)}`;
+    if (f) f.src = url;
 }
 
 function hideFeaturePanel() {
@@ -1499,7 +1584,13 @@ function hideFeaturePanel() {
     if (p) p.style.display = 'none';
 }
 
-function showGlobalFeaturePanel(hash, collection) {
+function showGlobalFeaturePanel(hash, collection, e) {
+    const url = `/feature/index.html?hash=${encodeURIComponent(hash)}&collection=${encodeURIComponent(collection)}`;
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(url, '_blank');
+        return;
+    }
+
     hideCodePanel();
     hideFeaturePanel();
     const p = document.getElementById('global-feature-panel');
@@ -1508,7 +1599,7 @@ function showGlobalFeaturePanel(hash, collection) {
 
     if (p) p.style.display = 'flex';
     if (title) title.innerText = `Feature Analysis: ${hash.substring(0, 12)}...`;
-    if (f) f.src = `/feature/index.html?hash=${encodeURIComponent(hash)}&collection=${encodeURIComponent(collection)}`;
+    if (f) f.src = url;
 }
 
 function hideGlobalFeaturePanel() {
@@ -1552,6 +1643,11 @@ function initResize(panelId) {
         currentPanel = panel;
         document.body.style.cursor = 'ns-resize';
         document.body.style.userSelect = 'none';
+
+        // Disable pointer events on all iframes to prevent them from capturing mousemove
+        document.querySelectorAll('iframe').forEach(ifrm => {
+            ifrm.style.pointerEvents = 'none';
+        });
     });
 }
 
@@ -1564,6 +1660,12 @@ window.addEventListener('mousemove', e => {
 });
 
 window.addEventListener('mouseup', () => {
+    if (isResizing) {
+        // Re-enable pointer events on all iframes
+        document.querySelectorAll('iframe').forEach(ifrm => {
+            ifrm.style.pointerEvents = 'auto';
+        });
+    }
     isResizing = false;
     currentPanel = null;
     document.body.style.cursor = 'default';
@@ -1710,6 +1812,7 @@ function loadUIParams() {
 
 window.addEventListener('load', () => {
     loadUIParams();
+    populateCollectionDropdown();
     if (!window.location.hash) window.location.hash = '#collections';
     // Apply defaults on initial page load if landing on sim view
     const [hashPath, queryString] = (window.location.hash || '').split('?');
@@ -1727,37 +1830,66 @@ async function populateCollectionDropdown() {
         if (!res.ok) return;
         const data = await res.json();
         const collections = data.collections || (Array.isArray(data) ? data : []);
-        const select = document.getElementById('side-collection-select');
-        if (!select) return;
+        
+        const list = document.getElementById('collection-flyout-list');
+        const trigger = document.getElementById('nav-collections');
+        const flyout = document.getElementById('collection-flyout');
+        if (!list || !trigger || !flyout) return;
 
-        select.innerHTML = '<option value="">None Selected</option>';
-        collections.forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c.name;
-            opt.innerText = c.name;
-            select.appendChild(opt);
-        });
-
-        // Sync with current URL
         const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-        select.value = params.get('collection') || '';
-        updateNavVisibility(select.value);
+        const currentCollection = params.get('collection') || '';
 
-        // Add event listener once populated
-        if (!select.dataset.hasListener) {
-            select.addEventListener('change', (e) => {
-                const val = e.target.value;
-                const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-                const p = new URLSearchParams(queryString);
-                if (val) p.set('collection', val);
-                else p.delete('collection');
-                window.location.hash = `${hashPath}?${p.toString()}`;
-            });
-            select.dataset.hasListener = "true";
+        const nameDisplay = document.getElementById('current-collection-name');
+        if (nameDisplay) {
+            nameDisplay.innerText = currentCollection || 'Collections';
+            nameDisplay.style.color = currentCollection ? 'var(--accent)' : 'inherit';
+        }
+
+        list.innerHTML = collections.map(c => `
+            <div class="collection-item ${c.name === currentCollection ? 'active' : ''}" onclick="selectCollection('${c.name}')">
+                <i class="fa-solid fa-database"></i>
+                <span>${c.name}</span>
+            </div>
+        `).join('') || '<div class="collection-item dim">No collections found</div>';
+
+        updateNavVisibility(currentCollection);
+
+        // Hover Logic
+        if (!trigger.dataset.hasListener) {
+            let hideTimeout = null;
+
+            const show = () => {
+                if (hideTimeout) clearTimeout(hideTimeout);
+                const rect = trigger.getBoundingClientRect();
+                flyout.style.top = rect.top + 'px';
+                flyout.style.display = 'flex';
+            };
+
+            const hide = () => {
+                hideTimeout = setTimeout(() => {
+                    flyout.style.display = 'none';
+                }, 300);
+            };
+
+            trigger.addEventListener('mouseenter', show);
+            trigger.addEventListener('mouseleave', hide);
+            flyout.addEventListener('mouseenter', () => { if (hideTimeout) clearTimeout(hideTimeout); });
+            flyout.addEventListener('mouseleave', hide);
+            
+            trigger.dataset.hasListener = "true";
         }
     } catch (e) {
         console.error("Failed to populate collections", e);
     }
+}
+
+function selectCollection(name) {
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const p = new URLSearchParams(queryString);
+    if (name) p.set('collection', name);
+    else p.delete('collection');
+    window.location.hash = `${hashPath}?${p.toString()}`;
+    document.getElementById('collection-flyout').style.display = 'none';
 }
 
 function updateNavVisibility(collection) {
@@ -2069,18 +2201,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = document.getElementById('toggle-filters-btn');
         if (btn) btn.classList.remove('active');
     }
-});
 
-document.addEventListener('contextmenu', e => {
-    if (e.target.closest('.feature-highlight')) {
-        showTokenContextMenu(e);
-    }
-});
+    // Initialize Resizable Panels
+    initResize('code-panel');
+    initResize('feature-panel');
+    initResize('global-feature-panel');
+    initResize('diff-panel');
 
-initResize('code-panel');
-initResize('feature-panel');
-initResize('global-feature-panel');
-initResize('diff-panel');
+    document.addEventListener('contextmenu', e => {
+        if (e.target.closest('.feature-highlight')) {
+            showTokenContextMenu(e);
+        }
+    });
+});
 
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
@@ -2090,6 +2223,8 @@ window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
+window.selectCollection = selectCollection;
+window.resetColumnWidths = resetColumnWidths;
 window.toggleSort = toggleSort;
 window.applySearch = applySearch;
 window.switchSimView = switchSimView;

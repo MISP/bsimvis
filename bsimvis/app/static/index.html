@@ -33,21 +33,11 @@
     <nav>
         <h2 title="BSim Vis"><i class="fa-solid fa-circle-nodes" style="color: var(--accent);"></i> <span>BSim
                 Vis</span></h2>
-        <a href="#collections" id="nav-collections" title="Collections"><i class="fa-solid fa-layer-group"></i>
-            <span>Collections</span></a>
-
-        <div class="nav-collection-container"
-            style="padding: 20px 20px 5px 20px; border-top: 1px solid var(--border); margin-top: 15px; transition: padding 0.3s; box-sizing: border-box;">
-            <div class="dim collection-label"
-                style="font-size: 0.6rem; text-transform: uppercase; margin-bottom: 5px; display: flex; align-items: center; gap: 8px;"
-                title="Current Collection">
-                <i class="fa-solid fa-database" style="color: var(--subtle);"></i> <span>Current Collection</span>
-            </div>
-            <select id="side-collection-select" title="Select Collection"
-                style="width: 100%; background: #111; color: var(--success); border: 1px solid var(--border); padding: 6px 8px; border-radius: 4px; font-weight: bold; font-size: 0.8rem; cursor: pointer; text-overflow: ellipsis; overflow: hidden; box-sizing: border-box;">
-                <option value="">None Selected</option>
-            </select>
-        </div>
+        <a href="#collections" id="nav-collections" title="Collections"
+            style="border-bottom: 1px solid var(--border); margin-bottom: 15px; padding-bottom: 15px;">
+            <i class="fa-solid fa-layer-group"></i>
+            <span id="current-collection-name">Collections</span>
+        </a>
 
         <a href="#batches" id="nav-batches" title="Batches" style="display:none"><i
                 class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
@@ -61,7 +51,8 @@
             style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
         <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i>
             <span>Clusters</span></a>
-        <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i class="fa-solid fa-sitemap"></i>
+        <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
+                class="fa-solid fa-sitemap"></i>
             <span>Call Graph</span></a>
 
         <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
@@ -97,13 +88,18 @@
                     <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
                         <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
                     </button>
+                    <button onclick="resetColumnWidths()" class="top-action-btn" title="Reset Column Widths">
+                        <i class="fa-solid fa-arrows-left-right"></i> Reset Cols
+                    </button>
                     <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
                         <i class="fa-solid fa-trash-can"></i> Clear
                     </button>
-                    <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()" title="Toggle Filters">
+                    <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
+                        title="Toggle Filters">
                         <i class="fa-solid fa-filter"></i> Filters
                     </button>
-                    <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()" title="Toggle Search Area">
+                    <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
+                        title="Toggle Search Area">
                         <i class="fa-solid fa-magnifying-glass"></i> Search
                     </button>
                 </div>
@@ -112,14 +108,18 @@
         </div>
 
         <!-- UI Settings Panel -->
-        <div id="ui-settings-panel" style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+        <div id="ui-settings-panel"
+            style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
                 <h3 style="margin:0; font-size:1rem; color:var(--accent);">UI Settings</h3>
-                <button onclick="toggleUISettings()" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
+                <button onclick="toggleUISettings()"
+                    style="background:none; border:none; color:var(--dim); cursor:pointer;"><i
+                        class="fa-solid fa-times"></i></button>
             </div>
             <div style="margin-bottom:15px;">
                 <label style="display:block; font-size:0.8rem; margin-bottom:5px;">Min Cohesion Threshold</label>
-                <input type="range" id="param-cohesion" min="0" max="1" step="0.05" value="0.5" style="width:100%" onchange="updateUIParams()">
+                <input type="range" id="param-cohesion" min="0" max="1" step="0.05" value="0.5" style="width:100%"
+                    onchange="updateUIParams()">
                 <span id="val-cohesion" style="font-size:0.75rem; color:var(--dim)">0.50</span>
             </div>
             <div style="display:flex; align-items:center; gap:10px;">
@@ -253,6 +253,11 @@
     <div id="diff-preview-tooltip"></div>
     <div id="hierarchy-tooltip"
         style="position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;">
+    </div>
+
+
+    <div id="collection-flyout">
+        <div id="collection-flyout-list"></div>
     </div>
 
 

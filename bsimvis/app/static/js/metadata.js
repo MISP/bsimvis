@@ -75,12 +75,13 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                                 const fid='${fid}'; 
                                 const name='${name.replace(/'/g, "\\'")}';
                                 if(window.showFunctionCodeById) { 
-                                    showFunctionCodeById(fid, name); 
+                                    showFunctionCodeById(fid, name, '', event); 
                                 } else if(window.parent && window.parent.showFunctionCodeById) { 
-                                    window.parent.showFunctionCodeById(fid, name); 
+                                    window.parent.showFunctionCodeById(fid, name, '', event); 
                                 } else { 
                                     window.location.href='/function/index.html?id='+encodeURIComponent(fid); 
-                                }"`;
+                                }"` ;
+
                             
                             return `<span class="tag-card" style="border-color:${color}; color:${color}; cursor:${cursor}; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;" ${previewAttrs} ${clickAttr}>
                                 ${labelHtml}

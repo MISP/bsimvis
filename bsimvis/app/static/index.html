@@ -24,6 +24,7 @@
     <script src="/js/metadata.js"></script>
     <script src="/js/similarity_graph.js"></script>
     <script src="/js/cluster_views.js"></script>
+    <script src="/js/call_graph.js"></script>
     <script src="/js/dashboard.js"></script>
 
 <body>
@@ -59,6 +60,8 @@
             style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
         <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i>
             <span>Clusters</span></a>
+        <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i class="fa-solid fa-sitemap"></i>
+            <span>Call Graph</span></a>
 
         <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
             <div class="dim nav-section-title"
@@ -129,6 +132,10 @@
             </div>
 
             <div id="packing-view-container"
+                style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
+            </div>
+
+            <div id="call-graph-view-container"
                 style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
             </div>
 

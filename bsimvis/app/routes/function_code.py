@@ -275,6 +275,7 @@ def get_file_call_graph():
         edges = []
         node_ids_in_graph = set()
         external_nodes = {}
+        unindexed_nodes = set()
 
         for i, fid in enumerate(func_ids):
             raw_meta = results[2 * i]
@@ -293,7 +294,12 @@ def get_file_call_graph():
                 "id": fid,
                 "name": func_name,
                 "entrypoint": addr,
-                "is_external": False
+                "namespace": meta.get("namespace") if meta else None,
+                "return_type": meta.get("return_type") if meta else None,
+                "parameters": meta.get("parameters") if meta else None,
+                "features_count": meta.get("bsim_features_count", 0) if meta else 0,
+                "is_external": False,
+                "is_unindexed": False
             })
             node_ids_in_graph.add(fid)
 
@@ -303,9 +309,44 @@ def get_file_call_graph():
                     "source": fid,
                     "target": callee_id
                 })
-                if callee_id.startswith("ext:") and callee_id not in external_nodes:
-                    name = callee_id.split(":", 1)[1]
-                    external_nodes[callee_id] = name
+                if callee_id.startswith("ext:"):
+                    if callee_id not in external_nodes:
+                        parts = callee_id.split(":", 1)
+                        name = parts[1] if len(parts) > 1 else callee_id
+                        external_nodes[callee_id] = name
+                else:
+                    # Internal function, but check if it's unindexed/filtered out
+                    if callee_id not in node_ids_in_graph and callee_id not in func_ids:
+                        unindexed_nodes.add(callee_id)
+
+        # Fetch metadata for unindexed nodes
+        if unindexed_nodes:
+            other_ids = list(unindexed_nodes)
+            other_pipe = r.pipeline()
+            for oid in other_ids:
+                other_pipe.json().get(f"{oid}:meta", "$")
+            other_results = other_pipe.execute()
+            
+            for oid, raw_meta in zip(other_ids, other_results):
+                meta = None
+                if raw_meta:
+                    meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                    if isinstance(meta, str):
+                        meta = json.loads(meta)
+                
+                func_name = meta.get("function_name") if meta else f"func_{oid.split(':')[-1]}"
+                addr = oid.split(":")[-1]
+                nodes.append({
+                    "id": oid,
+                    "name": func_name,
+                    "entrypoint": addr,
+                    "namespace": meta.get("namespace") if meta else None,
+                    "return_type": meta.get("return_type") if meta else None,
+                    "parameters": meta.get("parameters") if meta else None,
+                    "features_count": meta.get("bsim_features_count", 0) if meta else 0,
+                    "is_external": False,
+                    "is_unindexed": True
+                })
 
         # Add external nodes to the node list
         for ext_id, ext_name in external_nodes.items():
@@ -313,7 +354,9 @@ def get_file_call_graph():
                 "id": ext_id,
                 "name": ext_name,
                 "entrypoint": None,
-                "is_external": True
+                "features_count": 0,
+                "is_external": True,
+                "is_unindexed": False
             })
 
         return jsonify({

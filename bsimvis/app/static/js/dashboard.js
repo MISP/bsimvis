@@ -175,6 +175,12 @@ const routes = {
             { label: 'Actions', width: '18%' }
         ],
         renderer: renderClusters
+    },
+    '#file-call-graph': {
+        title: 'File Call Graph',
+        api: null,
+        headers: [],
+        renderer: null
     }
 };
 
@@ -248,7 +254,7 @@ async function refreshData(appendArg = false, force = false) {
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
     updateUI(hashPath, params, route);
 
-    if (params.get('view') === 'graph' && hashPath === '#function-similarity') {
+    if (params.get('view') === 'graph' && hashPath === '#function-similarity' || !route.api) {
         document.getElementById('loader').style.display = 'none';
         return;
     }
@@ -323,12 +329,14 @@ function updateUI(path, params, route) {
     document.getElementById('graph-view-container').style.display = 'none';
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
+    if (document.getElementById('call-graph-view-container')) document.getElementById('call-graph-view-container').style.display = 'none';
     document.getElementById('table-body').style.display = 'table-row-group';
     document.getElementById('pagination-container').style.display = 'block';
 
     if (window.graphInstance) window.graphInstance.stop();
     if (window.hierarchyInstance) window.hierarchyInstance.stop();
     if (window.packingInstance) window.packingInstance.stop();
+    if (window.callGraphInstance) window.callGraphInstance.stop();
 
     const col = params.get('collection');
 
@@ -367,6 +375,14 @@ function updateUI(path, params, route) {
         document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
         document.getElementById('nav-function-similarity').href = `#function-similarity?collection=${col}`;
         document.getElementById('nav-clusters').href = `#clusters?collection=${col}`;
+        
+        const fileMd5 = params.get('file_md5');
+        const cgNav = document.getElementById('nav-file-call-graph');
+        if (cgNav) {
+            let href = `#file-call-graph?collection=${col}`;
+            if (fileMd5) href += `&file_md5=${fileMd5}`;
+            cgNav.href = href;
+        }
     }
 
     // Table Head
@@ -660,6 +676,15 @@ function updateUI(path, params, route) {
             hview.style.display = 'none';
             if (pview) pview.style.display = 'none';
         }
+    } else if (path === '#file-call-graph') {
+        const tbody = document.getElementById('table-body');
+        const pag = document.getElementById('pagination-container');
+        const cgview = document.getElementById('call-graph-view-container');
+
+        tbody.style.display = 'none';
+        pag.style.display = 'none';
+        cgview.style.display = 'flex';
+        loadCallGraphView(params);
     }
 
     // Search Bar for Files
@@ -669,12 +694,38 @@ function updateUI(path, params, route) {
             <input type="text" id="file-search" placeholder="Filter by filename..." onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
             <button onclick="applySearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
         </div>`;
+    } else if (path === '#file-call-graph') {
+        const p = new URLSearchParams(params);
+        const col = p.get('collection');
+        const fileMd5 = p.get('file_md5');
+        
+        searchArea.innerHTML = `<div class="filter-bar" style="display:flex; align-items:center; gap:10px;">
+            <label style="color:var(--accent); font-weight:bold; font-size:0.85rem;">Select File:</label>
+            <select id="call-graph-file-select" onchange="window.location.hash='#file-call-graph?collection=${col}&file_md5=' + this.value" style="padding: 5px; background: #111; color: var(--success); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; max-width: 400px; width: 300px;">
+                <option value="">-- Loading Files... --</option>
+            </select>
+        </div>`;
+
+        fetch(`/api/file/search?collection=${col}&limit=1000`)
+            .then(res => res.json())
+            .then(data => {
+                const select = document.getElementById('call-graph-file-select');
+                if (select) {
+                    select.innerHTML = '<option value="">-- Select File --</option>' + 
+                        (data.files || []).map(f => `<option value="${f.file_md5}" ${f.file_md5 === fileMd5 ? 'selected' : ''}>${f.file_name} (${f.file_md5.substring(0,8)})</option>`).join('');
+                }
+            })
+            .catch(e => console.error("Error loading files for dropdown", e));
     } else if (path === '#functions') {
         const p = new URLSearchParams(params);
+        const fileMd5 = p.get('file_md5');
+        const callGraphBtn = fileMd5 ? `<a class="btn-action" href="#file-call-graph?collection=${p.get('collection')}&file_md5=${fileMd5}" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem;">View File Call Graph 🕸️</a>` : '';
+        
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
                 <input type="text" id="func-search-input" placeholder="Search by Keywords..." value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)">
                 <button onclick="applyAdvancedFuncSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                ${callGraphBtn}
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
                 <input type="checkbox" id="sim-color-by-tag" ${localStorage.getItem('sim-color-by-tag') === 'true' ? 'checked' : ''} onchange="localStorage.setItem('sim-color-by-tag', this.checked); refreshAllRowColors()">
@@ -1029,7 +1080,12 @@ function renderFiles(data) {
                 <div class="dim">${f['language_id']}</div>
             </td>
             <td class="dim">${formatDate(f['entry_date'])}</td>
-            <td><a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}">Functions →</a></td>
+            <td>
+                <div style="display:flex; gap:10px;">
+                    <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}">Functions →</a>
+                    <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" style="color:var(--accent)">Call Graph 🕸️</a>
+                </div>
+            </td>
         </tr>
     `).join('');
 }
@@ -1612,7 +1668,7 @@ async function populateCollectionDropdown() {
 }
 
 function updateNavVisibility(collection) {
-    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters'];
+    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-file-call-graph'];
     navItems.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = collection ? 'flex' : 'none';

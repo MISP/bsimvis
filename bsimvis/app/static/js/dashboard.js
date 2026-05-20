@@ -1,5 +1,7 @@
 // Main Dashboard Controller for BSimVis
 
+const windowManager = new WindowManager();
+
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
@@ -1456,14 +1458,6 @@ function renderTopCorrelations(items) {
 function showDiffPanel(force = false) {
     if (!force && diffSelection.length < 2) return;
 
-    hideCodePanel();
-    hideFeaturePanel();
-    hideGlobalFeaturePanel();
-
-    const p = document.getElementById('diff-panel');
-    const f = document.getElementById('diff-frame');
-    const title = document.getElementById('diff-title');
-
     let url = '/diff/index.html';
     let label = 'Function Comparison';
 
@@ -1477,9 +1471,7 @@ function showDiffPanel(force = false) {
         saveDiffQueue();
     }
 
-    if (p) p.style.display = 'flex';
-    if (title) title.innerText = label;
-    if (f) f.src = url;
+    windowManager.createWindow(label, url, { type: 'diff' });
 }
 
 function openDiffDirectly(id1, name1, id2, name2, e) {
@@ -1489,22 +1481,7 @@ function openDiffDirectly(id1, name1, id2, name2, e) {
         return;
     }
 
-    hideCodePanel();
-    hideFeaturePanel();
-    hideGlobalFeaturePanel();
-
-    const p = document.getElementById('diff-panel');
-    const f = document.getElementById('diff-frame');
-    const title = document.getElementById('diff-title');
-
-    if (p) p.style.display = 'flex';
-    if (title) title.innerText = `Diff: ${name1} vs ${name2}`;
-    if (f) f.src = url;
-}
-
-function hideDiffPanel() {
-    const p = document.getElementById('diff-panel');
-    if (p) p.style.display = 'none';
+    windowManager.createWindow(`Diff: ${name1} vs ${name2}`, url, { type: 'diff' });
 }
 
 function showDiffView() {
@@ -1527,21 +1504,20 @@ function showFunctionCodeById(id, name, lineHash = '', e) {
         return;
     }
 
-    hideFeaturePanel();
-    hideGlobalFeaturePanel();
-    const p = document.getElementById('code-panel');
-    const f = document.getElementById('code-frame');
-    const title = document.getElementById('code-title');
-
-    if (p) p.style.display = 'flex';
-    if (title) title.innerText = `Code: ${name}`;
-    if (f) f.src = url;
+    windowManager.createWindow(`Code: ${name}`, url, { type: 'code' });
 }
 
 function seeSimilarFromCode() {
-    const frame = document.getElementById('code-frame');
-    if (!frame || !frame.src) return;
-    const url = new URL(frame.src, window.location.origin);
+    const win = windowManager.activeWindow;
+    if (!win || !win.iframe || !win.iframe.src) return;
+    
+    let url;
+    try {
+        url = new URL(win.iframe.contentWindow.location.href);
+    } catch(e) {
+        url = new URL(win.iframe.src, window.location.origin);
+    }
+    
     const id = url.searchParams.get('id');
     if (!id) return;
 
@@ -1552,12 +1528,7 @@ function seeSimilarFromCode() {
     const addr = parts[3];
 
     window.location.hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
-    hideCodePanel();
-}
-
-function hideCodePanel() {
-    const p = document.getElementById('code-panel');
-    if (p) p.style.display = 'none';
+    windowManager.closeWindow(win);
 }
 
 function showFeaturePanel(id, e) {
@@ -1567,21 +1538,8 @@ function showFeaturePanel(id, e) {
         return;
     }
 
-    hideCodePanel();
-    const p = document.getElementById('feature-panel');
-    const f = document.getElementById('feature-frame');
-    const title = document.getElementById('feature-title');
-
     const addr = id.split(':').pop();
-
-    if (p) p.style.display = 'flex';
-    if (title) title.innerText = `Features: ${addr}`;
-    if (f) f.src = url;
-}
-
-function hideFeaturePanel() {
-    const p = document.getElementById('feature-panel');
-    if (p) p.style.display = 'none';
+    windowManager.createWindow(`Features: ${addr}`, url, { type: 'features' });
 }
 
 function showGlobalFeaturePanel(hash, collection, e) {
@@ -1591,86 +1549,21 @@ function showGlobalFeaturePanel(hash, collection, e) {
         return;
     }
 
-    hideCodePanel();
-    hideFeaturePanel();
-    const p = document.getElementById('global-feature-panel');
-    const f = document.getElementById('global-feature-frame');
-    const title = document.getElementById('global-feature-title');
-
-    if (p) p.style.display = 'flex';
-    if (title) title.innerText = `Feature Analysis: ${hash.substring(0, 12)}...`;
-    if (f) f.src = url;
+    windowManager.createWindow(`Feature Analysis: ${hash.substring(0, 12)}...`, url, { type: 'global-feature' });
 }
 
-function hideGlobalFeaturePanel() {
-    const p = document.getElementById('global-feature-panel');
-    if (p) p.style.display = 'none';
-}
+// Old panel toggle functions removed as closing is handled by WindowManager
+function hideDiffPanel() {}
+function hideCodePanel() {}
+function hideFeaturePanel() {}
+function hideGlobalFeaturePanel() {}
 
 function launchExternal(type) {
-    let url = '';
-    if (type === 'diff') {
-        url = document.getElementById('diff-frame').src;
-    } else if (type === 'code') {
-        url = document.getElementById('code-frame').src;
-    } else if (type === 'features') {
-        url = document.getElementById('feature-frame').src;
-    } else if (type === 'global-feature') {
-        url = document.getElementById('global-feature-frame').src;
-    }
-
-    if (url) {
-        window.open(url, '_blank');
-        if (type === 'diff') hideDiffPanel();
-        else if (type === 'code') hideCodePanel();
-        else if (type === 'features') hideFeaturePanel();
-        else if (type === 'global-feature') hideGlobalFeaturePanel();
-    }
+    const win = windowManager.activeWindow;
+    if (win) windowManager.popout(win);
 }
 
-// Resizing Logic
-let isResizing = false;
-let currentPanel = null;
-
-function initResize(panelId) {
-    const panel = document.getElementById(panelId);
-    if (!panel) return;
-    const handle = panel.querySelector('.resize-handle');
-    if (!handle) return;
-
-    handle.addEventListener('mousedown', e => {
-        isResizing = true;
-        currentPanel = panel;
-        document.body.style.cursor = 'ns-resize';
-        document.body.style.userSelect = 'none';
-
-        // Disable pointer events on all iframes to prevent them from capturing mousemove
-        document.querySelectorAll('iframe').forEach(ifrm => {
-            ifrm.style.pointerEvents = 'none';
-        });
-    });
-}
-
-window.addEventListener('mousemove', e => {
-    if (!isResizing || !currentPanel) return;
-    const newHeight = window.innerHeight - e.clientY;
-    if (newHeight > 100 && newHeight < window.innerHeight * 0.9) {
-        currentPanel.style.height = newHeight + 'px';
-    }
-});
-
-window.addEventListener('mouseup', () => {
-    if (isResizing) {
-        // Re-enable pointer events on all iframes
-        document.querySelectorAll('iframe').forEach(ifrm => {
-            ifrm.style.pointerEvents = 'auto';
-        });
-    }
-    isResizing = false;
-    currentPanel = null;
-    document.body.style.cursor = 'default';
-    document.body.style.userSelect = 'auto';
-});
+// Old Resizing Logic removed in favor of WindowManager's resize handles
 
 // Apply "NOT ignore" defaults only when first entering the Sim view
 function applySimViewDefaults(hashPath, queryString) {
@@ -1934,8 +1827,8 @@ function renderClusters(items) {
             <td class="dim">${formatDate(c.created_at)}</td>
             <td>
                 <div style="display:flex; gap:10px;">
-                    <a href="#functions?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">View Functions →</a>
-                    <a href="#function-similarity?collection=${document.getElementById('side-collection-select').value}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">View similarities →</a>
+                    <a href="#functions?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">View Functions →</a>
+                    <a href="#function-similarity?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">View similarities →</a>
                 </div>
             </td>
         </tr>
@@ -1972,7 +1865,7 @@ async function renameCluster(clusterId, currentName) {
     const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
     if (!newName || newName === currentName) return;
 
-    const collection = document.getElementById('side-collection-select').value;
+    const collection = getCollectionFromHash();
     const algo = new URLSearchParams(window.location.hash.split('?')[1]).get('algo') || 'unweighted_cosine';
 
     try {
@@ -2201,12 +2094,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = document.getElementById('toggle-filters-btn');
         if (btn) btn.classList.remove('active');
     }
-
-    // Initialize Resizable Panels
-    initResize('code-panel');
-    initResize('feature-panel');
-    initResize('global-feature-panel');
-    initResize('diff-panel');
 
     document.addEventListener('contextmenu', e => {
         if (e.target.closest('.feature-highlight')) {

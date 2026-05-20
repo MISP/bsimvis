@@ -277,7 +277,7 @@
 
                 scrollEl.addEventListener('pointermove', e => {
                     if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
-                        window.parent.moveCodePreviewFromIframe('code-frame', e);
+                        window.parent.moveCodePreviewFromIframe(window.name, e);
                     }
                 });
 
@@ -388,7 +388,7 @@
                     tooltipEl.style.display = 'none';
                     const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
                     if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                        window.parent.showCodePreviewFromIframe('code-frame', calledFuncId, targetName, e);
+                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, e);
                     } else if (typeof window.showCodePreview === 'function') {
                         window.showCodePreview(calledFuncId, targetName, null, null, null, e);
                     }

@@ -92,8 +92,15 @@
                 let x = e.clientX + offset;
                 let y = e.clientY + offset;
                 const rect = el.getBoundingClientRect();
+                
+                // Keep within viewport
                 if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - offset;
                 if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - offset;
+                
+                // Ensure it doesn't go off-screen on the top/left
+                x = Math.max(5, x);
+                y = Math.max(5, y);
+                
                 el.style.left = x + 'px';
                 el.style.top = y + 'px';
                 el.classList.add('showing');
@@ -140,7 +147,11 @@
         `;
 
         if (!tooltip.dataset.hasLeave) {
-            tooltip.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+            tooltip.addEventListener('mouseleave', (me) => { 
+                // Only hide if we aren't moving back to the trigger element
+                if (me.relatedTarget && me.relatedTarget.classList && me.relatedTarget.classList.contains('func-call-clickable')) return;
+                window.hideCodePreview(); 
+            });
             tooltip.dataset.hasLeave = 'true';
         }
 
@@ -150,6 +161,8 @@
                 window.previewTips = cached.tips;
                 window.previewCollection = collection;
                 _renderCodePreview(tooltip, cached, name, addr, bin, v_size, extra, file_name);
+                // Re-position after content loads to account for new dimensions
+                window.moveCodePreview(e);
                 return;
             }
             try {
@@ -160,6 +173,8 @@
                 window.previewCollection = collection;
                 previewCache.set(id, data);
                 _renderCodePreview(tooltip, data, name, addr, bin, v_size, extra, file_name);
+                // Re-position after content loads
+                window.moveCodePreview(e);
             } catch (err) {
                 tooltip.innerHTML = `<div class="preview-header" style="color:#ff5555">Error loading preview</div>`;
             }
@@ -366,5 +381,11 @@
 
     // Global mouse tracking for tooltip follow
     document.addEventListener('mousemove', window.moveCodePreview);
+
+    // Failsafe: hide tooltips if the window loses focus or mouse leaves the document
+    window.addEventListener('blur', () => window.hideCodePreview());
+    document.addEventListener('mouseleave', (e) => {
+        if (!e.relatedTarget) window.hideCodePreview();
+    });
 
 })();

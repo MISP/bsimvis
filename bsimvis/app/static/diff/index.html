@@ -551,7 +551,7 @@
                         </div>`, event.clientX, event.clientY);
                     } else if (calledFuncId && !isExternal) {
                         if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                            window.parent.showCodePreviewFromIframe('diff-frame', calledFuncId, targetName, event);
+                            window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, event);
                         } else if (typeof window.showCodePreview === 'function') {
                             window.showCodePreview(calledFuncId, targetName, null, null, null, event);
                         }
@@ -697,7 +697,12 @@
                         window.clearAllLocks();
                     }
                 }, true);
-                scrollEl.addEventListener('pointermove', e => moveTooltip(e.clientX, e.clientY));
+                scrollEl.addEventListener('pointermove', e => {
+                    moveTooltip(e.clientX, e.clientY);
+                    if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
+                        window.parent.moveCodePreviewFromIframe(window.name, e);
+                    }
+                });
                 scrollEl.dataset.listenersAttached = "true";
             }
 

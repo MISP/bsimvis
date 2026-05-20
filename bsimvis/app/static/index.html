@@ -26,6 +26,7 @@
     <script src="/js/similarity_graph.js"></script>
     <script src="/js/cluster_views.js"></script>
     <script src="/js/call_graph.js"></script>
+    <script src="/js/window_manager.js"></script>
     <script src="/js/dashboard.js"></script>
 
 <body>
@@ -168,86 +169,6 @@
 
     <!-- Extracted script block 1 -->
 
-    <!-- Code Panel -->
-    <div id="code-panel">
-        <div class="resize-handle"></div>
-        <div id="code-panel-header">
-            <div style="display:flex; align-items:center;">
-                <span class="code-view-badge"
-                    style="background:var(--accent); color:#000; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px;">CODE
-                    VIEW</span>
-                <span id="code-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Function
-                    View</span>
-            </div>
-            <div class="panel-actions">
-                <button class="btn-sim-action" onclick="seeSimilarFromCode()"><i class="fa-solid fa-code-compare"
-                        style="margin-right:4px;"></i> See Similar</button>
-                <button class="btn-panel" onclick="launchExternal('code')">Open in New Window ↗</button>
-                <button class="btn-panel" onclick="hideCodePanel()"
-                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close View</button>
-            </div>
-        </div>
-        <iframe id="code-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
-    </div>
-
-    <!-- Feature Panel -->
-    <div id="feature-panel">
-        <div class="resize-handle"></div>
-        <div id="feature-panel-header">
-            <div style="display:flex; align-items:center;">
-                <span
-                    style="background:#a6e22e; color:#000; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px; font-weight:bold;">FEATURES</span>
-                <span id="feature-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Function
-                    Feature Audit</span>
-            </div>
-            <div class="panel-actions">
-                <button class="btn-panel" onclick="launchExternal('features')">Open in New Window ↗</button>
-                <button class="btn-panel" onclick="hideFeaturePanel()"
-                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Panel</button>
-            </div>
-        </div>
-        <iframe id="feature-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
-    </div>
-
-    <!-- Global Feature Panel -->
-    <div id="global-feature-panel">
-        <div class="resize-handle"></div>
-        <div id="global-feature-panel-header">
-            <div style="display:flex; align-items:center;">
-                <span
-                    style="background:var(--accent); color:#000; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px; font-weight:bold;">FEATURE
-                    ANALYSIS</span>
-                <span id="global-feature-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Feature
-                    Search</span>
-            </div>
-            <div class="panel-actions">
-                <button class="btn-panel" onclick="launchExternal('global-feature')">Open in New Window ↗</button>
-                <button class="btn-panel" onclick="hideGlobalFeaturePanel()"
-                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Panel</button>
-            </div>
-        </div>
-        <iframe id="global-feature-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
-    </div>
-
-    <!-- Diff Panel -->
-    <div id="diff-panel">
-        <div class="resize-handle"></div>
-        <div id="diff-panel-header">
-            <div style="display:flex; align-items:center;">
-                <span
-                    style="background:#f92672; color:#fff; padding:2px 8px; border-radius:10px; font-size:0.7rem; margin-right:10px; font-weight:bold;">DIFF</span>
-                <span id="diff-title" style="font-weight:bold; font-size:0.9rem; color:var(--accent);">Function
-                    Comparison</span>
-            </div>
-            <div class="panel-actions">
-                <button class="btn-panel" onclick="launchExternal('diff')">Open in New Window ↗</button>
-                <button class="btn-panel" onclick="hideDiffPanel()"
-                    style="color:#ff5555; border-color:rgba(255,85,85,0.3)">Close Panel</button>
-            </div>
-        </div>
-        <iframe id="diff-frame" style="width:100%; flex:1; border:none; background:#0d0f14;"></iframe>
-    </div>
-
     <div id="code-preview-tooltip"></div>
     <div id="token-tooltip"></div>
     <div id="diff-preview-tooltip"></div>
@@ -259,6 +180,8 @@
     <div id="collection-flyout">
         <div id="collection-flyout-list"></div>
     </div>
+
+    <div id="window-tray"></div>
 
 
     <!-- Extracted script block 2 -->

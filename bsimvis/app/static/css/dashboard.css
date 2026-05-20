@@ -424,82 +424,181 @@ tr:nth-child(even) {
     text-align: center;
 }
 
-/* Diff, Code, & Feature Panels */
-#diff-panel,
-#code-panel,
-#feature-panel,
-#global-feature-panel {
+/* Floating Window System */
+.floating-window {
+    position: fixed;
+    background: #0d0f14;
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent);
+    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.9);
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 200px;
+    min-height: 150px;
+}
+
+.floating-window.active {
+    border-color: var(--accent);
+    box-shadow: 0 10px 60px rgba(4, 217, 255, 0.2);
+}
+
+.floating-window.sticky {
+    border-color: #bfef45; /* Success green for sticky */
+}
+
+.floating-window.sticky .win-sticky {
+    color: #bfef45;
+}
+
+.floating-window.diminished .window-content,
+.floating-window.diminished .win-resizer {
     display: none;
-    /* Managed by JS */
+}
+
+.floating-window.diminished {
+    min-height: 0;
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+    bottom: auto !important;
+    flex-shrink: 0;
+    width: 250px !important;
+    height: auto !important;
+}
+
+.floating-window.diminished .win-back,
+.floating-window.diminished .win-forward,
+.floating-window.diminished .win-sticky,
+.floating-window.diminished .win-dock-left,
+.floating-window.diminished .win-dock-right,
+.floating-window.diminished .win-dock-bottom,
+.floating-window.diminished .window-content,
+.floating-window.diminished .win-resizer {
+    display: none;
+}
+
+#window-tray {
     position: fixed;
     bottom: 0;
     left: var(--sidebar-width);
     right: 0;
-    height: 60vh;
-    background: #0d0f14;
-    border-top: 3px solid var(--accent);
-    z-index: 9999;
-    flex-direction: column;
-    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
-    transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    height: 40px;
+    background: #050505;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 10px;
+    z-index: 11000;
+    overflow-x: auto;
 }
 
-#diff-panel-header,
-#code-panel-header,
-#feature-panel-header,
-#global-feature-panel-header {
-    background: var(--border);
-    padding: 8px 20px;
+#window-tray:empty {
+    display: none;
+}
+
+.window-header {
+    background: #1a1f29;
+    padding: 6px 15px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    cursor: grab;
+    user-select: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-#diff-frame {
-    width: 100%;
+.win-dragging .window-header {
+    cursor: grabbing;
+}
+
+.window-title {
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: var(--accent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     flex: 1;
-    border: none;
-    background: #0d0f14;
+    text-align: center;
+    padding: 0 10px;
 }
 
-.resize-handle {
-    height: 4px;
-    width: 100%;
-    cursor: ns-resize;
-    background: transparent;
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 10001;
-}
-
-.resize-handle:hover {
-    background: var(--accent);
-    opacity: 0.5;
-}
-
-.panel-actions {
+.window-controls-left, .window-controls-right {
     display: flex;
-    gap: 8px;
+    gap: 5px;
     align-items: center;
 }
 
-.btn-panel {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #aaa;
+.win-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--subtle);
     cursor: pointer;
-    padding: 4px 10px;
-    border-radius: 4px;
+    padding: 2px 6px;
     font-size: 0.75rem;
+    border-radius: 3px;
     transition: all 0.2s;
 }
 
-.btn-panel:hover {
-    background: rgba(255, 255, 255, 0.15);
+.win-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
     color: #fff;
-    border-color: var(--accent);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.win-close:hover {
+    background: #ff4d8d;
+    color: #fff;
+    border-color: #ff4d8d;
+}
+
+.window-content {
+    flex: 1;
+    position: relative;
+    background: #000;
+}
+
+.window-content iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+/* Glass overlay to prevent iframe from capturing mouse events during drag/resize */
+.win-glass-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: transparent;
+    z-index: 10;
+    display: none;
+}
+
+/* Resize Handles */
+.win-resizer {
+    position: absolute;
+    background: transparent;
+    z-index: 20;
+}
+
+.win-resizer-n { top: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; }
+.win-resizer-s { bottom: -4px; left: 0; right: 0; height: 8px; cursor: ns-resize; }
+.win-resizer-e { right: -4px; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
+.win-resizer-w { left: -4px; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
+
+.win-resizer-nw { top: -4px; left: -4px; width: 10px; height: 10px; cursor: nwse-resize; }
+.win-resizer-ne { top: -4px; right: -4px; width: 10px; height: 10px; cursor: nesw-resize; }
+.win-resizer-sw { bottom: -4px; left: -4px; width: 10px; height: 10px; cursor: nesw-resize; }
+.win-resizer-se { bottom: -4px; right: -4px; width: 10px; height: 10px; cursor: nwse-resize; }
+
+body.win-dragging, body.win-resizing {
+    user-select: none !important;
 }
 
 th.sortable {

@@ -10,11 +10,7 @@ function getCurrentCollection() {
         if (id && id.includes(':')) return id.split(':')[0];
     }
 
-    // 2. Try select dropdown
-    const selectEl = document.getElementById('side-collection-select') || (window.parent && window.parent.document.getElementById('side-collection-select'));
-    if (selectEl && selectEl.value) return selectEl.value;
-
-    // 3. Try URL params
+    // 2. Try URL params
     const params = new URLSearchParams(window.location.search);
     if (params.get('collection')) return params.get('collection');
 

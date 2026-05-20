@@ -458,138 +458,107 @@ def search_functions():
         logging.error(f"FUNC LUA SEARCH CRASH: {e}")
         return jsonify({"error": str(e)}), 500
 
-    # Enrichment
-    pipe = r.pipeline()
+    # --- ENRICHMENT (Optimized & Deduplicated) ---
+    t_enrich_start = time.perf_counter()
+    
+    # Phase 1: Fetch Function Metadata & Cluster Scores (Bulk)
+    f_pipe = r.pipeline()
     for doc_id in doc_ids:
-        pipe.json().get(f"{doc_id}:meta", "$")
+        f_pipe.json().get(f"{doc_id}:meta", "$")
+        f_pipe.hgetall(f"{doc_id}:cluster_scores")
+    
+    f_results_raw = f_pipe.execute()
+    
+    f_meta_list = [] # List of {doc_id, meta, scores}
+    unique_md5s = set()
+    unique_cluster_ids = set()
+    
+    for i, doc_id in enumerate(doc_ids):
+        m_json = f_results_raw[i*2]
+        scores_raw = f_results_raw[i*2+1] or {}
+        
+        meta = (m_json[0] if isinstance(m_json, list) and m_json else m_json) or {}
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        
+        scores = {}
+        for k, v in scores_raw.items():
+            k_str = k.decode() if isinstance(k, bytes) else k
+            scores[k_str] = float(v)
+            unique_cluster_ids.add(k_str)
+        
+        f_meta_list.append({"doc_id": doc_id, "meta": meta, "scores": scores})
+        if meta.get("file_md5"):
+            unique_md5s.add(meta["file_md5"])
 
-    # Also fetch file-level metadata for tags
-    for doc_id in doc_ids:
-        try:
-            # doc_id is {col}:func:{md5}:{addr}
-            parts = doc_id.split(":")
-            if len(parts) >= 3:
-                md5 = parts[2]
-                pipe.json().get(f"{col}:file:{md5}:meta", "$")
-            else:
-                pipe.json().get("nonexistent", "$")
-        except:
-            pipe.json().get("nonexistent", "$")
+    # Phase 2: Fetch File Metadata (DEDUPLICATED)
+    file_meta_map = {}
+    if unique_md5s:
+        file_pipe = r.pipeline()
+        md5_list = list(unique_md5s)
+        for md5 in md5_list:
+            file_pipe.json().get(f"{col}:file:{md5}:meta", "$")
+        file_results = file_pipe.execute()
+        for md5, res in zip(md5_list, file_results):
+            fm = (res[0] if isinstance(res, list) and res else res) or {}
+            if isinstance(fm, str):
+                fm = json.loads(fm)
+            file_meta_map[md5] = fm
 
-    # Fetch clusters SET and scores
-    for doc_id in doc_ids:
-        pipe.smembers(f"{doc_id}:clusters")
-        pipe.hgetall(f"{doc_id}:cluster_scores")
-
-    raw_results_all = pipe.execute()
-    raw_meta_results = raw_results_all[: len(doc_ids)]
-    raw_file_results = raw_results_all[len(doc_ids) : 2 * len(doc_ids)]
-    raw_cluster_sets = raw_results_all[2 * len(doc_ids) : 4 * len(doc_ids) : 2]
-    raw_cluster_scores = raw_results_all[2 * len(doc_ids) + 1 : 4 * len(doc_ids) : 2]
-
-    functions_list = []
-    parsed_data_list = []
-
-    for i, (doc_id, raw) in enumerate(zip(doc_ids, raw_meta_results)):
-        if not raw:
-            parsed_data_list.append(None)
-            continue
-        data = raw[0] if isinstance(raw, list) and raw else raw
-        if isinstance(data, str):
-            data = json.loads(data)
-        parsed_data_list.append(data)
-
-    # Secondary pipeline for cluster metadata
-    algo = "unweighted_cosine"  # Default algo used by backend
-    cluster_pipe = r.pipeline()
-
-    # We will track which index in the pipeline corresponds to which function and cluster
-    # cluster_queries = [(function_index, cluster_id), ...]
-    cluster_queries = []
-
-    for i, data in enumerate(parsed_data_list):
-        if data:
-            c_set = raw_cluster_sets[i]
-            if c_set:
-                for c_bytes in c_set:
-                    cid = c_bytes.decode() if isinstance(c_bytes, bytes) else c_bytes
-                    cluster_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
-                    cluster_queries.append((i, cid))
-
-    if cluster_queries:
-        raw_cluster_meta_results = cluster_pipe.execute()
-    else:
-        raw_cluster_meta_results = []
-
-    # Map back the cluster metadata to the respective functions
-    func_clusters_map = {i: [] for i in range(len(parsed_data_list))}
-    for (func_idx, cid), raw_cm in zip(cluster_queries, raw_cluster_meta_results):
-        if raw_cm:
-            cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+    # Phase 3: Fetch Cluster Metadata (DEDUPLICATED)
+    cluster_meta_map = {}
+    algo = "unweighted_cosine" # Default algo
+    if unique_cluster_ids:
+        c_pipe = r.pipeline()
+        c_list = list(unique_cluster_ids)
+        for cid in c_list:
+            c_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
+        c_results = c_pipe.execute()
+        for cid, res in zip(c_list, c_results):
+            cm = (res[0] if isinstance(res, list) and res else res) or {}
             if isinstance(cm, str):
                 cm = json.loads(cm)
-            if cm:
-                func_clusters_map[func_idx].append(cm)
+            cluster_meta_map[cid] = cm
 
-    for i, data in enumerate(parsed_data_list):
-        if not data:
+    # Phase 4: Final Assembly
+    functions_list = []
+    for f_data in f_meta_list:
+        doc_id = f_data["doc_id"]
+        meta = f_data["meta"]
+        scores = f_data["scores"]
+        
+        if not meta:
             continue
 
-        # File metadata
-        file_raw = raw_file_results[i]
-        file_data = (
-            file_raw[0] if isinstance(file_raw, list) and file_raw else file_raw
-        ) or {}
-        if isinstance(file_data, str):
-            file_data = json.loads(file_data)
+        # File tags enrichment
+        md5 = meta.get("file_md5")
+        file_meta = file_meta_map.get(md5, {})
+        meta["file_tags"] = file_meta.get("tags", [])
+        meta["file_user_tags"] = file_meta.get("user_tags", [])
 
-        data["file_tags"] = file_data.get("tags", [])
-        data["file_user_tags"] = file_data.get("user_tags", [])
+        # ID construction
+        addr = meta.get("entrypoint_address")
+        b_uuid = meta.get("batch_uuid")
+        if md5 and addr and "function_id" not in meta:
+            meta["function_id"] = f"{col}:func:{md5}:{addr}"
+        if md5 and "file_id" not in meta:
+            meta["file_id"] = f"{col}:file:{md5}"
+        if b_uuid and "batch_id" not in meta:
+            meta["batch_id"] = f"{col}:batch:{b_uuid}"
 
-        # ID construction if missing
-        md5 = data.get("file_md5")
-        addr = data.get("entrypoint_address")
-        b_uuid = data.get("batch_uuid")
-
-        if md5 and addr and "function_id" not in data:
-            data["function_id"] = f"{col}:func:{md5}:{addr}"
-        if md5 and "file_id" not in data:
-            data["file_id"] = f"{col}:file:{md5}"
-        if b_uuid and "batch_id" not in data:
-            data["batch_id"] = f"{col}:batch:{b_uuid}"
-
-        normalize_tags(data)
+        normalize_tags(meta)
 
         # Enforce Unix timestamps
         for field in ["entry_date", "file_date"]:
-            if field in data:
-                data[field] = parse_timestamp(data[field])
+            if field in meta:
+                meta[field] = parse_timestamp(meta[field])
 
-        # Cluster metadata enrichment
-        c_metas = func_clusters_map[i]
-
-        # Sort clusters by member_count or cohesion descending, so UI can just pick the first
-        # We can sort by member_count descending
-        c_metas.sort(key=lambda x: x.get("member_count", 0), reverse=True)
-
+        # Cluster enrichment
         clusters = []
-        scores = raw_cluster_scores[i] or {}
-        for cm in c_metas:
-            cid = str(cm.get("cluster_id"))
-            # The user wants 'cluster_stability' to be the per-function score
-            score = float(
-                scores.get(cid.encode() if isinstance(cid, str) else cid, 0.0)
-            )
-            if not score and isinstance(scores, dict):
-                # Try decoding keys
-                for k, v in scores.items():
-                    k_str = k.decode() if isinstance(k, bytes) else k
-                    if k_str == cid:
-                        score = float(v)
-                        break
-
-            clusters.append(
-                {
+        for cid, score in scores.items():
+            cm = cluster_meta_map.get(cid)
+            if cm:
+                clusters.append({
                     "cluster_id": cm.get("cluster_id"),
                     "cluster_uuid": cm.get("cluster_uuid"),
                     "cluster_name": cm.get("cluster_name"),
@@ -597,23 +566,21 @@ def search_functions():
                     "member_count": cm.get("member_count", 0),
                     "cluster_stability": score or cm.get("cluster_stability", 0.0),
                     "avg_features": cm.get("avg_features", 0),
-                }
-            )
-        data["clusters"] = clusters
+                })
+        clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+        meta["clusters"] = clusters
 
-        for field in [
-            "cluster_id",
-            "cluster_name",
-            "cluster_uuid",
-            "cluster_stability",
-        ]:
-            data.pop(field, None)
-        functions_list.append(data)
+        # Cleanup
+        for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+            meta.pop(field, None)
+        
+        functions_list.append(meta)
 
     total_time = time.perf_counter() - t_req_start
     logging.info(
-        f"FUNC SEARCH | {session_id} | Total: {total} | Time: {total_time:.3f}s"
+        f"FUNC SEARCH | {session_id} | Total: {total} | Enrich: {time.perf_counter()-t_enrich_start:.3f}s | Time: {total_time:.3f}s"
     )
+
 
     return jsonify(
         {

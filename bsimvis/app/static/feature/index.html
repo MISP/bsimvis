@@ -4,9 +4,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Global Feature Browser</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/utils.js"></script>
     <script src="/js/code_renderer.js"></script>
+    <script src="/js/metadata.js"></script>
     <script src="/js/diff_queue.js"></script>
     <style>
         :root {
@@ -419,7 +421,7 @@
                                 <span>±</span> Add to Diff
                             </button>
                             <button class="btn-sim-action" onclick="seeSimilar('${funcId}')">
-                                <span>≈</span> See Similar
+                                <i class="fa-solid fa-code-compare"></i> See Similar
                             </button>
                         </div>
                     `;
@@ -645,26 +647,6 @@
 
 
 
-        function seeSimilar(funcId) {
-            const parts = normalizeFuncId(funcId).split(':');
-            if (parts.length < 4) return;
-            const col = parts[0];
-            const md5 = parts[2];
-            const addr = parts[3];
-            const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
-
-            if (window.parent && window.parent !== window) {
-                window.parent.location.hash = hash;
-                if (typeof window.parent.hideCodePanel === 'function') {
-                    window.parent.hideCodePanel();
-                }
-                if (typeof window.parent.hideFeaturePanel === 'function') {
-                    window.parent.hideFeaturePanel();
-                }
-            } else {
-                window.location.href = `/#${hash}`;
-            }
-        }
 
         updateDiffQueueUI();
         fetchPage();

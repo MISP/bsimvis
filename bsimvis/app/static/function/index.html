@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Function Code View</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/utils.js"></script>
     <script src="/js/code_renderer.js"></script>
@@ -126,24 +127,6 @@
             }
         }
 
-        function seeSimilar() {
-            const parts = window.currentFuncId.split(':');
-            if (parts.length < 4) return;
-            const col = parts[0];
-            const md5 = parts[2];
-            const addr = parts[3];
-            const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
-
-            if (window.parent && window.parent !== window) {
-                window.parent.location.hash = hash;
-                if (typeof window.parent.hideCodePanel === 'function') {
-                    window.parent.hideCodePanel();
-                }
-            } else {
-                // If standalone, we might want to go to the main dashboard with this hash
-                window.location.href = `/#${hash}`;
-            }
-        }
 
         function showTokenContextMenu(e) {
             const token = e.target.closest('.feature-highlight');
@@ -311,7 +294,7 @@
             renderFunctionMetadata('meta-container', m, window.currentFuncId, {
                 showFeaturesBtn: true,
                 showDiffBtn: true,
-                diffBtnFullText: true,
+                diffBtnFullText: false,
                 showSimilarBtn: true,
                 rightHeaderHtml: `<div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>`
             });

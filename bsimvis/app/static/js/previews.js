@@ -31,7 +31,7 @@
             display: 'none',
             zIndex: '20000',
             pointerEvents: 'none',
-            maxWidth: '600px',
+            maxWidth: '480px',
             maxHeight: '800px',
             overflow: 'visible',
             flexDirection: 'column',

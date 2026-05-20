@@ -5,9 +5,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Function Features Browser</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/utils.js"></script>
     <script src="/js/code_renderer.js"></script>
+    <script src="/js/metadata.js"></script>
     <script src="/js/diff_queue.js"></script>
     <style>
         body {
@@ -185,8 +187,8 @@
                     onclick="if(window.featureId) addToDiff(window.featureId, window.featureName)">
                     <span>±</span> Add to Diff
                 </button>
-                <button class="btn-sim-action" onclick="seeSimilar()">
-                    <span>≈</span> See Similar
+                <button class="btn-sim-action" onclick="seeSimilar(window.featureId)">
+                    <i class="fa-solid fa-code-compare"></i> See Similar
                 </button>
             </div>
         </div>
@@ -440,26 +442,6 @@
             }, 10);
         }
 
-        function seeSimilar() {
-            const parts = normalizeFuncId(window.featureId).split(':');
-            if (parts.length < 4) return;
-            const col = parts[0];
-            const md5 = parts[2];
-            const addr = parts[3];
-            const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
-
-            if (window.parent && window.parent !== window) {
-                window.parent.location.hash = hash;
-                if (typeof window.parent.hideCodePanel === 'function') {
-                    window.parent.hideCodePanel();
-                }
-                if (typeof window.parent.hideFeaturePanel === 'function') {
-                    window.parent.hideFeaturePanel();
-                }
-            } else {
-                window.location.href = `/#${hash}`;
-            }
-        }
 
         document.addEventListener('contextmenu', e => {
             if (e.target.closest('.feature-highlight')) {

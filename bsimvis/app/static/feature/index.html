@@ -410,7 +410,7 @@
                             </button>
                         </div>
                         <div style="display:flex; gap:5px; margin-top:5px;">
-                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', ''); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}'), '_blank'); }">
+                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}'), '_blank'); }">
                                 <span>↗</span> Code
                             </button>
                             <button class="btn-diff-action" data-func-id="${funcId}" data-full-text="true"
@@ -470,7 +470,7 @@
                     let contextHtml = '<div class="dim">Source code mapping unavailable</div>';
                     if (sourceData && sourceData.rows) {
                         contextHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
-                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}'); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
+                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
 
                         const contextLineSet = new Set();
                         occ['line_idx'].forEach(l => {

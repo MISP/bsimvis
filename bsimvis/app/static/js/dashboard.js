@@ -2025,7 +2025,7 @@ function showGraphContextMenu(e) {
         nodeIndices.forEach(idx => {
             const d = graph.node_source.data;
             const id = d.id[idx], name = d.name[idx], addr = d.addr[idx];
-            html += `<div class="context-menu-item graph-node-item" data-id="${id}">
+            html += `<div class="context-menu-item graph-node-item" data-id="${id}" data-name="${name}">
                 <div class="context-menu-icon" style="color:var(--accent)">𝑓</div>
                 <div style="flex:1">
                     <div style="font-weight:bold; color:var(--accent); font-size:0.75rem;">${name}</div>
@@ -2050,10 +2050,10 @@ function showGraphContextMenu(e) {
 
         if (compareItem) {
             const { id1, id2, f1, f2 } = compareItem.dataset;
-            openDiffDirectly(id1, f1, id2, f2);
+            openDiffDirectly(id1, f1, id2, f2, me);
         } else if (nodeItem) {
-            const { id } = nodeItem.dataset;
-            showFunctionCodeById(id);
+            const { id, name } = nodeItem.dataset;
+            showFunctionCodeById(id, name, '', me);
         }
         closeMenu();
     };

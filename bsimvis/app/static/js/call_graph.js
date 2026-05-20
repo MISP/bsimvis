@@ -266,7 +266,7 @@ class FileCallGraph {
         }).on("click", (event, d) => {
             if (d.is_external) return;
             if (window.showFunctionCodeById) {
-                window.showFunctionCodeById(d.id, d.name);
+                window.showFunctionCodeById(d.id, d.name, '', event);
             }
         });
 

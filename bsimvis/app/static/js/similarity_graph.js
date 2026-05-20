@@ -71,7 +71,7 @@ class SimilarityGraph {
             args: { source: this.hit_source },
             code: `
                 const indices = cb_data.index.indices;
-                window.lastGraphLinkIndices = indices;
+                window.lastGraphLinkIndices = (indices && indices.length > 0) ? indices : null;
                 if (indices.length > 0 && !window.graphNodeHovered && !window.graphContextMenuOpen) {
                     let sameHover = true;
                     if (!window.diffPreviewPairs || window.diffPreviewPairs.length !== indices.length) {
@@ -99,6 +99,7 @@ class SimilarityGraph {
                     const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
                     if (window.showDiffPreview) window.showDiffPreview(p.id1, p.n1, p.id2, p.n2, p.score, e, extra);
                 } else {
+                    window.lastGraphLinkIndices = null;
                     window.diffPreviewPairs = null;
                     if (window.hideDiffPreview) window.hideDiffPreview();
                 }
@@ -109,7 +110,7 @@ class SimilarityGraph {
             args: { source: this.node_source },
             code: `
                 const indices = cb_data.index.indices;
-                window.lastGraphNodeIndices = indices;
+                window.lastGraphNodeIndices = (indices && indices.length > 0) ? indices : null;
                 if (indices.length > 0 && !window.graphContextMenuOpen) {
                     window.graphNodeHovered = true;
                     const id = source.data.id[indices[0]];
@@ -123,6 +124,7 @@ class SimilarityGraph {
                     const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
                     if (window.showCodePreview) window.showCodePreview(id, name, addr, bin, v_size, e, extra, file_name);
                 } else {
+                    window.lastGraphNodeIndices = null;
                     window.graphNodeHovered = false;
                     if (window.hideCodePreview) window.hideCodePreview();
                 }
@@ -131,6 +133,9 @@ class SimilarityGraph {
 
         this.plot.add_tools(h_bin, h_links, h_nodes, new Bokeh.TapTool({ renderers: [r_links, r_nodes] }));
         this.plot.toolbar.active_inspect = [h_bin, h_links, h_nodes];
+
+        // Direct click handling for Ctrl+Click (bypasses TapTool's async selection)
+        container.addEventListener('click', (e) => this.handleDirectClick(e), true);
 
         // Tap Logic (direct call)
         const onSelect = () => {
@@ -143,8 +148,18 @@ class SimilarityGraph {
                 window.showFunctionCodeById(id, name);
                 this.node_source.selected.indices = [];
             } else if (hit_inds.length > 0) {
-                const id1 = this.hit_source.data.id1[hit_inds[0]]; const id2 = this.hit_source.data.id2[hit_inds[0]];
-                const name1 = this.hit_source.data.f1[hit_inds[0]]; const name2 = this.hit_source.data.f2[hit_inds[0]];
+                let id1, id2, name1, name2;
+                
+                // If we have a preview cycle active, use the currently visible pair
+                if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0 && window.diffPreviewIndex !== undefined) {
+                    const p = window.diffPreviewPairs[window.diffPreviewIndex];
+                    id1 = p.id1; id2 = p.id2;
+                    name1 = p.n1; name2 = p.n2;
+                } else {
+                    id1 = this.hit_source.data.id1[hit_inds[0]]; id2 = this.hit_source.data.id2[hit_inds[0]];
+                    name1 = this.hit_source.data.f1[hit_inds[0]]; name2 = this.hit_source.data.f2[hit_inds[0]];
+                }
+                
                 window.openDiffDirectly(id1, name1, id2, name2);
                 this.hit_source.selected.indices = [];
             }
@@ -190,6 +205,46 @@ class SimilarityGraph {
             <div style="font-size:11px; color:#AAA; margin-bottom:4px; font-style:italic;">@file_name</div>
             <div style="font-size:10px; color:#AAA; margin-bottom:8px;">Addr: @addr | Features: @v_size | @return_type</div>
         </div>`;
+    }
+
+    handleDirectClick(e) {
+        if (!e.ctrlKey && !e.metaKey) return;
+
+        // Check nodes first (prioritize them as they are smaller targets)
+        if (window.lastGraphNodeIndices && window.lastGraphNodeIndices.length > 0) {
+            const idx = window.lastGraphNodeIndices[0];
+            const id = this.node_source.data.id[idx];
+            const name = this.node_source.data.name[idx];
+            if (id && name) {
+                window.showFunctionCodeById(id, name, '', e);
+                e.preventDefault();
+                e.stopPropagation();
+                // Clear selection to avoid Bokeh also triggering onSelect
+                this.node_source.selected.indices = [];
+            }
+            return;
+        }
+
+        // Check links
+        if (window.lastGraphLinkIndices && window.lastGraphLinkIndices.length > 0) {
+            let id1, id2, name1, name2;
+            if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0 && window.diffPreviewIndex !== undefined) {
+                const p = window.diffPreviewPairs[window.diffPreviewIndex];
+                id1 = p.id1; id2 = p.id2;
+                name1 = p.n1; name2 = p.n2;
+            } else {
+                const idx = window.lastGraphLinkIndices[0];
+                id1 = this.hit_source.data.id1[idx]; id2 = this.hit_source.data.id2[idx];
+                name1 = this.hit_source.data.f1[idx]; name2 = this.hit_source.data.f2[idx];
+            }
+            if (id1 && id2) {
+                window.openDiffDirectly(id1, name1, id2, name2, e);
+                e.preventDefault();
+                e.stopPropagation();
+                // Clear selection
+                this.hit_source.selected.indices = [];
+            }
+        }
     }
 
     stop() { if (this.abortController) this.abortController.abort(); }

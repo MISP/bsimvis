@@ -328,7 +328,7 @@
             }
             if (window.parent && window.parent !== window && typeof window.parent.showFunctionCodeById === 'function') {
                 const name = funcId.split(':').pop();
-                window.parent.showFunctionCodeById(funcId, name);
+                window.parent.showFunctionCodeById(funcId, name, '', e);
             } else {
                 window.location.href = url;
             }

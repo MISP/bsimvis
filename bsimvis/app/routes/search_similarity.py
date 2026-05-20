@@ -953,285 +953,205 @@ def similarity_search():
         t_enrich_start = time.perf_counter()
         enriched_pairs = []
         if page_results:
-            # Phase 1: Fetch Similarity Metrics & identity
+            # Phase 1: Fetch Similarity Metrics & Identity
             pipe = r.pipeline()
             for sid, sort_sc in page_results:
                 pipe.json().get(sid, "$")
-                # Fetch cross-metric (e.g. if sorting by score, fetch features count)
                 if sort_by == "score":
                     pipe.zscore(min_features_zset, sid)
                 else:
                     pipe.zscore(algo_zset, sid)
+            
+            sim_raw = pipe.execute()
+            
+            # Extract unique function IDs and map sim data
+            unique_fids = set()
+            sim_data_map = {} # sid -> {id1, id2, sim_doc, other_metric, sort_sc}
 
-            enrichment_raw = pipe.execute()
-
-            # Helper to extract IDs from SID (same logic as Lua)
             def extract_from_sid(sid):
-                # sid is {col}:sim:{algo}:{clean_id1}::{clean_id2}
                 sim_prefix = f"{col}:sim:{algo}:"
                 if not sid.startswith(sim_prefix):
                     return None, None
-
-                rest = sid[len(sim_prefix) :]
-                parts = rest.split("::")
+                parts = sid[len(sim_prefix):].split("::")
                 if len(parts) != 2:
                     return None, None
-
-                # Reconstruct full IDs
-                id1 = f"{col}:func:{parts[0]}"
-                id2 = f"{col}:func:{parts[1]}"
-                return id1, id2
-
-            # Phase 2: Pipeline fetch for function-specific metadata
-            meta_pipe = r.pipeline()
-            f_id_map = {}  # Maps sid to (id1, id2)
+                return f"{col}:func:{parts[0]}", f"{col}:func:{parts[1]}"
 
             for i, (sid, sort_sc) in enumerate(page_results):
-                raw_json = enrichment_raw[i * 2]
+                raw_json = sim_raw[i*2]
                 if not raw_json:
                     continue
                 data = raw_json[0] if isinstance(raw_json, list) else raw_json
                 if isinstance(data, str):
                     data = json.loads(data)
-
+                
                 id1 = data.get("id1")
                 id2 = data.get("id2")
                 if not id1 or not id2:
                     id1, id2 = extract_from_sid(sid)
-
+                
                 if id1 and id2:
-                    f_id_map[sid] = (id1, id2, data, enrichment_raw[i * 2 + 1], sort_sc)
-                    meta_pipe.json().get(f"{id1}:meta", "$")
-                    meta_pipe.json().get(f"{id2}:meta", "$")
-                    meta_pipe.smembers(f"{id1}:clusters")
-                    meta_pipe.smembers(f"{id2}:clusters")
-                    meta_pipe.hgetall(f"{id1}:cluster_scores")
-                    meta_pipe.hgetall(f"{id2}:cluster_scores")
+                    unique_fids.add(id1)
+                    unique_fids.add(id2)
+                    sim_data_map[sid] = {
+                        "id1": id1, "id2": id2, 
+                        "sim_doc": data, 
+                        "other_metric": sim_raw[i*2+1],
+                        "sort_sc": sort_sc
+                    }
 
-                    # Also fetch file-level metadata for tags
-                    try:
-                        md5_1 = id1.split(":")[2]
-                        md5_2 = id2.split(":")[2]
-                        meta_pipe.json().get(f"{col}:file:{md5_1}:meta", "$")
-                        meta_pipe.json().get(f"{col}:file:{md5_2}:meta", "$")
-                    except:
-                        meta_pipe.json().get("nonexistent", "$")
-                        meta_pipe.json().get("nonexistent", "$")
+            # Phase 2: Fetch Function Metadata & Cluster Scores (DEDUPLICATED)
+            f_meta_map = {} # fid -> {meta, scores}
+            unique_fids_list = list(unique_fids)
+            f_pipe = r.pipeline()
+            for fid in unique_fids_list:
+                f_pipe.json().get(f"{fid}:meta", "$")
+                f_pipe.hgetall(f"{fid}:cluster_scores")
+            
+            f_results = f_pipe.execute()
+            
+            unique_cluster_ids = set()
+            unique_md5s = set()
 
-            meta_results = meta_pipe.execute()
+            for i, fid in enumerate(unique_fids_list):
+                m_json = f_results[i*2]
+                scores_raw = f_results[i*2+1] or {}
+                
+                meta = (m_json[0] if isinstance(m_json, list) else m_json) or {}
+                if isinstance(meta, str):
+                    meta = json.loads(meta)
+                
+                scores = {}
+                for k, v in scores_raw.items():
+                    k_str = k.decode() if isinstance(k, bytes) else k
+                    scores[k_str] = float(v)
+                    unique_cluster_ids.add(k_str)
+                
+                f_meta_map[fid] = {"meta": meta, "scores": scores}
+                if meta.get("file_md5"):
+                    unique_md5s.add(meta["file_md5"])
 
-            # Collect all cluster IDs to fetch metadata for
-            cluster_id_to_fetch = set()
-            func_clusters_ids = {}  # maps sid -> (list1, list2)
+            # Phase 3: Fetch File Metadata (DEDUPLICATED)
+            file_meta_map = {}
+            if unique_md5s:
+                file_pipe = r.pipeline()
+                md5_list = list(unique_md5s)
+                for md5 in md5_list:
+                    file_pipe.json().get(f"{col}:file:{md5}:meta", "$")
+                file_results = file_pipe.execute()
+                for md5, res in zip(md5_list, file_results):
+                    fm = (res[0] if isinstance(res, list) else res) or {}
+                    if isinstance(fm, str):
+                        fm = json.loads(fm)
+                    file_meta_map[md5] = fm
 
-            for i, sid in enumerate(f_id_map.keys()):
-                c1_res = meta_results[i * 8 + 2]
-                c2_res = meta_results[i * 8 + 3]
-
-                c1_ids = (
-                    [c.decode() if isinstance(c, bytes) else c for c in c1_res]
-                    if c1_res
-                    else []
-                )
-                c2_ids = (
-                    [c.decode() if isinstance(c, bytes) else c for c in c2_res]
-                    if c2_res
-                    else []
-                )
-
-                func_clusters_ids[sid] = (c1_ids, c2_ids)
-                for cid in c1_ids + c2_ids:
-                    cluster_id_to_fetch.add(cid)
-
-            # Fetch all cluster metadata in one go
+            # Phase 4: Fetch Cluster Metadata (DEDUPLICATED & ALGO-AWARE)
             cluster_meta_map = {}
-            if cluster_id_to_fetch:
+            if unique_cluster_ids:
                 c_pipe = r.pipeline()
-                algo = "unweighted_cosine"
-                c_list = list(cluster_id_to_fetch)
+                c_list = list(unique_cluster_ids)
+                # Use the requested algo for clusters if it matches a known clustering algo
+                c_algo = algo if algo in ["unweighted_cosine", "weighted_cosine"] else "unweighted_cosine"
                 for cid in c_list:
-                    c_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
+                    c_pipe.json().get(f"{col}:cluster:{c_algo}:{cid}:meta", "$")
                 c_results = c_pipe.execute()
                 for cid, res in zip(c_list, c_results):
-                    if res:
-                        cm = res[0] if isinstance(res, list) else res
-                        if isinstance(cm, str):
-                            cm = json.loads(cm)
-                        cluster_meta_map[cid] = cm
+                    cm = (res[0] if isinstance(res, list) else res) or {}
+                    if isinstance(cm, str):
+                        cm = json.loads(cm)
+                    cluster_meta_map[cid] = cm
 
-            # Map meta results back
-            for i, sid in enumerate(f_id_map.keys()):
-                id1, id2, sim_data, other_metric, sid_sort_sc = f_id_map[sid]
+            # Phase 5: Reconstruct Enriched Pairs
+            for sid, sort_sc in page_results:
+                s_data = sim_data_map.get(sid)
+                if not s_data:
+                    continue
+                
+                id1, id2 = s_data["id1"], s_data["id2"]
+                f1_data = f_meta_map.get(id1, {"meta": {}, "scores": {}})
+                f2_data = f_meta_map.get(id2, {"meta": {}, "scores": {}})
+                
+                m1, s1 = f1_data["meta"], f1_data["scores"]
+                m2, s2 = f2_data["meta"], f2_data["scores"]
+                
+                f1 = file_meta_map.get(m1.get("file_md5"), {})
+                f2 = file_meta_map.get(m2.get("file_md5"), {})
 
-                id1 = sim_data.get("id1")
-                id2 = sim_data.get("id2")
+                sim_score = float(s_data["sort_sc"]) if sort_by == "score" else float(s_data["other_metric"] or 0)
+                feat_count = float(s_data["sort_sc"]) if sort_by in ["feat_count", "min_features"] else float(s_data["other_metric"] or 0)
 
-                m1_json = meta_results[i * 8]
-                m2_json = meta_results[i * 8 + 1]
-                f1_json = meta_results[i * 8 + 6]
-                f2_json = meta_results[i * 8 + 7]
-                s1_res = meta_results[i * 8 + 4] or {}
-                s2_res = meta_results[i * 8 + 5] or {}
-
-                m1 = (m1_json[0] if isinstance(m1_json, list) else m1_json) or {}
-                m2 = (m2_json[0] if isinstance(m2_json, list) else m2_json) or {}
-                f1 = (f1_json[0] if isinstance(f1_json, list) else f1_json) or {}
-                f2 = (f2_json[0] if isinstance(f2_json, list) else f2_json) or {}
-
-                if isinstance(m1, str):
-                    m1 = json.loads(m1)
-                if isinstance(m2, str):
-                    m2 = json.loads(m2)
-                if isinstance(f1, str):
-                    f1 = json.loads(f1)
-                if isinstance(f2, str):
-                    f2 = json.loads(f2)
-
-                sim_score = (
-                    float(sid_sort_sc)
-                    if sort_by == "score"
-                    else float(other_metric or 0)
-                )
-                feat_count = (
-                    float(sid_sort_sc)
-                    if sort_by in ["feat_count", "min_features"]
-                    else float(other_metric or 0)
-                )
-
-                # Construct 'clusters' list for UI consistency
-                c1_ids, c2_ids = func_clusters_ids[sid]
-
-                clusters1 = []
-                for cid in c1_ids:
-                    cm = cluster_meta_map.get(cid)
-                    if cm:
-                        cid_str = str(cid)
-                        score = float(
-                            s1_res.get(
-                                (
-                                    cid_str.encode()
-                                    if isinstance(cid_str, str)
-                                    else cid_str
-                                ),
-                                0.0,
-                            )
-                        )
-                        if not score and isinstance(s1_res, dict):
-                            for k, v in s1_res.items():
-                                k_str = k.decode() if isinstance(k, bytes) else k
-                                if k_str == cid_str:
-                                    score = float(v)
-                                    break
-                        clusters1.append(
-                            {
+                def build_clusters(scores, meta_map):
+                    res = []
+                    for cid, score in scores.items():
+                        cm = meta_map.get(cid)
+                        if cm:
+                            res.append({
                                 "cluster_id": cm.get("cluster_id"),
                                 "cluster_uuid": cm.get("cluster_uuid"),
                                 "cluster_name": cm.get("cluster_name"),
                                 "cohesion_score": cm.get("cohesion_score", 0),
                                 "member_count": cm.get("member_count", 0),
-                                "cluster_stability": score
-                                or cm.get("cluster_stability", 0.0),
+                                "cluster_stability": score or cm.get("cluster_stability", 0.0),
                                 "avg_features": cm.get("avg_features", 0),
-                            }
-                        )
-                clusters1.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+                            })
+                    res.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+                    return res
 
-                clusters2 = []
-                for cid in c2_ids:
-                    cm = cluster_meta_map.get(cid)
-                    if cm:
-                        cid_str = str(cid)
-                        score = float(
-                            s2_res.get(
-                                (
-                                    cid_str.encode()
-                                    if isinstance(cid_str, str)
-                                    else cid_str
-                                ),
-                                0.0,
-                            )
-                        )
-                        if not score and isinstance(s2_res, dict):
-                            for k, v in s2_res.items():
-                                k_str = k.decode() if isinstance(k, bytes) else k
-                                if k_str == cid_str:
-                                    score = float(v)
-                                    break
-                        clusters2.append(
-                            {
-                                "cluster_id": cm.get("cluster_id"),
-                                "cluster_uuid": cm.get("cluster_uuid"),
-                                "cluster_name": cm.get("cluster_name"),
-                                "cohesion_score": cm.get("cohesion_score", 0),
-                                "member_count": cm.get("member_count", 0),
-                                "cluster_stability": score
-                                or cm.get("cluster_stability", 0.0),
-                                "avg_features": cm.get("avg_features", 0),
-                            }
-                        )
-                clusters2.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+                clusters1 = build_clusters(s1, cluster_meta_map)
+                clusters2 = build_clusters(s2, cluster_meta_map)
 
-                for field in [
-                    "cluster_id",
-                    "cluster_name",
-                    "cluster_uuid",
-                    "cluster_stability",
-                ]:
+                # Cleanup function meta before embedding
+                for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
                     m1.pop(field, None)
                     m2.pop(field, None)
-                enriched_pairs.append(
-                    {
-                        "id1": id1,
-                        "id2": id2,
-                        "name1": m1.get(
-                            "function_name", id1.split(":")[-1] if id1 else "N/A"
-                        ),
-                        "name2": m2.get(
-                            "function_name", id2.split(":")[-1] if id2 else "N/A"
-                        ),
-                        "score": sim_score,
-                        "feat_count": int(feat_count),
-                        "sid": sid,
-                        "entry_date": parse_timestamp(sim_data.get("entry_date")),
-                        "meta1": {
-                            "file_md5": m1.get("file_md5"),
-                            "file_name": m1.get("file_name"),
-                            "tags": m1.get("tags", []),
-                            "user_tags": m1.get("user_tags", []),
-                            "batch_uuid": m1.get("batch_uuid"),
-                            "language_id": m1.get("language_id"),
-                            "return_type": m1.get("return_type", "N/A"),
-                            "namespace": m1.get("namespace", ""),
-                            "parameters": m1.get("parameters", []),
-                            "bsim_features_count": m1.get("bsim_features_count"),
-                            "clusters": clusters1,
-                            "file_tags": f1.get("tags", []),
-                            "file_user_tags": f1.get("user_tags", []),
-                            "entry_date": parse_timestamp(m1.get("entry_date") or m1.get("file_date")),
-                        },
-                        "meta2": {
-                            "file_md5": m2.get("file_md5"),
-                            "file_name": m2.get("file_name"),
-                            "tags": m2.get("tags", []),
-                            "user_tags": m2.get("user_tags", []),
-                            "batch_uuid": m2.get("batch_uuid"),
-                            "language_id": m2.get("language_id"),
-                            "return_type": m2.get("return_type", "N/A"),
-                            "namespace": m2.get("namespace", ""),
-                            "parameters": m2.get("parameters", []),
-                            "bsim_features_count": m2.get("bsim_features_count"),
-                            "clusters": clusters2,
-                            "file_tags": f2.get("tags", []),
-                            "file_user_tags": f2.get("user_tags", []),
-                            "entry_date": parse_timestamp(m2.get("entry_date") or m2.get("file_date")),
-                        },
-                        "tags": sim_data.get("tags", []),
-                        "user_tags": sim_data.get("user_tags", []),
-                        "algo": algo,
-                    }
-                )
+
+                enriched_pairs.append({
+                    "id1": id1, "id2": id2,
+                    "name1": m1.get("function_name", id1.split(":")[-1] if id1 else "N/A"),
+                    "name2": m2.get("function_name", id2.split(":")[-1] if id2 else "N/A"),
+                    "score": sim_score,
+                    "feat_count": int(feat_count),
+                    "sid": sid,
+                    "entry_date": parse_timestamp(s_data["sim_doc"].get("entry_date")),
+                    "meta1": {
+                        "file_md5": m1.get("file_md5"),
+                        "file_name": m1.get("file_name"),
+                        "tags": m1.get("tags", []),
+                        "user_tags": m1.get("user_tags", []),
+                        "batch_uuid": m1.get("batch_uuid"),
+                        "language_id": m1.get("language_id"),
+                        "return_type": m1.get("return_type", "N/A"),
+                        "namespace": m1.get("namespace", ""),
+                        "parameters": m1.get("parameters", []),
+                        "bsim_features_count": m1.get("bsim_features_count"),
+                        "clusters": clusters1,
+                        "file_tags": f1.get("tags", []),
+                        "file_user_tags": f1.get("user_tags", []),
+                        "entry_date": parse_timestamp(m1.get("entry_date") or m1.get("file_date")),
+                    },
+                    "meta2": {
+                        "file_md5": m2.get("file_md5"),
+                        "file_name": m2.get("file_name"),
+                        "tags": m2.get("tags", []),
+                        "user_tags": m2.get("user_tags", []),
+                        "batch_uuid": m2.get("batch_uuid"),
+                        "language_id": m2.get("language_id"),
+                        "return_type": m2.get("return_type", "N/A"),
+                        "namespace": m2.get("namespace", ""),
+                        "parameters": m2.get("parameters", []),
+                        "bsim_features_count": m2.get("bsim_features_count"),
+                        "clusters": clusters2,
+                        "file_tags": f2.get("tags", []),
+                        "file_user_tags": f2.get("user_tags", []),
+                        "entry_date": parse_timestamp(m2.get("entry_date") or m2.get("file_date")),
+                    },
+                    "tags": s_data["sim_doc"].get("tags", []),
+                    "user_tags": s_data["sim_doc"].get("user_tags", []),
+                    "algo": algo,
+                })
 
         metrics["enrich_time"] = time.perf_counter() - t_enrich_start
+
         total_time = time.perf_counter() - t_req_all_start
 
         # FINAL CONSOLIDATED PERFORMANCE LOGGING (CLEAN VERSION)

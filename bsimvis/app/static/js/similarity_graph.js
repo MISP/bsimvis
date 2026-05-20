@@ -29,7 +29,7 @@ class SimilarityGraph {
         const height = container.clientHeight || 500;
 
         this.plot = Bokeh.Plotting.figure({
-            width: width, height: height,
+            sizing_mode: "stretch_both",
             match_aspect: true, toolbar_location: "above",
             background_fill_color: "#121212", border_fill_color: "#121212",
             active_scroll: "wheel_zoom"

@@ -42,6 +42,14 @@ function toggleHeader() {
     const isCollapsed = body.classList.toggle('header-collapsed');
     localStorage.setItem('headerCollapsed', isCollapsed);
 
+    const btn = document.getElementById('collapse-header-btn');
+    if (btn) {
+        if (isCollapsed) btn.classList.remove('active');
+        else btn.classList.add('active');
+    }
+
+
+
     // Trigger window resize for plots
     setTimeout(() => window.dispatchEvent(new Event('resize')), 400);
 }
@@ -52,9 +60,8 @@ function toggleFilters() {
     localStorage.setItem('filtersCollapsed', isCollapsed);
     const btn = document.getElementById('toggle-filters-btn');
     if (btn) {
-        btn.innerHTML = isCollapsed ? 'Show Filters ︾' : 'Hide Filters ︽';
-        btn.style.borderColor = isCollapsed ? 'var(--accent)' : 'var(--subtle)';
-        btn.style.color = isCollapsed ? 'var(--accent)' : 'var(--subtle)';
+        if (isCollapsed) btn.classList.remove('active');
+        else btn.classList.add('active');
     }
     setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
 }
@@ -691,8 +698,10 @@ function updateUI(path, params, route) {
     const searchArea = document.getElementById('search-area');
     if (path === '#files' && !document.getElementById('file-search')) {
         searchArea.innerHTML = `<div class="filter-bar">
-            <input type="text" id="file-search" placeholder="Filter by filename..." onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
-            <button onclick="applySearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+            <div class="search-input-wrapper">
+                <input type="text" id="file-search" placeholder="Filter by filename..." autofocus onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
+                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySearch()" title="Search"></i>
+            </div>
         </div>`;
     } else if (path === '#file-call-graph') {
         const p = new URLSearchParams(params);
@@ -723,8 +732,10 @@ function updateUI(path, params, route) {
         
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
-                <input type="text" id="func-search-input" placeholder="Search by Keywords..." value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)">
-                <button onclick="applyAdvancedFuncSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                <div class="search-input-wrapper">
+                    <input type="text" id="func-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)">
+                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i>
+                </div>
                 ${callGraphBtn}
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
@@ -736,8 +747,10 @@ function updateUI(path, params, route) {
         const p = new URLSearchParams(params);
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
-                <input type="text" id="feature-search" placeholder="Search by hash $(prefix)..." value="${p.get('hash') || ''}" onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
-                <button onclick="applySearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                <div class="search-input-wrapper">
+                    <input type="text" id="feature-search" placeholder="Search by hash $(prefix)..." autofocus value="${p.get('hash') || ''}" onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
+                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySearch()" title="Search"></i>
+                </div>
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
                 <input type="checkbox" id="sort-tf" ${p.get('sort') === 'tf' ? 'checked' : ''} onchange="applySearch()">
@@ -748,8 +761,10 @@ function updateUI(path, params, route) {
         const p = new URLSearchParams(params);
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
-                <input type="text" id="sim-search-input" placeholder="Search by Keywords..." value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                <button onclick="applySimSearch()" style="padding: 8px 15px; cursor:pointer">Search</button>
+                <div class="search-input-wrapper">
+                    <input type="text" id="sim-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i>
+                </div>
             </div>
         </div>`;
     } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
@@ -863,7 +878,7 @@ function switchSimView(mode) {
 }
 
 function loadGraphView(params) {
-    document.getElementById('graph-view-container').style.display = 'block';
+    document.getElementById('graph-view-container').style.display = 'flex';
     if (!window.graphInstance) {
         window.graphInstance = new SimilarityGraph('bk-similarity-plot');
         document.getElementById('graph-refresh-btn').onclick = () => {
@@ -2020,15 +2035,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (localStorage.getItem('headerCollapsed') === 'true') {
         document.body.classList.add('header-collapsed');
+        const btn = document.getElementById('collapse-header-btn');
+        if (btn) btn.classList.remove('active');
+
     }
     if (localStorage.getItem('filtersCollapsed') === 'true') {
         document.body.classList.add('filters-collapsed');
         const btn = document.getElementById('toggle-filters-btn');
-        if (btn) {
-            btn.innerHTML = 'Show Filters ︾';
-            btn.style.borderColor = 'var(--accent)';
-            btn.style.color = 'var(--accent)';
-        }
+        if (btn) btn.classList.remove('active');
     }
 });
 

@@ -94,7 +94,7 @@ main {
 }
 
 .header {
-    margin-bottom: 20px;
+    margin-bottom: 10px;
 }
 
 .header-top {
@@ -328,7 +328,7 @@ tr:nth-child(even) {
 }
 
 .filter-bar {
-    margin: 15px 0;
+    margin: 5px 0;
     display: flex;
     gap: 10px;
 }
@@ -340,6 +340,50 @@ tr:nth-child(even) {
     padding: 8px;
     border-radius: 4px;
     width: 300px;
+}
+
+.search-input-wrapper {
+    display: flex;
+    align-items: center;
+    background: #ffffff;
+    border-radius: 6px;
+    padding: 0 15px;
+    width: 600px;
+    max-width: 100%;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.search-input-wrapper i {
+    color: #666;
+    font-size: 1.1rem;
+}
+
+.search-input-wrapper input {
+    background: transparent !important;
+    border: none !important;
+    color: #000 !important;
+    font-size: 1rem !important;
+    padding: 10px 10px !important;
+    flex: 1;
+    outline: none !important;
+    box-shadow: none !important;
+    width: 100% !important;
+}
+.search-input-wrapper input::placeholder {
+    color: #999;
+}
+
+.search-icon-btn {
+    cursor: pointer;
+    color: var(--accent);
+    padding: 5px;
+    font-size: 1.2rem !important;
+    transition: all 0.2s;
+}
+.search-icon-btn:hover {
+    color: #000;
+    transform: scale(1.1);
 }
 
 .btn-action {
@@ -763,19 +807,19 @@ body.sidebar-collapsed .nav-collection-container {
     display: none !important;
 }
 
-.header {
+#search-area {
     transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin 0.4s ease, opacity 0.3s ease, padding 0.4s ease;
-    overflow: hidden;
     max-height: 500px;
 }
 
-body.header-collapsed .header {
+body.header-collapsed #search-area {
     max-height: 0 !important;
     margin-bottom: 0 !important;
     padding-top: 0 !important;
     padding-bottom: 0 !important;
     opacity: 0;
     pointer-events: none;
+    overflow: hidden;
 }
 
 body.filters-collapsed .filter-row {
@@ -815,52 +859,62 @@ body.sidebar-collapsed #sidebar-toggle {
     left: 55px;
 }
 
-/* Header Toggle Button */
-#collapse-header-btn {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--subtle);
-    padding: 5px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.7rem;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    transition: all 0.2s;
-}
 
-#collapse-header-btn:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-}
 
-#expand-header-btn {
-    display: none;
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
+
+/* Top Bar Buttons */
+.top-action-btn {
     background: var(--card-bg);
     border: 1px solid var(--border);
-    border-top: none;
-    color: var(--accent);
-    padding: 2px 20px;
-    border-radius: 0 0 10px 10px;
+    color: var(--text);
     cursor: pointer;
-    z-index: 500;
-    font-size: 0.7rem;
-    font-weight: bold;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    padding: 0 12px;
+    height: 30px;
+    box-sizing: border-box;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     transition: all 0.2s;
+    font-weight: bold;
+}
+.top-action-btn:hover {
+    border-color: var(--accent);
+    background: #1a1f29;
+}
+.top-action-btn.danger-btn {
+    color: #ff4d8d;
+    border-color: rgba(255, 77, 141, 0.5);
+}
+.top-action-btn.danger-btn:hover {
+    border-color: #ff4d8d;
+    background: rgba(255, 77, 141, 0.1);
 }
 
-#expand-header-btn:hover {
-    padding-bottom: 5px;
-    background: var(--accent);
-    color: #000;
+.toggle-btn {
+    background: transparent;
+    border: 1px solid var(--subtle);
+    color: var(--subtle);
+    cursor: pointer;
+    padding: 0 12px;
+    height: 30px;
+    box-sizing: border-box;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+    opacity: 0.7;
+    font-weight: bold;
 }
-
-body.header-collapsed #expand-header-btn {
-    display: block;
+.toggle-btn:hover {
+    opacity: 1;
+}
+.toggle-btn.active {
+    background: rgba(4, 217, 255, 0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+    opacity: 1;
 }

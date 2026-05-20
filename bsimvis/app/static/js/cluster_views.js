@@ -332,8 +332,9 @@ class ClusterHierarchy {
         d3.select(this.container).selectAll("svg").remove();
 
         this.svg = d3.select(this.container).append("svg")
-            .attr("width", width)
-            .attr("height", height)
+            .attr("viewBox", `0 0 ${width} ${height}`)
+            .attr("width", "100%")
+            .attr("height", "100%")
             .attr("style", "background:#0d0f14; cursor:grab;");
 
         this.g = this.svg.append("g");
@@ -1135,8 +1136,8 @@ class ClusterPacking {
 
         this.svg = d3.select(this.container).append("svg")
             .attr("viewBox", `0 0 ${width} ${height}`)
-            .attr("width", width)
-            .attr("height", height)
+            .attr("width", "100%")
+            .attr("height", "100%")
             .attr("style", "background:#0d0f14; cursor:pointer;");
 
         const stratify = d3.stratify()

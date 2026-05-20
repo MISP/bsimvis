@@ -76,7 +76,6 @@
     </nav>
 
     <main>
-        <button id="expand-header-btn" onclick="toggleHeader()" title="Expand Header">Expand Header ︾</button>
         <div class="header">
             <div class="header-top">
                 <div style="display:flex; align-items:center; gap:15px;">
@@ -89,24 +88,27 @@
                         style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
                     <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
                 </div>
-                <div style="display:flex; gap:10px; align-items:center;">
+                <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-                    <button onclick="refreshData(false, true)"
-                        style="background:none; border:1px solid var(--accent); color:var(--accent); cursor:pointer; padding:5px 12px; border-radius:4px;">Refresh</button>
-                    <button onclick="clearFilters()"
-                        style="background:none; border:1px solid #ff4d8d; color:#ff4d8d; cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Clear
-                        Filters</button>
-                    <button id="toggle-filters-btn" onclick="toggleFilters()" title="Toggle Table Filters"
-                        style="background:none; border:1px solid var(--subtle); color:var(--subtle); cursor:pointer; padding:5px 12px; border-radius:4px; font-size:0.8rem;">Hide
-                        Filters ︽</button>
-                    <button id="collapse-header-btn" onclick="toggleHeader()" title="Collapse Header">Collapse
-                        ︽</button>
+                    <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
+                        <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
+                    </button>
+                    <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
+                        <i class="fa-solid fa-trash-can"></i> Clear
+                    </button>
+                    <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()" title="Toggle Filters">
+                        <i class="fa-solid fa-filter"></i> Filters
+                    </button>
+                    <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()" title="Toggle Search Area">
+                        <i class="fa-solid fa-magnifying-glass"></i> Search
+                    </button>
                 </div>
             </div>
             <div id="search-area"></div>
         </div>
 
-        <div class="table-container" id="table-view-container">
+
+        <div class="table-container" id="table-view-container" style="display: flex; flex-direction: column;">
             <table id="data-table">
                 <thead id="table-head"></thead>
                 <tbody id="table-body"></tbody>
@@ -114,7 +116,7 @@
             <div id="loader">Loading...</div>
 
             <div id="graph-view-container"
-                style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#121212; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#121212; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
                 <div id="graph-loading-overlay">
                     <div class="spinner-graph"></div>
                     <div id="graph-loading-text">Initializing Map...</div>
@@ -128,15 +130,15 @@
             </div>
 
             <div id="hierarchy-view-container"
-                style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
             </div>
 
             <div id="packing-view-container"
-                style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
             </div>
 
             <div id="call-graph-view-container"
-                style="display:none; height:calc(100vh - 300px); border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin-top:10px; position:relative;">
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
             </div>
 
             <div id="pagination-container" class="load-more-container"></div>

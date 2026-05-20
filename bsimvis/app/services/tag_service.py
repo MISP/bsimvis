@@ -233,18 +233,17 @@ class TagService:
         """Ensures a tag has metadata (color) in the global index."""
         meta_key = f"{collection}:tags_metadata"
         if not self.r.hexists(meta_key, tag):
+            # Deterministic color based on tag name if we want, or just a better palette
             palette = [
-                "#FF5555",
-                "#50FA7B",
-                "#F1FA8C",
-                "#BD93F9",
-                "#FF79C6",
-                "#8BE9FD",
-                "#FFB86C",
-                "#A6E22E",
-                "#66D9EF",
+                "#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6",
+                "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700",
+                "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"
             ]
-            color = random.choice(palette)
+            # Use hash of tag name to pick a stable default color from palette
+            import hashlib
+            tag_hash = int(hashlib.md5(tag.encode()).hexdigest(), 16)
+            color = palette[tag_hash % len(palette)]
+            
             self.r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
 
     def get_collection_tags(self, collection):
@@ -257,26 +256,26 @@ class TagService:
         for k, v in raw_meta.items():
             tag_name = k.decode() if isinstance(k, bytes) else k
             meta = json.loads(v)
-
-            # Aggregate counts across all normalized buckets
-            count = 0
-            # Registry patterns to check
-            buckets = [
-                f"{collection}:idx:sim:tags:{tag_name.lower()}",
-                f"{collection}:idx:sim:user_tags:{tag_name.lower()}",
-                f"{collection}:idx:file:tags:{tag_name.lower()}",
-                f"{collection}:idx:file:user_tags:{tag_name.lower()}",
-                f"{collection}:idx:func:tags:{tag_name.lower()}",
-                f"{collection}:idx:func:user_tags:{tag_name.lower()}",
-            ]
-
-            for bkey in buckets:
-                count += r.scard(bkey)
-
-            meta["count"] = count
             results[tag_name] = meta
 
         return results
+
+    def get_tag_stats(self, collection, tag):
+        """Returns count breakdown by entity type for a given tag."""
+        r = self.r
+        tag_lower = tag.lower()
+        stats = {"function": 0, "file": 0, "similarity": 0}
+
+        # Check buckets for each level
+        for lvl in ["func", "file", "sim"]:
+            # Note: tags can be in 'tags' or 'user_tags' index buckets
+            for field in ["tags", "user_tags"]:
+                bkey = f"{collection}:idx:{lvl}:{field}:{tag_lower}"
+                count = r.scard(bkey)
+                if count > 0:
+                    etype = "function" if lvl == "func" else "file" if lvl == "file" else "similarity"
+                    stats[etype] += count
+        return stats
 
     def set_tag_color(self, collection, tag, color):
         meta_key = f"{collection}:tags_metadata"

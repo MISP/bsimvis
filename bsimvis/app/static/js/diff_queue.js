@@ -260,41 +260,29 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
         return;
     }
     const cacheKey = `${id1}::${id2}`;
+    const tooltip = getDiffPreviewTooltip();
+    
+    // Update active key and immediately move
     if (cacheKey === activeDiffKey) {
         moveDiffPreview(e);
         return;
     }
     activeDiffKey = cacheKey;
-    const tooltip = getDiffPreviewTooltip();
-    if (diffPreviewTimer) clearTimeout(diffPreviewTimer);
-
-    tooltip.style.display = 'flex';
+    
+    tooltip.style.display = 'block';
     tooltip.classList.add('showing');
     moveDiffPreview(e);
 
-    const extraHtml = extra > 0 ? `<div class="others-count-card" style="width:100%; box-sizing:border-box;"><span>⚡</span> And ${extra} other matches...</div>` : '';
+    if (diffPreviewTimer) clearTimeout(diffPreviewTimer);
 
-    tooltip.innerHTML = `
-        <div class="preview-card" style="width:100%">
-            <div class="diff-preview-header" style="background:#252525; border-bottom:1px solid #333; padding:10px 15px;">
-                <div style="display:flex; flex-direction:column; gap:5px; width:100%;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="color:#FFF;">${name1}</span>
-                        <span style="color:var(--subtle); margin:0 5px;">vs</span>
-                        <span style="color:#FFF;">${name2}</span>
-                    </div>
-                    <div style="font-size:1rem; font-weight:bold; color:var(--success); border-top:1px solid #444; padding-top:5px; display:flex; justify-content:space-between; align-items:center;">
-                        <span>${score >= 0 ? (score * 100).toFixed(2) + '% Match' : '...% Match '}</span>
-                        <span style="color:#fd971f; font-size:0.65rem; font-weight:bold;">LOADING DIFF...</span>
-                    </div>
-                </div>
-            </div>
-            <div style="height:80px; display:flex; align-items:center; justify-content:center; color:var(--subtle); font-size:0.7rem;">
-                Fetching side-by-side comparison...
-            </div>
-        </div>
-        ${extraHtml}
-    `;
+    // If we have cached data, render immediately
+    if (diffPreviewCache.has(cacheKey)) {
+        renderDiffPreview(diffPreviewCache.get(cacheKey), name1, name2, score, extra);
+        return;
+    }
+
+    // Otherwise, render a loading state for the right side but keep the list responsive
+    renderDiffPreview(null, name1, name2, score, extra);
 
     diffPreviewTimer = setTimeout(async () => {
         let finalScore = score;
@@ -308,58 +296,108 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
             } catch (err) {}
         }
 
-        if (diffPreviewCache.has(cacheKey)) {
-            renderDiffPreview(diffPreviewCache.get(cacheKey), name1, name2, finalScore, extra);
-            return;
-        }
-
         try {
             const res = await fetch(`/api/diff?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
             if (!res.ok) throw new Error("Diff failed");
             const data = await res.json();
             diffPreviewCache.set(cacheKey, data);
-            renderDiffPreview(data, name1, name2, finalScore, extra);
+            // Only render if this is still the active diff
+            if (activeDiffKey === cacheKey) {
+                renderDiffPreview(data, name1, name2, finalScore, extra);
+            }
         } catch (err) {
-            tooltip.innerHTML = `<div class="diff-preview-header" style="color:#ff5555">Error loading diff preview</div>`;
+            if (activeDiffKey === cacheKey) {
+                const rightCol = tooltip.querySelector('.diff-right-col');
+                if (rightCol) {
+                    rightCol.innerHTML = `<div style="padding:40px; text-align:center; color:#ff5555;">Error loading diff: ${err.message}</div>`;
+                }
+            }
         }
-    }, 300);
+    }, 150); // Reduced delay to 150ms for better responsiveness
 }
 
 function renderDiffPreview(data, name1, name2, score, extra = 0) {
     const tooltip = getDiffPreviewTooltip();
     if (!tooltip) return;
 
-    const rows = data.rows || [];
-    const extraHtml = extra > 0 ? `<div class="others-count-card" style="width:100%; box-sizing:border-box;"><span>⚡</span> And ${extra} other matches...</div>` : '';
+    const rows = (data && data.rows) || [];
+    const diffPairs = window.diffPreviewPairs || [];
+    const selectedIdx = window.diffPreviewIndex || 0;
+    const showList = diffPairs.length > 1;
 
     let html = `
-        <div class="preview-card" style="width:100%; max-height:450px; display:flex; flex-direction:column;">
-            <div class="diff-preview-header" style="background:#252525; border-bottom:1px solid #333; padding:10px 15px; flex-shrink:0;">
-                <div style="display:flex; flex-direction:column; gap:5px; width:100%;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="color:#FFF;">${name1}</span>
-                        <span style="color:var(--subtle); margin:0 5px;">vs</span>
-                        <span style="color:#FFF;">${name2}</span>
+        <div class="diff-tooltip-container">
+            ${showList ? `
+            <div class="diff-left-col">
+                <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">Similarity Pairs</div>
+                <div style="color:#666; font-size:0.65rem; margin-bottom:10px; text-transform:uppercase; letter-spacing:0.5px;">
+                    ${diffPairs.length} matches hovered
+                </div>
+                
+                <div class="diff-pair-list">
+                    <div class="diff-pair-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
+                        ${diffPairs.map((p, idx) => `
+                            <div class="diff-pair-item ${idx === selectedIdx ? 'selected' : ''}" data-index="${idx}">
+                                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">
+                                    ${p.n1} <span style="opacity:0.5">↔</span> ${p.n2}
+                                </span>
+                                <span class="score-badge">${p.score >= 0 ? (p.score * 100).toFixed(0) + '%' : '??%'}</span>
+                            </div>`).join('')}
                     </div>
-                    <div style="font-size:1rem; font-weight:bold; color:var(--success); border-top:1px solid #444; padding-top:5px; display:flex; justify-content:space-between; align-items:center;">
-                        <span>${score >= 0 ? (score * 100).toFixed(2) + '% Match' : '....% Match'}</span>
-                        <span style="color:#fd971f; font-size:0.65rem; font-weight:bold;">${rows.length} ROWS MATCH</span>
+                </div>
+                <div style="color:#444; margin-top:8px; font-size:0.65rem;">💡 Use scroll wheel to cycle</div>
+            </div>` : ''}
+
+            <div class="diff-right-col">
+                <div class="diff-preview-header" style="background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.05); padding:12px 15px; flex-shrink:0;">
+                    <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
+                        <div style="display:flex; align-items:center; gap:8px; font-size:0.9rem;">
+                            <span style="color:#FFF; font-weight:bold;">${name1}</span>
+                            <span style="color:var(--subtle); font-size:0.7rem;">vs</span>
+                            <span style="color:#FFF; font-weight:bold;">${name2}</span>
+                        </div>
+                        <div style="font-size:0.75rem; color:var(--success); display:flex; justify-content:space-between; align-items:center;">
+                            <span>Match: <b style="font-size:0.9rem;">${score >= 0 ? (score * 100).toFixed(2) + '%' : '....%'}</b></span>
+                            <span style="color:var(--accent); opacity:0.8;">${rows.length} instructions match</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="diff-preview-scroll" style="flex:1; overflow-y:auto; overflow-x:hidden; display:flex; align-items:flex-start; background:#0d0f14; font-family:'JetBrains Mono', monospace; font-size:0.7rem; min-height:0;">
-                <div style="flex:1; border-right:1px solid #333; border-left:4px solid #fd971f; min-width:0;">
-                    ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
+
+                <div class="diff-preview-scroll" style="flex:1; overflow-y:auto; overflow-x:hidden; display:flex; align-items:flex-start; background:#0d0f14; font-family:'JetBrains Mono', monospace; font-size:0.7rem; min-height:0;">
+                    ${data ? `
+                        <div style="flex:1; border-right:1px solid rgba(255,255,255,0.05); border-left:4px solid #fd971f; min-width:0;">
+                            ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
+                        </div>
+                        <div style="flex:1; border-left:4px solid var(--success); min-width:0;">
+                            ${rows.map(r => renderPreviewSide(r.r, 'r')).join('')}
+                        </div>
+                    ` : `
+                        <div style="flex:1; display:flex; align-items:center; justify-content:center; height:200px; color:#555;">
+                            <div style="text-align:center;">
+                                <i class="fas fa-spinner fa-spin" style="font-size:1.5rem; margin-bottom:10px;"></i>
+                                <div>Loading Diff...</div>
+                            </div>
+                        </div>
+                    `}
                 </div>
-                <div style="flex:1; border-left:4px solid var(--success); min-width:0;">
-                    ${rows.map(r => renderPreviewSide(r.r, 'r')).join('')}
-                </div>
+
+                ${rows.length > 12 ? `
+                <div style="background:rgba(0,0,0,0.2); text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
+                    💡 Use Ctrl+Scroll wheel to scroll code
+                </div>` : ''}
             </div>
-            ${rows.length > 12 ? `<div style="background:#111; text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top:1px solid #333; flex-shrink:0;">💡 Use scroll wheel to view all ${rows.length} matching rows</div>` : ''}
         </div>
-        ${extraHtml}
     `;
     tooltip.innerHTML = html;
+
+    // Handle list scrolling
+    if (showList) {
+        const listScroll = tooltip.querySelector('.diff-pair-list-scroll');
+        if (listScroll) {
+            const itemHeight = 34;
+            listScroll.style.transform = `translateY(-${selectedIdx * itemHeight}px)`;
+        }
+    }
 }
 
 function renderPreviewSide(sideData, side) {

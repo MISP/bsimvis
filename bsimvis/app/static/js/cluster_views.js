@@ -1,29 +1,29 @@
 // Cluster Hierarchy (Dendrogram) and Packing Visualizations for BSimVis
 
 function getCurrentCollection() {
-    const selectEl = document.getElementById('side-collection-select') || (window.parent && window.parent.document.getElementById('side-collection-select'));
-    if (selectEl) return selectEl.value;
-
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('collection')) return params.get('collection');
-    
-    // Fallback to parse from function IDs
-    const id = params.get('id') || params.get('id1') || params.get('id2') || window.currentFuncId;
-    if (id && id.includes(':')) {
-        return id.split(':')[0];
-    }
-    
+    // 1. Try parent hash params first (most reliable for views)
     if (window.parent && window.parent.location) {
-        const parentParams = new URLSearchParams(window.parent.location.hash.split('?')[1] || '');
-        if (parentParams.has('collection')) return parentParams.get('collection');
-        const parentId = parentParams.get('id') || parentParams.get('id1') || parentParams.get('id2');
-        if (parentId && parentId.includes(':')) {
-            return parentId.split(':')[0];
-        }
+        const hash = window.parent.location.hash || '';
+        const params = new URLSearchParams(hash.split('?')[1] || '');
+        if (params.get('collection')) return params.get('collection');
+        const id = params.get('id') || params.get('id1') || params.get('id2');
+        if (id && id.includes(':')) return id.split(':')[0];
     }
+
+    // 2. Try select dropdown
+    const selectEl = document.getElementById('side-collection-select') || (window.parent && window.parent.document.getElementById('side-collection-select'));
+    if (selectEl && selectEl.value) return selectEl.value;
+
+    // 3. Try URL params
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('collection')) return params.get('collection');
+
+    // 4. Try parsing from function IDs
+    const id = params.get('id') || params.get('id1') || params.get('id2') || window.currentFuncId;
+    if (id && id.includes(':')) return id.split(':')[0];
+
     return 'main';
 }
-
 function getHierarchyTooltip() {
     let el = document.getElementById('hierarchy-tooltip');
     if (!el) {
@@ -621,30 +621,7 @@ class ClusterHierarchy {
 
         if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
 
-        const nodeEl = event.currentTarget;
-        if (nodeEl && !nodeEl._hasWheelListener) {
-            nodeEl._hasWheelListener = true;
-            nodeEl.addEventListener('wheel', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                if (e.ctrlKey) {
-                    const codeScrollEl = document.querySelector('#hier-snippet-container .c-code-container');
-                    if (codeScrollEl) {
-                        codeScrollEl.scrollTop += e.deltaY;
-                        this._codeScrollTop = codeScrollEl.scrollTop;
-                    }
-                    return;
-                }
-
-                const delta = Math.sign(e.deltaY);
-                const members = d.data.runtime_members || [];
-                if (members.length === 0) return;
-
-                d.data.scrollOffset = Math.max(0, Math.min(members.length - 1, d.data.scrollOffset + delta));
-                this.renderTooltip(tooltip, d);
-            }, { passive: false });
-        }
+        // Wheel listener removed here - now handled globally in previews.js to prevent double-scroll
 
         this.renderTooltip(tooltip, d);
 
@@ -1440,30 +1417,7 @@ class ClusterPacking {
 
             if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
 
-            const nodeEl = event.currentTarget;
-            if (nodeEl && !nodeEl._hasWheelListener) {
-                nodeEl._hasWheelListener = true;
-                nodeEl.addEventListener('wheel', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-
-                    if (e.ctrlKey) {
-                        const codeScrollEl = document.querySelector('#hier-snippet-container .c-code-container');
-                        if (codeScrollEl) {
-                            codeScrollEl.scrollTop += e.deltaY;
-                            this._codeScrollTop = codeScrollEl.scrollTop;
-                        }
-                        return;
-                    }
-
-                    const delta = Math.sign(e.deltaY);
-                    const members = d.data.runtime_members || [];
-                    if (members.length === 0) return;
-
-                    d.data.scrollOffset = Math.max(0, Math.min(members.length - 1, d.data.scrollOffset + delta));
-                    this.renderTooltip(tooltip, d);
-                }, { passive: false });
-            }
+            // Wheel listener removed here - now handled globally in previews.js to prevent double-scroll
 
             this.renderTooltip(tooltip, d);
 

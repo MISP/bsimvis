@@ -13,6 +13,7 @@
     <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.4.min.js"></script>
     <script src="https://cdn.bokeh.org/bokeh/release/bokeh-api-3.3.4.min.js"></script>
     <script src="/js/tags.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script>
     <script src="/js/diff_queue.js"></script>
     <script src="/js/previews.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
@@ -90,6 +91,9 @@
                 </div>
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+                    <button onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
                     <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
                         <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
                     </button>
@@ -105,6 +109,23 @@
                 </div>
             </div>
             <div id="search-area"></div>
+        </div>
+
+        <!-- UI Settings Panel -->
+        <div id="ui-settings-panel" style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h3 style="margin:0; font-size:1rem; color:var(--accent);">UI Settings</h3>
+                <button onclick="toggleUISettings()" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div style="margin-bottom:15px;">
+                <label style="display:block; font-size:0.8rem; margin-bottom:5px;">Min Cohesion Threshold</label>
+                <input type="range" id="param-cohesion" min="0" max="1" step="0.05" value="0.5" style="width:100%" onchange="updateUIParams()">
+                <span id="val-cohesion" style="font-size:0.75rem; color:var(--dim)">0.50</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <input type="checkbox" id="param-color-tags" onchange="updateUIParams()">
+                <label style="font-size:0.8rem;">Color by Tags</label>
+            </div>
         </div>
 
 

@@ -94,6 +94,17 @@
     <div id="bsim-tooltip"></div>
 
     <script>
+        // Sync UI settings from parent if available
+        let UIParams = { cohesionThreshold: 0.5, colorByTag: false };
+        if (window.parent && window.parent.UIParams) {
+            UIParams = window.parent.UIParams;
+        } else {
+            UIParams = {
+                cohesionThreshold: parseFloat(localStorage.getItem('cohesionThreshold')) || 0.5,
+                colorByTag: localStorage.getItem('colorByTag') === 'true'
+            };
+        }
+
         const API_URL = "/api/function/code";
         let funcRows = [];
         let funcTips = {};

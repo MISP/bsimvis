@@ -16,7 +16,7 @@
     // --- DOM helpers: lazily create tooltip elements ---
     function ensureEl(id, styles) {
         let el = document.getElementById(id);
-        if (!el) {
+        if (!el && document.body) {
             el = document.createElement('div');
             el.id = id;
             Object.assign(el.style, styles);
@@ -313,22 +313,51 @@
                     return;
                 }
 
-                if (targetWindow.hierarchyInstance && targetWindow.hierarchyInstance._activeD) {
-                    const d = targetWindow.hierarchyInstance._activeD;
+                const activeInstance = (targetWindow.hierarchyInstance && targetWindow.hierarchyInstance._activeD)
+                    ? targetWindow.hierarchyInstance
+                    : ((targetWindow.packingInstance && targetWindow.packingInstance._activeD) ? targetWindow.packingInstance : null);
+
+                if (activeInstance && activeInstance._activeD) {
+                    const d = activeInstance._activeD;
                     const delta = Math.sign(e.deltaY);
                     const members = d.data.runtime_members || [];
                     if (members.length === 0) return;
 
                     if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
                     d.data.scrollOffset = Math.max(0, Math.min(members.length - 1, d.data.scrollOffset + delta));
-                    targetWindow.hierarchyInstance.renderTooltip(hierTooltip, d);
+                    activeInstance.renderTooltip(hierTooltip, d);
                 }
                 return;
             }
 
             const activeTooltip = isDiffActive ? diffTooltip : codeTooltip;
             const scrollContainer = activeTooltip.querySelector('.code-preview-scroll, .diff-preview-scroll');
-            if (scrollContainer) {
+            
+            if (isDiffActive) {
+                if (e.ctrlKey) {
+                    if (scrollContainer) {
+                        scrollContainer.scrollTop += e.deltaY;
+                        if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;
+                    }
+                } else {
+                    const diffPairs = targetWindow.diffPreviewPairs || window.diffPreviewPairs;
+                    if (diffPairs && diffPairs.length > 1) {
+                        const delta = Math.sign(e.deltaY);
+                        let idx = targetWindow.diffPreviewIndex !== undefined ? targetWindow.diffPreviewIndex : (window.diffPreviewIndex || 0);
+                        idx = Math.max(0, Math.min(diffPairs.length - 1, idx + delta));
+                        if (targetWindow.diffPreviewIndex !== undefined) targetWindow.diffPreviewIndex = idx;
+                        else window.diffPreviewIndex = idx;
+                        
+                        const p = diffPairs[idx];
+                        const extra = diffPairs.length - 1;
+                        const showFunc = targetWindow.showDiffPreview || window.showDiffPreview;
+                        if (showFunc) showFunc(p.id1, p.n1, p.id2, p.n2, p.score, e, extra);
+                    } else if (scrollContainer) {
+                        scrollContainer.scrollTop += e.deltaY;
+                        if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;
+                    }
+                }
+            } else if (scrollContainer) {
                 scrollContainer.scrollTop += e.deltaY;
                 if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;
             }

@@ -116,6 +116,19 @@ def get_metadata():
     return jsonify(tags)
 
 
+@tags_bp.route("/api/tags/stats", methods=["GET"])
+def get_tag_stats():
+    """Returns statistics for a specific tag."""
+    collection = request.args.get("collection")
+    tag = request.args.get("tag")
+
+    if not collection or not tag:
+        return jsonify({"error": "Missing parameters"}), 400
+
+    stats = tag_service.get_tag_stats(collection, tag)
+    return jsonify(stats)
+
+
 @tags_bp.route("/api/tags/set_color", methods=["POST"])
 def set_color():
     """Sets a custom color for a tag."""
@@ -124,7 +137,7 @@ def set_color():
     tag = data.get("tag")
     color = data.get("color")
 
-    if not all([collection, tag, color]):
+    if collection is None or tag is None or color is None:
         return jsonify({"error": "Missing parameters"}), 400
 
     tag_service.set_tag_color(collection, tag, color)
@@ -139,7 +152,7 @@ def set_priority():
     tag = data.get("tag")
     priority = data.get("priority")
 
-    if not all([collection, tag, priority]):
+    if collection is None or tag is None or priority is None:
         return jsonify({"error": "Missing parameters"}), 400
 
     tag_service.set_tag_priority(collection, tag, priority)

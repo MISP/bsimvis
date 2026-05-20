@@ -957,32 +957,39 @@ body {
 }
 
 /* Dendrogram Tooltip Enhancements */
-.hier-tooltip-container {
+.hier-tooltip-container, .diff-tooltip-container {
     display: flex;
     gap: 0;
     min-height: 400px;
     max-height: 600px;
 }
 
-.hier-left-col {
+.hier-left-col, .diff-left-col {
     width: 350px;
     display: flex;
     flex-direction: column;
-    padding-right: 15px;
+    padding: 12px;
     border-right: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.hier-right-col {
-    width: 500px;
-    padding-left: 15px;
+.diff-left-col {
+    width: 250px; /* Diff list can be narrower */
+}
+
+.hier-right-col, .diff-right-col {
+    width: 600px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
-.hier-function-list {
+.diff-right-col {
+    width: 700px; /* Diffs need more horizontal space */
+}
+
+.hier-function-list, .diff-pair-list {
     margin-top: 10px;
-    height: 150px; /* 5 items * 30px */
+    height: 180px; 
     overflow: hidden;
     position: relative;
     border: 1px solid rgba(255, 255, 255, 0.05);
@@ -990,8 +997,8 @@ body {
     border-radius: 4px;
 }
 
-.hier-function-item {
-    height: 30px;
+.hier-function-item, .diff-pair-item {
+    height: 34px;
     padding: 0 10px;
     display: flex;
     align-items: center;
@@ -1002,13 +1009,28 @@ body {
     white-space: nowrap;
     overflow: hidden;
     box-sizing: border-box;
+    cursor: pointer;
 }
 
-.hier-function-item.selected {
+.hier-function-item.selected, .diff-pair-item.selected {
     background: rgba(102, 217, 239, 0.15);
     color: var(--accent);
     border-left: 3px solid var(--accent);
-    padding-left: 7px; /* Adjusted for border */
+    padding-left: 7px;
+}
+
+.diff-pair-item .score-badge {
+    margin-left: auto;
+    font-size: 0.65rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 2px 4px;
+    border-radius: 3px;
+    color: var(--success);
+}
+
+.diff-pair-item.selected .score-badge {
+    background: rgba(166, 226, 46, 0.2);
+    color: #fff;
 }
 
 .hier-code-snippet {
@@ -1089,12 +1111,14 @@ body {
     position: fixed;
     display: none;
     z-index: 20001;
-    pointer-events: none;
-    width: 800px;
+    pointer-events: auto; /* Changed from none to allow interaction if needed, though usually fixed */
     max-height: 800px;
-    overflow: visible;
-    flex-direction: column;
-    gap: 12px;
+    overflow: hidden;
+    background: rgba(13, 15, 20, 0.98);
+    border: 1px solid var(--accent, #66d9ef);
+    border-radius: 8px;
+    box-shadow: 0 15px 50px rgba(0, 0, 0, 0.9);
+    backdrop-filter: blur(15px);
 }
 
 .diff-preview-header {

@@ -19,10 +19,9 @@ async function fetchTagMetadata(collection) {
     }
 }
 
-function getRowTagColor(analysisTags, userTags = []) {
-    // Only use user-defined tags for row coloring as requested
+function getRawTagColor(analysisTags, userTags = []) {
     const allTags = [...(userTags || [])].filter(t => t && t.trim());
-    if (localStorage.getItem('sim-color-by-tag') !== 'true' || allTags.length === 0) return "";
+    if (allTags.length === 0) return null;
     
     let bestColor = null;
     let maxPrio = -1;
@@ -38,6 +37,14 @@ function getRowTagColor(analysisTags, userTags = []) {
             bestColor = color;
         }
     });
+    return bestColor;
+}
+
+function getRowTagColor(analysisTags, userTags = []) {
+    const colorEnabled = typeof UIParams !== 'undefined' ? UIParams.colorByTag : (localStorage.getItem('sim-color-by-tag') === 'true');
+    if (!colorEnabled) return "";
+    
+    const bestColor = getRawTagColor(analysisTags, userTags);
     if (bestColor) {
         return `linear-gradient(90deg, ${bestColor}44 0%, transparent 100%)`;
     }
@@ -47,7 +54,7 @@ function getRowTagColor(analysisTags, userTags = []) {
 function refreshAllRowColors() {
     const rows = document.querySelectorAll('tr.sim-row');
     const [hashPath] = (window.location.hash || '#collections').split('?');
-    const isColorEnabled = localStorage.getItem('sim-color-by-tag') === 'true';
+    const isColorEnabled = typeof UIParams !== 'undefined' ? UIParams.colorByTag : (localStorage.getItem('sim-color-by-tag') === 'true');
 
     rows.forEach(tr => {
         if (!isColorEnabled) {
@@ -89,6 +96,222 @@ function refreshAllRowColors() {
     });
 }
 
+function updateTagUIElements(tag, color) {
+    // Update .sim-tag-card (User Tags)
+    document.querySelectorAll('.sim-tag-card').forEach(card => {
+        if (card.textContent.replace('×', '').trim() === tag) {
+            card.style.borderColor = color + '66';
+            card.style.color = color;
+            card.style.background = color + '11';
+        }
+    });
+
+    // Update .analysis-tag-badge (Analysis Tags)
+    document.querySelectorAll('.analysis-tag-badge').forEach(badge => {
+        if (badge.textContent.trim() === tag) {
+            badge.style.borderColor = color + '66';
+            badge.style.color = color;
+            badge.style.background = color + '11';
+        }
+    });
+
+    // Update Cluster Cards if they match the tag name (unlikely but possible)
+    document.querySelectorAll('.cluster-card').forEach(card => {
+        const nameSpan = card.querySelector('span');
+        if (nameSpan && nameSpan.textContent.trim() === tag) {
+            card.style.borderColor = color + '44';
+            card.style.color = color;
+            card.style.background = color + '11';
+        }
+    });
+}
+
+// Tag Tooltip
+window.showTooltip = (e, tag, coll) => {
+    let el = document.getElementById('tag-tooltip');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'tag-tooltip';
+        el.style.cssText = "position:fixed; z-index:20005; background:rgba(20,22,26,0.95); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
+        document.body.appendChild(el);
+    }
+    
+    el.innerHTML = `<div style="color:var(--dim)">Loading stats for <b>${tag}</b>...</div>`;
+    el.style.display = 'block';
+    
+    fetch(`/api/tags/stats?collection=${coll}&tag=${encodeURIComponent(tag)}`)
+        .then(res => res.json())
+        .then(stats => {
+            const meta = getTagMetadata(tag);
+            el.innerHTML = `
+                <div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:5px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="width:10px; height:10px; border-radius:50%; background:${meta.color}"></span>
+                        ${tag}
+                    </div>
+                    <div style="font-size:0.65rem; background:rgba(255,171,46,0.1); color:var(--accent); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,171,46,0.2);">
+                        Prio: ${meta.priority || 0}
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr auto; gap:5px 15px;">
+                    <span style="color:var(--dim)">Functions:</span> <b style="color:var(--accent)">${stats.function}</b>
+                    <span style="color:var(--dim)">Files:</span> <b style="color:var(--accent)">${stats.file}</b>
+                    <span style="color:var(--dim)">Similarities:</span> <b style="color:var(--accent)">${stats.similarity}</b>
+                </div>
+                <div style="margin-top:8px; font-size:0.65rem; color:var(--dim); font-style:italic;">Right-click tag to customize</div>
+            `;
+        });
+        
+    const moveTooltip = (ev) => {
+        let x = ev.clientX + 15;
+        let y = ev.clientY + 15;
+        if (x + 200 > window.innerWidth) x -= 220;
+        if (y + 120 > window.innerHeight) y -= 140;
+        el.style.left = x + 'px';
+        el.style.top = y + 'px';
+    };
+    moveTooltip(e);
+    e.target.onmousemove = moveTooltip;
+};
+
+window.getTagMetadata = (tag) => {
+    if (tag === 'bookmark') return { color: '#66d9ef', priority: 1000 };
+    if (tag === 'ignore') return { color: '#f92672', priority: 900 };
+    const m = tagMetadata[tag] || (window.parent && window.parent.tagMetadata && window.parent.tagMetadata[tag]);
+    if (m) return m;
+    const palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700", "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"];
+    let hash = 0; for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+    return { color: palette[Math.abs(hash) % palette.length], priority: 0 };
+};
+
+window.hideTooltip = () => {
+    const el = document.getElementById('tag-tooltip');
+    if (el) el.style.display = 'none';
+};
+
+window.handleTagContextMenu = (e, tag) => {
+    e.preventDefault();
+    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
+    const currentMeta = tagMetadata[tag] || { color: "#66d9ef", priority: 0 };
+    
+    let menu = document.getElementById('tag-custom-context-menu');
+    if (!menu) {
+        menu = document.createElement('div');
+        menu.id = 'tag-custom-context-menu';
+        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
+        document.body.appendChild(menu);
+    }
+    
+    menu.innerHTML = `
+        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center;">
+            <span>Tag: ${tag}</span>
+            <button onclick="document.getElementById('tag-custom-context-menu').style.display='none'" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
+        </div>
+        <div style="padding:15px; display:flex; flex-direction:column; gap:15px;">
+            <div id="tag-picker-container" style="display:flex; justify-content:center;"></div>
+            
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <label style="font-size:0.75rem; color:var(--dim); display:flex; justify-content:space-between;">
+                    Priority <span id="tag-prio-val" style="color:var(--accent)">${currentMeta.priority}</span>
+                </label>
+                <input type="range" id="tag-prio-slider" min="0" max="1000" step="10" value="${currentMeta.priority}" style="width:100%; cursor:pointer;">
+            </div>
+            
+            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
+                Apply Changes
+            </button>
+        </div>
+    `;
+
+    // Initialize Color Wheel
+    const colorPicker = new iro.ColorPicker("#tag-picker-container", {
+        width: 160,
+        color: currentMeta.color,
+        layout: [
+            { component: iro.ui.Wheel },
+            { component: iro.ui.Slider, options: { sliderType: 'value' } }
+        ]
+    });
+
+    const prioSlider = menu.querySelector('#tag-prio-slider');
+    const prioVal = menu.querySelector('#tag-prio-val');
+    prioSlider.oninput = (ev) => {
+        prioVal.innerText = ev.target.value;
+    };
+
+    const saveBtn = menu.querySelector('#tag-save-btn');
+    saveBtn.onclick = async () => {
+        saveBtn.disabled = true;
+        saveBtn.innerText = "Saving...";
+        const newColor = colorPicker.color.hexString;
+        const newPrio = parseInt(prioSlider.value);
+        
+        try {
+            await Promise.all([
+                fetch('/api/tags/set_color', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({collection: coll, tag: tag, color: newColor})
+                }),
+                fetch('/api/tags/set_priority', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({collection: coll, tag: tag, priority: newPrio})
+                })
+            ]);
+            
+            // Force immediate metadata sync
+            const updatedMeta = { color: newColor, priority: newPrio };
+            tagMetadata[tag] = updatedMeta;
+            if (window.parent && window.parent.tagMetadata) {
+                window.parent.tagMetadata[tag] = updatedMeta;
+            }
+            if (window.top && window.top.tagMetadata) {
+                window.top.tagMetadata[tag] = updatedMeta;
+            }
+
+            // Update all tag badges and cards in the current document
+            updateTagUIElements(tag, newColor);
+
+            // Refresh row colors
+            if (typeof refreshAllRowColors === 'function') {
+                refreshAllRowColors();
+            }
+
+            // If we have a graph instance, refresh its colors too
+            if (window.graphInstance && typeof window.graphInstance.refreshColors === 'function') {
+                window.graphInstance.refreshColors();
+            }
+
+            menu.style.display = 'none';
+            
+        } catch (err) {
+            console.error("Failed to save tag metadata", err);
+            saveBtn.disabled = false;
+            saveBtn.innerText = "Error - Retry";
+        }
+    };
+
+    menu.style.display = 'block';
+    
+    // Position handling
+    let x = e.clientX;
+    let y = e.clientY;
+    if (x + 240 > window.innerWidth) x -= 240;
+    if (y + 350 > window.innerHeight) y -= 350;
+    
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    
+    const closeMenu = (me) => {
+        if (!menu.contains(me.target)) {
+            menu.style.display = 'none';
+            document.removeEventListener('mousedown', closeMenu);
+        }
+    };
+    setTimeout(() => document.addEventListener('mousedown', closeMenu), 10);
+};
+
 const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const isBookmarked = userTagsList.includes('bookmark');
     const isIgnored = userTagsList.includes('ignore');
@@ -104,18 +327,24 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const addOnClick = `startAddTag(event, '${etype}', '${eid}')`;
 
     const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${t}">${t}</span>`).join('');
+    
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
         const meta = tagMetadata[t] || { color: '#66d9ef' };
         const color = meta.color;
         const removeClick = `removeTag(event, '${etype}', '${eid}', '${t}')`;
+        const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
+        
         return `
-        <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11;">
+        <span class="sim-tag-card" 
+              style="border-color:${color}44; color:${color}; background:${color}11; cursor:pointer;" 
+              onmouseenter="showTooltip(event, '${t}', '${coll}')" 
+              onmouseleave="hideTooltip()"
+              oncontextmenu="handleTagContextMenu(event, '${t}')">
             ${t} 
             <span class="remove-tag-btn" onclick="${removeClick}" style="background:${color}22">×</span>
         </span>`;
     }).join('');
-
     return `
         <div class="${editorClass}" data-etype="${etype}" data-eid="${eid}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle;">
             <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" 
@@ -134,7 +363,6 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
         </div>
     `;
 };
-
 window.applyClusterFilter = (uuid) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     const hash = targetWindow.location.hash || '#collections';
@@ -243,7 +471,8 @@ window.moveClusterCardTooltip = function(e) {
 window.renderClusterCards = (clusters) => {
     if (!clusters || clusters.length === 0) return '';
     
-    const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= 0.50);
+    const threshold = typeof UIParams !== 'undefined' ? UIParams.cohesionThreshold : 0.5;
+    const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= threshold);
     if (validClusters.length === 0) return '';
     
     const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
@@ -738,6 +967,7 @@ function updateUIForTagAdd(editors, tag) {
     const color = meta.color;
     const isBookmark = (tag === 'bookmark');
     const isIgnore = (tag === 'ignore');
+    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
 
     editors.forEach(editor => {
         if (!editor) return;
@@ -755,6 +985,13 @@ function updateUIForTagAdd(editors, tag) {
                 card.style.borderColor = color + '44';
                 card.style.color = color;
                 card.style.background = color + '11';
+                card.style.cursor = 'pointer';
+                
+                // Add event handlers for tooltip and context menu
+                card.setAttribute('onmouseenter', `showTooltip(event, '${tag}', '${coll}')`);
+                card.setAttribute('onmouseleave', 'hideTooltip()');
+                card.setAttribute('oncontextmenu', `handleTagContextMenu(event, '${tag}')`);
+
                 const removeClick = `removeTag(event, '${editor.dataset.etype}', '${editor.dataset.eid}', '${tag}')`;
                 card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="${removeClick}" style="background:${color}22">×</span>`;
                 const addBtn = editor.querySelector('.add-tag-btn');

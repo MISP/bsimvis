@@ -73,16 +73,33 @@ class SimilarityGraph {
                 const indices = cb_data.index.indices;
                 window.lastGraphLinkIndices = indices;
                 if (indices.length > 0 && !window.graphNodeHovered && !window.graphContextMenuOpen) {
-                    const id1 = source.data.id1[indices[0]];
-                    const id2 = source.data.id2[indices[0]];
-                    const n1 = source.data.f1[indices[0]];
-                    const n2 = source.data.f2[indices[0]];
-                    const score = source.data.score[indices[0]];
-                    const extra = indices.length - 1;
+                    let sameHover = true;
+                    if (!window.diffPreviewPairs || window.diffPreviewPairs.length !== indices.length) {
+                        sameHover = false;
+                    } else {
+                        if (window.diffPreviewPairs[0].id1 !== source.data.id1[indices[0]] || window.diffPreviewPairs[0].id2 !== source.data.id2[indices[0]]) {
+                            sameHover = false;
+                        }
+                    }
+                    
+                    if (!sameHover) {
+                        window.diffPreviewPairs = indices.map(idx => ({
+                            id1: source.data.id1[idx],
+                            id2: source.data.id2[idx],
+                            n1: source.data.f1[idx],
+                            n2: source.data.f2[idx],
+                            score: source.data.score[idx]
+                        }));
+                        window.diffPreviewIndex = 0;
+                    }
+                    
+                    const p = window.diffPreviewPairs[window.diffPreviewIndex];
+                    const extra = window.diffPreviewPairs.length - 1;
                     const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
                     const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                    if (window.showDiffPreview) window.showDiffPreview(id1, n1, id2, n2, score, e, extra);
+                    if (window.showDiffPreview) window.showDiffPreview(p.id1, p.n1, p.id2, p.n2, p.score, e, extra);
                 } else {
+                    window.diffPreviewPairs = null;
                     if (window.hideDiffPreview) window.hideDiffPreview();
                 }
             `
@@ -260,7 +277,8 @@ class SimilarityGraph {
                                 file_name: n.meta.file_name, return_type: n.meta.return_type,
                                 addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count,
                                 language_id: n.meta.language_id || 'N/A',
-                                tags: n.meta.tags || []
+                                tags: n.meta.tags || [],
+                                user_tags: n.meta.user_tags || []
                             };
                             this.nodes_map.set(n.id, node_obj); this.unique_nodes.push(node_obj); this.binary_md5s.add(n.meta.file_md5);
                         }
@@ -304,11 +322,21 @@ class SimilarityGraph {
         const bin_list = Array.from(this.binary_md5s).sort();
         const bin_colors = new Map(bin_list.map((md5, i) => [md5, palette[i % 20]]));
 
+        const isColorByTag = localStorage.getItem('sim-color-by-tag') === 'true' || (typeof UIParams !== 'undefined' && UIParams.colorByTag);
+
         const ns = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], file_name: [], return_type: [] };
         this.unique_nodes.forEach(n => {
             const info = id_to_info.get(n.id);
             ns.x.push(info.x); ns.y.push(info.y); ns.name.push(n.name); ns.addr.push(n.addr);
-            ns.bin.push(n.md5.slice(0, 8)); ns.color.push(bin_colors.get(n.md5));
+            ns.bin.push(n.md5.slice(0, 8)); 
+            
+            let color = bin_colors.get(n.md5);
+            if (isColorByTag && typeof getRawTagColor === 'function') {
+                const tagColor = getRawTagColor(n.tags, n.user_tags);
+                if (tagColor) color = tagColor;
+            }
+            ns.color.push(color);
+
             ns.v_size.push(n.v_size); ns.id.push(n.id);
             ns.file_name.push(n.file_name || ''); ns.return_type.push(n.return_type || 'N/A');
         });
@@ -318,6 +346,9 @@ class SimilarityGraph {
         const minScoreParam = params.get('min_score');
         const minScore = (minScoreParam !== null && minScoreParam !== "") ? parseFloat(minScoreParam) : 0.95;
 
+        const id_to_color = new Map();
+        ns.id.forEach((id, i) => id_to_color.set(id, ns.color[i]));
+
         this.all_pairs.forEach(p => {
             const n1 = id_to_info.get(p.id1); const n2 = id_to_info.get(p.id2);
             if (!n1 || !n2) return;
@@ -326,7 +357,7 @@ class SimilarityGraph {
                 const it = 1 - t;
                 return { x: it * it * n1.x + 2 * it * t * 0 + t * t * n2.x, y: it * it * n1.y + 2 * it * t * 0 + t * t * n2.y };
             });
-            const col1 = bin_colors.get(n1.md5); const col2 = bin_colors.get(n2.md5);
+            const col1 = id_to_color.get(p.id1); const col2 = id_to_color.get(p.id2);
             const norm = (p.score - minScore) / (1.0 - minScore + 0.0001);
             for (let k = 0; k < curve.length - 1; k++) {
                 ss.x0.push(curve[k].x); ss.y0.push(curve[k].y); ss.x1.push(curve[k + 1].x); ss.y1.push(curve[k + 1].y);
@@ -335,8 +366,7 @@ class SimilarityGraph {
             hs.xs.push(curve.map(v => v.x)); hs.ys.push(curve.map(v => v.y));
             hs.f1.push(p.name1); hs.f2.push(p.name2); hs.b1.push(n1.md5.slice(0, 8)); hs.b2.push(n2.md5.slice(0, 8));
             hs.score.push(p.score.toFixed(4)); hs.c1.push(col1); hs.c2.push(col2); hs.id1.push(p.id1); hs.id2.push(p.id2);
-            hs.fn1.push(n1.file_name || n1.md5.slice(0, 8)); hs.fn2.push(n2.file_name || n2.md5.slice(0, 8));
-
+            hs.fn1.push(n1.file_name || n1.file_name || n1.md5.slice(0, 8)); hs.fn2.push(n2.file_name || n2.file_name || n2.md5.slice(0, 8));
         });
 
         const rs = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [], language: [], tags: [] };
@@ -358,6 +388,52 @@ class SimilarityGraph {
         });
 
         this.node_source.data = ns; this.seg_source.data = ss; this.hit_source.data = hs; this.ring_source.data = rs;
+    }
+
+    refreshColors() {
+        if (!this.unique_nodes.length) return;
+        
+        const palette = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"];
+        const bin_list = Array.from(this.binary_md5s).sort();
+        const bin_colors = new Map(bin_list.map((md5, i) => [md5, palette[i % 20]]));
+
+        const isColorByTag = localStorage.getItem('sim-color-by-tag') === 'true' || (typeof UIParams !== 'undefined' && UIParams.colorByTag);
+
+        const nodeColors = [];
+        this.unique_nodes.forEach(n => {
+            let color = bin_colors.get(n.md5);
+            if (isColorByTag && typeof getRawTagColor === 'function') {
+                const tagColor = getRawTagColor(n.tags, n.user_tags);
+                if (tagColor) color = tagColor;
+            }
+            nodeColors.push(color);
+        });
+
+        this.node_source.data.color = nodeColors;
+        this.node_source.change.emit();
+
+        if (this.all_pairs.length > 0) {
+            const id_to_color = new Map();
+            this.unique_nodes.forEach((n, i) => id_to_color.set(n.id, nodeColors[i]));
+            
+            const segColors = [];
+            const t_vals = []; for (let i = 0; i <= 1; i += 1 / 15) t_vals.push(i);
+
+            this.all_pairs.forEach(p => {
+                const col1 = id_to_color.get(p.id1);
+                const col2 = id_to_color.get(p.id2);
+                if (col1 && col2) {
+                    for (let k = 0; k < t_vals.length - 1; k++) {
+                        segColors.push(this.blendHex(col1, col2, t_vals[k]));
+                    }
+                } else {
+                    // Fallback to original colors if not found (shouldn't happen)
+                    for (let k = 0; k < t_vals.length - 1; k++) segColors.push("#444444");
+                }
+            });
+            this.seg_source.data.color = segColors;
+            this.seg_source.change.emit();
+        }
     }
 
     blendHex(c1, c2, t) {

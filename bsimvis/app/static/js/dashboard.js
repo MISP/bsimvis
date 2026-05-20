@@ -738,10 +738,6 @@ function updateUI(path, params, route) {
                 </div>
                 ${callGraphBtn}
             </div>
-            <div style="display:flex; align-items:center; gap:8px;">
-                <input type="checkbox" id="sim-color-by-tag" ${localStorage.getItem('sim-color-by-tag') === 'true' ? 'checked' : ''} onchange="localStorage.setItem('sim-color-by-tag', this.checked); refreshAllRowColors()">
-                <label for="sim-color-by-tag" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Color by Tag</label>
-            </div>
         </div>`;
     } else if (path === '#features-global' && !document.getElementById('feature-search')) {
         const p = new URLSearchParams(params);
@@ -1148,8 +1144,9 @@ function renderFunctions(data) {
             </td>
             <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
             <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
-            <td>${renderClusterCards(f['clusters'])}</td>
+            <td class="cluster-cards-cell" data-clusters='${JSON.stringify(f['clusters'] || []).replace(/'/g, "&apos;")}'>${renderClusterCards(f['clusters'])}</td>
             <td class="sim-cell" style="text-align:center;">
+
                 <div style="display:inline-flex; align-items:center; gap:6px;">
                     <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
                     <button class="btn-icon" onclick="showFeaturePanel('${funcId}')" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
@@ -1337,8 +1334,8 @@ function renderTopCorrelations(items) {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderClusterCards(p.meta1?.clusters)}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderClusterCards(p.meta2?.clusters)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(p.meta1?.clusters || []).replace(/'/g, "&apos;")}'>${renderClusterCards(p.meta1?.clusters)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(p.meta2?.clusters || []).replace(/'/g, "&apos;")}'>${renderClusterCards(p.meta2?.clusters)}</div>
                 </div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
@@ -1630,9 +1627,90 @@ window.addEventListener('hashchange', (e) => {
     refreshData();
 });
 
+// UI Settings
+let UIParams = {
+    cohesionThreshold: parseFloat(localStorage.getItem('cohesionThreshold')) || 0.5,
+    colorByTag: localStorage.getItem('colorByTag') === 'true'
+};
+
+function toggleUISettings() {
+    const panel = document.getElementById('ui-settings-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function updateUIParams() {
+    const prevThreshold = UIParams.cohesionThreshold;
+    const prevColorByTag = UIParams.colorByTag;
+
+    UIParams.cohesionThreshold = parseFloat(document.getElementById('param-cohesion').value);
+    UIParams.colorByTag = document.getElementById('param-color-tags').checked;
+
+    document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
+
+    localStorage.setItem('cohesionThreshold', UIParams.cohesionThreshold);
+    localStorage.setItem('colorByTag', UIParams.colorByTag);
+    
+    // Sync with sim-color-by-tag for tags.js compatibility
+    localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
+
+    // Real-time updates
+    if (UIParams.colorByTag !== prevColorByTag) {
+        if (typeof refreshAllRowColors === 'function') {
+            refreshAllRowColors();
+        }
+        if (window.graphInstance && typeof window.graphInstance.refreshColors === 'function') {
+            window.graphInstance.refreshColors();
+        }
+    }
+
+    if (UIParams.cohesionThreshold !== prevThreshold) {
+        const [hashPath] = (window.location.hash || '#collections').split('?');
+        if (hashPath === '#clusters') {
+            filterClusterRowsByCohesion(UIParams.cohesionThreshold);
+        } else {
+            refreshClusterCards();
+        }
+    }
+}
+
+function filterClusterRowsByCohesion(threshold) {
+    const rows = document.querySelectorAll('#table-body tr[data-cluster-id]');
+    rows.forEach(row => {
+        // Cohesion is in the 6th column (index 5)
+        const cohesionSpan = row.querySelectorAll('td')[5]?.querySelector('span.dim');
+        if (cohesionSpan) {
+            const score = parseFloat(cohesionSpan.textContent);
+            row.style.display = (score < threshold) ? 'none' : '';
+        }
+    });
+}
+
+function refreshClusterCards() {
+    document.querySelectorAll('.cluster-cards-cell').forEach(cell => {
+        try {
+            const clusters = JSON.parse(cell.dataset.clusters || '[]');
+            if (typeof renderClusterCards === 'function') {
+                cell.innerHTML = renderClusterCards(clusters);
+            }
+        } catch (e) {
+            console.error("Failed to re-render cluster cards", e);
+        }
+    });
+}
+
+function loadUIParams() {
+    const elCohesion = document.getElementById('param-cohesion');
+    const elColorTags = document.getElementById('param-color-tags');
+    if (elCohesion) {
+        elCohesion.value = UIParams.cohesionThreshold;
+        document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
+    }
+    if (elColorTags) elColorTags.checked = UIParams.colorByTag;
+}
+
 window.addEventListener('load', () => {
+    loadUIParams();
     if (!window.location.hash) window.location.hash = '#collections';
-    populateCollectionDropdown();
     // Apply defaults on initial page load if landing on sim view
     const [hashPath, queryString] = (window.location.hash || '').split('?');
     if (applySimViewDefaults(hashPath, queryString)) {
@@ -1972,60 +2050,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('contextmenu', showGraphContextMenu);
 
     // Intercept wheel events for scrolling code/diff preview tooltips while hovering trigger elements
-    window.addEventListener('wheel', e => {
-        const codeTooltip = document.getElementById('code-preview-tooltip');
-        const diffTooltip = document.getElementById('diff-preview-tooltip');
-        const hierTooltip = document.getElementById('hierarchy-tooltip');
-
-        const isCodeActive = codeTooltip && (codeTooltip.style.display === 'flex' || codeTooltip.classList.contains('showing'));
-        const isDiffActive = diffTooltip && (diffTooltip.style.display === 'flex' || diffTooltip.classList.contains('showing'));
-        const isHierActive = hierTooltip && hierTooltip.style.display === 'block';
-
-        if (isHierActive) {
-            if (hierTooltip && hierTooltip.contains(e.target)) {
-                return;
-            }
-            e.preventDefault();
-            e.stopPropagation();
-
-            const activeInstance = (window.hierarchyInstance && window.hierarchyInstance._activeD)
-                ? window.hierarchyInstance
-                : ((window.packingInstance && window.packingInstance._activeD) ? window.packingInstance : null);
-
-            if (activeInstance && activeInstance._activeD) {
-                if (e.ctrlKey) {
-                    const codeScrollEl = document.querySelector('#hier-snippet-container .c-code-container');
-                    if (codeScrollEl) {
-                        codeScrollEl.scrollTop += e.deltaY;
-                        activeInstance._codeScrollTop = codeScrollEl.scrollTop;
-                    }
-                    return;
-                }
-
-                const members = activeInstance._activeD.data.runtime_members || [];
-                if (members.length > 0) {
-                    const delta = Math.sign(e.deltaY);
-                    activeInstance._activeD.data.scrollOffset = Math.max(0, Math.min(members.length - 1, (activeInstance._activeD.data.scrollOffset || 0) + delta));
-                    activeInstance.renderTooltip(hierTooltip, activeInstance._activeD);
-                }
-            }
-            return;
-        }
-
-        if (isCodeActive || isDiffActive) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const activeTooltip = isDiffActive ? diffTooltip : codeTooltip;
-            const scrollContainer = activeTooltip.querySelector('.code-preview-scroll, .diff-preview-scroll');
-            if (scrollContainer) {
-                scrollContainer.scrollTop += e.deltaY;
-                if (e.deltaX) {
-                    scrollContainer.scrollLeft += e.deltaX;
-                }
-            }
-        }
-    }, { passive: false, capture: true });
+    // [REMOVED: Now handled in previews.js to prevent double-scroll]
 
     // Reducible Panels Initialization
     if (localStorage.getItem('sidebarCollapsed') === 'true') {

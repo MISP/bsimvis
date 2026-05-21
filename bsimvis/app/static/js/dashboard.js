@@ -1018,11 +1018,6 @@ function loadGraphView(params) {
     document.getElementById('graph-view-container').style.display = 'flex';
     if (!window.graphInstance) {
         window.graphInstance = new SimilarityGraph('bk-similarity-plot');
-        document.getElementById('graph-refresh-btn').onclick = () => {
-            const p = new URLSearchParams(window.location.hash.split('?')[1] || '');
-            p.set('use_cache', 'false'); // Force refresh
-            window.graphInstance.fetch(p);
-        };
         document.getElementById('graph-stop-btn').onclick = () => window.graphInstance.stop();
     }
     window.graphInstance.fetch(params);

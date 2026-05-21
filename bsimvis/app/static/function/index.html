@@ -71,6 +71,37 @@
             background: rgba(166, 226, 46, 0.15) !important;
             box-shadow: inset 4px 0 0 var(--success);
         }
+
+        .floating-copy-btn {
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            background: rgba(30, 30, 30, 0.85);
+            border: 1px solid #444;
+            color: #888;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            cursor: pointer;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .floating-copy-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102, 217, 239, 0.15);
+            transform: scale(1.08);
+        }
+
+        .floating-copy-btn i {
+            font-size: 1.1rem;
+        }
     </style>
 </head>
 
@@ -84,6 +115,10 @@
     <div id="code-scroll" style="display: none;">
         <div id="v-height"></div>
         <div id="v-content" class="c-code-container"></div>
+
+        <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="copyFunctionCode(this)">
+            <i class="fas fa-copy"></i>
+        </button>
     </div>
 
     <div id="bsim-tooltip"></div>
@@ -105,6 +140,11 @@
         let funcTips = {};
         const rowH = 24;
         const OVERSCAN = 20;
+
+        function copyFunctionCode(btn) {
+            if (!funcRows || funcRows.length === 0) return;
+            copyRichText(funcRows, btn);
+        }
 
 
 
@@ -281,6 +321,8 @@
                     }
                 });
 
+                setupKeyboardSelection();
+                setupRichCopyInterceptor(vContentEl, () => funcRows);
                 scrollToLine();
                 onScroll();
 
@@ -337,21 +379,93 @@
         }
 
         function renderRows(start, end) {
-            let html = '';
+            // Surgical update: keep existing nodes to preserve selection/caret
+            const currentLines = Array.from(vContentEl.children);
+            const lineMap = new Map();
+            currentLines.forEach(el => {
+                const lnEl = el.querySelector('.line-num');
+                if (lnEl) lineMap.set(parseInt(lnEl.innerText), el);
+            });
+
+            // Identify which lines we need
+            const neededLines = [];
             for (let i = start; i < end; i++) {
                 const row = funcRows[i];
-                const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
-                let content = '';
-                for (const t of row.tokens) {
-                    content += renderTokenHtml(t, t.diff_class || '');
+                let lineEl = lineMap.get(row.line_idx);
+                
+                if (!lineEl) {
+                    const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
+                    let content = '';
+                    for (const t of row.tokens) {
+                        content += renderTokenHtml(t, t.diff_class || '');
+                    }
+                    lineEl = document.createElement('div');
+                    lineEl.className = `code-line ${isTarget ? 'target-highlight' : ''}`;
+                    lineEl.innerHTML = `<div class="gutter" contenteditable="false"><div class="line-num">${row.line_idx}</div></div><div class="line-content">${content}</div>`;
                 }
-                html += `<div class="code-line ${isTarget ? 'target-highlight' : ''}">
-                    <div class="gutter"><div class="line-num">${row.line_idx}</div></div>
-                    <div class="line-content">${content}</div>
-                </div>`;
+                neededLines.push(lineEl);
+                lineMap.delete(row.line_idx);
             }
-            vContentEl.innerHTML = html;
+
+            // Remove lines that are no longer in view
+            lineMap.forEach(el => el.remove());
+
+            // Ensure order and presence without clearing everything (innerHTML = '' kills selection)
+            for (let i = 0; i < neededLines.length; i++) {
+                const line = neededLines[i];
+                if (vContentEl.children[i] !== line) {
+                    vContentEl.insertBefore(line, vContentEl.children[i] || null);
+                }
+            }
+            
             applyLocks();
+        }
+
+        // Handle keyboard navigation and selection
+        function setupKeyboardSelection() {
+            vContentEl.setAttribute('contenteditable', 'true');
+            vContentEl.setAttribute('spellcheck', 'false');
+            
+            vContentEl.addEventListener('keydown', (e) => {
+                const isCmd = e.ctrlKey || e.metaKey;
+                const key = e.key;
+
+                if (isCmd && key.toLowerCase() === 'a') return; 
+                if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
+                
+                const allowedKeys = [
+                    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                    'Home', 'End', 'PageUp', 'PageDown', 'Shift', 'Control', 'Alt', 'Meta'
+                ];
+                
+                if (allowedKeys.includes(key)) {
+                    // Check if we need to scroll because caret is at the edge
+                    requestAnimationFrame(() => {
+                        const sel = window.getSelection();
+                        if (!sel.rangeCount) return;
+                        const rect = sel.getRangeAt(0).getBoundingClientRect();
+                        
+                        // Critical: ignore invalid/collapsed rects to prevent teleporting
+                        if (rect.height === 0 || (rect.top === 0 && rect.left === 0)) return;
+
+                        const containerRect = scrollEl.getBoundingClientRect();
+                        const padding = 60;
+
+                        if (rect.top < containerRect.top + padding) {
+                            scrollEl.scrollTop -= (containerRect.top + padding - rect.top);
+                        } else if (rect.bottom > containerRect.bottom - padding) {
+                            scrollEl.scrollTop += (rect.bottom - (containerRect.bottom - padding));
+                        }
+                    });
+                    return;
+                }
+
+                if (!isCmd) e.preventDefault();
+            });
+
+            vContentEl.addEventListener('beforeinput', (e) => {
+                e.preventDefault();
+            });
         }
 
         function findToken(e) {

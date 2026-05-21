@@ -681,6 +681,8 @@ body {
     background: #2d2e27;
     flex-shrink: 0;
     font-size: 0.9em;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .line-num {
@@ -689,6 +691,8 @@ body {
     padding-right: 10px;
     opacity: 0.5;
     cursor: help;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .line-content {
@@ -852,10 +856,6 @@ body {
     overflow-x: auto;
     overflow-y: hidden;
     position: relative;
-}
-
-.diff-pane:last-child {
-    border-left: 1px solid #3e3d32;
 }
 
 .bsim-vcontent {

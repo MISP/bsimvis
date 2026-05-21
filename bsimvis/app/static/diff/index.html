@@ -195,6 +195,37 @@
         .sim-select:hover {
             border-color: var(--accent);
         }
+
+        .floating-copy-btn {
+            position: absolute;
+            bottom: 25px;
+            right: 25px;
+            background: rgba(30, 30, 30, 0.85);
+            border: 1px solid #444;
+            color: #888;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            cursor: pointer;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .floating-copy-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102, 217, 239, 0.15);
+            transform: scale(1.08);
+        }
+
+        .floating-copy-btn i {
+            font-size: 1.1rem;
+        }
     </style>
 </head>
 
@@ -291,11 +322,21 @@
     <div id="bsim-scroll" style="display: none;">
         <div id="bsim-vheight" style="position:absolute; width:1px; top:0; left:0; z-index:-1;"></div>
         <div id="bsim-sticky">
-            <div class="diff-pane">
-                <div id="bsim-left-content" class="bsim-vcontent c-code-container"></div>
+            <div style="flex:1; position:relative; display:flex; flex-direction:column; overflow:hidden;">
+                <div class="diff-pane" style="height:100%;">
+                    <div id="bsim-left-content" class="bsim-vcontent c-code-container"></div>
+                </div>
+                <button class="floating-copy-btn" title="Copy left code with colors" onclick="copyDiffCode('l', this)">
+                    <i class="fas fa-copy"></i>
+                </button>
             </div>
-            <div class="diff-pane">
-                <div id="bsim-right-content" class="bsim-vcontent c-code-container"></div>
+            <div style="flex:1; position:relative; display:flex; flex-direction:column; overflow:hidden; border-left:1px solid #3e3d32;">
+                <div class="diff-pane" style="height:100%;">
+                    <div id="bsim-right-content" class="bsim-vcontent c-code-container"></div>
+                </div>
+                <button class="floating-copy-btn" title="Copy right code with colors" onclick="copyDiffCode('r', this)">
+                    <i class="fas fa-copy"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -319,6 +360,15 @@
 
         window.lockedHashes = new Set();
         let tooltipEl = null;
+
+        function copyDiffCode(side, btn) {
+            const rows = (window.bsimRows || [])
+                .map(row => row[side])
+                .filter(sideData => sideData !== null && sideData !== undefined && sideData.line_idx !== undefined);
+            
+            if (rows.length === 0) return;
+            copyRichText(rows, btn, { showDiffs: true });
+        }
 
         function navigateToFunction(funcId, e) {
             const url = `/function/index.html?id=${encodeURIComponent(funcId)}`;
@@ -622,8 +672,82 @@
             }
 
             return `<div class="code-line ${chunk_class}" ${data_attrs}>` +
-                `<div class="gutter"><div class="line-num" title="${tooltip_text}">${line_idx}</div></div>` +
+                `<div class="gutter" contenteditable="false"><div class="line-num" title="${tooltip_text}">${line_idx}</div></div>` +
                 `<div class="line-content">${content}</div></div>`;
+        }
+
+        function setupKeyboardSelection() {
+            leftContent.setAttribute('contenteditable', 'true');
+            leftContent.setAttribute('spellcheck', 'false');
+            rightContent.setAttribute('contenteditable', 'true');
+            rightContent.setAttribute('spellcheck', 'false');
+            
+            const syncCaret = () => {
+                const sel = window.getSelection();
+                if (!sel.rangeCount) return;
+                const node = sel.anchorNode;
+                if (!node || !(leftContent.contains(node) || rightContent.contains(node))) return;
+
+                const rect = sel.getRangeAt(0).getBoundingClientRect();
+                if (rect.height === 0 || (rect.top === 0 && rect.left === 0)) return;
+
+                const containerRect = scrollEl.getBoundingClientRect();
+                const padding = 60;
+                let delta = 0;
+
+                if (rect.top < containerRect.top + padding) {
+                    delta = rect.top - (containerRect.top + padding);
+                } else if (rect.bottom > containerRect.bottom - padding) {
+                    delta = rect.bottom - (containerRect.bottom - padding);
+                }
+
+                if (Math.abs(delta) > 1) {
+                    scrollEl.scrollTop += delta;
+                }
+            };
+
+            const handleKeydown = (e) => {
+                const isCmd = e.ctrlKey || e.metaKey;
+                const key = e.key;
+
+                if (isCmd && key.toLowerCase() === 'a') return;
+                if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
+                
+                const allowedKeys = [
+                    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                    'Home', 'End', 'PageUp', 'PageDown', 'Shift', 'Control', 'Alt', 'Meta'
+                ];
+                
+                if (allowedKeys.includes(key)) {
+                    requestAnimationFrame(syncCaret);
+                    return;
+                }
+                
+                if (!isCmd) e.preventDefault();
+            };
+
+            const preventInput = (e) => e.preventDefault();
+
+            leftContent.addEventListener('keydown', handleKeydown);
+            leftContent.addEventListener('beforeinput', preventInput);
+            rightContent.addEventListener('keydown', handleKeydown);
+            rightContent.addEventListener('beforeinput', preventInput);
+
+            // Force internal scroll to 0 at all times to prevent misalignment
+            const forceZeroScroll = (e) => { e.currentTarget.scrollTop = 0; };
+            leftContent.addEventListener('scroll', forceZeroScroll);
+            rightContent.addEventListener('scroll', forceZeroScroll);
+            const lp = leftContent.closest('.diff-pane');
+            const rp = rightContent.closest('.diff-pane');
+            if (lp) lp.addEventListener('scroll', forceZeroScroll);
+            if (rp) rp.addEventListener('scroll', forceZeroScroll);
+
+            // Also sync on mouse selection/click
+            let selTimeout = null;
+            document.addEventListener('selectionchange', () => {
+                if (selTimeout) clearTimeout(selTimeout);
+                selTimeout = setTimeout(syncCaret, 20);
+            });
         }
 
         function renderRows(start, end) {
@@ -631,16 +755,80 @@
             lastStart = start; lastEnd = end;
 
             const rows = window.bsimRows || [];
-            let lHtml = '', rHtml = '';
+            
+            // Map existing nodes for reuse
+            const lMap = new Map(), rMap = new Map();
+            Array.from(leftContent.children).forEach(el => {
+                const ln = el.querySelector('.line-num');
+                if (ln && ln.innerText.trim()) lMap.set(`L${ln.innerText.trim()}`, el);
+                else if (el.classList.contains('code-spacer')) lMap.set(`S${el.dataset.rowIdx}`, el);
+            });
+            Array.from(rightContent.children).forEach(el => {
+                const ln = el.querySelector('.line-num');
+                if (ln && ln.innerText.trim()) rMap.set(`L${ln.innerText.trim()}`, el);
+                else if (el.classList.contains('code-spacer')) rMap.set(`S${el.dataset.rowIdx}`, el);
+            });
+
+            const neededL = [], neededR = [];
 
             for (let i = start; i < end; i++) {
                 const row = rows[i];
-                lHtml += (row && row.l) ? renderSideHtml(row.l) : SPACER;
-                rHtml += (row && row.r) ? renderSideHtml(row.r) : SPACER;
+                
+                // Left side
+                let lEl;
+                if (row && row.l) {
+                    lEl = lMap.get(`L${row.l.line_idx}`);
+                    if (!lEl) {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = renderSideHtml(row.l);
+                        lEl = temp.firstElementChild;
+                    }
+                    lMap.delete(`L${row.l.line_idx}`);
+                } else {
+                    lEl = lMap.get(`S${i}`);
+                    if (!lEl) {
+                        lEl = document.createElement('div');
+                        lEl.className = 'code-spacer';
+                        lEl.dataset.rowIdx = i;
+                        lEl.setAttribute('contenteditable', 'false');
+                    }
+                    lMap.delete(`S${i}`);
+                }
+                neededL.push(lEl);
+
+                // Right side
+                let rEl;
+                if (row && row.r) {
+                    rEl = rMap.get(`L${row.r.line_idx}`);
+                    if (!rEl) {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = renderSideHtml(row.r);
+                        rEl = temp.firstElementChild;
+                    }
+                    rMap.delete(`L${row.r.line_idx}`);
+                } else {
+                    rEl = rMap.get(`S${i}`);
+                    if (!rEl) {
+                        rEl = document.createElement('div');
+                        rEl.className = 'code-spacer';
+                        rEl.dataset.rowIdx = i;
+                        rEl.setAttribute('contenteditable', 'false');
+                    }
+                    rMap.delete(`S${i}`);
+                }
+                neededR.push(rEl);
             }
 
-            leftContent.innerHTML = lHtml;
-            rightContent.innerHTML = rHtml;
+            // Cleanup
+            lMap.forEach(el => el.remove());
+            rMap.forEach(el => el.remove());
+
+            // Surgical insert: ensure order without clearing everything
+            for (let i = 0; i < neededL.length; i++) {
+                if (leftContent.children[i] !== neededL[i]) leftContent.insertBefore(neededL[i], leftContent.children[i] || null);
+                if (rightContent.children[i] !== neededR[i]) rightContent.insertBefore(neededR[i], rightContent.children[i] || null);
+            }
+
             applyLocks(leftContent);
             applyLocks(rightContent);
         }
@@ -656,6 +844,15 @@
             const offset = (start * rowH) - st;
             leftContent.style.transform = `translateY(${offset}px)`;
             rightContent.style.transform = `translateY(${offset}px)`;
+
+            // Force internal scroll to 0 to prevent browser from misaligning panes
+            // when it tries to "scroll into view" for the caret.
+            leftContent.scrollTop = 0;
+            rightContent.scrollTop = 0;
+            const lp = leftContent.closest('.diff-pane');
+            const rp = rightContent.closest('.diff-pane');
+            if (lp) lp.scrollTop = 0;
+            if (rp) rp.scrollTop = 0;
         }
 
         function initVirtualScroll() {
@@ -706,6 +903,9 @@
                 scrollEl.dataset.listenersAttached = "true";
             }
 
+            setupKeyboardSelection();
+            setupRichCopyInterceptor(leftContent, () => (window.bsimRows || []).map(r => r.l).filter(r => r && r.line_idx !== undefined), { showDiffs: true });
+            setupRichCopyInterceptor(rightContent, () => (window.bsimRows || []).map(r => r.r).filter(r => r && r.line_idx !== undefined), { showDiffs: true });
             onScroll();
 
             requestAnimationFrame(() => {

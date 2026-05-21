@@ -9,16 +9,11 @@
         integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
         crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="/css/style.css">
-    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.3.4.min.js"></script>
-    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.4.min.js"></script>
-    <script src="https://cdn.bokeh.org/bokeh/release/bokeh-api-3.3.4.min.js"></script>
     <script src="/js/tags.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script>
     <script src="/js/diff_queue.js"></script>
     <script src="/js/previews.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-3.3.4.min.css" type="text/css" />
-    <link rel="stylesheet" href="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.3.4.min.css" type="text/css" />
     <link rel="stylesheet" href="/css/dashboard.css">
     <script src="/js/utils.js"></script>
     <script src="/js/code_renderer.js"></script>
@@ -141,8 +136,73 @@
                 style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#121212; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
                 <div id="graph-loading-overlay">
                     <div class="spinner-graph"></div>
-                    <div id="graph-loading-text">Initializing Map...</div>
-                    <div id="graph-stream-info" style="margin-top:10px; font-size:14px; color:#aaa;"></div>
+                    <div class="graph-loading-content">
+                        <div id="graph-loading-text">Initializing Map...</div>
+                        <div id="graph-stream-info"></div>
+                    </div>
+                </div>
+                <div class="graph-settings" style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 150px;">
+                    <div class="graph-setting-item" style="align-items: center;">
+                        <label style="margin-bottom: 5px;">Profile</label>
+                        <div class="view-toggle" id="profile-toggle" style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
+                            <button class="view-btn active" onclick="window.graphInstance.applyProfile('default')" data-profile="default" title="Default View">Def</button>
+                            <button class="view-btn" onclick="window.graphInstance.applyProfile('func_tags')" data-profile="func_tags" title="Func Tags View">Func</button>
+                            <button class="view-btn" onclick="window.graphInstance.applyProfile('sim_tags')" data-profile="sim_tags" title="Sim Tags View">Sim</button>
+                        </div>
+                    </div>
+                    <div class="graph-setting-item">
+                        <label>Show Label</label>
+                        <select id="graph-show-label" onchange="window.graphInstance.refreshColors()">
+                            <option value="none">None</option>
+                            <option value="func_name">Function Name</option>
+                            <option value="file_name">File Name</option>
+                            <option value="func_tag">Function Tag</option>
+                            <option value="file_tag">File Tag</option>
+                        </select>
+                    </div>
+
+                    <div id="graph-more-options-toggle" style="cursor:pointer; font-size:0.75rem; color:var(--accent); text-align:center; padding-top:5px; border-top:1px solid var(--border);" onclick="const extra = document.getElementById('graph-extra-settings'); extra.style.display = extra.style.display === 'none' ? 'flex' : 'none'; this.innerText = extra.style.display === 'none' ? 'More options ▾' : 'Fewer options ▴';">
+                        More options ▾
+                    </div>
+
+                    <div id="graph-extra-settings" style="display:none; flex-direction:column; gap:10px;">
+                        <div class="graph-setting-item">
+                            <label>Binary</label>
+                            <select id="graph-color-binary" onchange="window.graphInstance.refreshColors()">
+                                <option value="binary">Default</option>
+                                <option value="file_tag">File Tag</option>
+                            </select>
+                        </div>
+                        <div class="graph-setting-item">
+                            <label>Function</label>
+                            <select id="graph-color-function" onchange="window.graphInstance.refreshColors()">
+                                <option value="binary">Default</option>
+                                <option value="func_tag">Function Tag</option>
+                                <option value="file_tag">File Tag</option>
+                            </select>
+                        </div>
+                        <div class="graph-setting-item">
+                            <label>Similarity</label>
+                            <select id="graph-color-sim" onchange="window.graphInstance.refreshColors()">
+                                <option value="gradient">Gradient Default</option>
+                                <option value="sim_tag">Sim Tag</option>
+                                <option value="func_tag">Gradient Func Tag</option>
+                                <option value="file_tag">Gradient File Tag</option>
+                            </select>
+                        </div>
+                        <div class="graph-setting-item">
+                            <label>Tension</label>
+                            <input type="range" id="graph-bundle-tension" min="0" max="1" step="0.05" value="0.85" style="width:100%" oninput="window.graphInstance.refreshColors()">
+                        </div>
+                        <div class="graph-setting-item">
+                            <label>Link Width</label>
+                            <input type="range" id="graph-link-width" min="0.1" max="5" step="0.1" value="1.0" style="width:100%" oninput="window.graphInstance.refreshColors()">
+                        </div>
+                        <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
+                            <input type="checkbox" id="graph-scale-width" checked onchange="window.graphInstance.refreshColors()">
+                            <label style="margin-bottom:0">Scale by Score</label>
+                        </div>
+                    </div>
                 </div>
                 <div id="bk-similarity-plot" style="width:100%; height:100%;"></div>
                 <div class="graph-controls">

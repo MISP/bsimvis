@@ -3,6 +3,7 @@ local config = cjson.decode(ARGV[1])
 local collection = config.collection
 local algo = config.algo
 local sort_by = config.sort_by or "score"
+local match_mode = config.match_mode or "any"
 local sort_order = config.sort_order or "desc"
 local pool_limit = tonumber(config.pool_limit or 1000000)
 local groups = config.groups or {}
@@ -33,7 +34,8 @@ end
 
 -- 1. Pre-resolve Filter Maps
 local producer = nil
-local filter_maps = {} -- index -> Map of { member = true }
+local filter_maps = {} -- index -> Map of { sid = true } (for "any" gate)
+local entity_maps = {} -- index -> Map of { func_id = true } (for "both" verification)
 local score_map = nil  -- sid -> score (if narrow range)
 
 -- Identify Producer and handle pre-loading
@@ -66,6 +68,30 @@ for idx, g in ipairs(groups) do
             end
         end
         filter_maps[idx] = allowed
+
+        -- "both" mode: build entity_map (func_id -> true) so we can verify
+        -- each function in a pair individually satisfies the filter.
+        if match_mode == "both" then
+            local emap = {}
+            for _, sub in ipairs(sub_groups) do
+                local pfx = sub.func_index_prefix or ""
+                if pfx ~= "" and sub.targets then
+                    if sub.level == "function" then
+                        -- targets are clean func IDs; pfx = "{col}:func:"
+                        for _, t in ipairs(sub.targets) do
+                            emap[pfx .. t] = true
+                        end
+                    else
+                        -- sim-level propagated or binary: look up func-level index
+                        for _, t in ipairs(sub.targets) do
+                            local fids = redis.call('SMEMBERS', pfx .. t) or {}
+                            for _, fid in ipairs(fids) do emap[fid] = true end
+                        end
+                    end
+                end
+            end
+            entity_maps[idx] = emap
+        end
     elseif g.type == "score_range" and g.weight < 50000 then
         -- KILLER FEATURE: Pre-load small score ranges to eliminate ZSCORE in loops
         local s_items = redis.call('ZRANGEBYSCORE', algo_zset, min_score, max_score, 'WITHSCORES')
@@ -112,13 +138,26 @@ if producer.type == "metadata" then
     -- The allowed map for the producer already contains the UNION of all sub-group SIDs
     local allowed = filter_maps[producer.idx]
     if allowed then
+        local func_pfx = collection .. ":func:"
         for sid, _ in pairs(allowed) do
+            -- "both" mode: both functions must individually satisfy the filter
+            if match_mode == "both" then
+                local emap = entity_maps[producer.idx]
+                if emap then
+                    local p_id1, p_id2 = extract_ids(sid)
+                    if not (p_id1 and emap[p_id1] and p_id2 and emap[p_id2]) then
+                        goto continue
+                    end
+                end
+            end
+
             local score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
             if score >= min_score and score <= max_score then
                 table.insert(sorted_raw, sid)
                 table.insert(sorted_raw, tostring(score))
             end
             if (#sorted_raw / 2) >= pool_limit then break end
+            ::continue::
         end
     end
     raw = sorted_raw
@@ -172,11 +211,20 @@ for i=1, #raw, 2 do
                     if not id1 then id1, id2 = extract_ids(sid) end
                     if id1 and (map[id1] or map[id2]) then match = false; break end
                 else
-                    -- Normal Inclusion Check (In-Memory Intersect)
+                    -- Normal Inclusion Check: map[sid] proves "at least one" match
                     if not map[sid] then
-                        -- Check constituent FIDs (Deep Join)
                         if not id1 then id1, id2 = extract_ids(sid) end
                         if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+                    end
+                    -- "both" mode: use entity_map to verify each function individually
+                    if match_mode == "both" then
+                        local emap = entity_maps[idx]
+                        if emap then
+                            if not id1 then id1, id2 = extract_ids(sid) end
+                            if not (id1 and emap[id1] and id2 and emap[id2]) then
+                                match = false; break
+                            end
+                        end
                     end
                 end
             end

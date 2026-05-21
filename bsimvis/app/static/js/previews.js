@@ -77,6 +77,19 @@
         });
     }
 
+    function getBinaryTooltip() {
+        return ensureEl('binary-preview-tooltip', {
+            position: 'fixed',
+            display: 'none',
+            zIndex: '20000',
+            pointerEvents: 'none',
+            minWidth: '280px',
+            maxWidth: '400px',
+            flexDirection: 'column',
+            gap: '10px',
+        });
+    }
+
     // --- Code Preview ---
     window.moveCodePreview = function (e) {
         if (!e) return;
@@ -85,7 +98,7 @@
             getCodeTooltip(),
             document.getElementById('token-tooltip'),
             document.getElementById('diff-preview-tooltip'),
-            document.getElementById('binary-preview-tooltip'),
+            getBinaryTooltip(),
         ];
         els.forEach(el => {
             if (el && (el.style.display === 'block' || el.style.display === 'flex' || el.classList.contains('showing'))) {
@@ -383,9 +396,81 @@
     document.addEventListener('mousemove', window.moveCodePreview);
 
     // Failsafe: hide tooltips if the window loses focus or mouse leaves the document
-    window.addEventListener('blur', () => window.hideCodePreview());
-    document.addEventListener('mouseleave', (e) => {
-        if (!e.relatedTarget) window.hideCodePreview();
+    window.addEventListener('blur', () => {
+        window.hideCodePreview();
+        window.hideBinaryPreview();
     });
+    document.addEventListener('mouseleave', (e) => {
+        if (!e.relatedTarget) {
+            window.hideCodePreview();
+            window.hideBinaryPreview();
+        }
+    });
+
+    window.showBinaryPreview = function (md5, fileName, count, language, tags, e, fileTags = [], fileUserTags = []) {
+        const tooltip = getBinaryTooltip();
+        
+        // Build tags html
+        const allTags = [...(fileTags || []), ...(fileUserTags || [])].filter(t => t && t.trim());
+        let tagsHtml = '';
+        if (allTags.length > 0) {
+            const tagBadges = allTags.map(tag => {
+                const isBookmark = tag === 'bookmark';
+                const isIgnore = tag === 'ignore';
+                let color = '#66d9ef';
+                if (isBookmark) color = '#66d9ef';
+                else if (isIgnore) color = '#f92672';
+                else if (window.getTagMetadata) {
+                    color = window.getTagMetadata(tag).color;
+                }
+                
+                return `
+                <span class="tag-card" style="border-color:${color}44; color:${color}; background:${color}11; font-size: 0.65rem; padding: 2px 6px; border-radius: 12px; margin: 2px 4px 2px 0; display: inline-flex; align-items: center; gap: 4px;">
+                    ${isBookmark ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>' : ''}
+                    ${isIgnore ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>' : ''}
+                    ${tag}
+                </span>`;
+            }).join('');
+            
+            tagsHtml = `
+            <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px;">
+                <div style="font-size: 0.65rem; color: #777; text-transform: uppercase; margin-bottom: 4px;"><i class="fa-solid fa-tags" style="margin-right: 6px; opacity: 0.5;"></i>Tags</div>
+                <div style="display: flex; flex-wrap: wrap;">${tagBadges}</div>
+            </div>`;
+        }
+
+        tooltip.innerHTML = `
+        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px rgba(0,0,0,0.9); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
+            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 8px; color: #fff; display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
+                <i class="fa-solid fa-file" style="color: var(--accent);"></i>
+                <span>${fileName}</span>
+            </div>
+            
+            <div style="display: flex; flex-direction: column; gap: 4px; font-family: 'Inter', sans-serif;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                    <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-hashtag" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>MD5</span>
+                    <span class="mono" style="color: var(--accent); font-weight: bold; font-family: 'JetBrains Mono', 'Consolas', monospace;">${md5}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                    <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-list-ol" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Functions</span>
+                    <span class="mono" style="color: #a6e22e; font-family: 'JetBrains Mono', 'Consolas', monospace;">${count}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                    <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-globe" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Language</span>
+                    <span class="mono" style="color: #ae81ff; font-family: 'JetBrains Mono', 'Consolas', monospace;">${language}</span>
+                </div>
+            </div>
+            ${tagsHtml}
+        </div>`;
+        
+        tooltip.style.display = 'flex';
+        window.moveCodePreview(e);
+    };
+
+    window.hideBinaryPreview = function () {
+        const tooltip = getBinaryTooltip();
+        tooltip.style.display = 'none';
+        tooltip.classList.remove('showing');
+    };
 
 })();

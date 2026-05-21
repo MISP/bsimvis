@@ -1,260 +1,95 @@
 class SimilarityGraph {
     constructor(containerId) {
         this.containerId = containerId;
+        this.container = d3.select(`#${containerId}`);
+        this.width = 0;
+        this.height = 0;
+        this.svg = null;
+        this.g = null;
+        this.linkGroup = null;
+        this.nodeGroup = null;
+        this.ringGroup = null;
+        this.zoom = null;
+
+        this.all_pairs = [];
+        this.nodes_map = new Map();
+        this.unique_nodes = [];
+        this.binary_md5s = new Set();
+        this.abortController = null;
+
         this.mousePos = { clientX: 0, clientY: 0 };
         window.addEventListener('mousemove', e => {
             this.mousePos.clientX = e.clientX;
             this.mousePos.clientY = e.clientY;
         });
-        this.abortController = null;
-        this.all_pairs = [];
-        this.nodes_map = new Map();
-        this.unique_nodes = [];
-        this.binary_md5s = new Set();
-        this.plot = null;
+
         window.graphInstance = this;
+        this.initSVG();
 
-        // 1. Initialize Data Sources
-        this.seg_source = new Bokeh.ColumnDataSource({ data: { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] } });
-        this.hit_source = new Bokeh.ColumnDataSource({ data: { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], s1: [], s2: [], id1: [], id2: [], fn1: [], fn2: [] } });
-        this.node_source = new Bokeh.ColumnDataSource({ data: { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], snippet: [], file_name: [], return_type: [], tags: [] } });
-        this.ring_source = new Bokeh.ColumnDataSource({ data: { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [] } });
-
-        this.initPlot();
+        window.addEventListener('resize', () => this.handleResize());
     }
 
-    initPlot() {
-        const container = document.getElementById(this.containerId);
-        const width = container.clientWidth || 800;
-        const height = container.clientHeight || 500;
+    initSVG() {
+        this.container.selectAll("*").remove();
+        const rect = this.container.node().getBoundingClientRect();
+        this.width = rect.width || 800;
+        this.height = rect.height || 500;
 
-        this.plot = Bokeh.Plotting.figure({
-            sizing_mode: "stretch_both",
-            match_aspect: true, toolbar_location: "above",
-            background_fill_color: "#121212", border_fill_color: "#121212",
-            active_scroll: "wheel_zoom"
-        });
-        this.plot.axis.visible = false;
-        this.plot.grid.grid_line_color = null;
+        this.svg = this.container.append("svg")
+            .attr("width", "100%")
+            .attr("height", "100%")
+            .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
+            .style("background-color", "#121212")
+            .style("user-select", "none");
 
-        // Glyphs
-        const r_ring = this.plot.annular_wedge({ x: 0, y: 0, inner_radius: { field: 'inner_r' }, outer_radius: { field: 'outer_r' }, start_angle: { field: 'start' }, end_angle: { field: 'end' }, color: { field: 'color' }, alpha: 0.3, source: this.ring_source });
-        this.plot.segment({ x0: { field: 'x0' }, y0: { field: 'y0' }, x1: { field: 'x1' }, y1: { field: 'y1' }, color: { field: 'color' }, line_alpha: { field: 'alpha' }, line_width: { field: 'width' }, source: this.seg_source });
-        const r_links = this.plot.multi_line({ xs: { field: 'xs' }, ys: { field: 'ys' }, line_width: 15, line_alpha: 0, hover_line_alpha: 0.6, hover_line_color: "white", source: this.hit_source });
-        const r_nodes = this.plot.circle({ x: { field: 'x' }, y: { field: 'y' }, size: 11, color: { field: 'color' }, line_color: "white", source: this.node_source });
+        this.g = this.svg.append("g");
+        this.defs = this.svg.append("defs");
 
-        // Hover Tools (No native tooltips)
-        const h_bin = new Bokeh.HoverTool({ renderers: [r_ring], tooltips: null });
-        const h_links = new Bokeh.HoverTool({ renderers: [r_links], tooltips: null });
-        const h_nodes = new Bokeh.HoverTool({ renderers: [r_nodes], tooltips: null });
-        h_bin.callback = new Bokeh.CustomJS({
-            args: { source: this.ring_source },
-            code: `
-                const indices = cb_data.index.indices;
-                if (indices.length > 0 && !window.graphContextMenuOpen) {
-                    const name = source.data.name[indices[0]];
-                    const md5 = source.data.md5[indices[0]];
-                    const file_name = source.data.file_name[indices[0]];
-                    const count = source.data.count[indices[0]];
-                    const language = source.data.language[indices[0]];
-                    const tags = source.data.tags[indices[0]];
-                    const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
-                    const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                    if (window.showBinaryPreview) window.showBinaryPreview(md5, file_name || name, count, language, tags, e);
-                } else {
-                    if (window.hideBinaryPreview) window.hideBinaryPreview();
-                }
-            `
+        this.zoom = d3.zoom()
+            .scaleExtent([0.1, 20])
+            .on("zoom", (event) => {
+                this.g.attr("transform", event.transform);
+            });
+
+        this.svg.call(this.zoom);
+
+        // Background click to clear selection/hide previews
+        this.svg.on("click", (e) => {
+            if (e.target === this.svg.node()) {
+                if (window.hideBinaryPreview) window.hideBinaryPreview();
+                if (window.hideDiffPreview) window.hideDiffPreview();
+                if (window.hideCodePreview) window.hideCodePreview();
+                this.nodeGroup.selectAll("circle").attr("stroke", "white").attr("stroke-width", 1);
+                this.linkGroup.selectAll("path").style("opacity", null).attr("stroke-width", d => d.width);
+            }
         });
 
-        h_links.callback = new Bokeh.CustomJS({
-            args: { source: this.hit_source },
-            code: `
-                const indices = cb_data.index.indices;
-                window.lastGraphLinkIndices = (indices && indices.length > 0) ? indices : null;
-                if (indices.length > 0 && !window.graphNodeHovered && !window.graphContextMenuOpen) {
-                    let sameHover = true;
-                    if (!window.diffPreviewPairs || window.diffPreviewPairs.length !== indices.length) {
-                        sameHover = false;
-                    } else {
-                        if (window.diffPreviewPairs[0].id1 !== source.data.id1[indices[0]] || window.diffPreviewPairs[0].id2 !== source.data.id2[indices[0]]) {
-                            sameHover = false;
-                        }
-                    }
-                    
-                    if (!sameHover) {
-                        window.diffPreviewPairs = indices.map(idx => ({
-                            id1: source.data.id1[idx],
-                            id2: source.data.id2[idx],
-                            n1: source.data.f1[idx],
-                            n2: source.data.f2[idx],
-                            score: source.data.score[idx]
-                        }));
-                        window.diffPreviewIndex = 0;
-                    }
-                    
-                    const p = window.diffPreviewPairs[window.diffPreviewIndex];
-                    const extra = window.diffPreviewPairs.length - 1;
-                    const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
-                    const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                    if (window.showDiffPreview) window.showDiffPreview(p.id1, p.n1, p.id2, p.n2, p.score, e, extra);
-                } else {
-                    window.lastGraphLinkIndices = null;
-                    window.diffPreviewPairs = null;
-                    if (window.hideDiffPreview) window.hideDiffPreview();
-                }
-            `
-        });
-
-        h_nodes.callback = new Bokeh.CustomJS({
-            args: { source: this.node_source },
-            code: `
-                const indices = cb_data.index.indices;
-                window.lastGraphNodeIndices = (indices && indices.length > 0) ? indices : null;
-                if (indices.length > 0 && !window.graphContextMenuOpen) {
-                    window.graphNodeHovered = true;
-                    const id = source.data.id[indices[0]];
-                    const name = source.data.name[indices[0]];
-                    const addr = source.data.addr[indices[0]];
-                    const bin = source.data.bin[indices[0]];
-                    const file_name = source.data.file_name[indices[0]];
-                    const v_size = source.data.v_size[indices[0]];
-                    const extra = indices.length - 1;
-                    const rect = document.getElementById('bk-similarity-plot').getBoundingClientRect();
-                    const e = { clientX: cb_data.geometry.vx + rect.left, clientY: cb_data.geometry.vy + rect.top };
-                    if (window.showCodePreview) window.showCodePreview(id, name, addr, bin, v_size, e, extra, file_name);
-                } else {
-                    window.lastGraphNodeIndices = null;
-                    window.graphNodeHovered = false;
-                    if (window.hideCodePreview) window.hideCodePreview();
-                }
-            `
-        });
-
-        this.plot.add_tools(h_bin, h_links, h_nodes, new Bokeh.TapTool({ renderers: [r_links, r_nodes] }));
-        this.plot.toolbar.active_inspect = [h_bin, h_links, h_nodes];
-
-        // Direct click handling for Ctrl+Click (bypasses TapTool's async selection)
-        container.addEventListener('click', (e) => this.handleDirectClick(e), true);
-
-        // Tap Logic (direct call)
-        const onSelect = () => {
-            const node_inds = this.node_source.selected.indices;
-            const hit_inds = this.hit_source.selected.indices;
-
-            if (this.node_source.data.id && node_inds.length > 0) {
-                const id = this.node_source.data.id[node_inds[0]];
-                const name = this.node_source.data.name[node_inds[0]];
-                window.showFunctionCodeById(id, name);
-                this.node_source.selected.indices = [];
-            } else if (hit_inds.length > 0) {
-                let id1, id2, name1, name2;
-                
-                // If we have a preview cycle active, use the currently visible pair
-                if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0 && window.diffPreviewIndex !== undefined) {
-                    const p = window.diffPreviewPairs[window.diffPreviewIndex];
-                    id1 = p.id1; id2 = p.id2;
-                    name1 = p.n1; name2 = p.n2;
-                } else {
-                    id1 = this.hit_source.data.id1[hit_inds[0]]; id2 = this.hit_source.data.id2[hit_inds[0]];
-                    name1 = this.hit_source.data.f1[hit_inds[0]]; name2 = this.hit_source.data.f2[hit_inds[0]];
-                }
-                
-                window.openDiffDirectly(id1, name1, id2, name2);
-                this.hit_source.selected.indices = [];
-            }
-        };
-        this.node_source.selected.properties.indices.change.connect(onSelect.bind(this));
-        this.hit_source.selected.properties.indices.change.connect(onSelect.bind(this));
-
-        Bokeh.Plotting.show(this.plot, `#${this.containerId}`);
+        this.linkGroup = this.g.append("g").attr("class", "links");
+        this.ringGroup = this.g.append("g").attr("class", "rings");
+        this.nodeGroup = this.g.append("g").attr("class", "nodes");
+        this.binaryLabelGroup = this.g.append("g").attr("class", "binary-labels");
     }
 
-    getRingTooltip() {
-        return `<div style="padding:12px; background:#1A1A1A; color:#FFF; border:2px solid @color; border-radius:8px; min-width:200px;">
-            <div style="font-size:14px; font-weight:bold; margin-bottom:4px; color:@color;">@file_name (BINARY)</div>
-            <div style="font-size:11px; color:#AAA; margin-bottom:8px;">MD5: @md5</div>
-            <div style="display:flex; justify-content:space-between; font-size:12px; border-top:1px solid #333; padding-top:8px;">
-                <span>Functions in Graph:</span>
-                <span style="font-weight:bold; color:#ff79c6;">@count</span>
-            </div>
-        </div>`;
+    handleResize() {
+        const rect = this.container.node().getBoundingClientRect();
+        this.width = rect.width || 800;
+        this.height = rect.height || 500;
+        this.svg.attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height]);
     }
 
-    getLinkTooltip() {
-        return `<div style="padding:12px; background:#121212; color:#D4D4D4; border:1px solid #444; border-radius:8px; width:340px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                <span style="color:#A6E22E; font-weight:bold; font-size:16px;">@score MATCH</span>
-                <span style="font-size:10px; color:#777;">Pair Summary</span>
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-                <div style="background:#1A1A1A; padding:6px; border-radius:4px; border-left:3px solid @c1;">
-                    <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" title="@fn1">@f1</div>
-                    <div style="font-size:8px; color:#777; overflow:hidden; text-overflow:ellipsis;">@fn1</div>
-                </div>
-                <div style="background:#1A1A1A; padding:6px; border-radius:4px; border-left:3px solid @c2;">
-                    <div style="font-size:10px; font-weight:bold; color:#AAA; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;" title="@fn2">@f2</div>
-                    <div style="font-size:8px; color:#777; overflow:hidden; text-overflow:ellipsis;">@fn2</div>
-                </div>
-            </div>
-        </div>`;
+    stop() {
+        if (this.abortController) this.abortController.abort();
     }
-
-    getNodeTooltip() {
-        return `<div style="padding:12px; background:#1A1A1A; color:#D4D4D4; border:2px solid @color; border-radius:8px; width:280px;">
-            <div style="font-size:13px; font-weight:bold; margin-bottom:2px; color:@color;">@name</div>
-            <div style="font-size:11px; color:#AAA; margin-bottom:4px; font-style:italic;">@file_name</div>
-            <div style="font-size:10px; color:#AAA; margin-bottom:8px;">Addr: @addr | Features: @v_size | @return_type</div>
-        </div>`;
-    }
-
-    handleDirectClick(e) {
-        if (!e.ctrlKey && !e.metaKey) return;
-
-        // Check nodes first (prioritize them as they are smaller targets)
-        if (window.lastGraphNodeIndices && window.lastGraphNodeIndices.length > 0) {
-            const idx = window.lastGraphNodeIndices[0];
-            const id = this.node_source.data.id[idx];
-            const name = this.node_source.data.name[idx];
-            if (id && name) {
-                window.showFunctionCodeById(id, name, '', e);
-                e.preventDefault();
-                e.stopPropagation();
-                // Clear selection to avoid Bokeh also triggering onSelect
-                this.node_source.selected.indices = [];
-            }
-            return;
-        }
-
-        // Check links
-        if (window.lastGraphLinkIndices && window.lastGraphLinkIndices.length > 0) {
-            let id1, id2, name1, name2;
-            if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0 && window.diffPreviewIndex !== undefined) {
-                const p = window.diffPreviewPairs[window.diffPreviewIndex];
-                id1 = p.id1; id2 = p.id2;
-                name1 = p.n1; name2 = p.n2;
-            } else {
-                const idx = window.lastGraphLinkIndices[0];
-                id1 = this.hit_source.data.id1[idx]; id2 = this.hit_source.data.id2[idx];
-                name1 = this.hit_source.data.f1[idx]; name2 = this.hit_source.data.f2[idx];
-            }
-            if (id1 && id2) {
-                window.openDiffDirectly(id1, name1, id2, name2, e);
-                e.preventDefault();
-                e.stopPropagation();
-                // Clear selection
-                this.hit_source.selected.indices = [];
-            }
-        }
-    }
-
-    stop() { if (this.abortController) this.abortController.abort(); }
 
     async fetch(params) {
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
         const signal = this.abortController.signal;
 
-        this.all_pairs = []; this.nodes_map.clear(); this.unique_nodes = []; this.binary_md5s.clear();
+        this.all_pairs = [];
+        this.nodes_map.clear();
+        this.unique_nodes = [];
+        this.binary_md5s.clear();
 
         const overlay = document.getElementById('graph-loading-overlay');
         const streamInfo = document.getElementById('graph-stream-info');
@@ -263,19 +98,17 @@ class SimilarityGraph {
         const DEFAULT_GRAPH_LIMIT = 500;
         const MAX_TOTAL = parseInt(params.get('limit')) || DEFAULT_GRAPH_LIMIT;
 
-        overlay.style.display = 'flex';
-        loadingText.innerText = "Building Similarity Map...";
-        streamInfo.innerText = "";
-        stopBtn.style.display = 'inline-block';
+        if (overlay) overlay.style.display = 'flex';
+        if (loadingText) loadingText.innerText = "Building Similarity Map...";
+        if (streamInfo) streamInfo.innerText = "";
+        if (stopBtn) stopBtn.style.display = 'inline-block';
 
-        // Clone and clean params to avoid duplicates in loop (like &offset=0&offset=500)
         const cleanParams = new URLSearchParams(params.toString());
         cleanParams.delete('limit');
         cleanParams.delete('offset');
         const base_url = `/api/similarity/search?${cleanParams.toString()}`;
         let currentOffset = 0;
 
-        // Clear the graph immediately
         this.updateSources(params);
 
         try {
@@ -286,7 +119,7 @@ class SimilarityGraph {
                 const res = await fetch(`${base_url}&limit=${BATCH_SIZE}&offset=${currentOffset}`, { signal });
                 const data = await res.json();
 
-                // Handle truncation and limit alerts next to inputs
+                // UI Warnings (truncation)
                 const poolIcon = document.getElementById('pool-warn-icon');
                 const limitIcon = document.getElementById('limit-warn-icon');
                 const poolInput = document.getElementById('sim-pool-limit');
@@ -324,6 +157,7 @@ class SimilarityGraph {
                     totalEl.style.display = 'inline-block';
                     totalEl.innerText = `${this.all_pairs.length.toLocaleString()} / ${(data.total || 0).toLocaleString()}`;
                 }
+
                 pairs.forEach(p => {
                     [{ id: p.id1, name: p.name1, meta: p.meta1 }, { id: p.id2, name: p.name2, meta: p.meta2 }].forEach(n => {
                         if (!this.nodes_map.has(n.id)) {
@@ -333,165 +167,572 @@ class SimilarityGraph {
                                 addr: n.id.split(':').pop(), v_size: n.meta.bsim_features_count,
                                 language_id: n.meta.language_id || 'N/A',
                                 tags: n.meta.tags || [],
-                                user_tags: n.meta.user_tags || []
+                                user_tags: n.meta.user_tags || [],
+                                file_tags: n.meta.file_tags || [],
+                                file_user_tags: n.meta.file_user_tags || []
                             };
-                            this.nodes_map.set(n.id, node_obj); this.unique_nodes.push(node_obj); this.binary_md5s.add(n.meta.file_md5);
+                            this.nodes_map.set(n.id, node_obj);
+                            this.unique_nodes.push(node_obj);
+                            this.binary_md5s.add(n.meta.file_md5);
                         }
                     });
                 });
 
                 this.updateSources(params);
-                streamInfo.innerText = `Streamed ${this.all_pairs.length} matches...`;
+                if (streamInfo) streamInfo.innerText = `Streamed ${this.all_pairs.length} matches...`;
                 currentOffset += BATCH_SIZE;
                 if (pairs.length < BATCH_SIZE) break;
             }
-        } catch (e) { if (e.name !== 'AbortError') console.error(e); }
-        finally {
-            overlay.style.display = 'none';
-            stopBtn.style.display = 'none';
+        } catch (e) {
+            if (e.name !== 'AbortError') console.error(e);
+        } finally {
+            if (overlay) overlay.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'none';
         }
     }
 
     updateSources(params) {
         if (this.all_pairs.length === 0) {
-            this.node_source.data = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], file_name: [], return_type: [], tags: [] };
-            this.seg_source.data = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
-            this.hit_source.data = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [], fn1: [], fn2: [] };
-            this.ring_source.data = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [] };
+            this.linkGroup.selectAll("*").remove();
+            this.nodeGroup.selectAll("*").remove();
+            this.ringGroup.selectAll("*").remove();
             return;
         }
 
+        // 1. Sort nodes to ensure consistent circular order (by binary then name)
         this.unique_nodes.sort((a, b) => a.md5.localeCompare(b.md5) || a.name.localeCompare(b.name));
-        const n_active = this.unique_nodes.length;
-        const theta_step = (2 * Math.PI) / n_active;
-        const derived_r = Math.max(2.5, 0.3 / theta_step);
-        const ring_inner = derived_r + 0.3; const ring_outer = derived_r + 1.8;
 
-        const id_to_info = new Map();
-        this.unique_nodes.forEach((n, i) => {
-            const angle = i * theta_step;
-            id_to_info.set(n.id, { ...n, x: derived_r * Math.cos(angle), y: derived_r * Math.sin(angle), angle: angle });
-        });
+        const radius = Math.min(this.width, this.height) / 2 - 120;
+        const innerRadius = radius;
+        const ringWidth = 20;
 
-        const palette = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"];
-        const bin_list = Array.from(this.binary_md5s).sort();
-        const bin_colors = new Map(bin_list.map((md5, i) => [md5, palette[i % 20]]));
+        // 2. Build Hierarchy for Bundling
+        const binGroups = d3.group(this.unique_nodes, d => d.md5);
+        const hierarchyData = {
+            name: "root",
+            children: Array.from(binGroups, ([md5, nodes]) => ({
+                name: md5,
+                children: nodes
+            }))
+        };
 
-        const isColorByTag = localStorage.getItem('sim-color-by-tag') === 'true' || (typeof UIParams !== 'undefined' && UIParams.colorByTag);
+        const root = d3.hierarchy(hierarchyData)
+            .sort((a, b) => d3.ascending(a.data.name, b.data.name));
 
-        const ns = { x: [], y: [], name: [], addr: [], bin: [], color: [], v_size: [], id: [], file_name: [], return_type: [] };
-        this.unique_nodes.forEach(n => {
-            const info = id_to_info.get(n.id);
-            ns.x.push(info.x); ns.y.push(info.y); ns.name.push(n.name); ns.addr.push(n.addr);
-            ns.bin.push(n.md5.slice(0, 8)); 
-            
-            let color = bin_colors.get(n.md5);
-            if (isColorByTag && typeof getRawTagColor === 'function') {
-                const tagColor = getRawTagColor(n.tags, n.user_tags);
-                if (tagColor) color = tagColor;
-            }
-            ns.color.push(color);
+        const cluster = d3.cluster()
+            .size([2 * Math.PI, innerRadius]);
 
-            ns.v_size.push(n.v_size); ns.id.push(n.id);
-            ns.file_name.push(n.file_name || ''); ns.return_type.push(n.return_type || 'N/A');
-        });
+        cluster(root);
 
-        const ss = { x0: [], y0: [], x1: [], y1: [], color: [], alpha: [], width: [] };
-        const hs = { xs: [], ys: [], f1: [], f2: [], b1: [], b2: [], score: [], c1: [], c2: [], id1: [], id2: [], fn1: [], fn2: [] };
+        const idToNode = new Map(root.leaves().map(d => [d.data.id, d]));
+
+        // 3. Prepare Links
         const minScoreParam = params.get('min_score');
         const minScore = (minScoreParam !== null && minScoreParam !== "") ? parseFloat(minScoreParam) : 0.95;
 
-        const id_to_color = new Map();
-        ns.id.forEach((id, i) => id_to_color.set(id, ns.color[i]));
+        const colorBinaryBy = document.getElementById('graph-color-binary')?.value || 'binary';
+        const colorFunctionBy = document.getElementById('graph-color-function')?.value || 'binary';
+        const colorSimBy = document.getElementById('graph-color-sim')?.value || 'gradient';
+        const linkWidthFactor = parseFloat(document.getElementById('graph-link-width')?.value || 1.0);
+        const shouldScaleWidth = document.getElementById('graph-scale-width')?.checked ?? true;
 
-        this.all_pairs.forEach(p => {
-            const n1 = id_to_info.get(p.id1); const n2 = id_to_info.get(p.id2);
-            if (!n1 || !n2) return;
-            const t_vals = []; for (let i = 0; i <= 1; i += 1 / 15) t_vals.push(i);
-            const curve = t_vals.map(t => {
-                const it = 1 - t;
-                return { x: it * it * n1.x + 2 * it * t * 0 + t * t * n2.x, y: it * it * n1.y + 2 * it * t * 0 + t * t * n2.y };
-            });
-            const col1 = id_to_color.get(p.id1); const col2 = id_to_color.get(p.id2);
+        const getMd5Color = (md5) => {
+            if (!md5) return "#888888";
+            // Use the first 6 chars of MD5 as a hex color, but ensure it's not too dark for the black background
+            // We'll use a simple deterministic approach: use md5 to pick from a large stable palette or hash to RGB
+            let hash = 0;
+            for (let i = 0; i < md5.length; i++) {
+                hash = md5.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+            const hex = "00000".substring(0, 6 - c.length) + c;
+
+            // Brighten if too dark (HSL approach or simple component boost)
+            let r = parseInt(hex.substring(0, 2), 16);
+            let g = parseInt(hex.substring(2, 4), 16);
+            let b = parseInt(hex.substring(4, 6), 16);
+
+            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+            if (brightness < 60) {
+                r = Math.min(255, r + 80);
+                g = Math.min(255, g + 80);
+                b = Math.min(255, b + 80);
+            }
+
+            return `rgb(${r}, ${g}, ${b})`;
+        };
+
+        const getNodeColor = (n, mode) => {
+            const defaultColor = getMd5Color(n.md5);
+            if (typeof getRawTagColor === 'function') {
+                if (mode === 'func_tag') {
+                    const tagColor = getRawTagColor(n.tags, n.user_tags);
+                    return tagColor || "#333333";
+                } else if (mode === 'file_tag') {
+                    const tagColor = getRawTagColor(n.file_tags, n.file_user_tags);
+                    return tagColor || "#333333";
+                }
+            }
+            return defaultColor;
+        };
+
+        const links = this.all_pairs.map(p => {
+            const source = idToNode.get(p.id1);
+            const target = idToNode.get(p.id2);
+            if (!source || !target) return null;
+
             const norm = (p.score - minScore) / (1.0 - minScore + 0.0001);
-            for (let k = 0; k < curve.length - 1; k++) {
-                ss.x0.push(curve[k].x); ss.y0.push(curve[k].y); ss.x1.push(curve[k + 1].x); ss.y1.push(curve[k + 1].y);
-                ss.color.push(this.blendHex(col1, col2, t_vals[k])); ss.alpha.push(0.1 + (norm * 0.7)); ss.width.push(0.5 + (norm * 6));
+
+            let color1, color2;
+            let linkColorOverride = null;
+
+            if (colorSimBy === 'gradient') {
+                color1 = getMd5Color(source.data.md5);
+                color2 = getMd5Color(target.data.md5);
+            } else if (colorSimBy === 'sim_tag') {
+                if (typeof getRawTagColor === 'function') {
+                    linkColorOverride = getRawTagColor(p.tags, p.user_tags) || "#333333";
+                } else {
+                    linkColorOverride = "#333333";
+                }
+            } else if (colorSimBy === 'func_tag') {
+                if (typeof getRawTagColor === 'function') {
+                    color1 = getRawTagColor(source.data.tags, source.data.user_tags) || "#333333";
+                    color2 = getRawTagColor(target.data.tags, target.data.user_tags) || "#333333";
+                } else {
+                    color1 = color2 = "#333333";
+                }
+            } else if (colorSimBy === 'file_tag') {
+                if (typeof getRawTagColor === 'function') {
+                    color1 = getRawTagColor(source.data.file_tags, source.data.file_user_tags) || "#333333";
+                    color2 = getRawTagColor(target.data.file_tags, target.data.file_user_tags) || "#333333";
+                } else {
+                    color1 = color2 = "#333333";
+                }
             }
-            hs.xs.push(curve.map(v => v.x)); hs.ys.push(curve.map(v => v.y));
-            hs.f1.push(p.name1); hs.f2.push(p.name2); hs.b1.push(n1.md5.slice(0, 8)); hs.b2.push(n2.md5.slice(0, 8));
-            hs.score.push(p.score.toFixed(4)); hs.c1.push(col1); hs.c2.push(col2); hs.id1.push(p.id1); hs.id2.push(p.id2);
-            hs.fn1.push(n1.file_name || n1.file_name || n1.md5.slice(0, 8)); hs.fn2.push(n2.file_name || n2.file_name || n2.md5.slice(0, 8));
+
+            const baseWidth = shouldScaleWidth ? (0.5 + norm * 6) : 2.5;
+            const finalWidth = baseWidth * linkWidthFactor;
+
+            return {
+                source, target, path: source.path(target), score: p.score,
+                width: finalWidth, alpha: 0.1 + (norm * 0.7),
+                color1, color2, linkColorOverride,
+                id1: p.id1, id2: p.id2, name1: p.name1, name2: p.name2,
+                sid: p.sid, algo: p.algo || 'unweighted_cosine',
+                tags: p.tags || [], user_tags: p.user_tags || []
+            };
+        }).filter(l => l !== null);
+
+        // 4. Draw Links
+        const tension = document.getElementById('graph-bundle-tension')?.value || 0.85;
+        const line = d3.lineRadial()
+            .curve(d3.curveBundle.beta(tension))
+            .radius(d => d.y)
+            .angle(d => d.x);
+
+        // For gradients, we need to define them in <defs>
+        this.defs.selectAll("*").remove();
+
+        const linkPaths = this.linkGroup.selectAll("path")
+            .data(links)
+            .join("path")
+            .each((d, i, nodes) => {
+                if (d.linkColorOverride) {
+                    d.strokeColor = d.linkColorOverride;
+                    return;
+                }
+                if (d.color1 === d.color2) {
+                    d.strokeColor = d.color1;
+                    return;
+                }
+                const gradId = `grad_${i}`;
+                const grad = this.defs.append("linearGradient")
+                    .attr("id", gradId)
+                    .attr("gradientUnits", "userSpaceOnUse")
+                    .attr("x1", d.source.y * Math.cos(d.source.x - Math.PI / 2))
+                    .attr("y1", d.source.y * Math.sin(d.source.x - Math.PI / 2))
+                    .attr("x2", d.target.y * Math.cos(d.target.x - Math.PI / 2))
+                    .attr("y2", d.target.y * Math.sin(d.target.x - Math.PI / 2));
+
+                grad.append("stop").attr("offset", "0%").attr("stop-color", d.color1);
+                grad.append("stop").attr("offset", "100%").attr("stop-color", d.color2);
+                d.gradientId = gradId;
+                d.strokeColor = `url(#${gradId})`;
+            })
+            .attr("d", d => line(d.path))
+            .attr("fill", "none")
+            .attr("stroke", d => d.strokeColor)
+            .attr("stroke-width", d => d.width)
+            .attr("stroke-opacity", d => d.alpha)
+            .style("cursor", "pointer")
+            .on("mouseover", (event, d) => {
+                if (window.graphContextMenuOpen || window.graphNodeHovered) return;
+                const rect = this.container.node().getBoundingClientRect();
+                const e = { clientX: event.clientX, clientY: event.clientY };
+
+                // Set up preview cycle similar to previous implementation
+                window.diffPreviewPairs = [{
+                    id1: d.id1, id2: d.id2, n1: d.name1, n2: d.name2, score: d.score.toFixed(4),
+                    sid: d.sid, algo: d.algo, tags: d.tags, user_tags: d.user_tags
+                }];
+                window.diffPreviewIndex = 0;
+
+                if (window.showDiffPreview) window.showDiffPreview(d.id1, d.name1, d.id2, d.name2, d.score.toFixed(4), e, 0);
+
+                d3.select(event.currentTarget)
+                    .attr("stroke", "white")
+                    .attr("stroke-opacity", 1)
+                    .attr("stroke-width", d.width + 2);
+            })
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    window.showGraphContextMenu(event, 'link', d);
+                }
+            })
+            .on("mouseout", (event, d) => {
+                if (window.hideDiffPreview) window.hideDiffPreview();
+                d3.select(event.currentTarget)
+                    .attr("stroke", d.strokeColor)
+                    .attr("stroke-opacity", d.alpha)
+                    .attr("stroke-width", d.width);
+            })
+            .on("click", (event, d) => {
+                event.stopPropagation();
+                // Open the pair currently selected in the preview (user may have scrolled)
+                const pairs = window.diffPreviewPairs;
+                const idx = window.diffPreviewIndex || 0;
+                const sel = (pairs && pairs.length > 0) ? pairs[idx] : null;
+                if (sel) {
+                    window.openDiffDirectly(sel.id1, sel.n1, sel.id2, sel.n2, event);
+                } else {
+                    window.openDiffDirectly(d.id1, d.name1, d.id2, d.name2, event);
+                }
+            });
+
+        // 5. Draw Binary Rings
+        const arc = d3.arc()
+            .innerRadius(radius + 5)
+            .outerRadius(radius + ringWidth + 5)
+            .startAngle(d => d.start)
+            .endAngle(d => d.end);
+
+        const ringsData = Array.from(binGroups, ([md5, nodes]) => {
+            const nodeInfos = nodes.map(n => idToNode.get(n.id));
+            const start = d3.min(nodeInfos, d => d.x);
+            const end = d3.max(nodeInfos, d => d.x);
+            // Add half step padding
+            const step = (2 * Math.PI) / this.unique_nodes.length;
+
+            let color = getMd5Color(md5);
+            if (colorBinaryBy === 'file_tag') {
+                color = "#333333";
+                if (typeof getRawTagColor === 'function') {
+                    const tagColor = getRawTagColor(nodes[0].file_tags, nodes[0].file_user_tags);
+                    if (tagColor) color = tagColor;
+                }
+            }
+
+            const collection = nodes[0].id.split(':')[0];
+            return {
+                md5,
+                collection,
+                fileId: `${collection}:file:${md5}`,
+                start: start - step / 2,
+                end: end + step / 2,
+                color: color,
+                name: md5.slice(0, 8),
+                file_name: nodes[0].file_name || md5.slice(0, 8),
+                count: nodes.length,
+                language: nodes[0].language_id,
+                tags: Array.from(new Set(nodes.flatMap(n => n.tags || []))).join(', '),
+                file_tags: nodes[0].file_tags || [],
+                file_user_tags: nodes[0].file_user_tags || []
+            };
         });
 
-        const rs = { start: [], end: [], color: [], name: [], md5: [], file_name: [], inner_r: [], outer_r: [], count: [], language: [], tags: [] };
-        bin_list.forEach(md5 => {
-            const md5_nodes = this.unique_nodes.map((n, i) => ({ n, i })).filter(item => item.n.md5 === md5);
-            if (md5_nodes.length > 0) {
-                const start_idx = md5_nodes[0].i; const end_idx = md5_nodes[md5_nodes.length - 1].i;
-                const col = bin_colors.get(md5);
-                rs.start.push(start_idx * theta_step - theta_step / 2); rs.end.push(end_idx * theta_step + theta_step / 2);
-                rs.color.push(col); rs.name.push(md5.slice(0, 8)); rs.md5.push(md5);
-                rs.file_name.push(md5_nodes[0].n.file_name || md5.slice(0, 8));
-                rs.inner_r.push(ring_inner); rs.outer_r.push(ring_outer);
-                rs.count.push(md5_nodes.length);
-                rs.language.push(md5_nodes[0].n.language_id);
-                const all_tags = new Set();
-                md5_nodes.forEach(item => { (item.n.tags || []).forEach(t => all_tags.add(t)); });
-                rs.tags.push(Array.from(all_tags).join(', '));
-            }
-        });
+        this.ringGroup.selectAll("path")
+            .data(ringsData)
+            .join("path")
+            .attr("d", arc)
+            .attr("fill", d => d.color)
+            .attr("fill-opacity", 0.3)
+            .style("cursor", "help")
+            .on("mouseover", (event, d) => {
+                if (window.graphContextMenuOpen) return;
+                const e = { clientX: event.clientX, clientY: event.clientY };
+                if (window.showBinaryPreview) window.showBinaryPreview(d.md5, d.file_name, d.count, d.language, d.tags, e, d.file_tags, d.file_user_tags);
+                d3.select(event.currentTarget).attr("fill-opacity", 0.6);
+            })
+            .on("mouseout", (event, d) => {
+                if (window.hideBinaryPreview) window.hideBinaryPreview();
+                d3.select(event.currentTarget).attr("fill-opacity", 0.3);
+            })
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    window.showGraphContextMenu(event, 'file', d);
+                }
+            });
 
-        this.node_source.data = ns; this.seg_source.data = ss; this.hit_source.data = hs; this.ring_source.data = rs;
+        // 6. Draw Nodes
+        const nodes = this.nodeGroup.selectAll("g")
+            .data(root.leaves())
+            .join("g")
+            .attr("transform", d => `rotate(${d.x * 180 / Math.PI - 90}) translate(${d.y},0)`);
+
+        nodes.selectAll("circle")
+            .data(d => [d])
+            .join("circle")
+            .attr("r", 5.5)
+            .attr("fill", d => getNodeColor(d.data, colorFunctionBy))
+            .attr("stroke", "white")
+            .attr("stroke-width", 1)
+            .style("cursor", "pointer")
+            .on("mouseover", (event, d) => {
+                if (window.graphContextMenuOpen) return;
+                window.graphNodeHovered = true;
+                const e = { clientX: event.clientX, clientY: event.clientY };
+                const n = d.data;
+
+                // Find all pairs for this node to show in diff preview
+                const relatedPairs = this.all_pairs.filter(p => p.id1 === n.id || p.id2 === n.id);
+                if (relatedPairs.length > 0) {
+                    window.diffPreviewPairs = relatedPairs.map(p => ({
+                        id1: p.id1, id2: p.id2, n1: p.name1, n2: p.name2, score: p.score.toFixed(4),
+                        sid: p.sid, algo: p.algo || 'unweighted_cosine',
+                        tags: p.tags || [], user_tags: p.user_tags || []
+                    }));
+                    window.diffPreviewIndex = 0;
+                    const p = window.diffPreviewPairs[0];
+                    if (window.showDiffPreview) window.showDiffPreview(p.id1, p.n1, p.id2, p.n2, p.score, e, window.diffPreviewPairs.length - 1);
+                }
+
+                d3.select(event.currentTarget).attr("stroke-width", 3).attr("stroke", "var(--accent)");
+
+                // Highlight connected links
+                this.linkGroup.selectAll("path")
+                    .style("opacity", l => (l.id1 === n.id || l.id2 === n.id) ? 1 : 0.05)
+                    .attr("stroke-width", l => (l.id1 === n.id || l.id2 === n.id) ? l.width + 2 : l.width);
+            })
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    window.showGraphContextMenu(event, 'node', d.data);
+                }
+            })
+            .on("mouseout", (event, d) => {
+                window.graphNodeHovered = false;
+                if (window.hideDiffPreview) window.hideDiffPreview();
+                d3.select(event.currentTarget).attr("stroke-width", 1).attr("stroke", "white");
+
+                this.linkGroup.selectAll("path")
+                    .style("opacity", null)
+                    .attr("stroke-width", l => l.width);
+            })
+            .on("click", (event, d) => {
+                event.stopPropagation();
+                if (event.ctrlKey || event.metaKey) {
+                    // Ctrl+click: open code view for this specific function
+                    window.showFunctionCodeById(d.data.id, d.data.name, '', event);
+                } else {
+                    // Plain click: open the pair currently selected in the preview
+                    const pairs = window.diffPreviewPairs;
+                    const idx = window.diffPreviewIndex || 0;
+                    const sel = (pairs && pairs.length > 0) ? pairs[idx] : null;
+                    if (sel) {
+                        window.openDiffDirectly(sel.id1, sel.n1, sel.id2, sel.n2, event);
+                    } else {
+                        window.showFunctionCodeById(d.data.id, d.data.name, '', event);
+                    }
+                }
+            });
+
+        // 7. Add labels
+        const showLabelMode = document.getElementById('graph-show-label')?.value || 'func_name';
+
+        // Clear existing labels
+        this.binaryLabelGroup.selectAll("*").remove();
+        nodes.selectAll("text").remove();
+
+        if (showLabelMode === 'none') return;
+
+        if (showLabelMode === 'file_name' || showLabelMode === 'file_tag') {
+            const r = radius + ringWidth + 15;
+            this.binaryLabelGroup.selectAll("text")
+                .data(ringsData)
+                .join("text")
+                .attr("dy", "0.31em")
+                .attr("transform", d => {
+                    const angle = (d.start + d.end) / 2;
+                    const deg = angle * 180 / Math.PI - 90;
+                    return `rotate(${deg}) translate(${r},0) ${angle >= Math.PI ? "rotate(180)" : ""}`;
+                })
+                .attr("text-anchor", d => {
+                    const angle = (d.start + d.end) / 2;
+                    return angle >= Math.PI ? "end" : "start";
+                })
+                .attr("x", d => {
+                    const angle = (d.start + d.end) / 2;
+                    return angle >= Math.PI ? -5 : 5;
+                })
+                .style("font-size", "10px")
+                .style("font-weight", "bold")
+                .style("pointer-events", "none")
+                .text(d => {
+                    if (showLabelMode === 'file_name') {
+                        return d.file_name;
+                    } else {
+                        const all = [...(d.file_tags || []), ...(d.file_user_tags || [])].filter(t => t);
+                        return all.length > 0 ? all.join(', ') : '---';
+                    }
+                })
+                .style("fill", d => {
+                    if (showLabelMode === 'file_name') return d.color;
+                    if (typeof getRawTagColor === 'function') {
+                        return getRawTagColor(d.file_tags, d.file_user_tags) || "#75715e";
+                    }
+                    return "#75715e";
+                });
+        } else if (this.unique_nodes.length < 500) {
+            const labels = nodes.selectAll("text")
+                .data(d => [d])
+                .join("text")
+                .attr("dy", "0.31em")
+                .attr("x", d => d.x < Math.PI ? 10 : -10)
+                .attr("text-anchor", d => d.x < Math.PI ? "start" : "end")
+                .attr("transform", d => d.x >= Math.PI ? "rotate(180)" : null)
+                .style("font-size", "8px")
+                .style("pointer-events", "none");
+
+            if (showLabelMode === 'func_name') {
+                labels.append("tspan")
+                    .text(d => d.data.return_type && d.data.return_type !== 'N/A' ? `${d.data.return_type} ` : "")
+                    .style("fill", "#ae81ff") // Purple
+                    .style("font-weight", "bold");
+
+                labels.append("tspan")
+                    .text(d => d.data.name)
+                    .style("fill", "#66d9ef"); // Cyan
+            } else if (showLabelMode === 'func_tag') {
+                labels.append("tspan")
+                    .text(d => {
+                        const tags = d.data.tags;
+                        const userTags = d.data.user_tags;
+                        const all = [...(tags || []), ...(userTags || [])].filter(t => t);
+                        return all.length > 0 ? all.join(', ') : '---';
+                    })
+                    .style("fill", d => {
+                        if (typeof getRawTagColor === 'function') {
+                            return getRawTagColor(d.data.tags, d.data.user_tags) || "#75715e";
+                        }
+                        return "#75715e";
+                    })
+                    .style("font-weight", "bold");
+            }
+        }
+    }
+
+    // Patch in-memory node/pair tag data after a cross-window tag update,
+    // then refresh graph colors so the visual matches the new tag state.
+    applyTagUpdate(action, etype, eid, tag) {
+        const mutate = (arr, t, add) => {
+            if (add) { if (!arr.includes(t)) arr.push(t); }
+            else { const i = arr.indexOf(t); if (i !== -1) arr.splice(i, 1); }
+        };
+        const add = (action === 'add');
+
+        if (etype === 'function') {
+            // Update matching function node (allowing fallback for :func: vs :function: differences)
+            let node = this.nodes_map.get(eid);
+            if (!node) {
+                const alternativeEid = eid.includes(':function:') 
+                    ? eid.replace(':function:', ':func:') 
+                    : eid.replace(':func:', ':function:');
+                node = this.nodes_map.get(alternativeEid);
+            }
+            if (node) mutate(node.user_tags, tag, add);
+        } else if (etype === 'file') {
+            // eid format: collection:file:md5 — update all nodes with that md5
+            const md5 = eid.split(':').pop();
+            this.nodes_map.forEach(node => {
+                if (node.md5 === md5) mutate(node.file_user_tags, tag, add);
+            });
+        } else if (etype === 'similarity') {
+            // eid may be id1|id2|algo or a sid — match against all_pairs
+            this.all_pairs.forEach(p => {
+                let match = false;
+                if (p.sid === eid) {
+                    match = true;
+                } else {
+                    const parts = eid.split('|');
+                    if (parts.length >= 2) {
+                        const id1 = parts[0].replace(':function:', ':func:');
+                        const id2 = parts[1].replace(':function:', ':func:');
+                        const pId1 = p.id1.replace(':function:', ':func:');
+                        const pId2 = p.id2.replace(':function:', ':func:');
+                        if ((pId1 === id1 && pId2 === id2) || (pId1 === id2 && pId2 === id1)) {
+                            match = true;
+                        }
+                    }
+                }
+                if (match) {
+                    p.user_tags = p.user_tags || [];
+                    mutate(p.user_tags, tag, add);
+                }
+            });
+        }
+
+        this.refreshColors();
     }
 
     refreshColors() {
         if (!this.unique_nodes.length) return;
-        
-        const palette = ["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c", "#98df8a", "#d62728", "#ff9896", "#9467bd", "#c5b0d5", "#8c564b", "#c49c94", "#e377c2", "#f7b6d2", "#7f7f7f", "#c7c7c7", "#bcbd22", "#dbdb8d", "#17becf", "#9edae5"];
-        const bin_list = Array.from(this.binary_md5s).sort();
-        const bin_colors = new Map(bin_list.map((md5, i) => [md5, palette[i % 20]]));
 
-        const isColorByTag = localStorage.getItem('sim-color-by-tag') === 'true' || (typeof UIParams !== 'undefined' && UIParams.colorByTag);
+        // Re-run the updateSources logic but focused on color updates if possible.
+        // For simplicity and since D3 is fast enough for 500 nodes, we just call updateSources with current params.
+        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+        this.updateSources(params);
+    }
 
-        const nodeColors = [];
-        this.unique_nodes.forEach(n => {
-            let color = bin_colors.get(n.md5);
-            if (isColorByTag && typeof getRawTagColor === 'function') {
-                const tagColor = getRawTagColor(n.tags, n.user_tags);
-                if (tagColor) color = tagColor;
-            }
-            nodeColors.push(color);
-        });
+    applyProfile(profile) {
+        const colorBinary = document.getElementById('graph-color-binary');
+        const colorFunc = document.getElementById('graph-color-function');
+        const colorSim = document.getElementById('graph-color-sim');
 
-        this.node_source.data.color = nodeColors;
-        this.node_source.change.emit();
+        if (!colorBinary || !colorFunc || !colorSim) return;
 
-        if (this.all_pairs.length > 0) {
-            const id_to_color = new Map();
-            this.unique_nodes.forEach((n, i) => id_to_color.set(n.id, nodeColors[i]));
-            
-            const segColors = [];
-            const t_vals = []; for (let i = 0; i <= 1; i += 1 / 15) t_vals.push(i);
-
-            this.all_pairs.forEach(p => {
-                const col1 = id_to_color.get(p.id1);
-                const col2 = id_to_color.get(p.id2);
-                if (col1 && col2) {
-                    for (let k = 0; k < t_vals.length - 1; k++) {
-                        segColors.push(this.blendHex(col1, col2, t_vals[k]));
-                    }
-                } else {
-                    // Fallback to original colors if not found (shouldn't happen)
-                    for (let k = 0; k < t_vals.length - 1; k++) segColors.push("#444444");
-                }
+        // Update button states
+        const toggle = document.getElementById('profile-toggle');
+        if (toggle) {
+            toggle.querySelectorAll('.view-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-profile') === profile);
             });
-            this.seg_source.data.color = segColors;
-            this.seg_source.change.emit();
         }
+
+        if (profile === 'default') {
+            colorBinary.value = 'binary';
+            colorFunc.value = 'binary';
+            colorSim.value = 'gradient';
+        } else if (profile === 'func_tags') {
+            colorBinary.value = 'binary';
+            colorFunc.value = 'func_tag';
+            colorSim.value = 'func_tag';
+        } else if (profile === 'sim_tags') {
+            colorBinary.value = 'binary';
+            colorFunc.value = 'binary';
+            colorSim.value = 'sim_tag';
+        }
+
+        this.refreshColors();
     }
 
     blendHex(c1, c2, t) {
+        if (!c1 || !c2) return "#888888";
         const rgb1 = [parseInt(c1.slice(1, 3), 16), parseInt(c1.slice(3, 5), 16), parseInt(c1.slice(5, 7), 16)];
         const rgb2 = [parseInt(c2.slice(1, 3), 16), parseInt(c2.slice(3, 5), 16), parseInt(c2.slice(5, 7), 16)];
         const res = rgb1.map((v, i) => Math.round(v * (1 - t) + rgb2[i] * t));

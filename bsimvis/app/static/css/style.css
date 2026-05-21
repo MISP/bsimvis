@@ -1115,6 +1115,22 @@ body {
     font-size: 1.1rem;
     opacity: 0.8;
 }
+.tag-submenu-trigger:hover .submenu {
+    display: block !important;
+}
+.context-menu.submenu {
+    animation: submenuFadeIn 0.12s ease-out;
+}
+@keyframes submenuFadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
 /* P-Code Block Display */
 .pcode-block-container {
     background: #1a1a1a;

@@ -106,7 +106,7 @@ function toggleSidebar() {
     const btn = document.getElementById('sidebar-toggle');
     btn.innerHTML = isCollapsed ? '⟩' : '⟨';
 
-    // Trigger window resize for Bokeh/D3 plots
+    // Trigger window resize for D3 plots
     setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
 }
 
@@ -652,6 +652,10 @@ function updateUI(path, params, route) {
                             <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
                             <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
                         </select>
+                        <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
+                            <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
+                            <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
+                        </select>
                     </div>
                 </th>`;
         } else {
@@ -967,6 +971,7 @@ function applySimSearch() {
     const algo = document.getElementById('sim-algo')?.value;
     const minFeatures = document.getElementById('flt-func-min-features')?.value;
     const crossBinary = document.getElementById('sim-cross-binary')?.value;
+    const matchMode = document.getElementById('sim-match-mode')?.value;
     const globalQ = document.getElementById('sim-search-input')?.value;
     const lang = document.getElementById('flt-func-language')?.value;
     const poolLimit = document.getElementById('sim-pool-limit')?.value;
@@ -981,6 +986,8 @@ function applySimSearch() {
 
     if (crossBinary) params.set('cross_binary', crossBinary);
     else params.delete('cross_binary');
+    if (matchMode && matchMode !== 'any') params.set('match_mode', matchMode);
+    else params.delete('match_mode');
     params.set('pool_limit', poolLimit || '1000000');
     params.set('limit', countLimit || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT));
 
@@ -1978,21 +1985,12 @@ function showTokenContextMenu(e) {
     }, 10);
 }
 
-function showGraphContextMenu(e) {
+window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
     const graph = window.graphInstance;
     if (!graph) return;
 
-    const linkIndices = window.lastGraphLinkIndices || [];
-    const nodeIndices = window.lastGraphNodeIndices || [];
-
-    if (linkIndices.length === 0 && nodeIndices.length === 0) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    hideDiffPreview();
-    hideCodePreview();
-    hideBinaryPreview();
+    // Save current context menu state for refreshing
+    window.currentContextMenu = { e, type, data };
     window.graphContextMenuOpen = true;
 
     let menu = document.getElementById('graph-context-menu');
@@ -2003,76 +2001,373 @@ function showGraphContextMenu(e) {
         document.body.appendChild(menu);
     }
 
+    if (window.hideDiffPreview) window.hideDiffPreview();
+    if (window.hideCodePreview) window.hideCodePreview();
+    if (window.hideBinaryPreview) window.hideBinaryPreview();
+
+    // Generate HTML content based on type
     let html = '';
+    
+    if (type === 'node') {
+        const nodeId = data.id;
+        const nodeName = data.name;
+        // Fetch latest node details from graph nodes_map
+        const latestNode = graph.nodes_map.get(nodeId) || data;
+        const userTags = latestNode.user_tags || [];
+        const tags = latestNode.tags || [];
 
-    if (linkIndices.length > 0) {
-        html += `<div class="context-menu-header">Similarity Comparisons (${linkIndices.length})</div>`;
-        linkIndices.forEach(idx => {
-            const d = graph.hit_source.data;
-            const id1 = d.id1[idx], id2 = d.id2[idx], f1 = d.f1[idx], f2 = d.f2[idx], score = d.score[idx];
-            html += `<div class="context-menu-item graph-compare-item" data-id1="${id1}" data-id2="${id2}" data-f1="${f1}" data-f2="${f2}">
-                <div class="context-menu-icon" style="color:var(--success)">⇄</div>
-                <div style="flex:1">
-                    <div style="font-weight:bold; color:#FFF; font-size:0.75rem;">${f1} vs ${f2}</div>
-                    <div style="font-size:0.65rem; color:var(--success); margin-top:2px;">Match Score: <b>${(score * 100).toFixed(2)}%</b></div>
-                </div>
-            </div>`;
-        });
-    }
+        html += `<div class="context-menu-header">Function: ${nodeName}</div>`;
+        
+        // Bookmark/Ignore/Tag actions
+        html += renderBookmarkIgnoreTagItems('function', nodeId, tags, userTags);
 
-    if (nodeIndices.length > 0) {
-        html += `<div class="context-menu-header">Function Analysis (${nodeIndices.length})</div>`;
-        nodeIndices.forEach(idx => {
-            const d = graph.node_source.data;
-            const id = d.id[idx], name = d.name[idx], addr = d.addr[idx];
-            html += `<div class="context-menu-item graph-node-item" data-id="${id}" data-name="${name}">
-                <div class="context-menu-icon" style="color:var(--accent)">𝑓</div>
-                <div style="flex:1">
-                    <div style="font-weight:bold; color:var(--accent); font-size:0.75rem;">${name}</div>
-                    <div style="font-size:0.65rem; color:var(--subtle); font-family:monospace;">Addr: ${addr}</div>
-                </div>
+        // Add to Diff, See Similar, Show Features
+        html += `
+        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${nodeId}', '${nodeName.replace(/'/g, "\\'")}')">
+            <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+            <span>Add to Diff</span>
+        </div>
+        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar('${nodeId}')">
+            <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+            <span>See Similar</span>
+        </div>
+        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel('${nodeId}', event)">
+            <i class="fa-solid fa-fingerprint" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+            <span>Show Features</span>
+        </div>`;
+
+        // Check if there is a selected similarity (previewed via hover/scroll)
+        let selectedSim = null;
+        if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0) {
+            const currentPair = window.diffPreviewPairs[window.diffPreviewIndex || 0];
+            if (currentPair && (currentPair.id1 === nodeId || currentPair.id2 === nodeId)) {
+                selectedSim = currentPair;
+            }
+        }
+
+        if (selectedSim) {
+            const simId = selectedSim.sid || `${selectedSim.id1}|${selectedSim.id2}|${selectedSim.algo}`;
+            // Fetch latest pair from graph all_pairs to get latest tags
+            const latestPair = graph.all_pairs.find(p => 
+                (p.id1 === selectedSim.id1 && p.id2 === selectedSim.id2) || 
+                (p.id1 === selectedSim.id2 && p.id2 === selectedSim.id1)
+            ) || selectedSim;
+            
+            const simUserTags = latestPair.user_tags || [];
+            const simTags = latestPair.tags || [];
+            const percentScore = (parseFloat(selectedSim.score) * 100).toFixed(1);
+
+            html += `<div class="context-menu-header" style="margin-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 6px;">Similarity: ${percentScore}% Match</div>`;
+            
+            html += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${selectedSim.id1}', '${selectedSim.n1.replace(/'/g, "\\'")}', '${selectedSim.id2}', '${selectedSim.n2.replace(/'/g, "\\'")}', event)">
+                <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Show Diff</span>
             </div>`;
-        });
+
+            html += renderBookmarkIgnoreTagItems('similarity', simId, simTags, simUserTags);
+        }
+    } else if (type === 'link') {
+        const id1 = data.id1;
+        const id2 = data.id2;
+        const name1 = data.name1;
+        const name2 = data.name2;
+        const simId = data.sid || `${id1}|${id2}|${data.algo}`;
+        
+        // Fetch latest pair from graph
+        const latestPair = graph.all_pairs.find(p => 
+            (p.id1 === id1 && p.id2 === id2) || (p.id1 === id2 && p.id2 === id1)
+        ) || data;
+
+        const simUserTags = latestPair.user_tags || [];
+        const simTags = latestPair.tags || [];
+        const percentScore = (parseFloat(data.score) * 100).toFixed(1);
+
+        html += `<div class="context-menu-header">Similarity: ${percentScore}% Match</div>`;
+        
+        html += `
+        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${id1}', '${name1.replace(/'/g, "\\'")}', '${id2}', '${name2.replace(/'/g, "\\'")}', event)">
+            <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+            <span>Show Diff</span>
+        </div>`;
+
+        html += renderBookmarkIgnoreTagItems('similarity', simId, simTags, simUserTags);
+    } else if (type === 'file') {
+        const md5 = data.md5;
+        const fileName = data.file_name;
+        const fileId = data.fileId || `${data.collection}:file:${md5}`;
+
+        // Find file tags from nodes map
+        let fileUserTags = [];
+        let fileTags = [];
+        for (const node of graph.nodes_map.values()) {
+            if (node.md5 === md5) {
+                fileUserTags = node.file_user_tags || [];
+                fileTags = node.file_tags || [];
+                break;
+            }
+        }
+
+        html += `<div class="context-menu-header">File: ${fileName}</div>`;
+        html += renderBookmarkIgnoreTagItems('file', fileId, fileTags, fileUserTags);
     }
 
     menu.innerHTML = html;
     menu.style.display = 'block';
-    let x = e.clientX, y = e.clientY;
-    if (x + 350 > window.innerWidth) x -= 350;
-    const totalItems = linkIndices.length + nodeIndices.length;
-    if (y + (totalItems * 52 + 60) > window.innerHeight) y -= (totalItems * 52 + 60);
-    menu.style.left = x + 'px';
-    menu.style.top = y + 'px';
 
-    const onMenuClick = (me) => {
-        const compareItem = me.target.closest('.graph-compare-item');
-        const nodeItem = me.target.closest('.graph-node-item');
+    if (!isRefresh) {
+        // Position the menu
+        let x = e.clientX, y = e.clientY;
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
 
-        if (compareItem) {
-            const { id1, id2, f1, f2 } = compareItem.dataset;
-            openDiffDirectly(id1, f1, id2, f2, me);
-        } else if (nodeItem) {
-            const { id, name } = nodeItem.dataset;
-            showFunctionCodeById(id, name, '', me);
-        }
-        closeMenu();
-    };
-    const closeMenu = () => {
+        // Check boundary collisions
+        const rect = menu.getBoundingClientRect();
+        if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 10;
+        if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 10;
+
+        menu.style.left = Math.max(5, x) + 'px';
+        menu.style.top = Math.max(5, y) + 'px';
+    }
+
+    // Attach click outside listener to close the menu (using capture phase to intercept stopPropagation)
+    if (!isRefresh) {
+        const closeGlobal = (me) => {
+            if (!menu.contains(me.target)) {
+                window.closeGraphContextMenu();
+            }
+        };
+        // Delay attaching listener slightly to avoid catching the current click
+        setTimeout(() => {
+            document.addEventListener('mousedown', closeGlobal, { capture: true });
+            window._contextMenuCloseFn = closeGlobal;
+        }, 10);
+    }
+};
+
+window.closeGraphContextMenu = function() {
+    let menu = document.getElementById('graph-context-menu');
+    if (menu) {
         menu.style.display = 'none';
-        window.graphContextMenuOpen = false;
-        menu.removeEventListener('click', onMenuClick);
-        document.removeEventListener('mousedown', closeGlobal);
+    }
+    window.graphContextMenuOpen = false;
+    window.currentContextMenu = null;
+    if (window._contextMenuCloseFn) {
+        document.removeEventListener('mousedown', window._contextMenuCloseFn, { capture: true });
+        window._contextMenuCloseFn = null;
+    }
+};
+
+window.toggleContextMenuBookmark = async function(event, etype, eid) {
+    const userTags = getEntityUserTags(etype, eid);
+    const isBookmarked = userTags.includes('bookmark');
+    
+    if (isBookmarked) {
+        await removeTag(null, etype, eid, 'bookmark');
+    } else {
+        await confirmAddTag(etype, eid, 'bookmark');
+    }
+};
+
+window.toggleContextMenuIgnore = async function(event, etype, eid) {
+    const userTags = getEntityUserTags(etype, eid);
+    const isIgnored = userTags.includes('ignore');
+    
+    if (isIgnored) {
+        await removeTag(null, etype, eid, 'ignore');
+    } else {
+        await confirmAddTag(etype, eid, 'ignore');
+    }
+};
+
+window.toggleContextMenuTag = async function(event, etype, eid, tag) {
+    const userTags = getEntityUserTags(etype, eid);
+    const hasTag = userTags.includes(tag);
+    if (hasTag) {
+        await removeTag(null, etype, eid, tag);
+    } else {
+        await confirmAddTag(etype, eid, tag);
+    }
+};
+
+window.showInlineTagInput = function(event, etype, eid) {
+    const item = event.currentTarget;
+    const parent = item.parentElement;
+    
+    // Create an input wrapper
+    const wrapper = document.createElement('div');
+    wrapper.style.padding = '6px 12px';
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.gap = '4px';
+    wrapper.style.position = 'relative';
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Search or create...';
+    input.style.width = '100%';
+    input.style.background = '#222';
+    input.style.border = '1px solid rgba(255,255,255,0.2)';
+    input.style.color = '#fff';
+    input.style.padding = '4px 8px';
+    input.style.borderRadius = '4px';
+    input.style.fontSize = '0.75rem';
+    
+    wrapper.appendChild(input);
+    parent.replaceChild(wrapper, item);
+    input.focus();
+    
+    // Clicking inside the input block shouldn't close the parent context menu
+    wrapper.onmousedown = (e) => e.stopPropagation();
+    
+    input.onkeydown = async (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const tag = input.value.trim();
+            if (tag) {
+                await confirmAddTag(etype, eid, tag);
+            }
+        } else if (e.key === 'Escape') {
+            window.refreshContextMenuUI();
+        }
     };
-    const closeGlobal = (me) => { if (!menu.contains(me.target)) closeMenu(); };
-    setTimeout(() => {
-        menu.addEventListener('click', onMenuClick);
-        document.addEventListener('mousedown', closeGlobal);
-    }, 10);
+    
+    if (window.attachTagAutocomplete) {
+        window.attachTagAutocomplete(input, async (tag) => {
+            if (tag && tag.trim()) {
+                await confirmAddTag(etype, eid, tag.trim());
+            }
+        });
+    }
+};
+
+window.removeContextMenuTag = async function(event, etype, eid, tag) {
+    await removeTag(null, etype, eid, tag);
+};
+
+window.refreshContextMenuUI = function() {
+    if (!window.currentContextMenu) return;
+    const { e, type, data } = window.currentContextMenu;
+    window.showGraphContextMenu(e, type, data, true);
+};
+
+function getEntityUserTags(etype, eid) {
+    const graph = window.graphInstance;
+    if (!graph) return [];
+    
+    if (etype === 'function') {
+        const latest = graph.nodes_map.get(eid);
+        return latest ? (latest.user_tags || []) : [];
+    } else if (etype === 'file') {
+        const md5 = eid.split(':').pop();
+        for (const node of graph.nodes_map.values()) {
+            if (node.md5 === md5) {
+                return node.file_user_tags || [];
+            }
+        }
+    } else if (etype === 'similarity') {
+        let latest = graph.all_pairs.find(p => p.sid === eid);
+        if (!latest) {
+            const parts = eid.split('|');
+            if (parts.length >= 2) {
+                latest = graph.all_pairs.find(p => 
+                    (p.id1 === parts[0] && p.id2 === parts[1]) || 
+                    (p.id1 === parts[1] && p.id2 === parts[0])
+                );
+            }
+        }
+        return latest ? (latest.user_tags || []) : [];
+    }
+    return [];
+}
+
+function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
+    const isBookmarked = userTagsList.includes('bookmark');
+    const isIgnored = userTagsList.includes('ignore');
+
+    let html = '';
+    
+    // Bookmark and Ignore side-by-side buttons
+    html += `
+    <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
+        <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'rgba(102, 217, 239, 0.1)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+            Bookmark
+        </button>
+        <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'rgba(249, 38, 114, 0.1)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
+            Ignore
+        </button>
+    </div>`;
+
+    // Generate Tags nested submenu dropdown items
+    const allKnownTags = Object.keys(window.tagMetadata || {}).filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
+    
+    let submenuHtml = '';
+    allKnownTags.forEach(tag => {
+        const isActive = userTagsList.includes(tag);
+        const color = window.getTagMetadata ? window.getTagMetadata(tag).color : '#66d9ef';
+        const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
+        
+        submenuHtml += `
+        <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')">
+            <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
+            <span>${tag}</span>
+        </div>`;
+    });
+
+    if (submenuHtml) {
+        submenuHtml += `<div style="border-top: 1px solid rgba(255,255,255,0.05); margin: 4px 0;"></div>`;
+    }
+
+    submenuHtml += `
+    <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.showInlineTagInput(event, '${etype}', '${eid}')">
+        <i class="fa-solid fa-plus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+        <span>Add custom tag...</span>
+    </div>`;
+
+    // Tags submenu category row
+    html += `
+    <div class="context-menu-item tag-submenu-trigger" style="position: relative;">
+        <i class="fa-solid fa-tags" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+        <span>Tags</span>
+        <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+        
+        <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+            ${submenuHtml}
+        </div>
+    </div>`;
+
+    // Applied tags list preview
+    html += renderContextMenuTagsList(etype, eid, tagsList, userTagsList);
+
+    return html;
+}
+
+function renderContextMenuTagsList(etype, eid, tagsList, userTagsList) {
+    const allTags = [...(userTagsList || [])].filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
+    if (allTags.length === 0) return '';
+    
+    const tagsHtml = allTags.map(tag => {
+        let color = '#66d9ef';
+        if (window.getTagMetadata) {
+            color = window.getTagMetadata(tag).color;
+        }
+        const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, '${etype}', '${eid}', '${tag}')`;
+        return `
+        <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
+            ${tag}
+            <span onclick="${removeClick}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
+        </span>`;
+    }).join('');
+
+    return `
+    <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
+        ${tagsHtml}
+    </div>`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Attach graph context menu (global to ensure it's not swallowed by Bokeh canvas)
-    window.addEventListener('contextmenu', showGraphContextMenu);
 
     // Intercept wheel events for scrolling code/diff preview tooltips while hovering trigger elements
     // [REMOVED: Now handled in previews.js to prevent double-scroll]
@@ -2096,6 +2391,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     document.addEventListener('contextmenu', e => {
+        const menu = document.getElementById('graph-context-menu');
+        if (menu && menu.style.display === 'block' && !menu.contains(e.target)) {
+            window.closeGraphContextMenu();
+        }
         if (e.target.closest('.feature-highlight')) {
             showTokenContextMenu(e);
         }
@@ -2139,3 +2438,65 @@ window.createTagCard = createTagCard;
 window.toggleCardExclude = toggleCardExclude;
 window.handleTagAdd = handleTagAdd;
 window.triggerTagSearch = triggerTagSearch;
+
+// ---------------------------------------------------------------------------
+// Cross-window tag broadcast listener
+// Receives bsimvis_tag_update from child iframes, updates dashboard UI and
+// forwards to all other open managed windows (siblings).
+// ---------------------------------------------------------------------------
+window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || msg.type !== 'bsimvis_tag_update') return;
+
+    const { action, tag, targets } = msg;
+    if (!tag || !targets || !targets.length) return;
+
+    // 1. Update dashboard DOM (tables, tag editors)
+    targets.forEach(({ etype, eid }) => {
+        let editors = Array.from(document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`));
+
+        // Similarity fallback: eid may be id1|id2|algo format
+        if (editors.length === 0 && etype === 'similarity') {
+            const parts = eid.split('|');
+            if (parts.length >= 2) {
+                const algoPart = parts.length > 2 ? `[data-algo="${parts[2]}"]` : '';
+                const row = document.querySelector(`tr[data-id1="${parts[0]}"][data-id2="${parts[1]}"]${algoPart}`);
+                if (row) {
+                    const ed = row.querySelector('[data-etype="similarity"]');
+                    if (ed) editors.push(ed);
+                }
+            }
+        }
+
+        if (editors.length === 0) return;
+
+        if (action === 'add' && typeof updateUIForTagAdd === 'function') {
+            updateUIForTagAdd(editors, tag);
+        } else if (action === 'remove' && typeof updateUIForTagRemove === 'function') {
+            updateUIForTagRemove(editors, tag);
+        }
+    });
+
+    // 2. Refresh row colors and update sim graph with patched in-memory tag data
+    if (typeof refreshAllRowColors === 'function') refreshAllRowColors();
+    if (window.graphInstance && typeof window.graphInstance.applyTagUpdate === 'function') {
+        targets.forEach(({ etype, eid }) => {
+            window.graphInstance.applyTagUpdate(action, etype, eid, tag);
+        });
+    }
+    if (typeof window.refreshContextMenuUI === 'function') {
+        window.refreshContextMenuUI();
+    }
+
+    // 3. Forward to all other managed iframe windows (siblings of the sender)
+    if (window.windowManager) {
+        const senderFrame = event.source;
+        window.windowManager.windows.forEach(win => {
+            try {
+                if (win.iframe && win.iframe.contentWindow && win.iframe.contentWindow !== senderFrame) {
+                    win.iframe.contentWindow.postMessage(msg, '*');
+                }
+            } catch (e) { /* cross-origin, skip */ }
+        });
+    }
+});

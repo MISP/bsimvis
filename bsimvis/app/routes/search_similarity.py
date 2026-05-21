@@ -196,6 +196,9 @@ def similarity_search():
     file_name_filter = request.args.get("file_name", "").lower().strip()
     md5_filters = request.args.getlist("md5")
     cross_binary_val = request.args.get("cross_binary")
+    match_mode = request.args.get("match_mode", "any").lower().strip()
+    if match_mode not in ("any", "both"):
+        match_mode = "any"
 
     # Tag Exclusion filters (now lists)
     ex_tag_filters = request.args.getlist("exclude_tag")
@@ -273,6 +276,7 @@ def similarity_search():
             "q",
             "name",
             "file_name",
+            "match_mode",
         ]:
             v = request.args.get(f)
             if v:
@@ -524,12 +528,34 @@ def similarity_search():
                         else:
                             clean_targets = targets[:1000]
 
+                        # Only these 3 fields are truly native to the sim entity itself.
+                        # file_tags, func_tags, file_user_tags, func_user_tags etc. are
+                        # propagated FROM file/func and need the "both" entity check.
+                        sim_native_fields = {"tags", "user_tags", "is_cross_binary"}
+                        is_propagated = (l_name == "similarity" and field not in sim_native_fields)
+
+                        # func_index_prefix: tells Lua which Redis key prefix to use when
+                        # building the entity map (function IDs) for "both" mode.
+                        # - sim-level propagated: idx:func:{field}:  (e.g. idx:func:function_name:)
+                        # - binary-level:         idx:func:file_md5: (targets are md5 values)
+                        # - function-level:       func:              (targets are clean func IDs)
+                        if l_name == "similarity" and is_propagated:
+                            func_index_prefix = f"{col}:idx:func:{field}:"
+                        elif l_name == "binary":
+                            func_index_prefix = f"{col}:idx:func:file_md5:"
+                        elif l_name == "function":
+                            func_index_prefix = f"{col}:func:"
+                        else:
+                            func_index_prefix = ""
+
                         total_weight += weight
                         normalized_subs.append(
                             {
                                 "level": l_name,
                                 "targets": clean_targets[:1000],
                                 "field": field,
+                                "propagated": is_propagated,
+                                "func_index_prefix": func_index_prefix,
                             }
                         )
 
@@ -898,6 +924,7 @@ def similarity_search():
                     "max_score": max_score,
                     "sort_by": sort_by,
                     "sort_order": sort_order,
+                    "match_mode": match_mode,
                 }
 
                 # Exec Lua Search (Unified Involves Architecture)

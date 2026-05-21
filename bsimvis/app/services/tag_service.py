@@ -12,9 +12,10 @@ class TagService:
         """Resolves a frontend ID into a backend Redis key."""
         if entity_type in ["file", "function"]:
             # Standardized IDs: {col}:file:{id} or {col}:func:{id}
-            if entity_id.endswith(":meta"):
-                return entity_id
-            return f"{entity_id}:meta"
+            resolved_id = entity_id.replace(":function:", ":func:")
+            if resolved_id.endswith(":meta"):
+                return resolved_id
+            return f"{resolved_id}:meta"
 
         if entity_type == "similarity":
             # Similarity IDs might be passed as "id1|id2|algo" from the UI
@@ -23,9 +24,11 @@ class TagService:
                 if len(parts) == 3:
                     id1, id2, algo = parts
                     # Standard Canonical SID: {coll}:sim:{algo}:{c1}::{c2}
+                    id1_clean = id1.replace(":function:", ":func:")
+                    id2_clean = id2.replace(":function:", ":func:")
                     func_prefix = f"{collection}:func:"
-                    c1 = id1[len(func_prefix) :] if id1.startswith(func_prefix) else id1
-                    c2 = id2[len(func_prefix) :] if id2.startswith(func_prefix) else id2
+                    c1 = id1_clean[len(func_prefix) :] if id1_clean.startswith(func_prefix) else id1_clean
+                    c2 = id2_clean[len(func_prefix) :] if id2_clean.startswith(func_prefix) else id2_clean
 
                     if c1 > c2:
                         return f"{collection}:sim:{algo}:{c1}::{c2}"

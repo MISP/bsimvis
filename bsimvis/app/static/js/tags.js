@@ -1,4 +1,5 @@
 let tagMetadata = {};
+window.tagMetadata = tagMetadata;
 
 async function fetchTagMetadata(collection) {
     if (!collection) return;
@@ -6,6 +7,7 @@ async function fetchTagMetadata(collection) {
         const res = await fetch(`/api/tags/metadata?collection=${collection}`);
         if (res.ok) {
             tagMetadata = await res.json();
+            window.tagMetadata = tagMetadata;
         }
         // Ensure bookmark and ignore have a default look if not set on server
         if (!tagMetadata['bookmark']) {
@@ -14,6 +16,7 @@ async function fetchTagMetadata(collection) {
         if (!tagMetadata['ignore']) {
             tagMetadata['ignore'] = { color: '#f92672', priority: 900, count: 0 };
         }
+        window.tagMetadata = tagMetadata;
     } catch (err) {
         console.error("Failed to fetch tag metadata", err);
     }
@@ -932,31 +935,17 @@ async function confirmAddTag(etype, eid, tag, container) {
 
     refreshAllRowColors();
 
-    // Broadcast updates to dashboard parent if inside an iframe
-    if (window.parent && window.parent !== window && typeof window.parent.updateUIForTagAdd === 'function') {
-        targets.forEach(t => {
-            let parentEditors = Array.from(window.parent.document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`));
-
-            // Fallback for similarities because dashboard might use canonical sid while diff view uses id1|id2|algo
-            if (parentEditors.length === 0 && t.etype === 'similarity') {
-                const parts = t.eid.split('|');
-                if (parts.length >= 2) {
-                    const id1 = parts[0];
-                    const id2 = parts[1];
-                    const algoPart = parts.length > 2 ? `[data-algo="${parts[2]}"]` : '';
-                    const row = window.parent.document.querySelector(`tr[data-id1="${id1}"][data-id2="${id2}"]${algoPart}`);
-                    if (row) {
-                        const ed = row.querySelector('[data-etype="similarity"]');
-                        if (ed) parentEditors.push(ed);
-                    }
-                }
-            }
-
-            if (parentEditors.length > 0) window.parent.updateUIForTagAdd(parentEditors, tag);
-        });
-        if (typeof window.parent.refreshAllRowColors === 'function') {
-            window.parent.refreshAllRowColors();
-        }
+    // Broadcast tag update to parent dashboard (and siblings) via postMessage
+    const msg = {
+        type: 'bsimvis_tag_update',
+        action: 'add',
+        tag,
+        targets: targets.map(t => ({ etype: t.etype, eid: t.eid }))
+    };
+    if (window.parent && window.parent !== window) {
+        window.parent.postMessage(msg, '*');
+    } else {
+        window.postMessage(msg, '*');
     }
 
     return mainSuccess;
@@ -1059,30 +1048,17 @@ async function removeTag(event, etype, eid, tag) {
     }
     refreshAllRowColors();
 
-    // Broadcast updates to dashboard parent if inside an iframe
-    if (window.parent && window.parent !== window && typeof window.parent.updateUIForTagRemove === 'function') {
-        targets.forEach(t => {
-            let parentEditors = Array.from(window.parent.document.querySelectorAll(`[data-etype="${t.etype}"][data-eid="${t.eid}"]`));
-
-            if (parentEditors.length === 0 && t.etype === 'similarity') {
-                const parts = t.eid.split('|');
-                if (parts.length >= 2) {
-                    const id1 = parts[0];
-                    const id2 = parts[1];
-                    const algoPart = parts.length > 2 ? `[data-algo="${parts[2]}"]` : '';
-                    const row = window.parent.document.querySelector(`tr[data-id1="${id1}"][data-id2="${id2}"]${algoPart}`);
-                    if (row) {
-                        const ed = row.querySelector('[data-etype="similarity"]');
-                        if (ed) parentEditors.push(ed);
-                    }
-                }
-            }
-
-            if (parentEditors.length > 0) window.parent.updateUIForTagRemove(parentEditors, tag);
-        });
-        if (typeof window.parent.refreshAllRowColors === 'function') {
-            window.parent.refreshAllRowColors();
-        }
+    // Broadcast tag update to parent dashboard (and siblings) via postMessage
+    const msg = {
+        type: 'bsimvis_tag_update',
+        action: 'remove',
+        tag,
+        targets: targets.map(t => ({ etype: t.etype, eid: t.eid }))
+    };
+    if (window.parent && window.parent !== window) {
+        window.parent.postMessage(msg, '*');
+    } else {
+        window.postMessage(msg, '*');
     }
 }
 
@@ -1129,3 +1105,32 @@ async function loadFieldCardinalities(col, level, fieldMap) {
         console.error("Failed to load cardinalities", err);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cross-window tag sync: receive forwarded tag updates from the dashboard
+// (works in any iframe: code view, diff view, feature view, etc.)
+// ---------------------------------------------------------------------------
+window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (!msg || msg.type !== 'bsimvis_tag_update') return;
+
+    // Only apply in iframe pages (avoid double-applying in the dashboard itself,
+    // which already handles this in dashboard.js)
+    if (window.parent === window) return;
+
+    const { action, tag, targets } = msg;
+    if (!tag || !targets || !targets.length) return;
+
+    targets.forEach(({ etype, eid }) => {
+        const editors = Array.from(document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`));
+        if (editors.length === 0) return;
+
+        if (action === 'add' && typeof updateUIForTagAdd === 'function') {
+            updateUIForTagAdd(editors, tag);
+        } else if (action === 'remove' && typeof updateUIForTagRemove === 'function') {
+            updateUIForTagRemove(editors, tag);
+        }
+    });
+
+    if (typeof refreshAllRowColors === 'function') refreshAllRowColors();
+});

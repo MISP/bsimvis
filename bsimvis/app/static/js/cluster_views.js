@@ -1634,6 +1634,7 @@ class ClusterPacking {
 const clusterTooltipMockCache = new Map();
 
 function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features) {
+    if (window.setTrigger) window.setTrigger(event);
     if (!window.hierarchyInstance) {
         window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
     }
@@ -1647,7 +1648,8 @@ function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, a
 }
 
 function hideClusterTableTooltip() {
-    if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
+    if (window.hideAllTooltips) window.hideAllTooltips();
+    else if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
 }
 
 function moveClusterTableTooltip(e) {

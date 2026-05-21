@@ -9,9 +9,50 @@
     const previewCache = new Map();
     let previewTimer = null;
     let activePreviewId = null;
+    let lastTriggerElement = null;
 
     window.previewTips = window.previewTips || {};
     window.previewCollection = window.previewCollection || '';
+
+    // --- Global Tooltip Management ---
+    window.hideAllTooltips = function() {
+        if (previewTimer) clearTimeout(previewTimer);
+        
+        const tooltipIds = [
+            'code-preview-tooltip',
+            'token-tooltip',
+            'diff-preview-tooltip',
+            'hierarchy-tooltip',
+            'binary-preview-tooltip',
+            'tag-tooltip',
+            'tag-custom-context-menu',
+            'graph-context-menu'
+        ];
+
+        tooltipIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.style.display = 'none';
+                el.classList.remove('showing');
+            }
+        });
+
+        if (window.hierarchyInstance && typeof window.hierarchyInstance.hideTooltip === 'function') {
+            window.hierarchyInstance.hideTooltip();
+        }
+        
+        if (typeof window.closeGraphContextMenu === 'function') {
+            window.closeGraphContextMenu();
+        }
+
+        activePreviewId = null;
+        lastTriggerElement = null;
+    };
+
+    function setTrigger(e) {
+        if (!e) return;
+        lastTriggerElement = e.currentTarget || e.target;
+    }
 
     // --- DOM helpers: lazily create tooltip elements ---
     function ensureEl(id, styles) {
@@ -93,6 +134,13 @@
     // --- Code Preview ---
     window.moveCodePreview = function (e) {
         if (!e) return;
+
+        // Failsafe: if the triggering element is gone, hide all tooltips
+        if (lastTriggerElement && !lastTriggerElement.isConnected) {
+            window.hideAllTooltips();
+            return;
+        }
+
         const offset = 15;
         const els = [
             getCodeTooltip(),
@@ -128,10 +176,12 @@
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
         activePreviewId = null;
+        lastTriggerElement = null;
     };
 
     window.showCodePreview = async function (id, name, addr, bin, v_size, e, extra = 0, file_name = '') {
         if (!id) return;
+        setTrigger(e);
         const tooltip = getCodeTooltip();
         if (id === activePreviewId) {
             window.moveCodePreview(e);
@@ -250,7 +300,12 @@
             return;
         }
         const rect = iframe.getBoundingClientRect();
-        const fakeEvent = { clientX: e.clientX + rect.left, clientY: e.clientY + rect.top };
+        const fakeEvent = { 
+            clientX: e.clientX + rect.left, 
+            clientY: e.clientY + rect.top,
+            target: e.target,
+            currentTarget: e.currentTarget
+        };
         window.showCodePreview(id, name, null, null, null, fakeEvent);
     };
 
@@ -261,7 +316,12 @@
             return;
         }
         const rect = iframe.getBoundingClientRect();
-        const fakeEvent = { clientX: e.clientX + rect.left, clientY: e.clientY + rect.top };
+        const fakeEvent = { 
+            clientX: e.clientX + rect.left, 
+            clientY: e.clientY + rect.top,
+            target: e.target,
+            currentTarget: e.currentTarget
+        };
         window.moveCodePreview(fakeEvent);
     };
 
@@ -272,6 +332,7 @@
     window.showTokenTooltip = function (e) {
         const token = e.target.closest('.feature-highlight');
         if (!token) return;
+        setTrigger(e);
 
         const tooltipEl = getTokenTooltip();
         const idx = token.dataset.idx;
@@ -311,6 +372,7 @@
     window.hideTokenTooltip = function () {
         const el = document.getElementById('token-tooltip');
         if (el) el.style.display = 'none';
+        lastTriggerElement = null;
     };
 
     // --- Wheel scroll intercept for preview tooltips ---
@@ -397,17 +459,32 @@
 
     // Failsafe: hide tooltips if the window loses focus or mouse leaves the document
     window.addEventListener('blur', () => {
-        window.hideCodePreview();
-        window.hideBinaryPreview();
+        window.hideAllTooltips();
     });
     document.addEventListener('mouseleave', (e) => {
         if (!e.relatedTarget) {
-            window.hideCodePreview();
-            window.hideBinaryPreview();
+            window.hideAllTooltips();
         }
     });
 
+    // Global MutationObserver to catch element deletions
+    const observer = new MutationObserver((mutations) => {
+        if (!lastTriggerElement) return;
+        for (const mutation of mutations) {
+            if (mutation.removedNodes.length > 0) {
+                for (const node of mutation.removedNodes) {
+                    if (node === lastTriggerElement || (node.contains && node.contains(lastTriggerElement))) {
+                        window.hideAllTooltips();
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
     window.showBinaryPreview = function (md5, fileName, count, language, tags, e, fileTags = [], fileUserTags = []) {
+        setTrigger(e);
         const tooltip = getBinaryTooltip();
         
         // Build tags html
@@ -471,6 +548,7 @@
         const tooltip = getBinaryTooltip();
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+        lastTriggerElement = null;
     };
 
 })();

@@ -226,12 +226,19 @@ function hideDiffPreview(e) {
         window.parent.hideDiffPreview(getParentEvent(e));
         return;
     }
-    const tooltip = document.getElementById('diff-preview-tooltip');
-    if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
-    if (tooltip) {
-        tooltip.style.display = 'none';
-        tooltip.classList.remove('showing');
-        activeDiffKey = null;
+    if (window.hideAllTooltips) {
+        // We only want to hide if we aren't moving into the tooltip itself
+        const tooltip = document.getElementById('diff-preview-tooltip');
+        if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
+        window.hideAllTooltips();
+    } else {
+        const tooltip = document.getElementById('diff-preview-tooltip');
+        if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
+        if (tooltip) {
+            tooltip.style.display = 'none';
+            tooltip.classList.remove('showing');
+            activeDiffKey = null;
+        }
     }
 }
 
@@ -259,6 +266,7 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
         window.parent.showDiffPreview(id1, name1, id2, name2, score, getParentEvent(e), extra);
         return;
     }
+    if (window.setTrigger) window.setTrigger(e);
     const cacheKey = `${id1}::${id2}`;
     const tooltip = getDiffPreviewTooltip();
     

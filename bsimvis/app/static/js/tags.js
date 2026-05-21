@@ -131,6 +131,7 @@ function updateTagUIElements(tag, color) {
 
 // Tag Tooltip
 window.showTooltip = (e, tag, coll) => {
+    if (window.setTrigger) window.setTrigger(e);
     let el = document.getElementById('tag-tooltip');
     if (!el) {
         el = document.createElement('div');
@@ -174,7 +175,6 @@ window.showTooltip = (e, tag, coll) => {
         el.style.top = y + 'px';
     };
     moveTooltip(e);
-    e.target.onmousemove = moveTooltip;
 };
 
 window.getTagMetadata = (tag) => {
@@ -188,8 +188,11 @@ window.getTagMetadata = (tag) => {
 };
 
 window.hideTooltip = () => {
-    const el = document.getElementById('tag-tooltip');
-    if (el) el.style.display = 'none';
+    if (window.hideAllTooltips) window.hideAllTooltips();
+    else {
+        const el = document.getElementById('tag-tooltip');
+        if (el) el.style.display = 'none';
+    }
 };
 
 window.handleTagContextMenu = (e, tag) => {

@@ -1714,19 +1714,23 @@ function applySimViewDefaults(hashPath, queryString) {
 
 window.addEventListener('hashchange', (e) => {
     // Ensure all tooltips are hidden when navigating/switching views
-    [
-        document.getElementById('code-preview-tooltip'),
-        document.getElementById('token-tooltip'),
-        document.getElementById('diff-preview-tooltip'),
-        document.getElementById('hierarchy-tooltip'),
-        document.getElementById('binary-preview-tooltip')
-    ].forEach(el => {
-        if (el) {
-            el.style.display = 'none';
-            el.classList.remove('showing');
-        }
-    });
-    if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
+    if (window.hideAllTooltips) {
+        window.hideAllTooltips();
+    } else {
+        [
+            document.getElementById('code-preview-tooltip'),
+            document.getElementById('token-tooltip'),
+            document.getElementById('diff-preview-tooltip'),
+            document.getElementById('hierarchy-tooltip'),
+            document.getElementById('binary-preview-tooltip')
+        ].forEach(el => {
+            if (el) {
+                el.style.display = 'none';
+                el.classList.remove('showing');
+            }
+        });
+        if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
+    }
 
     const [newHash] = (window.location.hash || '#collections').split('?');
     const [oldHash] = (e.oldURL ? new URL(e.oldURL).hash : '').split('?');
@@ -2016,6 +2020,7 @@ function switchClusterView(mode) {
 }
 
 function showTokenContextMenu(e) {
+    if (window.setTrigger) window.setTrigger(e);
     const token = e.target.closest('.feature-highlight');
     if (!token) return;
     e.preventDefault();
@@ -2098,6 +2103,7 @@ function showTokenContextMenu(e) {
 }
 
 window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
+    if (window.setTrigger) window.setTrigger(e);
     const graph = window.graphInstance;
     if (!graph) return;
 

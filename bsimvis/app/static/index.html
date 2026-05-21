@@ -78,15 +78,11 @@
                 </div>
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-                    <button onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
-                        <i class="fa-solid fa-gear"></i>
-                    </button>
+
                     <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
                         <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
                     </button>
-                    <button onclick="resetColumnWidths()" class="top-action-btn" title="Reset Column Widths">
-                        <i class="fa-solid fa-arrows-left-right"></i> Reset Cols
-                    </button>
+
                     <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
                         <i class="fa-solid fa-trash-can"></i> Clear
                     </button>
@@ -97,6 +93,9 @@
                     <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
                         title="Toggle Search Area">
                         <i class="fa-solid fa-magnifying-glass"></i> Search
+                    </button>
+                    <button onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
+                        <i class="fa-solid fa-gear"></i>
                     </button>
                 </div>
             </div>
@@ -116,11 +115,19 @@
                 <label style="display:block; font-size:0.8rem; margin-bottom:5px;">Min Cohesion Threshold</label>
                 <input type="range" id="param-cohesion" min="0" max="1" step="0.05" value="0.5" style="width:100%"
                     onchange="updateUIParams()">
-                <span id="val-cohesion" style="font-size:0.75rem; color:var(--dim)">0.50</span>
+                <div style="display:flex; justify-content:space-between;">
+                    <span id="val-cohesion" style="font-size:0.75rem; color:var(--dim)">0.50</span>
+                </div>
             </div>
-            <div style="display:flex; align-items:center; gap:10px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
                 <input type="checkbox" id="param-color-tags" onchange="updateUIParams()">
                 <label style="font-size:0.8rem;">Color by Tags</label>
+            </div>
+            
+            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                <button onclick="resetColumnWidths()" class="settings-panel-btn">
+                    <i class="fa-solid fa-arrows-left-right"></i> Reset Column Widths
+                </button>
             </div>
         </div>
 
@@ -141,13 +148,18 @@
                         <div id="graph-stream-info"></div>
                     </div>
                 </div>
-                <div class="graph-settings" style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 150px;">
+                <div class="graph-settings"
+                    style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 150px;">
                     <div class="graph-setting-item" style="align-items: center;">
                         <label style="margin-bottom: 5px;">Profile</label>
-                        <div class="view-toggle" id="profile-toggle" style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
-                            <button class="view-btn active" onclick="window.graphInstance.applyProfile('default')" data-profile="default" title="Default View">Def</button>
-                            <button class="view-btn" onclick="window.graphInstance.applyProfile('func_tags')" data-profile="func_tags" title="Func Tags View">Func</button>
-                            <button class="view-btn" onclick="window.graphInstance.applyProfile('sim_tags')" data-profile="sim_tags" title="Sim Tags View">Sim</button>
+                        <div class="view-toggle" id="profile-toggle"
+                            style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
+                            <button class="view-btn active" onclick="window.graphInstance.applyProfile('default')"
+                                data-profile="default" title="Default View">Def</button>
+                            <button class="view-btn" onclick="window.graphInstance.applyProfile('func_tags')"
+                                data-profile="func_tags" title="Func Tags View">Func</button>
+                            <button class="view-btn" onclick="window.graphInstance.applyProfile('sim_tags')"
+                                data-profile="sim_tags" title="Sim Tags View">Sim</button>
                         </div>
                     </div>
                     <div class="graph-setting-item">
@@ -161,7 +173,9 @@
                         </select>
                     </div>
 
-                    <div id="graph-more-options-toggle" style="cursor:pointer; font-size:0.75rem; color:var(--accent); text-align:center; padding-top:5px; border-top:1px solid var(--border);" onclick="const extra = document.getElementById('graph-extra-settings'); extra.style.display = extra.style.display === 'none' ? 'flex' : 'none'; this.innerText = extra.style.display === 'none' ? 'More options ▾' : 'Fewer options ▴';">
+                    <div id="graph-more-options-toggle"
+                        style="cursor:pointer; font-size:0.75rem; color:var(--accent); text-align:center; padding-top:5px; border-top:1px solid var(--border);"
+                        onclick="const extra = document.getElementById('graph-extra-settings'); extra.style.display = extra.style.display === 'none' ? 'flex' : 'none'; this.innerText = extra.style.display === 'none' ? 'More options ▾' : 'Fewer options ▴';">
                         More options ▾
                     </div>
 
@@ -192,14 +206,17 @@
                         </div>
                         <div class="graph-setting-item">
                             <label>Tension</label>
-                            <input type="range" id="graph-bundle-tension" min="0" max="1" step="0.05" value="0.85" style="width:100%" oninput="window.graphInstance.refreshColors()">
+                            <input type="range" id="graph-bundle-tension" min="0" max="1" step="0.05" value="0.85"
+                                style="width:100%" oninput="window.graphInstance.refreshColors()">
                         </div>
                         <div class="graph-setting-item">
                             <label>Link Width</label>
-                            <input type="range" id="graph-link-width" min="0.1" max="5" step="0.1" value="1.0" style="width:100%" oninput="window.graphInstance.refreshColors()">
+                            <input type="range" id="graph-link-width" min="0.1" max="5" step="0.1" value="1.0"
+                                style="width:100%" oninput="window.graphInstance.refreshColors()">
                         </div>
                         <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
-                            <input type="checkbox" id="graph-scale-width" checked onchange="window.graphInstance.refreshColors()">
+                            <input type="checkbox" id="graph-scale-width" checked
+                                onchange="window.graphInstance.refreshColors()">
                             <label style="margin-bottom:0">Scale by Score</label>
                         </div>
                     </div>

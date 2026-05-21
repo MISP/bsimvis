@@ -309,7 +309,7 @@
             UIParams = window.parent.UIParams;
         } else {
             UIParams = {
-                cohesionThreshold: parseFloat(localStorage.getItem('cohesionThreshold')) || 0.5,
+                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
                 colorByTag: localStorage.getItem('colorByTag') === 'true'
             };
         }

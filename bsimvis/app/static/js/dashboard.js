@@ -196,7 +196,14 @@ const routes = {
     '#files': {
         title: 'Files',
         api: '/api/file/search',
-        headers: ['Filename', 'MD5 / Arch', 'Entry Date', 'Actions'],
+        headers: [
+            { label: 'Filename', width: '25%' },
+            { label: 'MD5 / Arch', width: '15%' },
+            { label: 'Batch UUID', width: '15%' },
+            { label: 'Funcs', width: '15%', sort: 'function_count' },
+            { label: 'Entry Date', width: '12%', sort: 'entry_date' },
+            { label: 'Tags', width: '18%' }
+        ],
         renderer: renderFiles
     },
     '#functions': {
@@ -270,7 +277,7 @@ function clearFilters() {
     const newParams = new URLSearchParams();
 
     // Preserved context keys
-    const preserved = ['collection', 'batch_uuid', 'file_md5', 'algo', 'view', 'cluster_id', 'cluster_uuid'];
+    const preserved = ['collection', 'algo', 'view'];
     preserved.forEach(k => {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
@@ -306,8 +313,8 @@ async function refreshData(appendArg = false, force = false) {
     const params = new URLSearchParams(queryString);
     const collection = params.get('collection') || 'main';
 
-    // Ensure tag metadata is loaded for views that use it (functions and similarities)
-    if (hashPath === '#functions' || hashPath === '#function-similarity') {
+    // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
+    if (hashPath === '#functions' || hashPath === '#function-similarity' || hashPath === '#files') {
         await fetchTagMetadata(collection);
     }
 
@@ -517,48 +524,64 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
 
-    if (path === '#function-similarity' || path === '#functions') {
-        settingsEl.style.display = 'flex';
-        const viewMode = params.get('view') || 'table';
-        const currentLimit = params.get('pool_limit') || '1000000';
-        const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters') {
+        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : 'applyClusterSearch'));
 
         let settingsHtml = '';
-        if (path === '#function-similarity') {
+        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters') {
+            settingsEl.style.display = 'flex';
+            const viewMode = params.get('view') || 'table';
+            const poolLimit = params.get('pool_limit') || '1000000';
+            const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+
+            if (path === '#function-similarity') {
+                settingsHtml += `
+                    <div class="view-toggle">
+                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
+                        <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
+                    </div>`;
+            } else if (path === '#clusters') {
+                settingsHtml += `
+                    <div class="view-toggle">
+                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
+                        <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
+                        <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
+                    </div>`;
+            }
+
+            if (path === '#function-similarity' || path === '#functions') {
+                settingsHtml += `
+                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
+                    <div style="position:relative; display:inline-flex; align-items:center;">
+                        <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
+                            title="Max candidates to score / filter" 
+                            style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                            onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
+                        <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
+                    </div>`;
+            }
+
             settingsHtml += `
-                <div class="view-toggle">
-                    <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
-                    <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
-                </div>`;
+                <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
+                <div style="position:relative; display:inline-flex; align-items:center;">
+                    <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
+                        title="Max results to display (Output Limit)" 
+                        style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                        onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
+                    <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
+                </div>
+            `;
+            settingsEl.innerHTML = settingsHtml;
+        } else {
+            settingsEl.style.display = 'none';
         }
-
-        const applyFn = path === '#function-similarity' ? 'applySimSearch' : 'applyAdvancedFuncSearch';
-
-        settingsHtml += `
-            <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
-            <div style="position:relative; display:inline-flex; align-items:center;">
-                <input type="number" id="sim-pool-limit" value="${currentLimit}" step="100000" min="1000" max="1000000" 
-                    title="Max candidates to score / filter" 
-                    style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                    onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
-            </div>
-            <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
-            <div style="position:relative; display:inline-flex; align-items:center;">
-                <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
-                    title="Max results to display (Output Limit)" 
-                    style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                    onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
-            </div>
-        `;
-        settingsEl.innerHTML = settingsHtml;
 
         const tbody = document.getElementById('table-body');
         const pag = document.getElementById('pagination-container');
         const gview = document.getElementById('graph-view-container');
 
         if (path === '#function-similarity') {
+            const viewMode = params.get('view') || 'table';
             if (viewMode === 'graph') {
                 tbody.style.display = 'none';
                 pag.style.display = 'none';
@@ -571,137 +594,174 @@ function updateUI(path, params, route) {
                 gview.style.display = 'none';
             }
         } else {
-            // Functions view
             tbody.style.display = 'table-row-group';
             pag.style.display = 'block';
-            gview.style.display = 'none';
+            if (gview) gview.style.display = 'none';
         }
 
         const p = new URLSearchParams(params);
-        headHtml += `<tr class="filter-row">`;
-        
-        if (path === '#function-similarity') {
-            headHtml += `
-                <th></th>
-                <th style="vertical-align: middle;">
-                    <div style="display:flex; align-items:center; gap:2px;">
-                        <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                        <span class="dim" style="font-size:0.6rem">-</span>
-                        <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                    </div>
-                    <div class="tag-filter-container" id="tag-container-sim">
-                        <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })">
-                    </div>
-                </th>`;
-        }
 
-        // Common Fields (Function Name, Namespace, Return Type)
-        const nameVal = path === '#function-similarity' ? p.get('name') : p.get('function_name');
-        headHtml += `
-            <th>
-                <div style="display:flex; flex-direction:column; gap:4px;">
-                    <input type="text" id="flt-func-name" placeholder="Name..." value="${nameVal || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    <div style="display:flex; gap:2px;">
-                        <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                        <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${p.get('return_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                    </div>
-                </div>
-            </th>`;
+        if (path === '#files' || path === '#functions' || path === '#function-similarity') {
+            headHtml += `<tr class="filter-row">`;
 
-        // Address
-        const addrVal = path === '#function-similarity' ? p.get('address') : p.get('entrypoint_address');
-        headHtml += `
-            <th>
-                <input type="text" id="flt-func-address" placeholder="Addr..." value="${addrVal || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-            </th>`;
+            if (path === '#files') {
+                headHtml += `
+                    <th>
+                        <input type="text" id="flt-file-name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <input type="text" id="flt-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-file-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th>
+                        <input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${p.get('batch_uuid') || ''}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    </th>
+                    <th>
+                        <div style="display:flex; align-items:center; gap:2px;">
+                            <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${p.get('min_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            <span class="dim" style="font-size:0.6rem">-</span>
+                            <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${p.get('max_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${p.get('min_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${p.get('max_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th style="position:relative">
+                        <div class="tag-filter-container" id="tag-container-file">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
+                        </div>
+                    </th>`;
+            } else if (path === '#function-similarity' || path === '#functions') {
+                if (path === '#function-similarity') {
+                    headHtml += `
+                        <th></th>
+                        <th style="vertical-align: middle;">
+                            <div style="display:flex; align-items:center; gap:2px;">
+                                <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                <span class="dim" style="font-size:0.6rem">-</span>
+                                <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                            </div>
+                            <div class="tag-filter-container" id="tag-container-sim">
+                                <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })">
+                            </div>
+                        </th>`;
+                }
 
-        // Tags, Clusters, Features, File Info
-        headHtml += `
-            <th style="position:relative">
-                <div class="tag-filter-container" id="tag-container-func">
-                    <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })">
-                </div>
-            </th>
-            <th>
-                <div style="display:flex; flex-direction:column; gap:2px;">
-                    <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                    <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                </div>
-            </th>
-            <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-            <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-            <th style="position:relative">
-                <div class="tag-filter-container" id="tag-container-file">
-                    <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
-                </div>
-            </th>
-            <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${p.get('language_id') || p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+                // Common Fields (Function Name, Namespace, Return Type)
+                const nameVal = path === '#function-similarity' ? p.get('name') : p.get('function_name');
+                headHtml += `
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <input type="text" id="flt-func-name" placeholder="Name..." value="${nameVal || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <div style="display:flex; gap:2px;">
+                                <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${p.get('return_type') || p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                            </div>
+                        </div>
+                    </th>`;
 
-        if (path === '#function-similarity') {
-            headHtml += `
-                <th style="font-size: 0.65rem;">
-                    <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
-                        <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
-                        <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                        <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
-                    </select>
-                    <div style="margin-top:4px;">
-                        <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
-                            <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
-                            <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
-                            <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
-                        </select>
-                        <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
-                            <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
-                            <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
-                        </select>
-                    </div>
-                </th>`;
-        } else {
-            headHtml += `<th></th><th></th>`;
-        }
-        
-        headHtml += `</tr>`;
-        thead.innerHTML = headHtml;
+                // Address
+                const addrVal = path === '#function-similarity' ? p.get('address') : p.get('entrypoint_address');
+                headHtml += `
+                    <th>
+                        <input type="text" id="flt-func-address" placeholder="Addr..." value="${addrVal || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    </th>`;
 
-        // Re-inject tags
-        const tagFields = [
-            { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
-            { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
-            { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
-        ];
-        tagFields.forEach(col => {
-            col.fields.forEach(f => {
-                const values = p.getAll(f);
-                const isEx = f.startsWith('exclude_');
-                const baseType = isEx ? f.substring(8) : f;
-                values.forEach(v => {
-                    if (v) createTagCard(col.key, baseType, v, isEx);
+                // Tags, Clusters, Features, File Info
+                headHtml += `
+                    <th style="position:relative">
+                        <div class="tag-filter-container" id="tag-container-func">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })">
+                        </div>
+                    </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                        </div>
+                    </th>
+                    <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+                    <th style="position:relative">
+                        <div class="tag-filter-container" id="tag-container-file">
+                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
+                        </div>
+                    </th>
+                    <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${p.get('language_id') || p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+
+                if (path === '#function-similarity') {
+                    headHtml += `
+                        <th style="font-size: 0.65rem;">
+                            <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                                <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
+                                <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                                <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
+                            </select>
+                            <div style="margin-top:4px;">
+                                <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                                    <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
+                                    <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
+                                    <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
+                                </select>
+                                <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
+                                    <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
+                                    <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
+                                </select>
+                            </div>
+                        </th>`;
+                } else {
+                    headHtml += `<th></th><th></th>`;
+                }
+            }
+
+            headHtml += `</tr>`;
+            thead.innerHTML = headHtml;
+
+            // Re-inject tags
+            const tagFields = [
+                { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
+                { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
+                { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
+            ];
+            tagFields.forEach(col => {
+                col.fields.forEach(f => {
+                    const values = p.getAll(f);
+                    const isEx = f.startsWith('exclude_');
+                    const baseType = isEx ? f.substring(8) : f;
+                    values.forEach(v => {
+                        if (v) createTagCard(col.key, baseType, v, isEx);
+                    });
                 });
             });
-        });
 
-        loadFieldCardinalities(col, 'func', {
-            'function_name': 'flt-func-name',
-            'file_name': 'flt-func-file_name',
-            'file_md5': 'flt-func-md5',
-            'return_type': 'flt-func-ret_type',
-            'language_id': 'flt-func-language',
-            'namespace': 'flt-func-namespace'
-        });
-    } else if (path === '#clusters') {
+            if (path === '#files') {
+                loadFieldCardinalities(col, 'file', {
+                    'file_name': 'flt-file-name',
+                    'file_md5': 'flt-file-md5',
+                    'language_id': 'flt-file-language',
+                    'batch_uuid': 'flt-file-batch'
+                });
+            } else {
+                loadFieldCardinalities(col, 'func', {
+                    'function_name': 'flt-func-name',
+                    'file_name': 'flt-func-file_name',
+                    'file_md5': 'flt-func-md5',
+                    'return_type': 'flt-func-ret_type',
+                    'language_id': 'flt-func-language',
+                    'namespace': 'flt-func-namespace'
+                });
+            }
+        }
+    }
+    if (path === '#clusters') {
         const p = new URLSearchParams(params);
         if (dataTable) dataTable.style.tableLayout = 'fixed';
-        settingsEl.style.display = 'flex';
-        const viewMode = params.get('view') || 'table';
-        settingsEl.innerHTML = `
-            <div class="view-toggle">
-                <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
-                <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
-                <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
-            </div>
-        `;
         headHtml += `<tr class="filter-row">
             <th>
                 <div style="display:flex; flex-direction:column; gap:2px;">
@@ -760,11 +820,12 @@ function updateUI(path, params, route) {
 
     // Search Bar for Files
     const searchArea = document.getElementById('search-area');
-    if (path === '#files' && !document.getElementById('file-search')) {
+    if (path === '#files') {
+        const p = new URLSearchParams(params);
         searchArea.innerHTML = `<div class="filter-bar">
             <div class="search-input-wrapper">
-                <input type="text" id="file-search" placeholder="Filter by filename..." autofocus onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
-                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySearch()" title="Search"></i>
+                <input type="text" id="file-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)">
+                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i>
             </div>
         </div>`;
     } else if (path === '#file-call-graph') {
@@ -867,7 +928,13 @@ function toggleSort(key) {
     const currentOrder = params.get('sort_order') || 'desc';
 
     if (currentSort === key) {
-        params.set('sort_order', currentOrder === 'desc' ? 'asc' : 'desc');
+        if (currentOrder === 'desc') {
+            params.set('sort_order', 'asc');
+        } else {
+            // Third click: remove sorting
+            params.delete('sort_by');
+            params.delete('sort_order');
+        }
     } else {
         params.set('sort_by', key);
         params.set('sort_order', 'desc');
@@ -1043,9 +1110,62 @@ function applySimSearch() {
     window.location.hash = `${hashPath}?${params.toString()}`;
 }
 
+function applyAdvancedFileSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+
+    const globalQ = document.getElementById('file-search-input')?.value;
+    params.set('q', globalQ || '');
+
+    const nameFlt = document.getElementById('flt-file-name')?.value;
+    const md5Flt = document.getElementById('flt-file-md5')?.value;
+    const langFlt = document.getElementById('flt-file-language')?.value;
+    const batchFlt = document.getElementById('flt-file-batch')?.value;
+    const minEntryFlt = document.getElementById('flt-file-min-date')?.value;
+    const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
+    const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
+    const maxFuncsFlt = document.getElementById('flt-file-max-funcs')?.value;
+
+    if (nameFlt) params.set('file_name', nameFlt); else params.delete('file_name');
+    if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
+    if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
+    if (batchFlt) params.set('batch_uuid', batchFlt); else params.delete('batch_uuid');
+    if (minEntryFlt) params.set('min_entry_date', minEntryFlt); else params.delete('min_entry_date');
+    if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
+    if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');
+    if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
+
+    const allPossibleTagKeys = [
+        'tag', 'static_tag', 'user_tag', 'file_tag', 'file_static_tag', 'file_user_tag',
+        'exclude_tag', 'exclude_static_tag', 'exclude_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'
+    ];
+    allPossibleTagKeys.forEach(k => params.delete(k));
+
+    const container = document.getElementById(`tag-container-file`);
+    if (container) {
+        const cards = container.querySelectorAll('.tag-filter-card');
+        cards.forEach(card => {
+            const type = card.dataset.type;
+            const val = card.dataset.value;
+            const isEx = card.dataset.exclude === 'true';
+            const key = (isEx ? 'exclude_' : '') + type;
+            params.append(key, val);
+        });
+    }
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    window.location.hash = `${hashPath}?${params.toString()}`;
+}
+
 function triggerTagSearch() {
     if (window.location.hash.startsWith('#function-similarity')) debouncedSearch(applySimSearch);
     else if (window.location.hash.startsWith('#functions')) debouncedSearch(applyAdvancedFuncSearch);
+    else if (window.location.hash.startsWith('#files')) debouncedSearch(applyAdvancedFileSearch);
 }
 
 function createTagCard(columnId, type, value, isExclude = false) {
@@ -1153,29 +1273,49 @@ function renderBatches(data) {
 function renderFiles(data) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const col = params.get('collection');
-    return data.map(f => `
-        <tr>
-            <td>
+    return data.map(f => {
+        const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
+        const tags = f['tags'] || [];
+        const user_tags = f['user_tags'] || [];
+        const rowStyle = getRowTagColor(tags, user_tags);
+        const batchUuid = f['batch_uuid'] || '---';
+        const funcCount = f['function_count'] !== undefined ? f['function_count'] : 0;
+
+        return `
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${fileId}">
+            <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <b style="color:var(--accent)">${f['file_name']}</b>
-                    <button class="btn-copy" title="Copy File ID: ${f['file_id']}" onclick="copyToClipboard('${f['file_id']}', this)">
+                    <button class="btn-copy" title="Copy File ID: ${fileId}" onclick="copyToClipboard('${fileId}', this)">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
             </td>
-            <td>
-                <div class="mono" style="font-size:0.7rem">${f['file_md5']}</div>
-                <div class="dim">${f['language_id']}</div>
+            <td class="sim-cell">
+                <div class="mono" style="font-size:0.7rem"># ${f['file_md5']}</div>
+                <div class="dim" style="font-size:0.65rem">${f['language_id']}</div>
             </td>
-            <td class="dim">${formatDate(f['entry_date'])}</td>
-            <td>
-                <div style="display:flex; gap:10px;">
-                    <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}">Functions →</a>
-                    <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" style="color:var(--accent)">Call Graph 🕸️</a>
+            <td class="sim-cell mono dim" style="font-size:0.7rem" title="${batchUuid}">
+                ${batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid}
+            </td>
+            <td class="sim-cell">
+                <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
+                    <span style="font-weight: bold; color: var(--text); min-width: 20px; text-align: right;">${funcCount}</span>
+                    <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}" title="Functions" style="padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                        <i class="fa-solid fa-code" style="font-size:0.65rem;"></i>
+                    </a>
+                    <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" title="Call Graph" style="color: var(--accent); padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
+                        <i class="fa-solid fa-network-wired" style="font-size:0.65rem;"></i>
+                    </a>
                 </div>
             </td>
+            <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
+            <td>
+                ${renderTagEditor('file', fileId, tags, user_tags)}
+            </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function renderFunctions(data) {
@@ -1574,32 +1714,6 @@ function launchExternal(type) {
 
 // Apply "NOT ignore" defaults only when first entering the Sim view
 function applySimViewDefaults(hashPath, queryString) {
-    if (hashPath !== '#function-similarity') return false;
-    const pC = new URLSearchParams(queryString);
-    let changed = false;
-
-    const hasFunc = pC.has('func_tag') || pC.has('exclude_func_tag') ||
-        pC.has('func_static_tag') || pC.has('exclude_func_static_tag') ||
-        pC.has('func_user_tag') || pC.has('exclude_func_user_tag') ||
-        pC.has('tag') || pC.has('exclude_tag') ||
-        pC.has('static_tag') || pC.has('exclude_static_tag') ||
-        pC.has('user_tag') || pC.has('exclude_user_tag');
-    if (!hasFunc) { pC.set('exclude_func_tag', 'ignore'); changed = true; }
-
-    const hasSim = pC.has('sim_tag') || pC.has('exclude_sim_tag') ||
-        pC.has('sim_static_tag') || pC.has('exclude_sim_static_tag') ||
-        pC.has('sim_user_tag') || pC.has('exclude_sim_user_tag');
-    if (!hasSim) { pC.set('exclude_sim_tag', 'ignore'); changed = true; }
-
-    const hasFile = pC.has('file_tag') || pC.has('exclude_file_tag') ||
-        pC.has('file_static_tag') || pC.has('exclude_file_static_tag') ||
-        pC.has('file_user_tag') || pC.has('exclude_file_user_tag');
-    if (!hasFile) { pC.set('exclude_file_tag', 'ignore'); changed = true; }
-
-    if (changed) {
-        window.location.hash = hashPath + '?' + pC.toString();
-        return true; // redirected, don't call refreshData yet
-    }
     return false;
 }
 
@@ -1630,8 +1744,8 @@ window.addEventListener('hashchange', (e) => {
 });
 
 // UI Settings
-let UIParams = {
-    cohesionThreshold: parseFloat(localStorage.getItem('cohesionThreshold')) || 0.5,
+const UIParams = {
+    cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
     colorByTag: localStorage.getItem('colorByTag') === 'true'
 };
 
@@ -1862,6 +1976,9 @@ function applyClusterSearch() {
     if (ccount) params.set('min_count', ccount); else params.delete('min_count');
     if (cfeat) params.set('min_features', cfeat); else params.delete('min_features');
     if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
 
     currentOffset = 0;
     isEndOfResults = false;

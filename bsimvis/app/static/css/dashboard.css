@@ -1177,6 +1177,31 @@ body.sidebar-collapsed nav a#nav-collections {
     background: rgba(255, 77, 141, 0.1);
 }
 
+.settings-panel-btn {
+    width: 100%;
+    justify-content: center;
+    gap: 8px;
+    background: var(--border) !important;
+    color: var(--text) !important;
+    padding: 10px !important;
+    height: auto !important;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: all 0.2s ease;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.settings-panel-btn:hover {
+    background: var(--accent) !important;
+    color: #000 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
 .toggle-btn {
     background: transparent;
     border: 1px solid var(--subtle);

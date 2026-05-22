@@ -15,12 +15,15 @@ from pymilvus import (
 
 class MilvusService:
     def __init__(self, host=None, port=None):
+        self.enabled = os.getenv("ENABLE_MILVUS", "false").lower() == "true"
         self.host = host or os.getenv("MILVUS_HOST", "localhost")
         self.port = port or os.getenv("MILVUS_PORT", "19530")
         self._connected = False
         self._collections = {}
 
     def connect(self):
+        if not self.enabled:
+            return False
         if self._connected:
             return True
         try:
@@ -34,6 +37,8 @@ class MilvusService:
 
     def ensure_collection(self, collection_name, index_type="SPARSE_INVERTED_INDEX"):
         """Ensures a collection exists with the correct schema for sparse vectors."""
+        if not self.enabled:
+            return None
         self.connect()
         # Use a prefixed name to avoid collisions and indicate type
         milvus_coll_name = collection_name
@@ -109,6 +114,8 @@ class MilvusService:
         Upserts a list of functions into Milvus.
         functions_data: list of {'fid': str, 'tf_dict': dict}
         """
+        if not self.enabled:
+            return False
         col = self.ensure_collection(collection_name, index_type=index_type)
         if not col:
             return False
@@ -141,6 +148,10 @@ class MilvusService:
         """
         Syncs all indexed functions from Redis to Milvus for both index types.
         """
+        if not self.enabled:
+            logging.warning("Milvus is disabled. Skipping sync.")
+            return True
+
         indexed_set = f"{collection_name}:indexed:functions"
         function_ids = list(r.smembers(indexed_set))
         total = len(function_ids)
@@ -221,7 +232,11 @@ class MilvusService:
         index_type="SPARSE_INVERTED_INDEX",
     ):
         """Searches for similar functions in Milvus."""
+        if not self.enabled:
+            return None
         col = self.ensure_collection(collection_name, index_type=index_type)
+        if not col:
+            return None
 
         query_vector = self._map_vector(tf_dict)
 

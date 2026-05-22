@@ -13,8 +13,12 @@ def similarity_api():
         return jsonify({"detail": "Missing id1 or id2"}), 400
 
     try:
+        from bsimvis.app.services.milvus_service import milvus_service
         service = SimilarityService()
-        algorithms = ["jaccard", "unweighted_cosine", "milvus_sparse"]
+        algorithms = ["jaccard", "unweighted_cosine"]
+        if milvus_service.enabled:
+            algorithms.append("milvus_sparse")
+            
         scores = {}
 
         collection = id1.split(":")[0] if ":" in id1 else "main"

@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.similarity_service import SimilarityService
+from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.redis_client import get_redis
 
 similarity_bp = Blueprint("similarity", __name__)
@@ -109,6 +110,9 @@ def build_similarity():
     }
 
     if algo in ["milvus_sparse"]:
+        if not milvus_service.enabled:
+            return jsonify({"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}), 400
+            
         tasks = [
             (JobType.SYNC_MILVUS, {"collection": collection}),
             (JobType.BUILD_SIM, payload),
@@ -159,6 +163,8 @@ def rebuild_similarity():
     ]
 
     if algo in ["milvus_sparse"]:
+        if not milvus_service.enabled:
+            return jsonify({"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}), 400
         tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
 
     pipeline_id = job_service.create_pipeline(tasks)

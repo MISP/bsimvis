@@ -84,16 +84,17 @@ class FeatureService:
             pipe.execute()
 
             # Milvus Buffer
-            milvus_data.append({"fid": func_id, "tf_dict": tf_dict})
-            if len(milvus_data) >= milvus_chunk_size:
-                for itype in ["SPARSE_INVERTED_INDEX"]:
-                    milvus_service.upsert_functions(
-                        collection, milvus_data, index_type=itype
-                    )
-                milvus_data = []
+            if milvus_service.enabled:
+                milvus_data.append({"fid": func_id, "tf_dict": tf_dict})
+                if len(milvus_data) >= milvus_chunk_size:
+                    for itype in ["SPARSE_INVERTED_INDEX"]:
+                        milvus_service.upsert_functions(
+                            collection, milvus_data, index_type=itype
+                        )
+                    milvus_data = []
 
         # Final Milvus Flush
-        if milvus_data:
+        if milvus_service.enabled and milvus_data:
             for itype in ["SPARSE_INVERTED_INDEX"]:
                 milvus_service.upsert_functions(
                     collection, milvus_data, index_type=itype

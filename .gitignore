@@ -9,7 +9,16 @@ __pycache__
 
 *.egg-info/
 
-kvrocks_data/
+# Data storage
+data/*
+!data/bench/
+!data/.gitkeep
+
+# Legacy (remove once migrated)
+data/kvrocks/
 volumes/
 *.log
 .env
+
+scratch_build/
+bin/

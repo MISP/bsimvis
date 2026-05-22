@@ -3,6 +3,7 @@ import json
 import hashlib
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
+from bsimvis.app.services.milvus_service import milvus_service
 import logging
 
 file_bp = Blueprint("file", __name__)
@@ -55,6 +56,9 @@ def upload_file_data():
         if "algo" in data:
             build_sim_payload["algo"] = data["algo"]
 
+        if build_sim_payload.get("algo") == "milvus_sparse" and not milvus_service.enabled:
+            return jsonify({"error": "Milvus is disabled. Cannot use milvus_sparse algorithm."}), 400
+
         skip_sim = data.get("skip_sim", False)
 
         # 2. Trigger Pipeline
@@ -75,7 +79,8 @@ def upload_file_data():
         ]
 
         if not skip_sim:
-            pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
+            if milvus_service.enabled and build_sim_payload.get("algo") == "milvus_sparse":
+                pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
             pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
 
         pipeline_id = job_service.create_pipeline(pipeline_tasks)

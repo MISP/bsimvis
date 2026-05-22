@@ -1,0 +1,87 @@
+#!/bin/bash
+set -e
+
+# Configuration
+REDIS_VERSION="7.2.4"
+
+# Directories
+PROJECT_ROOT=$(pwd)
+BIN_DIR="${PROJECT_ROOT}/bin"
+SCRATCH_DIR="${PROJECT_ROOT}/scratch_build"
+
+# Check for build dependencies
+MISSING_DEPS=()
+for cmd in gcc g++ make autoconf automake libtoolize cmake git; do
+    if ! command -v $cmd > /dev/null; then
+        MISSING_DEPS+=($cmd)
+    fi
+done
+
+if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
+    echo "Error: Missing build dependencies: ${MISSING_DEPS[*]}"
+    echo "Please install them before running this script."
+    echo "On Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential autoconf automake libtool libtool-bin cmake git"
+    exit 1
+fi
+
+mkdir -p "${BIN_DIR}"
+mkdir -p "${SCRATCH_DIR}"
+mkdir -p data/etcd data/minio data/milvus data/kvrocks
+
+echo "--- Setting up Python environment ---"
+if command -v uv > /dev/null; then
+    echo "Using uv for dependency management..."
+    uv sync
+else
+    echo "Using pip for dependency management..."
+    if [ ! -d ".venv" ]; then
+        python3 -m venv .venv
+    fi
+    source .venv/bin/activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+fi
+
+echo "--- Installing Redis ---"
+if [ ! -f "${BIN_DIR}/redis-server" ]; then
+    echo "Building Redis from source..."
+    cd "${SCRATCH_DIR}"
+    curl -L "https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz" -o redis.tar.gz
+    tar -xzf redis.tar.gz
+    cd "redis-${REDIS_VERSION}"
+    make -j$(nproc 2>/dev/null || echo 4)
+    cp src/redis-server src/redis-cli "${BIN_DIR}/"
+    cd "${PROJECT_ROOT}"
+else
+    echo "Redis already installed in bin/"
+fi
+
+echo "--- Installing Kvrocks ---"
+if [ ! -f "${BIN_DIR}/kvrocks" ]; then
+    echo "Building Kvrocks from source..."
+    cd "${SCRATCH_DIR}"
+    if [ ! -d "kvrocks" ]; then
+        git clone https://github.com/apache/kvrocks.git
+    fi
+    cd kvrocks
+    # Use x.py to build
+    ./x.py build -j$(nproc 2>/dev/null || echo 4)
+    cp build/kvrocks "${BIN_DIR}/"
+    cd "${PROJECT_ROOT}"
+else
+    echo "Kvrocks already installed in bin/"
+fi
+
+# Load .env to check for Milvus
+if [ -f .env ]; then
+    # Simple export for the script
+    export $(grep -v '^#' .env | xargs)
+fi
+
+if [ "$ENABLE_MILVUS" = "true" ]; then
+    ./scripts/install_milvus.sh
+fi
+
+echo "--- Installation Complete ---"
+echo "Binaries are located in ${BIN_DIR}"
+echo "You can now run ./launch.sh to start the services."

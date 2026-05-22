@@ -228,6 +228,10 @@ class SimilarityService:
         self, collection, chunk, algo, top_k, min_score, min_features=0
     ):
         """Processes a chunk using Milvus for discovery."""
+        if not milvus_service.enabled:
+            logging.error("[!] Attempted to use milvus_sparse algorithm while Milvus is disabled.")
+            return
+
         r = self.r
         built_set_key = f"{collection}:built:functions:{algo}"
         index_type = "SPARSE_INVERTED_INDEX"

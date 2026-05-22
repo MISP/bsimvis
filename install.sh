@@ -32,9 +32,17 @@ for cmd in autoconf automake libtoolize; do
     fi
 done
 
+# Load .env early to get DATA_BASE_DIR
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Set default data directory if not provided
+DATA_BASE_DIR=${DATA_BASE_DIR:-"${PROJECT_ROOT}/data"}
+
 mkdir -p "${BIN_DIR}"
 mkdir -p "${SCRATCH_DIR}"
-mkdir -p data/etcd data/minio data/milvus data/kvrocks
+mkdir -p "${DATA_BASE_DIR}/etcd" "${DATA_BASE_DIR}/minio" "${DATA_BASE_DIR}/milvus" "${DATA_BASE_DIR}/kvrocks" "${DATA_BASE_DIR}/redis"
 
 echo "--- Setting up Python environment ---"
 if command -v uv > /dev/null; then

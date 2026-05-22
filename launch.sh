@@ -54,14 +54,15 @@ REDIS_PORT=${REDIS_PORT:-6379}
 KVROCKS_PORT=${KVROCKS_PORT:-6666}
 WORKERS_COUNT=${WORKERS_COUNT:-5}
 ENABLE_MILVUS=${ENABLE_MILVUS:-false}
+DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 
-echo "--- Launching Services ---"
+echo "--- Launching Services (Data: ${DATA_BASE_DIR}) ---"
 
 # Start Redis
-start_screen "bsimvis-redis" "redis-server --port ${REDIS_PORT} --dir ./data/redis"
+start_screen "bsimvis-redis" "redis-server --port ${REDIS_PORT} --dir ${DATA_BASE_DIR}/redis"
 
 # Start Kvrocks
-start_screen "bsimvis-kvrocks" "kvrocks -c kvrocks.conf --port ${KVROCKS_PORT}"
+start_screen "bsimvis-kvrocks" "kvrocks -c kvrocks.conf --port ${KVROCKS_PORT} --dir ${DATA_BASE_DIR}/kvrocks"
 
 # Start Milvus stack if enabled
 if [ "$ENABLE_MILVUS" = "true" ]; then
@@ -72,9 +73,9 @@ if [ "$ENABLE_MILVUS" = "true" ]; then
     MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
 
     echo "Launching Milvus stack (Etcd, Minio, Milvus)..."
-    start_screen "bsimvis-etcd" "etcd --data-dir ./data/etcd --advertise-client-urls http://127.0.0.1:${ETCD_PORT} --listen-client-urls http://0.0.0.0:${ETCD_PORT}"
+    start_screen "bsimvis-etcd" "etcd --data-dir ${DATA_BASE_DIR}/etcd --advertise-client-urls http://127.0.0.1:${ETCD_PORT} --listen-client-urls http://0.0.0.0:${ETCD_PORT}"
     
-    start_screen "bsimvis-minio" "MINIO_ROOT_USER=${MINIO_ACCESS_KEY} MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY} minio server ./data/minio --address \":${MINIO_PORT}\" --console-address \":${MINIO_CONSOLE_PORT}\""
+    start_screen "bsimvis-minio" "MINIO_ROOT_USER=${MINIO_ACCESS_KEY} MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY} minio server ${DATA_BASE_DIR}/minio --address \":${MINIO_PORT}\" --console-address \":${MINIO_CONSOLE_PORT}\""
     
     # Give a moment for etcd and minio to start
     sleep 2

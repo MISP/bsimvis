@@ -24,17 +24,16 @@ if command -v java >/dev/null; then
         JAVA_VERSION="${BASH_REMATCH[1]}"
         if [ "$JAVA_VERSION" -lt 21 ]; then
             echo "Warning: Ghidra 12+ requires Java 21 or higher. Found version $JAVA_VERSION."
-            echo "Please install OpenJDK 21 or higher (e.g., sudo apt install openjdk-21-jdk)"
+            echo "You might need to provide a newer JDK for Ghidra to run correctly."
         else
             echo "Found Java version $JAVA_VERSION."
         fi
     else
-        echo "Could not determine Java version. Please ensure Java 21+ is installed."
+        echo "Warning: Could not determine Java version. Please ensure Java 21+ is installed for Ghidra."
     fi
 else
-    echo "Error: Java is not installed. Please install OpenJDK 21 or higher."
-    echo "On Ubuntu/Debian: sudo apt update && sudo apt install -y openjdk-21-jdk"
-    exit 1
+    echo "Warning: Java is not installed. Ghidra requires OpenJDK 21 or higher to run."
+    echo "You can download a portable JDK and add it to your PATH later."
 fi
 
 # Check for unzip

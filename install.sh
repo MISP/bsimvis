@@ -11,18 +11,26 @@ SCRATCH_DIR="${PROJECT_ROOT}/scratch_build"
 
 # Check for build dependencies
 MISSING_DEPS=()
-for cmd in gcc g++ make autoconf automake libtoolize cmake git unzip curl; do
+# Critical dependencies
+for cmd in gcc g++ make cmake git unzip curl; do
     if ! command -v $cmd > /dev/null; then
         MISSING_DEPS+=($cmd)
     fi
 done
 
 if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
-    echo "Error: Missing build dependencies: ${MISSING_DEPS[*]}"
-    echo "Please install them before running this script."
-    echo "On Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential autoconf automake libtool libtool-bin cmake git unzip curl"
-    exit 1
+    echo "Warning: Missing critical build dependencies: ${MISSING_DEPS[*]}"
+    echo "Attempting to continue, but the build might fail."
+    echo "If you are root, you can install them with:"
+    echo "sudo apt update && sudo apt install -y build-essential cmake git unzip curl"
 fi
+
+# Optional/Helper dependencies (often present but maybe named differently or not strictly needed for all steps)
+for cmd in autoconf automake libtoolize; do
+    if ! command -v $cmd > /dev/null; then
+        echo "Note: Optional dependency '$cmd' not found. This might be needed for some source builds."
+    fi
+done
 
 mkdir -p "${BIN_DIR}"
 mkdir -p "${SCRATCH_DIR}"

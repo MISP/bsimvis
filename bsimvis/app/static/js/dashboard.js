@@ -17,9 +17,15 @@ function handleFilterKey(e, searchFn) {
         
         // Capture focus and selection before searching
         currentFocusId = e.target.id;
-        if (e.target.setSelectionRange) {
-            preservedSelection.start = e.target.selectionStart;
-            preservedSelection.end = e.target.selectionEnd;
+        try {
+            if (e.target.setSelectionRange) {
+                preservedSelection.start = e.target.selectionStart;
+                preservedSelection.end = e.target.selectionEnd;
+            }
+        } catch (err) {
+            // Some input types (number, etc.) throw when accessing selection properties
+            preservedSelection.start = 0;
+            preservedSelection.end = 0;
         }
         
         searchFn();
@@ -1049,8 +1055,12 @@ function updateUI(path, params, route) {
         const focusedEl = document.getElementById(currentFocusId);
         if (focusedEl) {
             focusedEl.focus();
-            if (focusedEl.setSelectionRange) {
-                focusedEl.setSelectionRange(preservedSelection.start, preservedSelection.end);
+            try {
+                if (focusedEl.setSelectionRange) {
+                    focusedEl.setSelectionRange(preservedSelection.start, preservedSelection.end);
+                }
+            } catch (err) {
+                // Ignore if the element doesn't support selection (number, etc.)
             }
         }
         // Reset after restoration

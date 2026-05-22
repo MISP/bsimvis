@@ -11,7 +11,7 @@ SCRATCH_DIR="${PROJECT_ROOT}/scratch_build"
 
 # Check for build dependencies
 MISSING_DEPS=()
-for cmd in gcc g++ make autoconf automake libtoolize cmake git; do
+for cmd in gcc g++ make autoconf automake libtoolize cmake git unzip curl; do
     if ! command -v $cmd > /dev/null; then
         MISSING_DEPS+=($cmd)
     fi
@@ -20,7 +20,7 @@ done
 if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
     echo "Error: Missing build dependencies: ${MISSING_DEPS[*]}"
     echo "Please install them before running this script."
-    echo "On Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential autoconf automake libtool libtool-bin cmake git"
+    echo "On Ubuntu/Debian: sudo apt update && sudo apt install -y build-essential autoconf automake libtool libtool-bin cmake git unzip curl"
     exit 1
 fi
 
@@ -71,6 +71,9 @@ if [ ! -f "${BIN_DIR}/kvrocks" ]; then
 else
     echo "Kvrocks already installed in bin/"
 fi
+
+echo "--- Installing Ghidra ---"
+./scripts/install_ghidra.sh
 
 # Load .env to check for Milvus
 if [ -f .env ]; then

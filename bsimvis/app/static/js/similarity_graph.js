@@ -393,6 +393,7 @@ class SimilarityGraph {
                 }
             })
             .on("mouseout", (event, d) => {
+                if (window.graphContextMenuOpen) return;
                 if (window.hideDiffPreview) window.hideDiffPreview();
                 d3.select(event.currentTarget)
                     .attr("stroke", d.strokeColor)
@@ -526,6 +527,7 @@ class SimilarityGraph {
                 }
             })
             .on("mouseout", (event, d) => {
+                if (window.graphContextMenuOpen) return;
                 window.graphNodeHovered = false;
                 if (window.hideDiffPreview) window.hideDiffPreview();
                 d3.select(event.currentTarget).attr("stroke-width", 1).attr("stroke", "white");
@@ -563,7 +565,7 @@ class SimilarityGraph {
 
         if (showLabelMode === 'file_name' || showLabelMode === 'file_tag') {
             const r = radius + ringWidth + 15;
-            this.binaryLabelGroup.selectAll("text")
+            const texts = this.binaryLabelGroup.selectAll("text")
                 .data(ringsData)
                 .join("text")
                 .attr("dy", "0.31em")
@@ -582,22 +584,34 @@ class SimilarityGraph {
                 })
                 .style("font-size", "10px")
                 .style("font-weight", "bold")
-                .style("pointer-events", "none")
-                .text(d => {
-                    if (showLabelMode === 'file_name') {
-                        return d.file_name;
-                    } else {
-                        const all = [...(d.file_tags || []), ...(d.file_user_tags || [])].filter(t => t);
-                        return all.length > 0 ? all.join(', ') : '---';
+                .style("pointer-events", "none");
+
+            texts.each(function(d) {
+                const el = d3.select(this);
+                el.selectAll("*").remove();
+                if (showLabelMode === 'file_name') {
+                    el.text(d.file_name).style("fill", d.color);
+                } else {
+                    const all = [...(d.file_tags || []), ...(d.file_user_tags || [])].filter(t => t && t.trim());
+                    if (all.length === 0) {
+                        el.append("tspan").text("---").style("fill", "#75715e");
+                        return;
                     }
-                })
-                .style("fill", d => {
-                    if (showLabelMode === 'file_name') return d.color;
-                    if (typeof getRawTagColor === 'function') {
-                        return getRawTagColor(d.file_tags, d.file_user_tags) || "#75715e";
-                    }
-                    return "#75715e";
-                });
+                    all.forEach((t, i) => {
+                        if (i > 0) {
+                            el.append("tspan").text(", ").style("fill", "#75715e");
+                        }
+                        let meta = window.tagMetadata ? window.tagMetadata[t] : null;
+                        if (t === 'bookmark') meta = { color: '#66d9ef' };
+                        if (t === 'ignore') meta = { color: '#f92672' };
+                        const color = (meta && meta.color) ? meta.color : '#66d9ef';
+                        el.append("tspan")
+                            .text(t)
+                            .style("fill", color)
+                            .style("font-weight", "bold");
+                    });
+                }
+            });
         } else if (this.unique_nodes.length < 500) {
             const labels = nodes.selectAll("text")
                 .data(d => [d])
@@ -609,31 +623,41 @@ class SimilarityGraph {
                 .style("font-size", "8px")
                 .style("pointer-events", "none");
 
-            if (showLabelMode === 'func_name') {
-                labels.append("tspan")
-                    .text(d => d.data.return_type && d.data.return_type !== 'N/A' ? `${d.data.return_type} ` : "")
-                    .style("fill", "#ae81ff") // Purple
-                    .style("font-weight", "bold");
+            labels.each(function(d) {
+                const el = d3.select(this);
+                el.selectAll("*").remove();
+                if (showLabelMode === 'func_name') {
+                    el.append("tspan")
+                        .text(d.data.return_type && d.data.return_type !== 'N/A' ? `${d.data.return_type} ` : "")
+                        .style("fill", "#ae81ff") // Purple
+                        .style("font-weight", "bold");
 
-                labels.append("tspan")
-                    .text(d => d.data.name)
-                    .style("fill", "#66d9ef"); // Cyan
-            } else if (showLabelMode === 'func_tag') {
-                labels.append("tspan")
-                    .text(d => {
-                        const tags = d.data.tags;
-                        const userTags = d.data.user_tags;
-                        const all = [...(tags || []), ...(userTags || [])].filter(t => t);
-                        return all.length > 0 ? all.join(', ') : '---';
-                    })
-                    .style("fill", d => {
-                        if (typeof getRawTagColor === 'function') {
-                            return getRawTagColor(d.data.tags, d.data.user_tags) || "#75715e";
+                    el.append("tspan")
+                        .text(d.data.name)
+                        .style("fill", "#66d9ef"); // Cyan
+                } else if (showLabelMode === 'func_tag') {
+                    const tags = d.data.tags || [];
+                    const userTags = d.data.user_tags || [];
+                    const all = [...tags, ...userTags].filter(t => t && t.trim());
+                    if (all.length === 0) {
+                        el.append("tspan").text("---").style("fill", "#75715e");
+                        return;
+                    }
+                    all.forEach((t, i) => {
+                        if (i > 0) {
+                            el.append("tspan").text(", ").style("fill", "#75715e");
                         }
-                        return "#75715e";
-                    })
-                    .style("font-weight", "bold");
-            }
+                        let meta = window.tagMetadata ? window.tagMetadata[t] : null;
+                        if (t === 'bookmark') meta = { color: '#66d9ef' };
+                        if (t === 'ignore') meta = { color: '#f92672' };
+                        const color = (meta && meta.color) ? meta.color : '#66d9ef';
+                        el.append("tspan")
+                            .text(t)
+                            .style("fill", color)
+                            .style("font-weight", "bold");
+                    });
+                }
+            });
         }
     }
 

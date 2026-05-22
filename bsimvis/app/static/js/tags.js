@@ -23,7 +23,7 @@ async function fetchTagMetadata(collection) {
 }
 
 function getRawTagColor(analysisTags, userTags = []) {
-    const allTags = [...(userTags || [])].filter(t => t && t.trim());
+    const allTags = [...(analysisTags || []), ...(userTags || [])].filter(t => t && t.trim());
     if (allTags.length === 0) return null;
     
     let bestColor = null;
@@ -530,11 +530,21 @@ window.renderClusterCards = (clusters) => {
 function attachTagAutocomplete(input, onSelect) {
     if (input._acAttached) return;
     input._acAttached = true;
+    input.setAttribute('autocomplete', 'off');
 
-    const parent = input.parentElement;
     const dropdown = document.createElement('div');
     dropdown.className = 'tag-autocomplete-dropdown';
-    parent.appendChild(dropdown);
+    document.body.appendChild(dropdown);
+    input._autocompleteDropdown = dropdown;
+
+    const positionDropdown = () => {
+        const rect = input.getBoundingClientRect();
+        dropdown.style.position = 'fixed';
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.top = rect.bottom + 'px';
+        dropdown.style.width = Math.max(150, rect.width) + 'px';
+        dropdown.style.zIndex = '200000';
+    };
 
     let activeIndex = -1;
     let currentSuggestions = [];
@@ -576,6 +586,7 @@ function attachTagAutocomplete(input, onSelect) {
             };
             dropdown.appendChild(item);
         });
+        positionDropdown();
         dropdown.style.display = 'block';
     };
 
@@ -641,14 +652,21 @@ function attachTagAutocomplete(input, onSelect) {
 function attachAutocomplete(input, level, field, onSelect) {
     if (input._acAttached) return;
     input._acAttached = true;
-
-    const parent = input.parentElement;
-    const originalPosition = window.getComputedStyle(parent).position;
-    if (originalPosition === 'static') parent.style.position = 'relative';
+    input.setAttribute('autocomplete', 'off');
 
     const dropdown = document.createElement('div');
     dropdown.className = 'tag-autocomplete-dropdown';
-    parent.appendChild(dropdown);
+    document.body.appendChild(dropdown);
+    input._autocompleteDropdown = dropdown;
+
+    const positionDropdown = () => {
+        const rect = input.getBoundingClientRect();
+        dropdown.style.position = 'fixed';
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.top = rect.bottom + 'px';
+        dropdown.style.width = Math.max(150, rect.width) + 'px';
+        dropdown.style.zIndex = '200000';
+    };
 
     let activeIndex = -1;
     let currentSuggestions = [];
@@ -682,6 +700,7 @@ function attachAutocomplete(input, level, field, onSelect) {
             };
             dropdown.appendChild(div);
         });
+        positionDropdown();
         dropdown.style.display = 'block';
     };
 
@@ -852,6 +871,9 @@ async function startAddTag(event, etype, eid) {
     const cleanup = () => {
         if (isClosing) return;
         isClosing = true;
+        if (input._autocompleteDropdown) {
+            input._autocompleteDropdown.remove();
+        }
         if (wrapper.parentNode === parent) parent.replaceChild(btn, wrapper);
     };
 
@@ -878,19 +900,22 @@ async function confirmAddTag(etype, eid, tag, container) {
     const col = colStr || (colParts.length > 2 ? colParts[0] : 'main');
 
     let targets = [{ etype, eid, container }];
-    if (etype === 'similarity' && typeof selectedSimilarityPairs !== 'undefined' && selectedSimilarityPairs.has(eid)) {
-        targets = Array.from(selectedSimilarityPairs).map(pid => {
-            const info = typeof getSimilarityRowInfo === 'function' ? getSimilarityRowInfo(pid) : null;
-            return info ? { etype: 'similarity', eid: pid, container: info.container } : { etype: 'similarity', eid: pid, container: null };
+    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
+
+    if (selectedIds.includes(eid)) {
+        targets = selectedIds.map(id => {
+            const row = document.querySelector(`tr[data-id="${id}"]`);
+            const targetContainer = row ? row.querySelector(`[data-etype="${etype}"][data-eid="${id}"]`) : null;
+            return { etype, eid: id, container: targetContainer };
         });
     }
 
     let uiTargets = [container];
-    if (etype === 'function' || etype === 'file') {
+    if (targets.length > 1) {
+        uiTargets = targets.map(t => t.container).filter(c => !!c);
+    } else if (etype === 'function' || etype === 'file') {
         const allEditors = document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`);
         if (allEditors.length > 0) uiTargets = Array.from(allEditors);
-    } else if (etype === 'similarity' && typeof selectedSimilarityPairs !== 'undefined' && selectedSimilarityPairs.has(eid)) {
-        uiTargets = targets.map(t => t.container).filter(c => !!c);
     }
 
     let mainSuccess = false;
@@ -1003,10 +1028,13 @@ async function removeTag(event, etype, eid, tag) {
     const col = colStr || (colParts.length > 2 ? colParts[0] : 'main');
 
     let targets = [{ etype, eid }];
-    if (etype === 'similarity' && typeof selectedSimilarityPairs !== 'undefined' && selectedSimilarityPairs.has(eid)) {
-        targets = Array.from(selectedSimilarityPairs).map(pid => {
-            const info = typeof getSimilarityRowInfo === 'function' ? getSimilarityRowInfo(pid) : null;
-            return info ? { etype: 'similarity', eid: pid, container: info.container } : { etype: 'similarity', eid: pid, container: null };
+    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
+
+    if (selectedIds.includes(eid)) {
+        targets = selectedIds.map(id => {
+            const row = document.querySelector(`tr[data-id="${id}"]`);
+            const targetContainer = row ? row.querySelector(`[data-etype="${etype}"][data-eid="${id}"]`) : null;
+            return { etype, eid: id, container: targetContainer };
         });
     }
 

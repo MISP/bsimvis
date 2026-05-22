@@ -23,6 +23,7 @@
     <script src="/js/call_graph.js"></script>
     <script src="/js/window_manager.js"></script>
     <script src="/js/dashboard.js"></script>
+    <script src="/js/table_selection.js"></script>
 
 <body>
     <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
@@ -119,9 +120,13 @@
                     <span id="val-cohesion" style="font-size:0.75rem; color:var(--dim)">0.50</span>
                 </div>
             </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
                 <input type="checkbox" id="param-color-tags" onchange="updateUIParams()">
                 <label style="font-size:0.8rem;">Color by Tags</label>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
+                <input type="checkbox" id="param-include-headers" onchange="updateUIParams()">
+                <label style="font-size:0.8rem;">Include Headers in Copy</label>
             </div>
 
             <div style="border-top: 1px solid var(--border); padding-top: 15px;">
@@ -133,10 +138,21 @@
 
 
         <div class="table-container" id="table-view-container" style="display: flex; flex-direction: column;">
-            <table id="data-table">
-                <thead id="table-head"></thead>
-                <tbody id="table-body"></tbody>
-            </table>
+            <div id="table-wrap" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+                <div class="table-header-wrap">
+                    <table id="data-table-header" style="table-layout:fixed; width:100%;">
+                        <colgroup id="table-colgroup-header"></colgroup>
+                        <thead id="table-head"></thead>
+                    </table>
+                </div>
+                <div class="table-body-wrap" id="table-body-wrap">
+                    <table id="data-table" style="table-layout:fixed; width:100%;">
+                        <colgroup id="table-colgroup"></colgroup>
+                        <tbody id="table-body"></tbody>
+                    </table>
+                    <div id="pagination-container" class="load-more-container"></div>
+                </div>
+            </div>
             <div id="loader">Loading...</div>
 
             <div id="graph-view-container"
@@ -240,7 +256,7 @@
                 style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
             </div>
 
-            <div id="pagination-container" class="load-more-container"></div>
+
         </div>
     </main>
 

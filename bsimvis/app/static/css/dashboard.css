@@ -106,10 +106,25 @@ main {
 /* Table Styling */
 .table-container {
     flex: 1;
-    overflow-y: auto;
+    overflow: hidden;
+    min-width: 0;
     background: var(--card-bg);
     border: 1px solid var(--border);
     border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+}
+
+.table-header-wrap {
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.table-body-wrap {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
 }
 
 table {
@@ -118,13 +133,19 @@ table {
     border-spacing: 0;
     text-align: left;
     font-size: 0.85rem;
+    table-layout: fixed;
 }
 
 thead {
-    position: sticky;
-    top: 0;
     background: #000;
-    z-index: 10;
+}
+
+tbody {
+    display: table-row-group;
+}
+
+tbody tr {
+    display: table-row;
 }
 
 th {
@@ -346,32 +367,39 @@ tr:nth-child(even) {
     display: flex;
     align-items: center;
     background: #ffffff;
-    border-radius: 6px;
-    padding: 0 15px;
+    border-radius: 4px;
+    padding: 0 12px;
     width: 600px;
     max-width: 100%;
-    border: 1px solid #ddd;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    border: 1px solid #dcdcdc;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
 }
 
 .search-input-wrapper i {
-    color: #666;
-    font-size: 1.1rem;
+    color: #666666;
+    font-size: 0.95rem;
 }
 
 .search-input-wrapper input {
     background: transparent !important;
     border: none !important;
-    color: #000 !important;
-    font-size: 1rem !important;
-    padding: 10px 10px !important;
+    color: #222222 !important;
+    font-size: 0.85rem !important;
+    padding: 8px 8px !important;
     flex: 1;
     outline: none !important;
     box-shadow: none !important;
     width: 100% !important;
+    font-family: 'Inter', sans-serif !important;
 }
+
 .search-input-wrapper input::placeholder {
-    color: #999;
+    color: #888888;
 }
 
 .search-icon-btn {
@@ -1227,4 +1255,40 @@ body.sidebar-collapsed nav a#nav-collections {
     border-color: var(--accent);
     color: var(--accent);
     opacity: 1;
+}
+
+/* Excel-like Selection Styles */
+#data-table td.selected-cell {
+    background-color: rgba(4, 217, 255, 0.04) !important;
+}
+
+#data-table td.sel-t { box-shadow: inset 0 2px 0 0 var(--accent) !important; }
+#data-table td.sel-b { box-shadow: inset 0 -2px 0 0 var(--accent) !important; }
+#data-table td.sel-l { box-shadow: inset 2px 0 0 0 var(--accent) !important; }
+#data-table td.sel-r { box-shadow: inset -2px 0 0 0 var(--accent) !important; }
+
+#data-table td.sel-t.sel-l { box-shadow: inset 2px 2px 0 0 var(--accent) !important; }
+#data-table td.sel-t.sel-r { box-shadow: inset -2px 2px 0 0 var(--accent) !important; }
+#data-table td.sel-b.sel-l { box-shadow: inset 2px -2px 0 0 var(--accent) !important; }
+#data-table td.sel-b.sel-r { box-shadow: inset -2px -2px 0 0 var(--accent) !important; }
+#data-table td.sel-t.sel-b { box-shadow: inset 0 2px 0 0 var(--accent), inset 0 -2px 0 0 var(--accent) !important; }
+#data-table td.sel-l.sel-r { box-shadow: inset 2px 0 0 0 var(--accent), inset -2px 0 0 0 var(--accent) !important; }
+
+/* Triple combinations for single-cell/single-row/col */
+#data-table td.sel-t.sel-b.sel-l { box-shadow: inset 2px 0 0 0 var(--accent), inset 0 2px 0 0 var(--accent), inset 0 -2px 0 0 var(--accent) !important; }
+#data-table td.sel-t.sel-b.sel-r { box-shadow: inset -2px 0 0 0 var(--accent), inset 0 2px 0 0 var(--accent), inset 0 -2px 0 0 var(--accent) !important; }
+#data-table td.sel-l.sel-r.sel-t { box-shadow: inset 0 2px 0 0 var(--accent), inset 2px 0 0 0 var(--accent), inset -2px 0 0 0 var(--accent) !important; }
+#data-table td.sel-l.sel-r.sel-b { box-shadow: inset 0 -2px 0 0 var(--accent), inset 2px 0 0 0 var(--accent), inset -2px 0 0 0 var(--accent) !important; }
+
+/* All sides (single cell selection) */
+#data-table td.sel-t.sel-b.sel-l.sel-r { box-shadow: inset 0 0 0 2px var(--accent) !important; }
+
+#data-table td.focused-cell {
+    background-color: rgba(4, 217, 255, 0.1) !important;
+    z-index: 5;
+}
+
+#data-table td {
+    position: relative;
+    user-select: text !important;
 }

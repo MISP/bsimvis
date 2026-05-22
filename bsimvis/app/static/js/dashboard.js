@@ -49,6 +49,13 @@ function initColumnResize(th, path, label) {
     const resizer = th.querySelector('.resizer');
     if (!resizer) return;
 
+    // Find matching <col> in both header and body colgroups by th index
+    const colgroupHeader = document.getElementById('table-colgroup-header');
+    const colgroupBody = document.getElementById('table-colgroup');
+    const thIndex = Array.from(th.parentElement.children).indexOf(th);
+    const colHeader = colgroupHeader ? colgroupHeader.children[thIndex] : null;
+    const colBody = colgroupBody ? colgroupBody.children[thIndex] : null;
+
     let startX, startWidth;
 
     resizer.addEventListener('mousedown', (e) => {
@@ -68,6 +75,9 @@ function initColumnResize(th, path, label) {
         const onMouseMove = (e) => {
             const width = startWidth + (e.clientX - startX);
             if (width > 30) {
+                // Sync width to both tables via colgroup
+                if (colHeader) colHeader.style.width = width + 'px';
+                if (colBody) colBody.style.width = width + 'px';
                 th.style.width = width + 'px';
                 th.style.minWidth = width + 'px';
             }
@@ -95,7 +105,6 @@ const DEFAULT_GRAPH_LIMIT = 500;
 const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
 let isEndOfResults = false;
 let lastHashPath = '';
-let selectedSimilarityPairs = new Set(); // Global selection state: Set of "id1|id2|algo"
 let lastSimilarityQuery = null; // Track filters to detect view switching
 let simSearchRequested = false; // Set to true when user explicitly triggers a search
 
@@ -143,41 +152,6 @@ function getCollectionFromHash() {
     const [hashPath, queryString] = (window.location.hash || '').split('?');
     const params = new URLSearchParams(queryString);
     return params.get('collection') || 'main';
-}
-
-function toggleSimilaritySelection(event, id1, id2, algo) {
-    const pairId = event.target.dataset.pairId || `${id1}|${id2}|${algo}`;
-    if (event.target.checked) {
-        selectedSimilarityPairs.add(pairId);
-    } else {
-        selectedSimilarityPairs.delete(pairId);
-        const master = document.getElementById('select-all-sim');
-        if (master) master.checked = false;
-    }
-}
-
-function toggleAllSimilaritySelection(master) {
-    const checkboxes = document.querySelectorAll('.row-selector');
-    checkboxes.forEach(cb => {
-        cb.checked = master.checked;
-        const pairId = cb.dataset.pairId;
-        if (master.checked) {
-            selectedSimilarityPairs.add(pairId);
-        } else {
-            selectedSimilarityPairs.delete(pairId);
-        }
-    });
-}
-
-function getSimilarityRowInfo(pairId) {
-    const row = document.querySelector(`input[data-pair-id="${pairId}"]`)?.closest('tr');
-    if (!row) return null;
-    return {
-        container: row.querySelector('.sim-tags-editor'),
-        id1: row.dataset.id1,
-        id2: row.dataset.id2,
-        algo: row.dataset.algo
-    };
 }
 
 const routes = {
@@ -419,7 +393,16 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
     if (document.getElementById('call-graph-view-container')) document.getElementById('call-graph-view-container').style.display = 'none';
-    document.getElementById('table-body').style.display = 'table-row-group';
+
+    // Clear all autocomplete dropdowns to prevent leftovers from previous navigation
+    document.querySelectorAll('.tag-autocomplete-dropdown').forEach(el => el.remove());
+
+    const tableWrap = document.getElementById('table-wrap');
+    const tableBodyWrap = document.getElementById('table-body-wrap');
+    tableWrap.style.display = 'flex';
+    tableWrap.style.flex = '1';
+    if (tableBodyWrap) tableBodyWrap.style.display = '';
+
     document.getElementById('pagination-container').style.display = 'block';
 
     if (window.graphInstance) window.graphInstance.stop();
@@ -432,11 +415,6 @@ function updateUI(path, params, route) {
     // Sidebar
     document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
     const navLink = document.getElementById('nav-' + path.substring(1));
-
-    // Clear selection if navigating away from similarity view
-    if (path !== lastHashPath.split('?')[0] && path !== '#function-similarity') {
-        selectedSimilarityPairs.clear();
-    }
 
     if (navLink) navLink.classList.add('active');
 
@@ -475,21 +453,16 @@ function updateUI(path, params, route) {
     // Table Head
     const thead = document.getElementById('table-head');
     const dataTable = document.getElementById('data-table');
+    const dataTableHeader = document.getElementById('data-table-header');
     let headHtml = '<tr>';
     
     const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[path];
     const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
     const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
 
-    if (path === '#function-similarity') {
-        headHtml += `<th style="width:30px; text-align:center;"><input type="checkbox" id="select-all-sim" onchange="toggleAllSimilaritySelection(this)"></th>`;
-    }
-
-    if (hasWidths) {
-        if (dataTable) dataTable.style.tableLayout = 'fixed';
-    } else {
-        if (dataTable) dataTable.style.tableLayout = 'auto';
-    }
+    const tableLayout = hasWidths ? 'fixed' : 'auto';
+    if (dataTable) dataTable.style.tableLayout = tableLayout;
+    if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
     route.headers.forEach(h => {
         const label = typeof h === 'string' ? h : h.label;
         const sortKey = typeof h === 'object' ? h.sort : null;
@@ -518,7 +491,9 @@ function updateUI(path, params, route) {
     const settingsEl = document.getElementById('search-settings-container');
     settingsEl.style.display = 'none';
     settingsEl.innerHTML = '';
-    document.getElementById('table-body').style.display = 'table-row-group';
+    tableWrap.style.display = 'flex';
+    tableWrap.style.flex = '1';
+    if (tableBodyWrap) tableBodyWrap.style.display = '';
     document.getElementById('pagination-container').style.display = 'block';
     document.getElementById('graph-view-container').style.display = 'none';
     document.getElementById('hierarchy-view-container').style.display = 'none';
@@ -576,6 +551,8 @@ function updateUI(path, params, route) {
             settingsEl.style.display = 'none';
         }
 
+        const tableWrap = document.getElementById('table-wrap');
+        const tableBodyWrap = document.getElementById('table-body-wrap');
         const tbody = document.getElementById('table-body');
         const pag = document.getElementById('pagination-container');
         const gview = document.getElementById('graph-view-container');
@@ -583,18 +560,24 @@ function updateUI(path, params, route) {
         if (path === '#function-similarity') {
             const viewMode = params.get('view') || 'table';
             if (viewMode === 'graph') {
-                tbody.style.display = 'none';
+                tableWrap.style.display = 'flex';
+                tableWrap.style.flex = 'none';
+                if (tableBodyWrap) tableBodyWrap.style.display = 'none';
                 pag.style.display = 'none';
                 gview.style.display = 'flex';
                 console.log("updateUI: Loading Graph...");
                 loadGraphView(params);
             } else {
-                tbody.style.display = 'table-row-group';
+                tableWrap.style.display = 'flex';
+                tableWrap.style.flex = '1';
+                if (tableBodyWrap) tableBodyWrap.style.display = '';
                 pag.style.display = 'block';
                 gview.style.display = 'none';
             }
         } else {
-            tbody.style.display = 'table-row-group';
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = '1';
+            if (tableBodyWrap) tableBodyWrap.style.display = '';
             pag.style.display = 'block';
             if (gview) gview.style.display = 'none';
         }
@@ -639,7 +622,6 @@ function updateUI(path, params, route) {
             } else if (path === '#function-similarity' || path === '#functions') {
                 if (path === '#function-similarity') {
                     headHtml += `
-                        <th></th>
                         <th style="vertical-align: middle;">
                             <div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
@@ -762,6 +744,7 @@ function updateUI(path, params, route) {
     if (path === '#clusters') {
         const p = new URLSearchParams(params);
         if (dataTable) dataTable.style.tableLayout = 'fixed';
+        if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
         headHtml += `<tr class="filter-row">
             <th>
                 <div style="display:flex; flex-direction:column; gap:2px;">
@@ -784,35 +767,44 @@ function updateUI(path, params, route) {
 
     if (path === '#clusters') {
         const viewMode = params.get('view') || 'table';
-        const tbody = document.getElementById('table-body');
+        const tableWrap = document.getElementById('table-wrap');
+        const tableBodyWrap = document.getElementById('table-body-wrap');
         const hview = document.getElementById('hierarchy-view-container');
         const pview = document.getElementById('packing-view-container');
         const pag = document.getElementById('pagination-container');
 
         if (viewMode === 'hierarchy') {
-            tbody.style.display = 'none';
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = 'none';
+            if (tableBodyWrap) tableBodyWrap.style.display = 'none';
             pag.style.display = 'none';
             hview.style.display = 'flex';
             if (pview) pview.style.display = 'none';
             loadHierarchyView(params);
         } else if (viewMode === 'packing') {
-            tbody.style.display = 'none';
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = 'none';
+            if (tableBodyWrap) tableBodyWrap.style.display = 'none';
             pag.style.display = 'none';
             hview.style.display = 'none';
             if (pview) pview.style.display = 'flex';
             loadPackingView(params);
         } else {
-            tbody.style.display = 'table-row-group';
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = '1';
+            if (tableBodyWrap) tableBodyWrap.style.display = '';
             pag.style.display = 'block';
             hview.style.display = 'none';
             if (pview) pview.style.display = 'none';
         }
     } else if (path === '#file-call-graph') {
-        const tbody = document.getElementById('table-body');
+        const tableWrap = document.getElementById('table-wrap');
+        const tableBodyWrap = document.getElementById('table-body-wrap');
         const pag = document.getElementById('pagination-container');
         const cgview = document.getElementById('call-graph-view-container');
 
-        tbody.style.display = 'none';
+        tableWrap.style.display = 'none';
+        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
         pag.style.display = 'none';
         cgview.style.display = 'flex';
         loadCallGraphView(params);
@@ -824,32 +816,11 @@ function updateUI(path, params, route) {
         const p = new URLSearchParams(params);
         searchArea.innerHTML = `<div class="filter-bar">
             <div class="search-input-wrapper">
-                <input type="text" id="file-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)">
+                <input type="text" id="file-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)">
                 <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i>
             </div>
         </div>`;
-    } else if (path === '#file-call-graph') {
-        const p = new URLSearchParams(params);
-        const col = p.get('collection');
-        const fileMd5 = p.get('file_md5');
-        
-        searchArea.innerHTML = `<div class="filter-bar" style="display:flex; align-items:center; gap:10px;">
-            <label style="color:var(--accent); font-weight:bold; font-size:0.85rem;">Select File:</label>
-            <select id="call-graph-file-select" onchange="window.location.hash='#file-call-graph?collection=${col}&file_md5=' + this.value" style="padding: 5px; background: #111; color: var(--success); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; max-width: 400px; width: 300px;">
-                <option value="">-- Loading Files... --</option>
-            </select>
-        </div>`;
 
-        fetch(`/api/file/search?collection=${col}&limit=1000`)
-            .then(res => res.json())
-            .then(data => {
-                const select = document.getElementById('call-graph-file-select');
-                if (select) {
-                    select.innerHTML = '<option value="">-- Select File --</option>' + 
-                        (data.files || []).map(f => `<option value="${f.file_md5}" ${f.file_md5 === fileMd5 ? 'selected' : ''}>${f.file_name} (${f.file_md5.substring(0,8)})</option>`).join('');
-                }
-            })
-            .catch(e => console.error("Error loading files for dropdown", e));
     } else if (path === '#functions') {
         const p = new URLSearchParams(params);
         const fileMd5 = p.get('file_md5');
@@ -892,10 +863,50 @@ function updateUI(path, params, route) {
         searchArea.innerHTML = '';
     }
 
+    // Sync body colgroup from the header row's actual rendered widths.
+    // We use requestAnimationFrame so the header table has laid out first.
+    const syncColgroups = () => {
+        const headerTable = document.getElementById('data-table-header');
+        const bodyColgroup = document.getElementById('table-colgroup');
+        if (!headerTable || !bodyColgroup) return;
+
+        const headerRow = thead.querySelector('tr:first-child');
+        if (!headerRow) return;
+        const ths = headerRow.querySelectorAll('th');
+
+        // Also rebuild the header colgroup
+        const headerColgroup = document.getElementById('table-colgroup-header');
+        if (headerColgroup) {
+            headerColgroup.innerHTML = '';
+            ths.forEach(th => {
+                const col = document.createElement('col');
+                if (th.style.width) col.style.width = th.style.width;
+                headerColgroup.appendChild(col);
+            });
+        }
+
+        // Read actual rendered widths after layout and apply to body colgroup
+        requestAnimationFrame(() => {
+            bodyColgroup.innerHTML = '';
+            ths.forEach(th => {
+                const col = document.createElement('col');
+                col.style.width = th.getBoundingClientRect().width + 'px';
+                bodyColgroup.appendChild(col);
+            });
+        });
+    };
+    syncColgroups();
+
     // Initialize resizers - MUST BE DONE AFTER ALL thead.innerHTML UPDATES
     thead.querySelectorAll('.resizable-th').forEach(th => {
         initColumnResize(th, path, th.dataset.label);
     });
+
+    // Automatically focus the active search input when switching views
+    const searchInput = searchArea.querySelector('input[type="text"]');
+    if (searchInput) {
+        searchInput.focus();
+    }
 }
 
 function applySearch() {
@@ -1223,7 +1234,7 @@ function renderCollections(data) {
     if (!data.length) return '<tr><td colspan="5" style="text-align:center">No collections found.</td></tr>';
 
     return data.map(col => `
-        <tr>
+        <tr data-id="${col.name}">
             <td><b style="color:var(--accent)">${col.name}</b></td>
             <td class="mono">${col['total_files']}</td>
             <td class="mono">${col['total_functions']}</td>
@@ -1247,7 +1258,7 @@ function renderBatches(data) {
     return data.map(b => {
         const col = b.collection || 'unknown';
         return `
-        <tr>
+        <tr data-id="${b['batch_uuid']}">
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <b>${b.name || 'Unnamed'}</b>
@@ -1421,7 +1432,7 @@ function renderGlobalFeatures(items) {
         }
 
         return `
-        <tr>
+        <tr data-id="${f.hash}">
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <code class="mono" style="color:var(--accent)">${f.hash}</code>
@@ -1475,13 +1486,7 @@ function renderTopCorrelations(items) {
         const pairId = p.sid || `${p.id1}|${p.id2}|${p.algo}`;
 
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
-            <td style="text-align:center; vertical-align:middle;">
-                <input type="checkbox" class="row-selector" 
-                        data-pair-id="${pairId}"
-                        ${selectedSimilarityPairs.has(pairId) ? 'checked' : ''} 
-                        onchange="toggleSimilaritySelection(event, '${p.id1}', '${p.id2}', '${p.algo}')">
-            </td>
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
@@ -1640,6 +1645,9 @@ function showDiffView() {
 }
 
 function showFunctionCodeById(id, name, lineHash = '', e) {
+    if (window.getSelection && window.getSelection().toString().trim()) {
+        return;
+    }
     const url = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
     if (e && (e.ctrlKey || e.metaKey)) {
         window.open(url, '_blank');
@@ -1745,8 +1753,10 @@ window.addEventListener('hashchange', (e) => {
 // UI Settings
 const UIParams = {
     cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
-    colorByTag: localStorage.getItem('colorByTag') === 'true'
+    colorByTag: localStorage.getItem('colorByTag') === 'true',
+    includeHeaders: localStorage.getItem('includeHeaders') === 'true'
 };
+window.UIParams = UIParams;
 
 function toggleUISettings() {
     const panel = document.getElementById('ui-settings-panel');
@@ -1759,11 +1769,13 @@ function updateUIParams() {
 
     UIParams.cohesionThreshold = parseFloat(document.getElementById('param-cohesion').value);
     UIParams.colorByTag = document.getElementById('param-color-tags').checked;
+    UIParams.includeHeaders = document.getElementById('param-include-headers').checked;
 
     document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
 
     localStorage.setItem('cohesionThreshold', UIParams.cohesionThreshold);
     localStorage.setItem('colorByTag', UIParams.colorByTag);
+    localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
@@ -1816,11 +1828,13 @@ function refreshClusterCards() {
 function loadUIParams() {
     const elCohesion = document.getElementById('param-cohesion');
     const elColorTags = document.getElementById('param-color-tags');
+    const elIncludeHeaders = document.getElementById('param-include-headers');
     if (elCohesion) {
         elCohesion.value = UIParams.cohesionThreshold;
         document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
     }
     if (elColorTags) elColorTags.checked = UIParams.colorByTag;
+    if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
 }
 
 window.addEventListener('load', () => {
@@ -1916,7 +1930,7 @@ function updateNavVisibility(collection) {
 function renderClusters(items) {
     return items.map(c => `
         <tr data-cluster-id="${c.cluster_id}">
-            <td class="mono" style="color:var(--accent)">
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
                 ${(c.cluster_uuid || '').substring(0, 8)}
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
@@ -2107,10 +2121,6 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
     const graph = window.graphInstance;
     if (!graph) return;
 
-    // Save current context menu state for refreshing
-    window.currentContextMenu = { e, type, data };
-    window.graphContextMenuOpen = true;
-
     let menu = document.getElementById('graph-context-menu');
     if (!menu) {
         menu = document.createElement('div');
@@ -2122,6 +2132,10 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
     if (window.hideDiffPreview) window.hideDiffPreview();
     if (window.hideCodePreview) window.hideCodePreview();
     if (window.hideBinaryPreview) window.hideBinaryPreview();
+
+    // Save current context menu state for refreshing and set open state AFTER hide functions to avoid them immediately resetting graphContextMenuOpen
+    window.currentContextMenu = { e, type, data };
+    window.graphContextMenuOpen = true;
 
     // Generate HTML content based on type
     let html = '';
@@ -2233,6 +2247,10 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
     menu.innerHTML = html;
     menu.style.display = 'block';
 
+    // Disable SVG pointer events so underlying graph elements can't fire hover events through the menu
+    const graphSvg = document.querySelector('#bk-similarity-plot svg');
+    if (graphSvg) graphSvg.style.pointerEvents = 'none';
+
     if (!isRefresh) {
         // Position the menu
         let x = e.clientX, y = e.clientY;
@@ -2270,6 +2288,9 @@ window.closeGraphContextMenu = function() {
     }
     window.graphContextMenuOpen = false;
     window.currentContextMenu = null;
+    // Re-enable SVG pointer events
+    const graphSvg = document.querySelector('#bk-similarity-plot svg');
+    if (graphSvg) graphSvg.style.pointerEvents = '';
     if (window._contextMenuCloseFn) {
         document.removeEventListener('mousedown', window._contextMenuCloseFn, { capture: true });
         window._contextMenuCloseFn = null;
@@ -2537,10 +2558,8 @@ window.handleFilterKey = handleFilterKey;
 window.toggleSidebar = toggleSidebar;
 window.toggleHeader = toggleHeader;
 window.toggleFilters = toggleFilters;
-window.toggleSimilaritySelection = toggleSimilaritySelection;
-window.toggleAllSimilaritySelection = toggleAllSimilaritySelection;
-window.getSimilarityRowInfo = getSimilarityRowInfo;
 window.seeSimilarFromCode = seeSimilarFromCode;
+
 window.showFunctionCodeById = showFunctionCodeById;
 window.showFeaturePanel = showFeaturePanel;
 window.showGlobalFeaturePanel = showGlobalFeaturePanel;

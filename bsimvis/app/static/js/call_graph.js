@@ -16,11 +16,35 @@ class FileCallGraph {
         this.width = this.container.clientWidth;
         this.height = this.container.clientHeight || 600;
         this.abortController = null;
+        this.currentCollection = null;
+        this.currentFileMd5 = null;
     }
 
     stop() {
         if (this.abortController) this.abortController.abort();
         if (this.simulation) this.simulation.stop();
+    }
+
+    async loadAndPopulateDropdown(col, file_md5) {
+        try {
+            const res = await fetch(`/api/file/search?collection=${col}&limit=1000`);
+            const data = await res.json();
+            const select = document.getElementById('call-graph-file-select');
+            if (select) {
+                select.innerHTML = '<option value="">-- Select File --</option>' + 
+                    (data.files || []).map(f => `<option value="${f.file_md5}" ${f.file_md5 === file_md5 ? 'selected' : ''}>${f.file_name} (${f.file_md5.substring(0,8)})</option>`).join('');
+                
+                select.onchange = (e) => {
+                    if (e.target.value) {
+                        window.location.hash = `#file-call-graph?collection=${col}&file_md5=${e.target.value}`;
+                    } else {
+                        window.location.hash = `#file-call-graph?collection=${col}`;
+                    }
+                };
+            }
+        } catch (e) {
+            console.error("Error loading files for dropdown:", e);
+        }
     }
 
     async fetch(params) {
@@ -30,8 +54,25 @@ class FileCallGraph {
 
         const col = params.get('collection');
         const file_md5 = params.get('file_md5');
+        this.currentCollection = col;
+        this.currentFileMd5 = file_md5;
+
         if (!col || !file_md5) {
-            this.container.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100%; color:var(--subtle); font-size:1.2rem;">Please select a file from the dropdown above to view its call graph.</div>';
+            this.container.innerHTML = `
+                <div style="display:flex; justify-content:center; align-items:center; height:100%; color:var(--subtle); font-size:1.2rem; flex-direction:column; gap:15px; background:#0d0f14;">
+                    <i class="fa-solid fa-sitemap" style="font-size:3.5rem; color:var(--border); opacity:0.3; margin-bottom:10px;"></i>
+                    <span>Please select a file from the dropdown to view its call graph.</span>
+                </div>
+                <div style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.85); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px;">
+                    <label for="call-graph-file-select" style="color:var(--accent); font-weight:bold; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Select File</label>
+                    <select id="call-graph-file-select" style="padding: 6px 10px; background: #111; color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
+                        <option value="">-- Loading Files... --</option>
+                    </select>
+                </div>
+            `;
+            if (col) {
+                this.loadAndPopulateDropdown(col, file_md5);
+            }
             return;
         }
 
@@ -85,6 +126,7 @@ class FileCallGraph {
 
         // Clear previous
         this.container.innerHTML = `
+            <div id="${this.containerId}-svg-root" style="width:100%; height:100%;"></div>
             <div style="position:absolute; top:15px; left:15px; z-index:10; background:rgba(0,0,0,0.85); padding:12px; border-radius:6px; border:1px solid #333; pointer-events:none; font-size:0.75rem; color:#eee; backdrop-filter:blur(5px);">
                 <div style="font-weight:bold; color:var(--accent); margin-bottom:10px; border-bottom:1px solid #444; padding-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
                     <span>Call Graph Legend</span>
@@ -115,13 +157,22 @@ class FileCallGraph {
                     • <b>Scroll</b> to zoom/pan
                 </div>
             </div>
-            <div style="position:absolute; bottom:15px; right:15px; z-index:10; display:flex; gap:10px;">
+            <div style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.85); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px; pointer-events: auto;">
+                <label for="call-graph-file-select" style="color:var(--accent); font-weight:bold; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Select File</label>
+                <select id="call-graph-file-select" style="padding: 6px 10px; background: #111; color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
+                    <option value="">-- Loading Files... --</option>
+                </select>
+            </div>
+            <div style="position:absolute; bottom:15px; right:15px; z-index:10; display:flex; gap:10px; pointer-events: auto;">
                 <button id="${this.containerId}-btn-size" title="Toggle Size by Operations" style="background:#1e1e1e; border:1px solid #444; color:var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">Size: Uniform</button>
                 <button id="${this.containerId}-btn-physics" title="Toggle Physics Simulation" style="background:#1e1e1e; border:1px solid #444; color:var(--success); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:bold;">Physics: ON</button>
                 <button id="${this.containerId}-btn-hierarchy" title="Arrange Topologically" style="background:#1e1e1e; border:1px solid #444; color:var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">Hierarchical Layout</button>
             </div>
-            <div id="${this.containerId}-svg-root" style="width:100%; height:100%;"></div>
         `;
+
+        if (this.currentCollection && this.currentFileMd5) {
+            this.loadAndPopulateDropdown(this.currentCollection, this.currentFileMd5);
+        }
 
         this.width = this.container.clientWidth;
         this.height = this.container.clientHeight || 600;

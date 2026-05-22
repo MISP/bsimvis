@@ -318,9 +318,9 @@ function navigateToFeatures(id, e) {
         return;
     }
     if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
-        window.parent.showFeaturePanel(id);
+        window.parent.showFeaturePanel(id, e);
     } else if (typeof window.showFeaturePanel === 'function') {
-        window.showFeaturePanel(id);
+        window.showFeaturePanel(id, e);
     } else {
         window.location.href = url;
     }

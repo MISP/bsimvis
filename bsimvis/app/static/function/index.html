@@ -160,8 +160,7 @@
                 return;
             }
             if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
-                const parts = id.split(':');
-                window.parent.showFeaturePanel(id);
+                window.parent.showFeaturePanel(id, e);
             } else {
                 window.location.href = url;
             }

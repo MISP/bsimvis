@@ -58,7 +58,7 @@ ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 echo "--- Launching Services ---"
 
 # Start Redis
-start_screen "bsimvis-redis" "redis-server --port ${REDIS_PORT}"
+start_screen "bsimvis-redis" "redis-server --port ${REDIS_PORT} --dir ./data/redis"
 
 # Start Kvrocks
 start_screen "bsimvis-kvrocks" "kvrocks -c kvrocks.conf --port ${KVROCKS_PORT}"

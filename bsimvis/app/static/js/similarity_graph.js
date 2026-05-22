@@ -721,6 +721,10 @@ class SimilarityGraph {
         // For simplicity and since D3 is fast enough for 500 nodes, we just call updateSources with current params.
         const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
         this.updateSources(params);
+
+        if (typeof window.saveGraphSettings === 'function') {
+            window.saveGraphSettings();
+        }
     }
 
     applyProfile(profile) {

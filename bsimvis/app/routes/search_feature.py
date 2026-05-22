@@ -224,6 +224,11 @@ def search_features():
     except ValueError:
         return jsonify({"error": "offset and limit must be integers"}), 400
 
+    format_arg = request.args.get("format")
+    if format_arg in ("csv", "json"):
+        offset = 0
+        limit = 100000
+
     feature_prefix = request.args.get("hash", "")
     sort_by = request.args.get("sort", "default")
 
@@ -236,14 +241,20 @@ def search_features():
         if "feature_id" not in f:
             f["feature_id"] = f"{collection}:feature:{f['hash']}"
 
-    return jsonify(
-        {
-            "total": total_found,
-            "offset": offset,
-            "limit": limit,
-            "features": feature_list,
-        }
-    )
+    response_data = {
+        "total": total_found,
+        "offset": offset,
+        "limit": limit,
+        "features": feature_list,
+    }
+    if format_arg == "csv":
+        from bsimvis.app.services.export_service import export_to_csv
+        return export_to_csv(feature_list, "features")
+    elif format_arg == "json":
+        from bsimvis.app.services.export_service import export_to_json
+        return export_to_json(response_data, "features")
+    else:
+        return jsonify(response_data)
 
 
 @search_feature_bp.route("/api/feature/details/<f_hash>")

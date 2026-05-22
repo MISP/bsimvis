@@ -54,6 +54,11 @@ def search_functions():
 
     pool_limit = max(1, min(pool_limit, MAX_POOL_LIMIT))
 
+    format_arg = request.args.get("format")
+    if format_arg in ("csv", "json"):
+        offset = 0
+        limit = 100000
+
     # Search parameters
     search_q = request.args.get("q", "").lower().strip()
     name_filter = (
@@ -582,16 +587,22 @@ def search_functions():
     )
 
 
-    return jsonify(
-        {
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "pool_truncated": pool_truncated,
-            "functions": functions_list,
-            "collection": col,
-            "q": search_q,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        }
-    )
+    response_data = {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "pool_truncated": pool_truncated,
+        "functions": functions_list,
+        "collection": col,
+        "q": search_q,
+        "sort_by": sort_by,
+        "sort_order": sort_order,
+    }
+    if format_arg == "csv":
+        from bsimvis.app.services.export_service import export_to_csv
+        return export_to_csv(functions_list, "functions")
+    elif format_arg == "json":
+        from bsimvis.app.services.export_service import export_to_json
+        return export_to_json(response_data, "functions")
+    else:
+        return jsonify(response_data)

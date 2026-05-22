@@ -169,6 +169,11 @@ def similarity_search():
     except ValueError:
         return jsonify({"detail": "Invalid numeric parameter"}), 400
 
+    format_arg = request.args.get("format")
+    if format_arg in ("csv", "json"):
+        offset = 0
+        limit = 100000
+
     # Filtering parameters
     search_q = request.args.get("q", "").lower().strip()
     name_filter = request.args.get("name", "").lower().strip()
@@ -1197,39 +1202,44 @@ def similarity_search():
             f"Enrich: {metrics['enrich_time']:.3f}s | Total: {total_time:.3f}s"
         )
 
-        resp = jsonify(
-            {
-                "collection": col,
-                "algo": algo,
-                "min_score": min_score,
-                "max_score": max_score,
-                "min_features": min_features,
-                "q": request.args.get("q", ""),
-                "name": request.args.get("name", ""),
-                "tag": request.args.get("tag", ""),
-                "static_tag": request.args.get("static_tag", ""),
-                "user_tag": request.args.get("user_tag", ""),
-                "sim_tag": request.args.get("sim_tag", ""),
-                "sim_static_tag": request.args.get("sim_static_tag", ""),
-                "sim_user_tag": request.args.get("sim_user_tag", ""),
-                "func_tag": request.args.get("func_tag", ""),
-                "func_static_tag": request.args.get("func_static_tag", ""),
-                "func_user_tag": request.args.get("func_user_tag", ""),
-                "language": request.args.get("language", ""),
-                "md5": md5_filters,
-                "cross_binary": cross_binary_val,
-                "total": total,
-                "offset": offset,
-                "limit": limit,
-                "pool_limit": pool_limit,
-                "pool_truncated": pool_truncated,
-                "pairs": enriched_pairs,
-                "sort_by": sort_by,
-                "sort_order": sort_order,
-                "cached_response": cache_hit,
-            }
-        )
-        return resp
+        response_data = {
+            "collection": col,
+            "algo": algo,
+            "min_score": min_score,
+            "max_score": max_score,
+            "min_features": min_features,
+            "q": request.args.get("q", ""),
+            "name": request.args.get("name", ""),
+            "tag": request.args.get("tag", ""),
+            "static_tag": request.args.get("static_tag", ""),
+            "user_tag": request.args.get("user_tag", ""),
+            "sim_tag": request.args.get("sim_tag", ""),
+            "sim_static_tag": request.args.get("sim_static_tag", ""),
+            "sim_user_tag": request.args.get("sim_user_tag", ""),
+            "func_tag": request.args.get("func_tag", ""),
+            "func_static_tag": request.args.get("func_static_tag", ""),
+            "func_user_tag": request.args.get("func_user_tag", ""),
+            "language": request.args.get("language", ""),
+            "md5": md5_filters,
+            "cross_binary": cross_binary_val,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "pool_limit": pool_limit,
+            "pool_truncated": pool_truncated,
+            "pairs": enriched_pairs,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "cached_response": cache_hit,
+        }
+        if format_arg == "csv":
+            from bsimvis.app.services.export_service import export_to_csv
+            return export_to_csv(enriched_pairs, "similarity")
+        elif format_arg == "json":
+            from bsimvis.app.services.export_service import export_to_json
+            return export_to_json(response_data, "similarity")
+        else:
+            return jsonify(response_data)
 
     except Exception as e:
         import traceback

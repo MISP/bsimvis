@@ -16,6 +16,11 @@ def search_collections():
     except ValueError:
         return jsonify({"error": "offset and limit must be integers"}), 400
 
+    format_arg = request.args.get("format")
+    if format_arg in ("csv", "json"):
+        offset = 0
+        limit = 100000
+
     collection_names = sorted(list(r.smembers("global:collections")))
     total = len(collection_names)
     page_names = collection_names[offset : offset + limit]
@@ -60,9 +65,20 @@ def search_collections():
             }
         )
 
-    return jsonify(
-        {"collections": results, "total": total, "offset": offset, "limit": limit}
-    )
+    response_data = {
+        "collections": results,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+    if format_arg == "csv":
+        from bsimvis.app.services.export_service import export_to_csv
+        return export_to_csv(results, "collections")
+    elif format_arg == "json":
+        from bsimvis.app.services.export_service import export_to_json
+        return export_to_json(response_data, "collections")
+    else:
+        return jsonify(response_data)
 
 
 @search_collection_bp.route("/api/batch/search")
@@ -78,6 +94,11 @@ def search_batches():
     target_collection = request.args.get("collection")
     if not target_collection:
         return jsonify({"error": "No collection specified"}), 400
+
+    format_arg = request.args.get("format")
+    if format_arg in ("csv", "json"):
+        offset = 0
+        limit = 100000
 
     batch_uuids = list(r.smembers("global:batches"))
 
@@ -109,4 +130,17 @@ def search_batches():
     total = len(all_results)
     page = all_results[offset : offset + limit]
 
-    return jsonify({"batches": page, "total": total, "offset": offset, "limit": limit})
+    response_data = {
+        "batches": page,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+    if format_arg == "csv":
+        from bsimvis.app.services.export_service import export_to_csv
+        return export_to_csv(page, "batches")
+    elif format_arg == "json":
+        from bsimvis.app.services.export_service import export_to_json
+        return export_to_json(response_data, "batches")
+    else:
+        return jsonify(response_data)

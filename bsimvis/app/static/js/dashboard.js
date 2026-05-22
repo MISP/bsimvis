@@ -259,6 +259,7 @@ function clearFilters() {
     currentOffset = 0;
     isEndOfResults = false;
     const newHash = hashPath + (newParams.toString() ? '?' + newParams.toString() : '');
+    window.isClearingFilters = true;
     window.location.hash = newHash;
     // Re-apply sim view defaults when clearing within the sim view
     if (hashPath === '#function-similarity') {
@@ -286,6 +287,12 @@ async function refreshData(appendArg = false, force = false) {
 
     const params = new URLSearchParams(queryString);
     const collection = params.get('collection') || 'main';
+
+    // Save search filters state (only if not collections view)
+    if (hashPath !== '#collections') {
+        localStorage.setItem(`savedFilters:${collection}:${hashPath}`, queryString || `collection=${collection}`);
+        addToHistory(hashPath, queryString);
+    }
 
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
     if (hashPath === '#functions' || hashPath === '#function-similarity' || hashPath === '#files') {
@@ -431,23 +438,61 @@ function updateUI(path, params, route) {
     }
 
     // Side Collections Info
-    updateNavVisibility(col);
+    const viewHistoryBtnContainer = document.querySelector('.view-history-container');
+    if (viewHistoryBtnContainer) {
+        viewHistoryBtnContainer.style.display = path === '#collections' ? 'none' : 'block';
+    }
+
+    // Toggle download buttons visibility
+    const exportContainer = document.getElementById('export-dropdown-container');
+    if (exportContainer) {
+        if (route.api) {
+            exportContainer.style.display = 'inline-block';
+        } else {
+            exportContainer.style.display = 'none';
+            if (typeof closeExportDropdown === 'function') closeExportDropdown();
+        }
+    }
 
     if (col) {
-        document.getElementById('nav-batches').href = `#batches?collection=${col}`;
-        document.getElementById('nav-files').href = `#files?collection=${col}`;
-        document.getElementById('nav-functions').href = `#functions?collection=${col}`;
-        document.getElementById('nav-features-global').href = `#features-global?collection=${col}`;
-        document.getElementById('nav-function-similarity').href = `#function-similarity?collection=${col}`;
-        document.getElementById('nav-clusters').href = `#clusters?collection=${col}`;
+        const updateNavLink = (id, hash) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const saved = localStorage.getItem(`savedFilters:${col}:${hash}`);
+            if (saved) {
+                const savedParams = new URLSearchParams(saved);
+                savedParams.set('collection', col);
+                el.href = `${hash}?${savedParams.toString()}`;
+            } else {
+                el.href = `${hash}?collection=${col}`;
+            }
+        };
+
+        updateNavLink('nav-batches', '#batches');
+        updateNavLink('nav-files', '#files');
+        updateNavLink('nav-functions', '#functions');
+        updateNavLink('nav-features-global', '#features-global');
+        updateNavLink('nav-function-similarity', '#function-similarity');
+        updateNavLink('nav-clusters', '#clusters');
         
         const fileMd5 = params.get('file_md5');
         const cgNav = document.getElementById('nav-file-call-graph');
         if (cgNav) {
-            let href = `#file-call-graph?collection=${col}`;
-            if (fileMd5) href += `&file_md5=${fileMd5}`;
-            cgNav.href = href;
+            const saved = localStorage.getItem(`savedFilters:${col}:#file-call-graph`);
+            if (saved) {
+                const savedParams = new URLSearchParams(saved);
+                savedParams.set('collection', col);
+                cgNav.href = `#file-call-graph?${savedParams.toString()}`;
+            } else {
+                let href = `#file-call-graph?collection=${col}`;
+                if (fileMd5) href += `&file_md5=${fileMd5}`;
+                cgNav.href = href;
+            }
         }
+    }
+
+    if (path === '#function-similarity' && params.get('view') === 'graph') {
+        restoreGraphSettings();
     }
 
     // Table Head
@@ -1740,12 +1785,21 @@ window.addEventListener('hashchange', (e) => {
         if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
     }
 
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+    const col = params.get('collection') || 'main';
+
+    if (window.isClearingFilters) {
+        window.isClearingFilters = false;
+        localStorage.setItem(`savedFilters:${col}:${hashPath}`, queryString || `collection=${col}`);
+    }
+
     const [newHash] = (window.location.hash || '#collections').split('?');
     const [oldHash] = (e.oldURL ? new URL(e.oldURL).hash : '').split('?');
     // Apply defaults only when entering sim view from a different view
     if (newHash === '#function-similarity' && oldHash !== '#function-similarity') {
-        const [hashPath, queryString] = (window.location.hash || '').split('?');
-        if (applySimViewDefaults(hashPath, queryString)) return;
+        const [hashPathPart, queryStringPart] = (window.location.hash || '').split('?');
+        if (applySimViewDefaults(hashPathPart, queryStringPart)) return;
     }
     refreshData();
 });
@@ -1841,14 +1895,73 @@ window.addEventListener('load', () => {
     loadUIParams();
     populateCollectionDropdown();
     if (!window.location.hash) window.location.hash = '#collections';
-    // Apply defaults on initial page load if landing on sim view
+
+    // Attach graph settings listeners
+    const graphSettingIds = [
+        'graph-show-label',
+        'graph-color-binary',
+        'graph-color-function',
+        'graph-color-sim',
+        'graph-bundle-tension',
+        'graph-link-width',
+        'graph-scale-width'
+    ];
+    graphSettingIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => { if (typeof saveGraphSettings === 'function') saveGraphSettings(); });
+            el.addEventListener('input', () => { if (typeof saveGraphSettings === 'function') saveGraphSettings(); });
+        }
+    });
+
     const [hashPath, queryString] = (window.location.hash || '').split('?');
+
     if (applySimViewDefaults(hashPath, queryString)) {
         loadDiffQueue();
         return;
     }
     refreshData();
     loadDiffQueue();
+
+    // Sidebar History Hover Listeners
+    const navHistoryContainer = document.querySelector('.history-dropdown-container');
+    if (navHistoryContainer) {
+        navHistoryContainer.addEventListener('mouseenter', () => {
+            if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
+            const dropdown = document.getElementById('history-dropdown');
+            if (dropdown) {
+                dropdown.style.display = 'block';
+                const chev = document.getElementById('nav-history-chevron');
+                if (chev) chev.style.transform = 'rotate(180deg)';
+            }
+        });
+        navHistoryContainer.addEventListener('mouseleave', () => {
+            const dropdown = document.getElementById('history-dropdown');
+            if (dropdown) {
+                dropdown.style.display = 'none';
+                const chev = document.getElementById('nav-history-chevron');
+                if (chev) chev.style.transform = 'rotate(0deg)';
+            }
+        });
+    }
+
+    // View-Specific History Hover Listeners
+    const viewHistoryContainer = document.querySelector('.view-history-container');
+    if (viewHistoryContainer) {
+        viewHistoryContainer.addEventListener('mouseenter', () => {
+            if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
+            const dropdown = document.getElementById('view-history-dropdown');
+            if (dropdown) {
+                dropdown.style.display = 'block';
+            }
+        });
+        viewHistoryContainer.addEventListener('mouseleave', () => {
+            const dropdown = document.getElementById('view-history-dropdown');
+            if (dropdown) {
+                dropdown.style.display = 'none';
+            }
+        });
+    }
 });
 
 async function populateCollectionDropdown() {
@@ -2637,3 +2750,532 @@ window.addEventListener('message', (event) => {
         });
     }
 });
+
+// --- Saved Filters & History Mechanism ---
+const viewMetaData = {
+    '#collections': { name: 'Collections', icon: 'fa-layer-group' },
+    '#batches': { name: 'Batches', icon: 'fa-boxes-stacked' },
+    '#files': { name: 'Files', icon: 'fa-file-code' },
+    '#functions': { name: 'Functions', icon: 'fa-code' },
+    '#features-global': { name: 'Features', icon: 'fa-fingerprint' },
+    '#function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
+    '#clusters': { name: 'Clusters', icon: 'fa-bullseye' },
+    '#file-call-graph': { name: 'Call Graph', icon: 'fa-sitemap' }
+};
+
+function getFilterSummary(path, params) {
+    const summary = [];
+    const q = params.get('q');
+    if (q) summary.push(`q: "${q}"`);
+
+    if (path === '#files') {
+        const file_name = params.get('file_name');
+        const file_md5 = params.get('file_md5');
+        const language_id = params.get('language_id');
+        const min_function_count = params.get('min_function_count');
+        const max_function_count = params.get('max_function_count');
+        
+        if (file_name) summary.push(`Name: "${file_name}"`);
+        if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
+        if (language_id) summary.push(`Lang: ${language_id}`);
+        if (min_function_count || max_function_count) {
+            summary.push(`Funcs: ${min_function_count || 0}-${max_function_count || '∞'}`);
+        }
+    } else if (path === '#functions') {
+        const function_name = params.get('function_name');
+        const file_name = params.get('file_name');
+        const file_md5 = params.get('file_md5');
+        const min_features = params.get('min_features');
+        const cluster_name = params.get('cluster_name');
+        const entrypoint_address = params.get('entrypoint_address');
+        
+        if (function_name) summary.push(`Func: "${function_name}"`);
+        if (file_name) summary.push(`File: "${file_name}"`);
+        if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
+        if (entrypoint_address) summary.push(`Addr: ${entrypoint_address}`);
+        if (min_features && min_features !== '0') summary.push(`Min Feat: ${min_features}`);
+        if (cluster_name) summary.push(`Cluster: "${cluster_name}"`);
+    } else if (path === '#function-similarity') {
+        const name = params.get('name');
+        const md5 = params.get('md5');
+        const address = params.get('address');
+        const min_score = params.get('min_score');
+        const max_score = params.get('max_score');
+        const algo = params.get('algo');
+        const cross_binary = params.get('cross_binary');
+        const match_mode = params.get('match_mode');
+        
+        if (name) summary.push(`Func: "${name}"`);
+        if (md5) summary.push(`MD5: ${md5.substring(0, 6)}`);
+        if (address) summary.push(`Addr: ${address}`);
+        if (min_score && min_score !== '0.95') summary.push(`Score >= ${min_score}`);
+        if (max_score && max_score !== '1.0') summary.push(`Score <= ${max_score}`);
+        if (algo && algo !== 'unweighted_cosine') summary.push(`Algo: ${algo}`);
+        if (cross_binary) {
+            summary.push(cross_binary === 'true' ? 'Cross-Binary' : 'Same-Binary');
+        }
+        if (match_mode && match_mode !== 'any') summary.push(`Match: ${match_mode}`);
+    } else if (path === '#clusters') {
+        const cluster_uuid = params.get('cluster_uuid');
+        const cluster_name = params.get('cluster_name');
+        const min_count = params.get('min_count');
+        const min_cohesion = params.get('min_cohesion');
+        
+        if (cluster_uuid) summary.push(`UUID: ${cluster_uuid.substring(0, 6)}`);
+        if (cluster_name) summary.push(`Name: "${cluster_name}"`);
+        if (min_count && min_count !== '0') summary.push(`Min Funcs: ${min_count}`);
+        if (min_cohesion && min_cohesion !== '0') summary.push(`Cohesion >= ${min_cohesion}`);
+    } else if (path === '#file-call-graph') {
+        const file_md5 = params.get('file_md5');
+        if (file_md5) summary.push(`File MD5: ${file_md5.substring(0, 8)}`);
+    }
+
+    const tags = [];
+    params.forEach((val, key) => {
+        if (key.includes('tag') && !key.startsWith('exclude_') && val) {
+            tags.push(val);
+        }
+    });
+    if (tags.length > 0) {
+        summary.push(`Tags: ${tags.join(',')}`);
+    }
+
+    return summary.join(', ') || 'No filters applied';
+}
+
+function getGraphTypeBadge(path, params) {
+    const viewMode = params.get('view') || 'table';
+    if (path === '#function-similarity') {
+        return viewMode === 'graph' ? 'Graph' : 'Table';
+    } else if (path === '#clusters') {
+        if (viewMode === 'hierarchy') return 'Hierarchy';
+        if (viewMode === 'packing') return 'Packing';
+        return 'Table';
+    } else if (path === '#file-call-graph') {
+        return 'Call Graph';
+    }
+    return 'Table';
+}
+
+function formatRelativeTime(timestamp) {
+    const diff = Date.now() - timestamp;
+    if (diff < 60000) return 'Just now';
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+}
+
+function addToHistory(path, queryString) {
+    if (path === '#collections') return;
+
+    const params = new URLSearchParams(queryString);
+    const col = params.get('collection') || 'main';
+    const view = params.get('view') || 'table';
+    const summary = getFilterSummary(path, params);
+
+    // Do not save to history if no filters were applied
+    if (!summary || summary === 'No filters applied') {
+        return;
+    }
+
+    let history = [];
+    try {
+        history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
+    } catch(e) {}
+
+    const now = Date.now();
+    const cleanParamsObj = {};
+    params.forEach((val, key) => {
+        if (cleanParamsObj[key]) {
+            if (Array.isArray(cleanParamsObj[key])) {
+                cleanParamsObj[key].push(val);
+            } else {
+                cleanParamsObj[key] = [cleanParamsObj[key], val];
+            }
+        } else {
+            cleanParamsObj[key] = val;
+        }
+    });
+
+    const newItem = {
+        timestamp: now,
+        path: path,
+        collection: col,
+        params: cleanParamsObj,
+        view: view,
+        summary: summary
+    };
+
+    // Helper to generate a standardized fingerprint ignoring key order
+    const getFingerprint = (item) => {
+        const sortedParams = {};
+        if (item.params) {
+            Object.keys(item.params).sort().forEach(k => {
+                if (k !== 'collection' && k !== 'view') {
+                    sortedParams[k] = item.params[k];
+                }
+            });
+        }
+        return `${item.collection || 'main'}:${item.path || ''}:${item.view || 'table'}:${JSON.stringify(sortedParams)}`;
+    };
+
+    const newItemFingerprint = getFingerprint(newItem);
+
+    let mergedTyping = false;
+    if (history.length > 0) {
+        const last = history[0];
+        const isSameView = last.path === path && last.collection === col && last.view === view;
+        const timeDiff = now - last.timestamp;
+        
+        // Typing merge (debounce within 7 seconds)
+        if (isSameView && timeDiff < 7000) {
+            history[0] = newItem;
+            mergedTyping = true;
+        }
+    }
+
+    if (!mergedTyping) {
+        // Full list deduplication: Filter out any existing matching query
+        history = history.filter(item => getFingerprint(item) !== newItemFingerprint);
+        // Move/unshift new item to top
+        history.unshift(newItem);
+    }
+
+    if (history.length > 30) {
+        history = history.slice(0, 30);
+    }
+
+    localStorage.setItem('bsimvis_search_history', JSON.stringify(history));
+    renderHistoryDropdowns();
+}
+
+function serializeParams(paramsObj) {
+    const params = new URLSearchParams();
+    for (const [key, val] of Object.entries(paramsObj)) {
+        if (Array.isArray(val)) {
+            val.forEach(v => params.append(key, v));
+        } else {
+            params.set(key, val);
+        }
+    }
+    return params.toString();
+}
+
+function loadHistoryItemByTimestamp(timestamp) {
+    let history = [];
+    try {
+        history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
+    } catch(e) {}
+
+    const item = history.find(h => h.timestamp === timestamp);
+    if (!item) return;
+
+    const qs = serializeParams(item.params);
+    window.location.hash = `${item.path}?${qs}`;
+    closeAllHistoryDropdowns();
+}
+
+function renderHistoryDropdowns() {
+    let history = [];
+    try {
+        history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
+    } catch(e) {}
+
+    const globalDropdown = document.getElementById('history-dropdown');
+    const viewDropdown = document.getElementById('view-history-dropdown');
+    const [currentPath, currentQueryString] = (window.location.hash || '#collections').split('?');
+    const currentParams = new URLSearchParams(currentQueryString);
+    const currentCol = currentParams.get('collection') || 'main';
+
+    const esc = (str) => {
+        if (!str) return '';
+        return str.replace(/&/g, '&amp;')
+                  .replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;')
+                  .replace(/"/g, '&quot;')
+                  .replace(/'/g, '&#039;');
+    };
+
+    // 1. Render Global Dropdown
+    if (globalDropdown) {
+        const colHistory = history.filter(item => item.collection === currentCol);
+        if (colHistory.length === 0) {
+            globalDropdown.innerHTML = `
+                <div class="history-dropdown-title">
+                    <span>Search History</span>
+                </div>
+                <div class="history-empty">
+                    <i class="fa-solid fa-clock-rotate-left" style="font-size: 1.5rem; opacity: 0.3;"></i>
+                    <span>No search history yet.</span>
+                </div>`;
+        } else {
+            let html = `
+                <div class="history-dropdown-title">
+                    <span>Search History</span>
+                    <button class="history-dropdown-clear-btn" onclick="clearSearchHistory(event)">
+                        <i class="fa-solid fa-trash-can"></i> Clear
+                    </button>
+                </div>`;
+            colHistory.forEach(item => {
+                const meta = viewMetaData[item.path] || { name: item.path, icon: 'fa-magnifying-glass' };
+                const tempParams = new URLSearchParams();
+                for (const [k, v] of Object.entries(item.params)) {
+                    if (Array.isArray(v)) v.forEach(x => tempParams.append(k, x));
+                    else tempParams.set(k, v);
+                }
+                const graphType = getGraphTypeBadge(item.path, tempParams);
+                html += `
+                    <div class="history-item" onclick="loadHistoryItemByTimestamp(${item.timestamp})">
+                        <div class="history-item-header">
+                            <i class="fa-solid ${meta.icon}"></i>
+                            <span class="history-item-view-name">${meta.name}</span>
+                            <span class="history-item-graph-type">${graphType}</span>
+                            <span class="history-item-time" title="${new Date(item.timestamp).toLocaleString()}">${formatRelativeTime(item.timestamp)}</span>
+                        </div>
+                        <div class="history-item-summary" title="${esc(item.summary)}">${esc(item.summary)}</div>
+                    </div>`;
+            });
+            globalDropdown.innerHTML = html;
+        }
+    }
+
+    // 2. Render View-Specific Dropdown
+    if (viewDropdown) {
+        const viewHistory = history.filter(item => item.path === currentPath && item.collection === currentCol);
+        if (viewHistory.length === 0) {
+            viewDropdown.innerHTML = `
+                <div class="history-dropdown-title">
+                    <span>View History</span>
+                </div>
+                <div class="history-empty">
+                    <i class="fa-solid fa-clock-rotate-left" style="font-size: 1.5rem; opacity: 0.3;"></i>
+                    <span>No history for this view.</span>
+                </div>`;
+        } else {
+            let html = `
+                <div class="history-dropdown-title">
+                    <span>View History</span>
+                    <button class="history-dropdown-clear-btn" onclick="clearViewHistory(event, '${currentPath}')">
+                        <i class="fa-solid fa-trash-can"></i> Clear View
+                    </button>
+                </div>`;
+            viewHistory.forEach(item => {
+                const meta = viewMetaData[item.path] || { name: item.path, icon: 'fa-magnifying-glass' };
+                const tempParams = new URLSearchParams();
+                for (const [k, v] of Object.entries(item.params)) {
+                    if (Array.isArray(v)) v.forEach(x => tempParams.append(k, x));
+                    else tempParams.set(k, v);
+                }
+                const graphType = getGraphTypeBadge(item.path, tempParams);
+                html += `
+                    <div class="history-item" onclick="loadHistoryItemByTimestamp(${item.timestamp})">
+                        <div class="history-item-header">
+                            <i class="fa-solid ${meta.icon}"></i>
+                            <span class="history-item-view-name">${meta.name}</span>
+                            <span class="history-item-graph-type">${graphType}</span>
+                            <span class="history-item-time" title="${new Date(item.timestamp).toLocaleString()}">${formatRelativeTime(item.timestamp)}</span>
+                        </div>
+                        <div class="history-item-summary" title="${esc(item.summary)}">${esc(item.summary)}</div>
+                    </div>`;
+            });
+            viewDropdown.innerHTML = html;
+        }
+    }
+}
+
+function clearSearchHistory(event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const [currentPath, currentQueryString] = (window.location.hash || '#collections').split('?');
+    const currentParams = new URLSearchParams(currentQueryString);
+    const currentCol = currentParams.get('collection') || 'main';
+
+    let history = [];
+    try {
+        history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
+    } catch(e) {}
+
+    // Keep items from other collections
+    const filtered = history.filter(item => item.collection !== currentCol);
+    localStorage.setItem('bsimvis_search_history', JSON.stringify(filtered));
+    renderHistoryDropdowns();
+}
+
+function clearViewHistory(event, path) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const [currentPath, currentQueryString] = (window.location.hash || '#collections').split('?');
+    const currentParams = new URLSearchParams(currentQueryString);
+    const currentCol = currentParams.get('collection') || 'main';
+
+    let history = [];
+    try {
+        history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
+    } catch(e) {}
+
+    // Keep items that are not in this view or not in this collection
+    const filtered = history.filter(item => !(item.path === path && item.collection === currentCol));
+    localStorage.setItem('bsimvis_search_history', JSON.stringify(filtered));
+    renderHistoryDropdowns();
+}
+
+function toggleHistoryDropdown(event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const dropdown = document.getElementById('history-dropdown');
+    if (!dropdown) return;
+    const isVisible = dropdown.style.display === 'block';
+    
+    closeAllHistoryDropdowns();
+
+    if (!isVisible) {
+        renderHistoryDropdowns();
+        dropdown.style.display = 'block';
+        const chev = document.getElementById('nav-history-chevron');
+        if (chev) chev.style.transform = 'rotate(180deg)';
+    }
+}
+
+function toggleViewHistoryDropdown(event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const dropdown = document.getElementById('view-history-dropdown');
+    if (!dropdown) return;
+    const isVisible = dropdown.style.display === 'block';
+    
+    closeAllHistoryDropdowns();
+
+    if (!isVisible) {
+        renderHistoryDropdowns();
+        dropdown.style.display = 'block';
+    }
+}
+
+function closeAllHistoryDropdowns() {
+    const globalDropdown = document.getElementById('history-dropdown');
+    const viewDropdown = document.getElementById('view-history-dropdown');
+    
+    if (globalDropdown) globalDropdown.style.display = 'none';
+    if (viewDropdown) viewDropdown.style.display = 'none';
+    
+    const chev = document.getElementById('nav-history-chevron');
+    if (chev) chev.style.transform = 'rotate(0deg)';
+}
+
+// Close dropdowns on outside click
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.history-dropdown-container') && !e.target.closest('.view-history-container')) {
+        closeAllHistoryDropdowns();
+    }
+    if (!e.target.closest('.export-dropdown-container')) {
+        closeExportDropdown();
+    }
+});
+
+// --- Graph Settings Sync ---
+function saveGraphSettings() {
+    const settings = {
+        showLabel: document.getElementById('graph-show-label')?.value || 'none',
+        colorBinary: document.getElementById('graph-color-binary')?.value || 'binary',
+        colorFunction: document.getElementById('graph-color-function')?.value || 'binary',
+        colorSim: document.getElementById('graph-color-sim')?.value || 'gradient',
+        bundleTension: document.getElementById('graph-bundle-tension')?.value || '0.85',
+        linkWidth: document.getElementById('graph-link-width')?.value || '1.0',
+        scaleWidth: document.getElementById('graph-scale-width')?.checked ?? true,
+        activeProfile: document.querySelector('#profile-toggle .view-btn.active')?.getAttribute('data-profile') || 'default'
+    };
+    localStorage.setItem('similarityGraphSettings', JSON.stringify(settings));
+}
+window.saveGraphSettings = saveGraphSettings;
+
+function restoreGraphSettings() {
+    const raw = localStorage.getItem('similarityGraphSettings');
+    if (!raw) return;
+    try {
+        const settings = JSON.parse(raw);
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        };
+        if (settings.showLabel !== undefined) setVal('graph-show-label', settings.showLabel);
+        if (settings.colorBinary !== undefined) setVal('graph-color-binary', settings.colorBinary);
+        if (settings.colorFunction !== undefined) setVal('graph-color-function', settings.colorFunction);
+        if (settings.colorSim !== undefined) setVal('graph-color-sim', settings.colorSim);
+        if (settings.bundleTension !== undefined) setVal('graph-bundle-tension', settings.bundleTension);
+        if (settings.linkWidth !== undefined) setVal('graph-link-width', settings.linkWidth);
+        
+        const chk = document.getElementById('graph-scale-width');
+        if (chk && settings.scaleWidth !== undefined) chk.checked = settings.scaleWidth;
+
+        // Restore active profile button selection
+        if (settings.activeProfile) {
+            document.querySelectorAll('#profile-toggle .view-btn').forEach(btn => {
+                if (btn.getAttribute('data-profile') === settings.activeProfile) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+            if (window.graphInstance) {
+                window.graphInstance.applyProfile(settings.activeProfile);
+            }
+        }
+    } catch(e) {
+        console.error("Failed to restore graph settings", e);
+    }
+}
+window.restoreGraphSettings = restoreGraphSettings;
+
+function downloadSearchResults(format) {
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const route = routes[hashPath];
+    if (!route || !route.api) {
+        alert("Downloads are not available for this view.");
+        return;
+    }
+    
+    const params = new URLSearchParams(queryString);
+    params.set('format', format);
+    // For downloads, we want to fetch all matches, so we set limit to a large number
+    params.set('limit', '100000');
+    
+    const downloadUrl = route.api + '?' + params.toString();
+    
+    // Create a temporary anchor element to trigger the browser download
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.setAttribute('download', '');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+window.downloadSearchResults = downloadSearchResults;
+
+function toggleExportDropdown(e) {
+    if (e) e.stopPropagation();
+    const dropdown = document.getElementById('export-dropdown');
+    if (!dropdown) return;
+    if (dropdown.style.display === 'none' || !dropdown.style.display) {
+        dropdown.style.display = 'block';
+    } else {
+        dropdown.style.display = 'none';
+    }
+}
+window.toggleExportDropdown = toggleExportDropdown;
+
+function closeExportDropdown() {
+    const dropdown = document.getElementById('export-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+}
+window.closeExportDropdown = closeExportDropdown;

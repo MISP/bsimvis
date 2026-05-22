@@ -17,6 +17,7 @@ class TableSelection {
         this.startPos = { x: 0, y: 0 };
         this.startedOnBlocking = false;
         this.tempFocus = null;
+        this.wasSelecting = false;
 
         if (!window.tableSelections) window.tableSelections = [];
         window.tableSelections.push(this);
@@ -25,21 +26,22 @@ class TableSelection {
     }
 
     init() {
-        this.table.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        this.table.addEventListener('dragstart', (e) => {
+        document.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        document.addEventListener('dragstart', (e) => {
             if (this.isDragging) {
                 e.preventDefault();
             }
         });
+        document.addEventListener('click', (e) => {
+            if (this.wasSelecting) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.wasSelecting = false;
+            }
+        }, true);
         window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         window.addEventListener('mouseup', (e) => this.handleMouseUp(e));
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
-
-        document.addEventListener('mousedown', (e) => {
-            if (!this.table.contains(e.target)) {
-                this.clearSelection();
-            }
-        });
 
         // Observer to handle dynamic content
         this.observer = new MutationObserver(() => {
@@ -82,24 +84,45 @@ class TableSelection {
     handleMouseDown(e) {
         if (e.button !== 0) return;
 
+        // Clear selection if clicking outside the table container
+        const container = this.table.closest('.table-container') || this.table.parentElement;
+        if (!container.contains(e.target)) {
+            this.clearSelection();
+        }
+
+        // Exclude interactive elements, sidebar, floating windows, code panes, or other graph/visual containers
+        if (this.isInteractive(e.target)) return;
+        if (
+            e.target.closest('nav') ||
+            e.target.closest('#window-tray') ||
+            e.target.closest('.code-preview-scroll') ||
+            e.target.closest('.diff-pane') ||
+            e.target.closest('.c-code-container') ||
+            e.target.closest('#graph-view-container') ||
+            e.target.closest('#hierarchy-view-container') ||
+            e.target.closest('#packing-view-container') ||
+            e.target.closest('#call-graph-view-container')
+        ) {
+            return;
+        }
+
         const info = this.getCellInfo(e.target);
-        if (!info) return;
 
         this.isDragging = true;
         this.startPos = { x: e.clientX, y: e.clientY };
-        this.startCell = { r: info.r, c: info.c };
+        this.startCell = info ? { r: info.r, c: info.c } : null;
         this.cellModeActive = false;
         
         // We track if we started on a truly "blocking" element like a button or actual <a> link.
         // Plain divs/spans with pointer cursor (like filenames) should still allow drag-to-cell-select.
         this.startedOnBlocking = this.isInteractive(e.target);
 
-        if (e.shiftKey && this.anchorCell) {
+        if (info && e.shiftKey && this.anchorCell) {
             this.cellModeActive = true;
             this.extendSelection(info.r, info.c);
             this.updateVisuals();
             e.preventDefault();
-        } else {
+        } else if (info) {
             this.tempFocus = { r: info.r, c: info.c };
         }
     }
@@ -107,8 +130,13 @@ class TableSelection {
     handleMouseMove(e) {
         if (!this.isDragging) return;
 
-        const info = this.getCellInfo(e.target);
+        const targetEl = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+        const info = this.getCellInfo(targetEl);
         if (!info) return;
+
+        if (!this.startCell) {
+            this.startCell = { r: info.r, c: info.c };
+        }
 
         const movedSignificantly = Math.hypot(e.clientX - this.startPos.x, e.clientY - this.startPos.y) > 5;
 
@@ -137,6 +165,13 @@ class TableSelection {
         if (this.isDragging) {
             const dist = Math.hypot(e.clientX - this.startPos.x, e.clientY - this.startPos.y);
             const selection = window.getSelection().toString();
+
+            if (this.cellModeActive || dist > 3) {
+                this.wasSelecting = true;
+                setTimeout(() => {
+                    this.wasSelecting = false;
+                }, 50);
+            }
 
             if (!this.cellModeActive && this.tempFocus && !this.startedOnBlocking) {
                 // If it was just a click or a very small movement with no text selection,

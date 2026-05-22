@@ -272,6 +272,11 @@ def search_files():
     except ValueError:
         return jsonify({"error": "offset and limit must be integers"}), 400
 
+    format_arg = request.args.get("format")
+    if format_arg in ("csv", "json"):
+        offset = 0
+        limit = 100000
+
     collection = request.args.get("collection")
     if not collection:
         return jsonify({"error": "No collection specified"}), 400
@@ -403,7 +408,18 @@ def search_files():
     if total == 0 and not has_filters:
         total = get_true_total_files(r, collection)
 
-    return jsonify(
-        {"total": total, "offset": offset, "limit": limit, "files": files_list}
-    )
+    response_data = {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "files": files_list,
+    }
+    if format_arg == "csv":
+        from bsimvis.app.services.export_service import export_to_csv
+        return export_to_csv(files_list, "files")
+    elif format_arg == "json":
+        from bsimvis.app.services.export_service import export_to_json
+        return export_to_json(response_data, "files")
+    else:
+        return jsonify(response_data)
 

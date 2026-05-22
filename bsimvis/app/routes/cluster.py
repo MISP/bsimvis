@@ -87,6 +87,7 @@ def list_clusters():
     algo = request.args.get("algo", "unweighted_cosine")
 
     # Filtering
+    format_arg = request.args.get("format")
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
@@ -201,14 +202,20 @@ def list_clusters():
     else:
         results.sort(key=lambda x: str(x["cluster_id"]), reverse=reverse)
 
-    return jsonify(
-        {
-            "collection": collection,
-            "algo": algo,
-            "total": len(results),
-            "results": results,
-        }
-    )
+    response_data = {
+        "collection": collection,
+        "algo": algo,
+        "total": len(results),
+        "results": results,
+    }
+    if format_arg == "csv":
+        from bsimvis.app.services.export_service import export_to_csv
+        return export_to_csv(results, "clusters")
+    elif format_arg == "json":
+        from bsimvis.app.services.export_service import export_to_json
+        return export_to_json(response_data, "clusters")
+    else:
+        return jsonify(response_data)
 
 
 @cluster_bp.route("/api/cluster/tree", methods=["GET"])

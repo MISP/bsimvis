@@ -61,6 +61,14 @@
             <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"
                 style="color:var(--accent); font-weight:bold;"><i class="fa-solid fa-plus-minus"
                     style="color: var(--accent);"></i> <span>Diffing Tool</span></a>
+            <div class="history-dropdown-container" style="position: relative;">
+                <a href="javascript:void(0)" id="nav-history" title="Search History"
+                    style="color:var(--text);"><i class="fa-solid fa-clock-rotate-left"
+                        style="color: var(--subtle);"></i> <span>History</span>
+                    <i class="fa-solid fa-chevron-down" id="nav-history-chevron" style="font-size:0.75rem; margin-left:auto; transition: transform 0.2s;"></i>
+                </a>
+                <div id="history-dropdown" class="history-dropdown" style="display:none;"></div>
+            </div>
         </div>
     </nav>
 
@@ -87,6 +95,26 @@
                     <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
                         <i class="fa-solid fa-trash-can"></i> Clear
                     </button>
+                    <div class="view-history-container" style="position:relative;">
+                        <button id="view-history-btn" class="top-action-btn" title="View Search History">
+                            <i class="fa-solid fa-clock-rotate-left"></i> History
+                        </button>
+                        <div id="view-history-dropdown" class="history-dropdown view-history-dropdown" style="display:none;"></div>
+                    </div>
+                    <div class="export-dropdown-container" id="export-dropdown-container" style="position:relative; display:none;">
+                        <button id="export-btn" class="top-action-btn" title="Export Results" onclick="toggleExportDropdown(event)">
+                            <i class="fa-solid fa-download" style="color:var(--accent);"></i>
+                        </button>
+                        <div id="export-dropdown" class="history-dropdown view-history-dropdown" style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
+                            <div class="history-dropdown-title" style="color:var(--accent);">Export Options</div>
+                            <a href="#" onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();" class="history-item" style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as CSV
+                            </a>
+                            <a href="#" onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();" class="history-item" style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as JSON
+                            </a>
+                        </div>
+                    </div>
                     <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
                         title="Toggle Filters">
                         <i class="fa-solid fa-filter"></i> Filters

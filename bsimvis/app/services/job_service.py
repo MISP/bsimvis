@@ -193,6 +193,11 @@ class JobService:
             return False
 
         self.r.hset(f"job:{job_id}", "status", JobStatus.CANCELLED.value)
+
+        # Remove from pending queues to update stats immediately
+        self.r.lrem("jobs:pending", 0, job_id)
+        self.r.lrem("jobs:pending:high", 0, job_id)
+
         self.r.lpush(
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
         )
@@ -202,6 +207,8 @@ class JobService:
             tids = json.loads(data["task_ids"])
             for tid in tids:
                 self.r.hset(f"job:{tid}", "status", JobStatus.CANCELLED.value)
+                self.r.lrem("jobs:pending", 0, tid)
+                self.r.lrem("jobs:pending:high", 0, tid)
 
         return True
 
@@ -259,22 +266,28 @@ class JobService:
             if not job:
                 continue
 
+            # Only count if NOT cancelled, failed, or completed
+            status = job.get("status")
+            if status in [JobStatus.CANCELLED.value, JobStatus.FAILED.value, JobStatus.COMPLETED.value]:
+                continue
+
+            active_jobs_count += 1
+
             speed = float(job.get("speed", 0))
             if speed > 0:
                 total_speed += speed
-                active_jobs_count += 1
 
             total = int(job.get("total_items", 0))
             done = int(job.get("processed_items", 0))
             remaining_items += max(0, total - done)
 
-        # Average speed (weighted by number of workers if we have them)
+        # Average speed
         avg_speed = total_speed / active_jobs_count if active_jobs_count > 0 else 0
 
         global_eta = remaining_items / total_speed if total_speed > 0 else 0
 
         return {
-            "active_workers": len(processing_ids),
+            "active_workers": active_jobs_count,
             "pending_jobs": pending_count,
             "avg_speed": round(avg_speed, 2),
             "total_speed": round(total_speed, 2),
@@ -290,6 +303,21 @@ class JobService:
         for jid in job_ids:
             job = self.r.hgetall(f"job:{jid}")
             if job:
+                # Extract target from payload
+                target = ""
+                collection = ""
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        collection = payload.get("collection", "")
+                        target = payload.get("md5") or payload.get("file_id") or payload.get("batch_uuid") or ""
+                        # Truncate long targets
+                        if target and len(target) > 20:
+                            target = target[:8] + "..." + target[-8:]
+                    except:
+                        pass
+
                 # Basic summary info
                 results.append(
                     {
@@ -297,6 +325,8 @@ class JobService:
                         "type": job.get("type"),
                         "status": job.get("status"),
                         "progress": int(job.get("progress", 0)),
+                        "collection": collection,
+                        "target": target,
                         "created_at": int(job.get("created_at", 0)),
                         "updated_at": int(job.get("updated_at", 0)),
                     }

@@ -261,6 +261,21 @@ const routes = {
         api: null,
         headers: [],
         renderer: null
+    },
+    '#jobs': {
+        title: 'Background Jobs',
+        api: '/api/jobs',
+        headers: [
+            { label: 'ID', width: '15%' },
+            { label: 'Type', width: '12%' },
+            { label: 'Collection', width: '10%' },
+            { label: 'Target', width: '15%' },
+            { label: 'Status', width: '10%' },
+            { label: 'Progress', width: '15%' },
+            { label: 'Created', width: '12%' },
+            { label: 'Actions', width: '11%' }
+        ],
+        renderer: (data) => window.renderJobs(data)
     }
 };
 
@@ -296,11 +311,15 @@ async function refreshData(appendArg = false, force = false) {
 
     populateCollectionDropdown();
 
+    const isSilent = (full_hash === lastHashPath && !force && !append);
+
     if (full_hash !== lastHashPath || !append) {
         currentOffset = 0;
         isEndOfResults = false;
-        document.getElementById('table-body').innerHTML = '';
-        document.getElementById('loader').style.display = 'block';
+        if (!isSilent) {
+            document.getElementById('table-body').innerHTML = '';
+            document.getElementById('loader').style.display = 'block';
+        }
     }
     lastHashPath = full_hash;
 
@@ -390,10 +409,13 @@ async function refreshData(appendArg = false, force = false) {
         }
 
         const tbody = document.getElementById('table-body');
+        if (!append) tbody.innerHTML = '';
+
         if (items.length === 0 && !append) {
             tbody.innerHTML = '<tr><td colspan="100" style="text-align:center; padding:40px;">No data found</td></tr>';
         } else {
-            tbody.insertAdjacentHTML('beforeend', route.renderer(items));
+            const html = route.renderer(items);
+            if (html) tbody.insertAdjacentHTML('beforeend', html);
         }
 
         currentOffset += (items.length || 0);
@@ -490,12 +512,14 @@ function updateUI(path, params, route) {
             }
         };
 
+        updateNavLink('nav-collections', '#collections');
         updateNavLink('nav-batches', '#batches');
         updateNavLink('nav-files', '#files');
         updateNavLink('nav-functions', '#functions');
         updateNavLink('nav-features-global', '#features-global');
         updateNavLink('nav-function-similarity', '#function-similarity');
         updateNavLink('nav-clusters', '#clusters');
+        updateNavLink('nav-jobs', '#jobs');
         
         const fileMd5 = params.get('file_md5');
         const cgNav = document.getElementById('nav-file-call-graph');
@@ -2076,6 +2100,33 @@ window.addEventListener('load', () => {
             }
         });
     }
+
+    // Navbar Job Status Polling
+    const updateJobStatusIcon = async () => {
+        try {
+            const res = await fetch('/api/jobs/stats');
+            if (!res.ok) return;
+            const stats = await res.json();
+            const loader = document.getElementById('nav-jobs-loader');
+            const icon = document.getElementById('nav-jobs-icon');
+            const navLink = document.getElementById('nav-jobs');
+            if (loader && icon && navLink) {
+                if (stats.active_workers > 0 || stats.pending_jobs > 0) {
+                    loader.style.display = 'block';
+                    icon.style.display = 'none';
+                    navLink.title = `${stats.active_workers} active, ${stats.pending_jobs} pending jobs`;
+                } else {
+                    loader.style.display = 'none';
+                    icon.style.display = 'inline-block';
+                    navLink.title = "Background Jobs";
+                }
+            }
+        } catch (e) {
+            // Silently fail for navbar polling
+        }
+    };
+    updateJobStatusIcon();
+    setInterval(updateJobStatusIcon, 10000); // Check every 10s
 });
 
 async function populateCollectionDropdown() {

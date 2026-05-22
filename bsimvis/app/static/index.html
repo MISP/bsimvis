@@ -23,6 +23,7 @@
     <script src="/js/call_graph.js"></script>
     <script src="/js/window_manager.js"></script>
     <script src="/js/dashboard.js"></script>
+    <script src="/js/jobs.js"></script>
     <script src="/js/table_selection.js"></script>
 
 <body>
@@ -61,6 +62,10 @@
             <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"
                 style="color:var(--accent); font-weight:bold;"><i class="fa-solid fa-plus-minus"
                     style="color: var(--accent);"></i> <span>Diffing Tool</span></a>
+            <a href="#jobs" id="nav-jobs" title="Background Jobs"
+                style="color:var(--text);"><i id="nav-jobs-icon" class="fa-solid fa-server"
+                    style="color: var(--subtle);"></i><div id="nav-jobs-loader" class="nav-job-spinner" style="display:none;"></div> <span>Jobs</span>
+            </a>
             <div class="history-dropdown-container" style="position: relative;">
                 <a href="javascript:void(0)" id="nav-history" title="Search History"
                     style="color:var(--text);"><i class="fa-solid fa-clock-rotate-left"
@@ -306,6 +311,18 @@
 
 
     <!-- Extracted script block 2 -->
+    <div id="job-details-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-content" style="max-width: 800px; width: 90%;">
+            <div class="modal-header">
+                <h3 id="job-modal-title">Job Details</h3>
+                <button class="close-btn" onclick="closeJobModal()">&times;</button>
+            </div>
+            <div id="job-modal-body" class="modal-body"></div>
+            <div class="modal-footer">
+                <button class="btn-action" onclick="closeJobModal()">Close</button>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>

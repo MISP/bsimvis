@@ -49,3 +49,69 @@ function formatSigComponent(ns, ret, name, params) {
         fullSig: fullSig
     };
 }
+
+function showToast(message, type = 'info') {
+    const container = document.getElementById('notification-container');
+    if (!container) {
+        console.warn('Notification container not found, falling back to console:', message);
+        return;
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    
+    let icon = 'fa-info-circle';
+    if (type === 'success') icon = 'fa-check-circle';
+    if (type === 'error') icon = 'fa-exclamation-triangle';
+    if (type === 'warning') icon = 'fa-exclamation-circle';
+
+    toast.innerHTML = `
+        <i class="fa-solid ${icon}"></i>
+        <div class="toast-message">${message}</div>
+    `;
+
+    container.appendChild(toast);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(20px)';
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
+}
+
+function showConfirm(message, onConfirm) {
+    const container = document.getElementById('notification-container');
+    if (!container) {
+        if (confirm(message)) onConfirm();
+        return;
+    }
+
+    const toast = document.createElement('div');
+    toast.className = 'toast toast-confirm';
+    toast.style.flexDirection = 'column';
+    toast.style.alignItems = 'flex-start';
+    toast.style.gap = '10px';
+
+    toast.innerHTML = `
+        <div style="display:flex; gap:10px; align-items:center;">
+            <i class="fa-solid fa-question-circle" style="color:var(--accent)"></i>
+            <div class="toast-message">${message}</div>
+        </div>
+        <div style="display:flex; gap:10px; width:100%; justify-content: flex-end;">
+            <button class="toast-btn toast-btn-cancel">Cancel</button>
+            <button class="toast-btn toast-btn-ok">Confirm</button>
+        </div>
+    `;
+
+    container.appendChild(toast);
+
+    toast.querySelector('.toast-btn-cancel').onclick = () => {
+        toast.remove();
+    };
+
+    toast.querySelector('.toast-btn-ok').onclick = () => {
+        onConfirm();
+        toast.remove();
+    };
+}

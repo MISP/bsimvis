@@ -1,0 +1,339 @@
+/**
+ * Jobs UI Module for BSimVis
+ */
+
+function renderJobs(jobs) {
+    const jobsList = Array.isArray(jobs) ? jobs : (jobs.results || []);
+    
+    if (jobsList.length === 0) {
+        return '<tr><td colspan="8" style="text-align:center; padding: 60px; color: var(--dim);"><i class="fa-solid fa-wind" style="font-size: 2rem; opacity: 0.2; display: block; margin-bottom: 10px;"></i>No recent jobs found</td></tr>';
+    }
+
+    // Grouping by pipeline if possible, or just tracking parents
+    const parentMap = new Map();
+    jobsList.forEach(job => {
+        if (job.type === 'pipeline' && job.task_ids) {
+            job.task_ids.forEach(tid => parentMap.set(tid, job.id));
+        }
+    });
+    
+    return jobsList.map(job => {
+        const isPipeline = job.type === 'pipeline';
+        const parentId = parentMap.get(job.id);
+        
+        // Progress bar HTML
+        const progress = job.progress || 0;
+        const status = job.status || 'pending';
+        
+        let progressClass = '';
+        if (status === 'running') progressClass = 'progress-running';
+        if (status === 'completed') progressClass = 'progress-completed';
+        if (status === 'failed') progressClass = 'progress-failed';
+
+        const progressHtml = `
+            <div class="job-progress-container">
+                <div class="job-progress-track">
+                    <div class="job-progress-fill ${progressClass}" style="width: ${progress}%"></div>
+                </div>
+                <span class="job-progress-text">${progress}%</span>
+            </div>
+        `;
+        
+        // Status Badge
+        let statusIcon = 'fa-circle-notch fa-spin';
+        if (status === 'completed') statusIcon = 'fa-check-circle';
+        if (status === 'failed') statusIcon = 'fa-exclamation-circle';
+        if (status === 'cancelled') statusIcon = 'fa-ban';
+        if (status === 'pending') statusIcon = 'fa-clock';
+        
+        const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`;
+        
+        const createdDate = new Date(job.created_at).toLocaleString();
+        
+        // Actions
+        let actions = '<div class="job-actions">';
+        if (status === 'pending' || status === 'running') {
+            actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+        }
+        if (status === 'failed' || status === 'cancelled' || status === 'completed') {
+             actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+        }
+        actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
+        actions += '</div>';
+
+        const typeDisplay = isPipeline ? `<span class="pipeline-label"><i class="fa-solid fa-microchip"></i> PIPELINE</span>` : `<span class="job-label">${job.type}</span>`;
+        const indent = parentId ? '<span class="job-indent"></span>' : '';
+        const collectionDisplay = job.collection ? `<div class="job-collection-cell"><i class="fa-solid fa-database"></i> ${job.collection}</div>` : '<span class="dim">-</span>';
+        const targetDisplay = job.target ? `<code class="job-target-text">${job.target}</code>` : '<span class="dim">-</span>';
+        
+        return `
+            <tr class="job-row ${isPipeline ? 'pipeline-row' : ''} ${parentId ? 'child-row' : ''}" ${parentId ? `data-parent-id="${parentId}"` : ''}>
+                <td>
+                    <div class="job-id-cell">
+                        ${indent}
+                        <code class="job-id-text" title="${job.id}">${job.id}</code>
+                    </div>
+                </td>
+                <td>
+                    <div class="job-type-cell">
+                        ${typeDisplay}
+                    </div>
+                </td>
+                <td>${collectionDisplay}</td>
+                <td>${targetDisplay}</td>
+                <td>${statusBadge}</td>
+                <td>${progressHtml}</td>
+                <td class="job-date-cell">${createdDate}</td>
+                <td>${actions}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+window.renderJobs = renderJobs;
+
+window.cancelJob = async function(jobId) {
+    try {
+        const resp = await fetch(`/api/jobs/${jobId}/cancel`, {method: 'POST'});
+        if (resp.ok) {
+            if (window.refreshData) window.refreshData();
+        } else {
+            const data = await resp.json();
+            alert('Failed to cancel job: ' + (data.error || 'Unknown error'));
+        }
+    } catch(e) {
+        console.error(e);
+        alert('Error cancelling job');
+    }
+};
+
+window.retryJob = async function(jobId) {
+    try {
+        const resp = await fetch(`/api/jobs/${jobId}/retry`, {method: 'POST'});
+        if (resp.ok) {
+            if (window.refreshData) window.refreshData();
+        } else {
+            const data = await resp.json();
+            alert('Failed to retry job: ' + (data.error || 'Unknown error'));
+        }
+    } catch(e) {
+        console.error(e);
+        alert('Error retrying job');
+    }
+};
+
+let currentActiveJobId = null;
+
+window.showJobDetails = async function(jobId) {
+    currentActiveJobId = jobId;
+    await refreshJobModal(jobId, true);
+    document.getElementById('job-details-modal').style.display = 'flex';
+};
+
+async function refreshJobModal(jobId, isInitial = false) {
+    try {
+        const resp = await fetch(`/api/jobs/${jobId}`);
+        const job = await resp.json();
+        
+        if (currentActiveJobId !== jobId) return;
+
+        document.getElementById('job-modal-title').innerText = `Job Details: ${job.type}`;
+        
+        // Build subtasks HTML
+        let subtasksHtml = '';
+        if (job.sub_tasks && job.sub_tasks.length > 0) {
+            subtasksHtml = `
+                <div style="margin-top: 20px;">
+                    <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Pipeline Sub-tasks</h4>
+                    <table class="data-table" style="width:100%; font-size: 0.85rem;">
+                        <thead>
+                            <tr style="background: rgba(255,255,255,0.03);">
+                                <th style="padding: 8px;">Type</th>
+                                <th style="padding: 8px;">Status</th>
+                                <th style="padding: 8px;">Progress</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            job.sub_tasks.forEach(st => {
+                let sColor = 'var(--dim)';
+                if (st.status === 'completed') sColor = 'var(--success)';
+                if (st.status === 'failed') sColor = 'var(--danger)';
+                if (st.status === 'running') sColor = 'var(--warning)';
+                
+                subtasksHtml += `
+                    <tr>
+                        <td style="padding: 8px;">${st.type}</td>
+                        <td style="padding: 8px;"><span style="color: ${sColor}">${st.status.toUpperCase()}</span></td>
+                        <td style="padding: 8px;">
+                            <div style="background: rgba(255,255,255,0.05); height: 6px; width: 100%; border-radius:3px; overflow:hidden;">
+                                <div style="background: var(--accent); width: ${st.progress}%; height: 100%;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+            subtasksHtml += '</tbody></table></div>';
+        }
+        
+        // Build Logs HTML
+        const logContainerId = 'job-log-viewer';
+        let logsInnerHtml = '';
+        
+        if (job.logs && job.logs.length > 0) {
+            const sortedLogs = [...job.logs].reverse();
+            sortedLogs.forEach(log => {
+                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${log.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+            });
+        } else {
+            logsInnerHtml = '<div style="font-style: italic;">No logs available yet.</div>';
+        }
+
+        let logsHtml = `
+            <div style="margin-top: 20px;">
+                <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Execution Logs</h4>
+                <div id="${logContainerId}" style="background: #0a0a0a; color: #888; font-family: var(--mono); font-size: 0.75rem; padding: 15px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; line-height: 1.5;">
+                    ${logsInnerHtml}
+                </div>
+            </div>`;
+
+        // Error message if any
+        let errorHtml = '';
+        if (job.error) {
+            errorHtml = `
+                <div style="background: rgba(255, 85, 85, 0.1); border-left: 3px solid var(--danger); padding: 12px; margin: 15px 0; color: #ff8888; font-size: 0.9rem;">
+                    <div style="font-weight: bold; margin-bottom: 4px;">Error Details</div>
+                    <div style="font-family: var(--mono); font-size: 0.8rem;">${job.error}</div>
+                </div>
+            `;
+        }
+        
+        const modalBody = document.getElementById('job-modal-body');
+        
+        // Try to preserve scroll position of log viewer
+        const oldLogViewer = document.getElementById(logContainerId);
+        const wasAtBottom = oldLogViewer ? (oldLogViewer.scrollHeight - oldLogViewer.scrollTop <= oldLogViewer.clientHeight + 10) : true;
+        
+        modalBody.innerHTML = `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: rgba(255,255,255,0.02); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
+                <div>
+                    <div style="color: var(--dim); font-size: 0.75rem; text-transform: uppercase;">Job ID</div>
+                    <div style="font-family: var(--mono); font-size: 0.85rem;">${job.id}</div>
+                </div>
+                <div>
+                    <div style="color: var(--dim); font-size: 0.75rem; text-transform: uppercase;">Status</div>
+                    <div style="font-weight: bold; color: var(--accent);">${job.status.toUpperCase()}</div>
+                </div>
+            </div>
+            ${errorHtml}
+            ${subtasksHtml}
+            ${logsHtml}
+        `;
+        
+        // Restore scroll or scroll to bottom if it was already at bottom
+        const newLogViewer = document.getElementById(logContainerId);
+        if (newLogViewer && wasAtBottom) {
+            newLogViewer.scrollTop = newLogViewer.scrollHeight;
+        }
+        
+    } catch(e) {
+        console.error(e);
+        if (isInitial) alert('Error fetching job details');
+    }
+}
+
+window.closeJobModal = function() {
+    document.getElementById('job-details-modal').style.display = 'none';
+    currentActiveJobId = null;
+};
+
+// Global CSS for Modal if not already present
+if (!document.getElementById('jobs-style')) {
+    const style = document.createElement('style');
+    style.id = 'jobs-style';
+    style.textContent = `
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(4px);
+            z-index: 20000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            max-height: 90vh;
+        }
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h3 { margin: 0; color: var(--accent); }
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+        }
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--dim);
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .close-btn:hover { color: var(--text); }
+        .job-collection-cell {
+            font-size: 0.75rem;
+            color: var(--accent);
+            background: rgba(255, 171, 46, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            border: 1px solid rgba(255, 171, 46, 0.2);
+        }
+        .job-target-text {
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            color: var(--subtle);
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// Auto-refresh when in jobs view
+setInterval(() => {
+    const [path] = (window.location.hash || '').split('?');
+    if (path === '#jobs') {
+        const modal = document.getElementById('job-details-modal');
+        const isModalOpen = modal && modal.style.display !== 'none';
+        
+        if (isModalOpen && currentActiveJobId) {
+            refreshJobModal(currentActiveJobId);
+        } else {
+            if (window.refreshData) window.refreshData(false, false);
+        }
+    }
+}, 5000);

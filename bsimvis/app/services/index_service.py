@@ -55,6 +55,8 @@ FILE_TAG_FIELDS = get_native_fields("file", is_num=False)
 FUNC_TAG_FIELDS = get_native_fields("func", is_num=False)
 FILE_NUM_FIELDS = get_native_fields("file", is_num=True)
 FUNC_NUM_FIELDS = get_native_fields("func", is_num=True)
+FEATURE_TAG_FIELDS = get_native_fields("feature", is_num=False)
+FEATURE_NUM_FIELDS = get_native_fields("feature", is_num=True)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +153,16 @@ def save_function(pipe, coll, md5, addr, data):
     # relationship links
     pipe.sadd(f"{coll}:idx:file:functions:{md5}", base_id)
     pipe.sadd(f"{coll}:all_functions", base_id)
+
+
+def save_feature(pipe, coll, f_hash, data):
+    """Index all fields for a feature doc. Standardized as {col}:feature:{f_hash}"""
+    base_id = f"{coll}:feature:{f_hash}"
+    for f in FEATURE_TAG_FIELDS:
+        _index_tag(pipe, coll, "feature", f, data.get(f), base_id)
+    for f in FEATURE_NUM_FIELDS:
+        _index_num(pipe, coll, "feature", f, data.get(f), base_id)
+    pipe.sadd(f"{coll}:all_features", base_id)
 
 
 def save_similarity(
@@ -299,6 +311,25 @@ def delete_function(r, coll, md5, addr):
     pipe.srem(f"{coll}:all_functions", base_id)
     pipe.delete(f"{base_id}:callees")
     pipe.delete(f"{base_id}:callers")
+    pipe.execute()
+
+
+def delete_feature(r, coll, f_hash):
+    """Remove a feature from all indexes."""
+    base_id = f"{coll}:feature:{f_hash}"
+    doc_id = f"{base_id}:global_meta"
+    data = r.json().get(doc_id, "$")
+    if isinstance(data, list) and data:
+        data = data[0]
+
+    pipe = r.pipeline()
+    if data:
+        for f in FEATURE_TAG_FIELDS:
+            _unindex_tag(pipe, coll, "feature", f, data.get(f), base_id)
+        for f in FEATURE_NUM_FIELDS:
+            _unindex_num(pipe, coll, "feature", f, base_id)
+    pipe.srem(f"{coll}:all_features", base_id)
+    pipe.json().delete(doc_id)
     pipe.execute()
 
 

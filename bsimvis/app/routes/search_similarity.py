@@ -49,8 +49,10 @@ def autocomplete():
 
     results = []
     if registry_key:
-        # Search pattern: for better performance we match the whole bucket key
-        match_pat = f"*{query}*"
+        keywords = [k for k in query.split() if k]
+        
+        # Search pattern: use the first keyword for Redis-side filtering, or * if empty
+        match_pat = f"*{keywords[0]}*" if keywords else "*"
 
         try:
             # Parse key to get the suffix
@@ -65,7 +67,8 @@ def autocomplete():
 
                 if bucket_str.startswith(prefix):
                     val = bucket_str[len(prefix) :]
-                    if query in val.lower():
+                    val_lower = val.lower()
+                    if not keywords or all(kw in val_lower for kw in keywords):
                         candidate_buckets.append((val, bucket_str))
                         count_found += 1
 

@@ -16,12 +16,23 @@ def search_collections():
     except ValueError:
         return jsonify({"error": "offset and limit must be integers"}), 400
 
+    q = request.args.get("q", "").lower().strip()
     format_arg = request.args.get("format")
     if format_arg in ("csv", "json"):
         offset = 0
         limit = 100000
 
-    collection_names = sorted(list(r.smembers("global:collections")))
+    collection_names = sorted([n.decode() if isinstance(n, bytes) else str(n) for n in r.smembers("global:collections")])
+    
+    if q:
+        keywords = [k for k in q.split() if k]
+        filtered_names = []
+        for name in collection_names:
+            name_lower = name.lower()
+            if all(kw in name_lower for kw in keywords):
+                filtered_names.append(name)
+        collection_names = filtered_names
+
     total = len(collection_names)
     page_names = collection_names[offset : offset + limit]
 
@@ -95,6 +106,7 @@ def search_batches():
     if not target_collection:
         return jsonify({"error": "No collection specified"}), 400
 
+    q = request.args.get("q", "").lower().strip()
     format_arg = request.args.get("format")
     if format_arg in ("csv", "json"):
         offset = 0
@@ -108,11 +120,28 @@ def search_batches():
     raw_data = pipe.execute()
 
     all_results = []
+    keywords = [k for k in q.split() if k] if q else []
+
     for item in raw_data:
         if not item:
             continue
         data = item[0] if isinstance(item, list) and item else item
         data = json.loads(data) if isinstance(data, str) else data
+        
+        # Apply q filter
+        if keywords:
+            b_uuid = str(data.get("batch_uuid", "")).lower()
+            b_name = str(data.get("batch_name", "")).lower()
+            b_col = str(data.get("collection", "")).lower()
+            
+            match = True
+            for kw in keywords:
+                if not (kw in b_uuid or kw in b_name or kw in b_col):
+                    match = False
+                    break
+            if not match:
+                continue
+
         col = data.get("collection") or target_collection
         b_uuid = data.get("batch_uuid")
         if col and b_uuid and "batch_id" not in data:

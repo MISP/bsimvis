@@ -47,6 +47,13 @@ INDEX_CONFIG = {
         "user_tags": ["sim"],
         "is_cross_binary": ["sim"],
     },
+    "feature": {
+        "hash": ["feature"],
+        "type": ["feature"],
+        "op": ["feature"],
+        "frequency": ["feature"],
+        "tf_score": ["feature"],
+    },
 }
 
 INDEX_CONFIG_legacy = {
@@ -89,6 +96,8 @@ NUM_FIELDS = {
     "instruction_count",
     "bsim_features_count",
     "cluster_stability",
+    "frequency",
+    "tf_score",
 }
 
 EXACT_FIELDS = {
@@ -174,7 +183,7 @@ def get_search_paths_for_field(
     The search engine should evaluate each path independently, stopping at the first
     level in a path that returns results (short-circuiting the join for that specific source).
     """
-    order = ["sim", "func", "file"]
+    order = ["sim", "func", "file", "feature"]
     try:
         start_idx = order.index(requested_target)
     except ValueError:

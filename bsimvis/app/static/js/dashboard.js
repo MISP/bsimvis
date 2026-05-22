@@ -14,6 +14,14 @@ function handleFilterKey(e, searchFn) {
     if (e.key === 'Enter') {
         e.preventDefault();
         if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+        
+        // Capture focus and selection before searching
+        currentFocusId = e.target.id;
+        if (e.target.setSelectionRange) {
+            preservedSelection.start = e.target.selectionStart;
+            preservedSelection.end = e.target.selectionEnd;
+        }
+        
         searchFn();
     }
 }
@@ -105,8 +113,11 @@ const DEFAULT_GRAPH_LIMIT = 500;
 const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
 let isEndOfResults = false;
 let lastHashPath = '';
+let lastViewPath = '';
 let lastSimilarityQuery = null; // Track filters to detect view switching
 let simSearchRequested = false; // Set to true when user explicitly triggers a search
+let currentFocusId = null;
+let preservedSelection = { start: 0, end: 0 };
 
 function toggleSidebar() {
     const body = document.body;
@@ -201,7 +212,15 @@ const routes = {
     '#features-global': {
         title: 'Global Feature Index',
         api: '/api/feature/search',
-        headers: ['Feature Hash', 'Type / Op', 'PCode Context', 'C Code Context', 'Total TF', 'Funcs', 'Actions'],
+        headers: [
+            { label: 'Feature Hash', width: '12%', sort: 'hash' },
+            { label: 'Type / Op', width: '10%', sort: 'type' },
+            { label: 'PCode Context', width: '22%' },
+            { label: 'C Code Context', width: '24%' },
+            { label: 'Total TF', width: '6%', sort: 'tf_score' },
+            { label: 'Funcs', width: '5%', sort: 'frequency' },
+            { label: 'Actions', width: '5%' }
+        ],
         renderer: renderGlobalFeatures
     },
     '#function-similarity': {
@@ -395,6 +414,9 @@ async function refreshData(appendArg = false, force = false) {
 }
 
 function updateUI(path, params, route) {
+    const pathChanged = (path !== lastViewPath);
+    lastViewPath = path;
+
     // Reset all special view containers and stop active processes
     document.getElementById('graph-view-container').style.display = 'none';
     document.getElementById('hierarchy-view-container').style.display = 'none';
@@ -544,11 +566,11 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
 
-    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters') {
-        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : 'applyClusterSearch'));
+    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global') {
+        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : 'applyClusterSearch')));
 
         let settingsHtml = '';
-        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters') {
+        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global') {
             settingsEl.style.display = 'flex';
             const viewMode = params.get('view') || 'table';
             const poolLimit = params.get('pool_limit') || '1000000';
@@ -629,10 +651,39 @@ function updateUI(path, params, route) {
 
         const p = new URLSearchParams(params);
 
-        if (path === '#files' || path === '#functions' || path === '#function-similarity') {
+        if (path === '#files' || path === '#functions' || path === '#function-similarity' || path === '#features-global') {
             headHtml += `<tr class="filter-row">`;
 
-            if (path === '#files') {
+            if (path === '#features-global') {
+                headHtml += `
+                    <th>
+                        <input type="text" id="flt-feat-hash" placeholder="Hash..." value="${p.get('hash') || ''}" onfocus="attachAutocomplete(this, 'feature', 'hash', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <input type="text" id="flt-feat-type" placeholder="Type..." value="${p.get('type') || ''}" onfocus="attachAutocomplete(this, 'feature', 'type', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-feat-op" placeholder="Op..." value="${p.get('op') || ''}" onfocus="attachAutocomplete(this, 'feature', 'op', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th></th>
+                    <th></th>
+                    <th>
+                        <div style="display:flex; align-items:center; gap:2px;">
+                            <input type="number" id="flt-feat-min-tf" placeholder="Min..." value="${p.get('min_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            <span class="dim" style="font-size:0.6rem">-</span>
+                            <input type="number" id="flt-feat-max-tf" placeholder="Max..." value="${p.get('max_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th>
+                        <div style="display:flex; align-items:center; gap:2px;">
+                            <input type="number" id="flt-feat-min-freq" placeholder="Min..." value="${p.get('min_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            <span class="dim" style="font-size:0.6rem">-</span>
+                            <input type="number" id="flt-feat-max-freq" placeholder="Max..." value="${p.get('max_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th></th>
+                `;
+            } else if (path === '#files') {
                 headHtml += `
                     <th>
                         <input type="text" id="flt-file-name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
@@ -784,6 +835,14 @@ function updateUI(path, params, route) {
                     'namespace': 'flt-func-namespace'
                 });
             }
+
+            if (path === '#features-global') {
+                loadFieldCardinalities(col, 'feature', {
+                    'hash': 'flt-feat-hash',
+                    'type': 'flt-feat-type',
+                    'op': 'flt-feat-op'
+                });
+            }
         }
     }
     if (path === '#clusters') {
@@ -861,7 +920,7 @@ function updateUI(path, params, route) {
         const p = new URLSearchParams(params);
         searchArea.innerHTML = `<div class="filter-bar">
             <div class="search-input-wrapper">
-                <input type="text" id="file-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)">
+                <input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)">
                 <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i>
             </div>
         </div>`;
@@ -874,24 +933,20 @@ function updateUI(path, params, route) {
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="search-input-wrapper">
-                    <input type="text" id="func-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)">
+                    <input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)">
                     <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i>
                 </div>
                 ${callGraphBtn}
             </div>
         </div>`;
-    } else if (path === '#features-global' && !document.getElementById('feature-search')) {
+    } else if (path === '#features-global' && !document.getElementById('feature-search-input')) {
         const p = new URLSearchParams(params);
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="search-input-wrapper">
-                    <input type="text" id="feature-search" placeholder="Search by hash $(prefix)..." autofocus value="${p.get('hash') || ''}" onchange="debouncedSearch(applySearch)" onkeydown="handleFilterKey(event, applySearch)">
-                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySearch()" title="Search"></i>
+                    <input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)">
+                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i>
                 </div>
-            </div>
-            <div style="display:flex; align-items:center; gap:8px;">
-                <input type="checkbox" id="sort-tf" ${p.get('sort') === 'tf' ? 'checked' : ''} onchange="applySearch()">
-                <label for="sort-tf" style="font-size:0.85rem; cursor:pointer; color:var(--accent)">Sort by Total TF</label>
             </div>
         </div>`;
     } else if (path === '#function-similarity') {
@@ -899,12 +954,20 @@ function updateUI(path, params, route) {
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="search-input-wrapper">
-                    <input type="text" id="sim-search-input" placeholder="Search by Keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                    <input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                     <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i>
                 </div>
             </div>
         </div>`;
-    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global') {
+    } else if (path === '#clusters' && !document.getElementById('cluster-search-input')) {
+        const p = new URLSearchParams(params);
+        searchArea.innerHTML = `<div class="filter-bar">
+            <div class="search-input-wrapper">
+                <input type="text" id="cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)">
+                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i>
+            </div>
+        </div>`;
+    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global' && path !== '#clusters') {
         searchArea.innerHTML = '';
     }
 
@@ -947,10 +1010,27 @@ function updateUI(path, params, route) {
         initColumnResize(th, path, th.dataset.label);
     });
 
-    // Automatically focus the active search input when switching views
+    // Automatically focus the active search input ONLY when switching views
     const searchInput = searchArea.querySelector('input[type="text"]');
-    if (searchInput) {
+    if (pathChanged && searchInput) {
         searchInput.focus();
+        // Move cursor to end if there's text
+        const val = searchInput.value;
+        if (val) {
+            searchInput.value = '';
+            searchInput.value = val;
+        }
+    } else if (currentFocusId) {
+        // Restore focus and selection after re-render if it was the search bar
+        const focusedEl = document.getElementById(currentFocusId);
+        if (focusedEl) {
+            focusedEl.focus();
+            if (focusedEl.setSelectionRange) {
+                focusedEl.setSelectionRange(preservedSelection.start, preservedSelection.end);
+            }
+        }
+        // Reset after restoration
+        currentFocusId = null;
     }
 }
 
@@ -1217,6 +1297,40 @@ function triggerTagSearch() {
     if (window.location.hash.startsWith('#function-similarity')) debouncedSearch(applySimSearch);
     else if (window.location.hash.startsWith('#functions')) debouncedSearch(applyAdvancedFuncSearch);
     else if (window.location.hash.startsWith('#files')) debouncedSearch(applyAdvancedFileSearch);
+    else if (window.location.hash.startsWith('#features-global')) debouncedSearch(applyAdvancedFeatureSearch);
+    else if (window.location.hash.startsWith('#clusters')) debouncedSearch(applyClusterSearch);
+}
+
+function applyAdvancedFeatureSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+
+    const globalQ = document.getElementById('feature-search-input')?.value;
+    params.set('q', globalQ || '');
+
+    const hashFlt = document.getElementById('flt-feat-hash')?.value;
+    const typeFlt = document.getElementById('flt-feat-type')?.value;
+    const opFlt = document.getElementById('flt-feat-op')?.value;
+    const minTf = document.getElementById('flt-feat-min-tf')?.value;
+    const maxTf = document.getElementById('flt-feat-max-tf')?.value;
+    const minFreq = document.getElementById('flt-feat-min-freq')?.value;
+    const maxFreq = document.getElementById('flt-feat-max-freq')?.value;
+
+    if (hashFlt) params.set('hash', hashFlt); else params.delete('hash');
+    if (typeFlt) params.set('type', typeFlt); else params.delete('type');
+    if (opFlt) params.set('op', opFlt); else params.delete('op');
+    if (minTf) params.set('min_tf_score', minTf); else params.delete('min_tf_score');
+    if (maxTf) params.set('max_tf_score', maxTf); else params.delete('max_tf_score');
+    if (minFreq) params.set('min_frequency', minFreq); else params.delete('min_frequency');
+    if (maxFreq) params.set('max_frequency', maxFreq); else params.delete('max_frequency');
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    window.location.hash = `${hashPath}?${params.toString()}`;
 }
 
 function createTagCard(columnId, type, value, isExclude = false) {
@@ -2087,6 +2201,9 @@ function applyClusterSearch() {
     const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
     const params = new URLSearchParams(queryString);
 
+    const globalQ = document.getElementById('cluster-search-input')?.value;
+    params.set('q', globalQ || '');
+
     const cid = document.getElementById('flt-cluster-id')?.value;
     const cuuid = document.getElementById('flt-cluster-uuid')?.value;
     const cname = document.getElementById('flt-cluster-name')?.value;
@@ -2828,6 +2945,18 @@ function getFilterSummary(path, params) {
     } else if (path === '#file-call-graph') {
         const file_md5 = params.get('file_md5');
         if (file_md5) summary.push(`File MD5: ${file_md5.substring(0, 8)}`);
+    } else if (path === '#features-global') {
+        const hash = params.get('hash');
+        const type = params.get('type');
+        const op = params.get('op');
+        const min_tf = params.get('min_tf_score');
+        const min_freq = params.get('min_frequency');
+
+        if (hash) summary.push(`Hash: ${hash.substring(0, 8)}`);
+        if (type) summary.push(`Type: ${type}`);
+        if (op) summary.push(`Op: ${op}`);
+        if (min_tf) summary.push(`Min TF: ${min_tf}`);
+        if (min_freq) summary.push(`Min Freq: ${min_freq}`);
     }
 
     const tags = [];

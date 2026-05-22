@@ -603,6 +603,7 @@ function attachTagAutocomplete(input, onSelect) {
     };
 
     input.onfocus = () => showSuggestions(input.value);
+    input.onclick = () => showSuggestions(input.value);
     input.oninput = () => showSuggestions(input.value);
     input.onblur = () => {
         setTimeout(() => {
@@ -729,6 +730,7 @@ function attachAutocomplete(input, level, field, onSelect) {
     };
 
     input.onfocus = () => showSuggestions(input.value);
+    input.onclick = () => showSuggestions(input.value);
     input.oninput = () => showSuggestions(input.value);
     input.onblur = () => {
         setTimeout(() => {

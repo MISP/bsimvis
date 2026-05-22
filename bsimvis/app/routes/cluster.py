@@ -88,6 +88,7 @@ def list_clusters():
 
     # Filtering
     format_arg = request.args.get("format")
+    q = request.args.get("q", "").lower().strip()
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
@@ -157,15 +158,24 @@ def list_clusters():
             # Apply filters
             cid = str(m.get("cluster_id", ""))
             cuuid = str(m.get("cluster_uuid", ""))
+            cname = str(m.get("cluster_name", ""))
+
+            # Global keyword search
+            if q:
+                keywords = [k for k in q.split() if k]
+                match = True
+                for kw in keywords:
+                    if not any(kw in v.lower() for v in [cid, cuuid, cname]):
+                        match = False
+                        break
+                if not match:
+                    continue
 
             if cluster_id_q and cluster_id_q not in cid.lower():
                 continue
             if cluster_uuid_q and cluster_uuid_q not in cuuid.lower():
                 continue
-            if (
-                cluster_name_q
-                and cluster_name_q not in m.get("cluster_name", "").lower()
-            ):
+            if cluster_name_q and cluster_name_q not in cname.lower():
                 continue
             if m.get("avg_stability", 0) < min_stability:
                 continue

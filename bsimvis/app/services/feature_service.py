@@ -410,7 +410,7 @@ class FeatureService:
                 # Filter occurrences to this best pair, and pick the first one
                 matching_occs = [
                     occ for occ in occurrences
-                    if occ.get("type") == best_type and occ.get("pcode_op") == best_op
+                    if str(occ.get("type", "N/A")) == best_type and str(occ.get("pcode_op", "N/A")) == best_op
                 ]
                 best_occ = matching_occs[0]
 

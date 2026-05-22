@@ -349,39 +349,30 @@ class FeatureService:
         for i in range(0, len(feature_hashes), chunk_size):
             chunk = feature_hashes[i : i + chunk_size]
 
-            # Fetch all metadata HASHes and ZSET scores in parallel
-            pipe = self.r.pipeline()
-            for fh in chunk:
-                pipe.hgetall(f"{collection}:feature:{fh}:meta")
-                pipe.zscore(f"{collection}:features:by_tf", fh)
-
-            pipeline_res = pipe.execute()
-
-            # Group into pairs
-            hgetall_results = pipeline_res[0::2]
-            tf_scores = pipeline_res[1::2]
-
             # Batch-fetch C contexts and Pcode context fallbacks in a second pipeline
             context_fetch_pipe = self.r.pipeline()
             fetch_map = []
 
             for idx, fh in enumerate(chunk):
-                meta_dict = hgetall_results[idx]
-                if not meta_dict:
-                    # Feature has no functions mapped anymore. Delete its global index and secondary index
-                    delete_feature(self.r, collection, fh)
-                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
-                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
-                    fetch_map.append(None)
-                    continue
-
-                # Parse all occurrences
+                # OPTIMIZATION: Instead of hgetall(), use HSCAN with sampling for high-frequency features
+                # This prevents memory/CPU exhaustion for features with 100k+ occurrences.
                 occurrences = []
-                for func_id, occ_str in meta_dict.items():
-                    try:
-                        occurrences.append(json.loads(occ_str))
-                    except Exception:
-                        pass
+                cursor = 0
+                sample_limit = 1000
+                
+                while len(occurrences) < sample_limit:
+                    cursor, data_batch = self.r.hscan(f"{collection}:feature:{fh}:meta", cursor=cursor, count=sample_limit)
+                    for func_id, occ_str in data_batch.items():
+                        try:
+                            occ = json.loads(occ_str)
+                            occ["function_id"] = func_id
+                            occurrences.append(occ)
+                        except Exception:
+                            pass
+                        if len(occurrences) >= sample_limit:
+                            break
+                    if cursor == 0:
+                        break
 
                 if not occurrences:
                     delete_feature(self.r, collection, fh)
@@ -428,14 +419,16 @@ class FeatureService:
                 else:
                     context_fetch_pipe.execute_command("ECHO", "no_fallback_meta")
 
+                # Fetch TF score for global meta
+                context_fetch_pipe.zscore(f"{collection}:features:by_tf", fh)
+
                 fetch_map.append({
                     "fh": fh,
                     "best_type": best_type,
                     "best_op": best_op,
                     "best_occ": best_occ,
                     "line_idxs": line_idxs,
-                    "frequency": len(meta_dict),
-                    "tf_score": float(tf_scores[idx]) if tf_scores[idx] is not None else 0.0
+                    "frequency": self.r.hlen(f"{collection}:feature:{fh}:meta") # Actual total frequency
                 })
 
             context_res = context_fetch_pipe.execute()
@@ -451,14 +444,17 @@ class FeatureService:
                 best_type = info["best_type"]
                 best_op = info["best_op"]
                 line_idxs = info["line_idxs"]
-
-                source_data = context_res[idx * 2]
+                
+                # Each fetch_map entry consumed 3 pipeline calls
+                source_data = context_res[idx * 3]
                 if isinstance(source_data, list) and source_data:
                     source_data = source_data[0]
 
-                vec_meta = context_res[idx * 2 + 1]
+                vec_meta = context_res[idx * 3 + 1]
                 if isinstance(vec_meta, list) and vec_meta:
                     vec_meta = vec_meta[0]
+
+                tf_score = float(context_res[idx * 3 + 2]) if context_res[idx * 3 + 2] is not None else 0.0
 
                 # Extract C tokens
                 c_code = None

@@ -393,8 +393,15 @@ class FeatureService:
                 # Group by (type, pcode_op) to find the most common pair
                 counts = {}
                 for occ in occurrences:
-                    pair = (occ.get("type", "N/A"), occ.get("pcode_op", "N/A"))
+                    pair = (str(occ.get("type", "N/A")), str(occ.get("pcode_op", "N/A")))
                     counts[pair] = counts.get(pair, 0) + 1
+
+                if not counts:
+                    delete_feature(self.r, collection, fh)
+                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
+                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
+                    fetch_map.append(None)
+                    continue
 
                 # Find most common
                 best_pair = max(counts.items(), key=lambda x: (x[1], x[0]))[0]

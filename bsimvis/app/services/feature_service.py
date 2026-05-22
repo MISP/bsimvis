@@ -349,30 +349,37 @@ class FeatureService:
         for i in range(0, len(feature_hashes), chunk_size):
             chunk = feature_hashes[i : i + chunk_size]
 
-            # Batch-fetch C contexts and Pcode context fallbacks in a second pipeline
+            # --- STAGE 1: Batch fetch samples, frequencies, and scores ---
+            pipe1 = self.r.pipeline()
+            for fh in chunk:
+                # Use a single HSCAN call as a representative sample (1000 items)
+                pipe1.hscan(f"{collection}:feature:{fh}:meta", cursor=0, count=1000)
+                pipe1.hlen(f"{collection}:feature:{fh}:meta")
+                pipe1.zscore(f"{collection}:features:by_tf", fh)
+            
+            res1 = pipe1.execute()
+            
+            # --- STAGE 2: Identify best occurrences and batch fetch contexts ---
             context_fetch_pipe = self.r.pipeline()
             fetch_map = []
 
             for idx, fh in enumerate(chunk):
-                # OPTIMIZATION: Instead of hgetall(), use HSCAN with sampling for high-frequency features
-                # This prevents memory/CPU exhaustion for features with 100k+ occurrences.
-                occurrences = []
-                cursor = 0
-                sample_limit = 1000
+                # res1 indices: HSCAN=idx*3, HLEN=idx*3+1, ZSCORE=idx*3+2
+                hscan_res = res1[idx * 3]
+                total_freq = res1[idx * 3 + 1]
+                tf_score_val = res1[idx * 3 + 2]
+
+                # hscan_res is [cursor, {func_id: occ_str, ...}]
+                data_batch = hscan_res[1] if (isinstance(hscan_res, (list, tuple)) and len(hscan_res) > 1) else {}
                 
-                while len(occurrences) < sample_limit:
-                    cursor, data_batch = self.r.hscan(f"{collection}:feature:{fh}:meta", cursor=cursor, count=sample_limit)
-                    for func_id, occ_str in data_batch.items():
-                        try:
-                            occ = json.loads(occ_str)
-                            occ["function_id"] = func_id
-                            occurrences.append(occ)
-                        except Exception:
-                            pass
-                        if len(occurrences) >= sample_limit:
-                            break
-                    if cursor == 0:
-                        break
+                occurrences = []
+                for func_id, occ_str in data_batch.items():
+                    try:
+                        occ = json.loads(occ_str)
+                        occ["function_id"] = func_id
+                        occurrences.append(occ)
+                    except Exception:
+                        pass
 
                 if not occurrences:
                     delete_feature(self.r, collection, fh)
@@ -408,7 +415,7 @@ class FeatureService:
                 func_id = best_occ.get("function_id")
                 line_idxs = best_occ.get("line_idx", [])
 
-                # Queue context fetches
+                # Queue context fetches (Source Code and Full Vector Meta)
                 if func_id:
                     context_fetch_pipe.json().get(f"{func_id}:source", "$")
                 else:
@@ -419,21 +426,19 @@ class FeatureService:
                 else:
                     context_fetch_pipe.execute_command("ECHO", "no_fallback_meta")
 
-                # Fetch TF score for global meta
-                context_fetch_pipe.zscore(f"{collection}:features:by_tf", fh)
-
                 fetch_map.append({
                     "fh": fh,
                     "best_type": best_type,
                     "best_op": best_op,
                     "best_occ": best_occ,
                     "line_idxs": line_idxs,
-                    "frequency": self.r.hlen(f"{collection}:feature:{fh}:meta") # Actual total frequency
+                    "frequency": total_freq,
+                    "tf_score": float(tf_score_val) if tf_score_val is not None else 0.0
                 })
 
             context_res = context_fetch_pipe.execute()
 
-            # Save the final results to JSON and write secondary indexes
+            # --- STAGE 3: Final assembly and batch save ---
             save_pipe = self.r.pipeline()
             for idx, info in enumerate(fetch_map):
                 if not info:
@@ -445,16 +450,14 @@ class FeatureService:
                 best_op = info["best_op"]
                 line_idxs = info["line_idxs"]
                 
-                # Each fetch_map entry consumed 3 pipeline calls
-                source_data = context_res[idx * 3]
+                # Each fetch_map entry consumed 2 pipeline calls
+                source_data = context_res[idx * 2]
                 if isinstance(source_data, list) and source_data:
                     source_data = source_data[0]
 
-                vec_meta = context_res[idx * 3 + 1]
+                vec_meta = context_res[idx * 2 + 1]
                 if isinstance(vec_meta, list) and vec_meta:
                     vec_meta = vec_meta[0]
-
-                tf_score = float(context_res[idx * 3 + 2]) if context_res[idx * 3 + 2] is not None else 0.0
 
                 # Extract C tokens
                 c_code = None
@@ -484,12 +487,11 @@ class FeatureService:
                 if not pcode_full:
                     pcode_full = "N/A"
 
-                # Function parts: key format is {collection}:{something}:{md5}:{addr}
+                # Function parts
                 fid = best_occ.get("function_id", "")
                 parts = fid.split(":")
                 md5, addr = "N/A", "N/A"
                 if len(parts) >= 4:
-                    # Standard format: col:function:md5:addr or col:func:md5:addr
                     md5 = parts[-2]
                     addr = parts[-1]
 
@@ -516,10 +518,8 @@ class FeatureService:
                     "context": context
                 }
 
-                # Write to Kvrocks JSON
+                # Write to Kvrocks JSON and Update Secondary Indexes
                 save_pipe.json().set(f"{collection}:feature:{fh}:global_meta", "$", global_meta)
-
-                # Index fields using secondary indexes (tag/num registries)
                 save_feature(save_pipe, collection, fh, global_meta)
 
             save_pipe.execute()

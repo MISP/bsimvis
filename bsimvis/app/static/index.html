@@ -22,6 +22,7 @@
     <script src="/js/cluster_views.js"></script>
     <script src="/js/call_graph.js"></script>
     <script src="/js/window_manager.js"></script>
+    <script src="/js/upload.js"></script>
     <script src="/js/dashboard.js"></script>
     <script src="/js/jobs.js"></script>
     <script src="/js/table_selection.js"></script>
@@ -47,8 +48,7 @@
                 class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
         <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
             style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i>
-            <span>Clusters</span></a>
+        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
         <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
                 class="fa-solid fa-sitemap"></i>
             <span>Call Graph</span></a>
@@ -57,6 +57,7 @@
             <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"
                 style="color:var(--accent); font-weight:bold;"><i class="fa-solid fa-plus-minus"
                     style="color: var(--accent);"></i> <span>Diffing Tool</span></a>
+            <a href="#upload" id="nav-upload" title="Upload Binaries"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
             <a href="#jobs" id="nav-jobs" title="Background Jobs"
                 style="color:var(--text);"><i id="nav-jobs-icon" class="fa-solid fa-server"
                     style="color: var(--subtle);"></i><div id="nav-jobs-loader" class="nav-job-spinner" style="display:none;"></div> <span>Jobs</span>
@@ -287,6 +288,10 @@
                 style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
             </div>
 
+            <div id="upload-view-container"
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow-y:auto; margin: 10px; position:relative; padding: 30px;">
+            </div>
+
 
         </div>
     </main>
@@ -306,6 +311,7 @@
     </div>
 
     <div id="window-tray"></div>
+    <div id="notification-container" style="position: fixed; bottom: 60px; right: 20px; z-index: 100000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
 
 
     <!-- Extracted script block 2 -->

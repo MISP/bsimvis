@@ -262,6 +262,12 @@ const routes = {
         ],
         renderer: renderClusters
     },
+    '#upload': {
+        title: 'Upload Binaries',
+        api: null,
+        headers: [],
+        renderer: null
+    },
     '#file-call-graph': {
         title: 'File Call Graph',
         api: null,
@@ -444,12 +450,14 @@ async function refreshData(appendArg = false, force = false) {
 function updateUI(path, params, route) {
     const pathChanged = (path !== lastViewPath);
     lastViewPath = path;
+    const col = params.get('collection');
 
     // Reset all special view containers and stop active processes
     document.getElementById('graph-view-container').style.display = 'none';
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
     if (document.getElementById('call-graph-view-container')) document.getElementById('call-graph-view-container').style.display = 'none';
+    if (document.getElementById('upload-view-container')) document.getElementById('upload-view-container').style.display = 'none';
 
     // Clear all autocomplete dropdowns to prevent leftovers from previous navigation
     document.querySelectorAll('.tag-autocomplete-dropdown').forEach(el => el.remove());
@@ -467,7 +475,17 @@ function updateUI(path, params, route) {
     if (window.packingInstance) window.packingInstance.stop();
     if (window.callGraphInstance) window.callGraphInstance.stop();
 
-    const col = params.get('collection');
+    if (path === '#upload') {
+        tableWrap.style.display = 'none';
+        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+        document.getElementById('pagination-container').style.display = 'none';
+        document.getElementById('upload-view-container').style.display = 'block';
+        if (typeof renderUploadView === 'function') renderUploadView(params);
+    } else if (path === '#file-call-graph') {
+        tableWrap.style.display = 'none';
+        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+        document.getElementById('pagination-container').style.display = 'none';
+    }
 
     // Sidebar
     document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
@@ -526,6 +544,7 @@ function updateUI(path, params, route) {
         updateNavLink('nav-function-similarity', '#function-similarity');
         updateNavLink('nav-clusters', '#clusters');
         updateNavLink('nav-jobs', '#jobs');
+        updateNavLink('nav-upload', '#upload');
         
         const fileMd5 = params.get('file_md5');
         const cgNav = document.getElementById('nav-file-call-graph');
@@ -588,10 +607,12 @@ function updateUI(path, params, route) {
     const settingsEl = document.getElementById('search-settings-container');
     settingsEl.style.display = 'none';
     settingsEl.innerHTML = '';
-    tableWrap.style.display = 'flex';
-    tableWrap.style.flex = '1';
-    if (tableBodyWrap) tableBodyWrap.style.display = '';
-    document.getElementById('pagination-container').style.display = 'block';
+    if (path !== '#upload' && path !== '#file-call-graph') {
+        tableWrap.style.display = 'flex';
+        tableWrap.style.flex = '1';
+        if (tableBodyWrap) tableBodyWrap.style.display = '';
+        document.getElementById('pagination-container').style.display = 'block';
+    }
     document.getElementById('graph-view-container').style.display = 'none';
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
@@ -1434,6 +1455,10 @@ function renderCollections(data) {
             <td class="dim">${formatDate(col['last_updated'])}</td>
             <td>
                 <div style="display: flex; gap: 15px;">
+                    <a class="btn-action" href="#upload?collection=${col.name}" style="color:var(--accent)">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload
+                    </a>
+                    <span style="color:var(--border)">|</span>
                     <a class="btn-action" href="#batches?collection=${col.name}">
                         Browse Batches
                     </a>

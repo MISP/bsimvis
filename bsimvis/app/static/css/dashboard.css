@@ -1764,3 +1764,59 @@ body.sidebar-collapsed nav #nav-history-chevron {
     margin-left: 5px;
     margin-right: 5px;
 }
+
+/* Upload View Styles */
+.upload-container {
+    animation: fadeIn 0.3s ease-out;
+}
+
+.upload-input {
+    width: 100%;
+    background: #000;
+    border: 1px solid var(--border);
+    color: #fff;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    transition: border-color 0.2s;
+}
+
+.upload-input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+#upload-drop-zone:hover {
+    border-color: var(--accent) !important;
+    background: rgba(4, 217, 255, 0.05) !important;
+}
+
+#upload-drop-zone i {
+    transition: transform 0.2s, opacity 0.2s;
+}
+
+#upload-drop-zone:hover i {
+    transform: translateY(-5px);
+    opacity: 1 !important;
+}
+
+.upload-file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 0.8rem;
+    transition: background 0.2s;
+}
+
+.upload-file-item:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.upload-progress-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+}

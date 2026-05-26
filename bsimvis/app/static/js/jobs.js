@@ -2,6 +2,18 @@
  * Jobs UI Module for BSimVis
  */
 
+const collapsedPipelines = new Set(JSON.parse(localStorage.getItem('collapsedPipelines') || '[]'));
+
+window.togglePipelineCollapse = function(pipelineId) {
+    if (collapsedPipelines.has(pipelineId)) {
+        collapsedPipelines.delete(pipelineId);
+    } else {
+        collapsedPipelines.add(pipelineId);
+    }
+    localStorage.setItem('collapsedPipelines', JSON.stringify(Array.from(collapsedPipelines)));
+    if (window.refreshData) window.refreshData(false, false);
+};
+
 function renderJobs(jobs) {
     const jobsList = Array.isArray(jobs) ? jobs : (jobs.results || []);
     
@@ -9,19 +21,77 @@ function renderJobs(jobs) {
         return '<tr><td colspan="8" style="text-align:center; padding: 60px; color: var(--dim);"><i class="fa-solid fa-wind" style="font-size: 2rem; opacity: 0.2; display: block; margin-bottom: 10px;"></i>No recent jobs found</td></tr>';
     }
 
-    // Grouping by pipeline if possible, or just tracking parents
-    const parentMap = new Map();
+    const jobsById = new Map();
+    const childJobIds = new Set();
+    const pipelineChildren = new Map();
+
     jobsList.forEach(job => {
+        jobsById.set(job.id, job);
+    });
+
+    // Track children and group them
+    jobsList.forEach(job => {
+        if (job.parent_id) {
+            childJobIds.add(job.id);
+            if (!pipelineChildren.has(job.parent_id)) {
+                pipelineChildren.set(job.parent_id, []);
+            }
+            pipelineChildren.get(job.parent_id).push(job);
+        }
         if (job.type === 'pipeline' && job.task_ids) {
-            job.task_ids.forEach(tid => parentMap.set(tid, job.id));
+            job.task_ids.forEach(tid => {
+                childJobIds.add(tid);
+            });
         }
     });
-    
-    return jobsList.map(job => {
+
+    // Order pipeline children according to task_ids sequence
+    jobsList.forEach(job => {
+        if (job.type === 'pipeline') {
+            const children = [];
+            const taskIds = job.task_ids || [];
+            taskIds.forEach(tid => {
+                const childJob = jobsById.get(tid);
+                if (childJob) {
+                    children.push(childJob);
+                }
+            });
+            // Append any other children not in task_ids list
+            const otherChildren = pipelineChildren.get(job.id) || [];
+            otherChildren.forEach(child => {
+                if (!children.some(c => c.id === child.id)) {
+                    children.push(child);
+                }
+            });
+            pipelineChildren.set(job.id, children);
+        }
+    });
+
+    // Identify top-level items (not child of any existing pipeline in list)
+    const topLevelItems = jobsList.filter(job => {
+        if (job.parent_id && jobsById.has(job.parent_id)) {
+            return false;
+        }
+        if (childJobIds.has(job.id)) {
+            let hasParentInList = false;
+            for (let [id, pJob] of jobsById.entries()) {
+                if (pJob.type === 'pipeline' && pJob.task_ids && pJob.task_ids.includes(job.id)) {
+                    hasParentInList = true;
+                    break;
+                }
+            }
+            if (hasParentInList) return false;
+        }
+        return true;
+    });
+
+    // Sort top-level items by created_at desc
+    topLevelItems.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    const rows = [];
+
+    function renderJobRow(job, parentId = null) {
         const isPipeline = job.type === 'pipeline';
-        const parentId = parentMap.get(job.id);
-        
-        // Progress bar HTML
         const progress = job.progress || 0;
         const status = job.status || 'pending';
         
@@ -29,6 +99,7 @@ function renderJobs(jobs) {
         if (status === 'running') progressClass = 'progress-running';
         if (status === 'completed') progressClass = 'progress-completed';
         if (status === 'failed') progressClass = 'progress-failed';
+        if (status === 'cancelled') progressClass = 'progress-failed';
 
         const progressHtml = `
             <div class="job-progress-container">
@@ -39,7 +110,6 @@ function renderJobs(jobs) {
             </div>
         `;
         
-        // Status Badge
         let statusIcon = 'fa-circle-notch fa-spin';
         if (status === 'completed') statusIcon = 'fa-check-circle';
         if (status === 'failed') statusIcon = 'fa-exclamation-circle';
@@ -50,24 +120,39 @@ function renderJobs(jobs) {
         
         const createdDate = new Date(job.created_at).toLocaleString();
         
-        // Actions
         let actions = '<div class="job-actions">';
         if (status === 'pending' || status === 'running') {
             actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
         }
         if (status === 'failed' || status === 'cancelled' || status === 'completed') {
-             actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+            actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
         }
         actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
         actions += '</div>';
 
-        const typeDisplay = isPipeline ? `<span class="pipeline-label"><i class="fa-solid fa-microchip"></i> PIPELINE</span>` : `<span class="job-label">${job.type}</span>`;
+        const isCollapsed = isPipeline && collapsedPipelines.has(job.id);
+        
+        let typeDisplay = '';
+        if (isPipeline) {
+            const chevron = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
+            typeDisplay = `
+                <div class="pipeline-header-cell" onclick="togglePipelineCollapse('${job.id}')" style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                    <i class="fa-solid ${chevron} collapse-chevron" style="color: var(--accent); width: 12px;"></i>
+                    <span class="pipeline-label"><i class="fa-solid fa-microchip"></i> PIPELINE</span>
+                </div>
+            `;
+        } else {
+            typeDisplay = `<span class="job-label">${job.type}</span>`;
+        }
+
         const indent = parentId ? '<span class="job-indent"></span>' : '';
         const collectionDisplay = job.collection ? `<div class="job-collection-cell"><i class="fa-solid fa-database"></i> ${job.collection}</div>` : '<span class="dim">-</span>';
         const targetDisplay = job.target ? `<code class="job-target-text">${job.target}</code>` : '<span class="dim">-</span>';
         
+        const rowStyle = parentId && collapsedPipelines.has(parentId) ? 'display: none;' : '';
+        
         return `
-            <tr class="job-row ${isPipeline ? 'pipeline-row' : ''} ${parentId ? 'child-row' : ''}" ${parentId ? `data-parent-id="${parentId}"` : ''}>
+            <tr class="job-row ${isPipeline ? 'pipeline-row' : ''} ${parentId ? 'child-row' : ''}" ${parentId ? `data-parent-id="${parentId}"` : ''} style="${rowStyle}">
                 <td>
                     <div class="job-id-cell">
                         ${indent}
@@ -87,7 +172,19 @@ function renderJobs(jobs) {
                 <td>${actions}</td>
             </tr>
         `;
-    }).join('');
+    }
+
+    topLevelItems.forEach(item => {
+        rows.push(renderJobRow(item));
+        if (item.type === 'pipeline') {
+            const children = pipelineChildren.get(item.id) || [];
+            children.forEach(child => {
+                rows.push(renderJobRow(child, item.id));
+            });
+        }
+    });
+
+    return rows.join('');
 }
 
 window.renderJobs = renderJobs;
@@ -318,6 +415,22 @@ if (!document.getElementById('jobs-style')) {
             font-family: var(--mono);
             font-size: 0.8rem;
             color: var(--subtle);
+        }
+        .collapse-chevron {
+            cursor: pointer;
+            transition: transform 0.2s ease, color 0.2s ease;
+        }
+        .collapse-chevron:hover {
+            color: #fff !important;
+        }
+        .pipeline-header-cell {
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-left: -8px;
+            transition: background-color 0.2s ease;
+        }
+        .pipeline-header-cell:hover {
+            background: rgba(255, 255, 255, 0.05);
         }
     `;
     document.head.appendChild(style);

@@ -5,6 +5,7 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
 import logging
+import uuid
 
 job_service = JobService()
 
@@ -120,6 +121,9 @@ def upload_raw_binary():
         collection = request.args.get("collection", "main")
         file_name = request.args.get("file_name", "unknown")
         batch_uuid = request.args.get("batch_uuid")
+        # If client did not provide a batch UUID, generate one server‑side so that all files uploaded in this request share the same identifier
+        if not batch_uuid:
+            batch_uuid = uuid.uuid4().hex
         batch_name = request.args.get("batch_name", "Ghidra Batch")
 
         # Compute MD5

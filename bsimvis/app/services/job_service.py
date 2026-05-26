@@ -15,6 +15,7 @@ class JobStatus(Enum):
 
 class JobType(Enum):
     FILE_DATA_INGEST = "file_data_ingest"
+    GHIDRA_ANALYZE = "ghidra_analyze"
     INDEX_META = "idx_meta"
     INDEX_FUNCTIONS = "idx_functions"
     INDEX_FEATURES = "idx_features"
@@ -268,7 +269,11 @@ class JobService:
 
             # Only count if NOT cancelled, failed, or completed
             status = job.get("status")
-            if status in [JobStatus.CANCELLED.value, JobStatus.FAILED.value, JobStatus.COMPLETED.value]:
+            if status in [
+                JobStatus.CANCELLED.value,
+                JobStatus.FAILED.value,
+                JobStatus.COMPLETED.value,
+            ]:
                 continue
 
             active_jobs_count += 1
@@ -312,7 +317,12 @@ class JobService:
                     try:
                         payload = json.loads(payload_raw)
                         collection = payload.get("collection", "")
-                        target = payload.get("md5") or payload.get("file_id") or payload.get("batch_uuid") or ""
+                        target = (
+                            payload.get("md5")
+                            or payload.get("file_id")
+                            or payload.get("batch_uuid")
+                            or ""
+                        )
                         # Truncate long targets
                         if target and len(target) > 20:
                             target = target[:8] + "..." + target[-8:]
@@ -320,6 +330,14 @@ class JobService:
                         pass
 
                 # Basic summary info
+                parent_id = job.get("parent_id", "")
+                task_ids = []
+                if "task_ids" in job:
+                    try:
+                        task_ids = json.loads(job["task_ids"])
+                    except:
+                        pass
+
                 results.append(
                     {
                         "id": jid,
@@ -330,6 +348,8 @@ class JobService:
                         "target": target,
                         "created_at": int(job.get("created_at", 0)),
                         "updated_at": int(job.get("updated_at", 0)),
+                        "parent_id": parent_id,
+                        "task_ids": task_ids,
                     }
                 )
         return results, total

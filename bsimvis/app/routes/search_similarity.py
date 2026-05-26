@@ -3,11 +3,9 @@ import logging
 import redis
 import hashlib
 import os
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import query_ids, parse_timestamp
-
-search_similarity_bp = Blueprint("search_similarity", __name__)
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -16,7 +14,6 @@ CACHE_TIME_THRESHOLD = 0.1  # Only cache requests that take more than X seconds
 MAX_CACHED_RESULTS = 10000
 
 
-@search_similarity_bp.route("/api/search/autocomplete", methods=["GET"])
 def autocomplete():
     col = request.args.get("collection")
     level = request.args.get("level", "func")
@@ -25,7 +22,7 @@ def autocomplete():
     limit = int(request.args.get("limit", 50))
 
     if not all([col, level, field]):
-        return jsonify({"error": "Missing parameters"}), 400
+        return {"error": "Missing parameters"}, 400
 
     r = get_redis()
 
@@ -50,7 +47,7 @@ def autocomplete():
     results = []
     if registry_key:
         keywords = [k for k in query.split() if k]
-        
+
         # Search pattern: use the first keyword for Redis-side filtering, or * if empty
         match_pat = f"*{keywords[0]}*" if keywords else "*"
 
@@ -97,24 +94,21 @@ def autocomplete():
         unique_results.values(), key=lambda x: (len(x["value"]), x["value"])
     )[:limit]
 
-    return jsonify(
-        {
-            "results": final_results,
-            "cardinality": (
-                r.scard(registry_key) if registry_key and r.exists(registry_key) else 0
-            ),
-        }
-    )
+    return {
+        "results": final_results,
+        "cardinality": (
+            r.scard(registry_key) if registry_key and r.exists(registry_key) else 0
+        ),
+    }
 
 
-@search_similarity_bp.route("/api/search/fields", methods=["GET"])
 def get_field_stats():
     col = request.args.get("collection")
     level = request.args.get("level", "func")
     fields = request.args.getlist("field")
 
     if not col or not fields:
-        return jsonify({"error": "Missing parameters"}), 400
+        return {"error": "Missing parameters"}, 400
 
     r = get_redis()
     stats = {}
@@ -138,10 +132,9 @@ def get_field_stats():
         else:
             stats[f] = 0
 
-    return jsonify(stats)
+    return stats
 
 
-@search_similarity_bp.route("/api/similarity/search", methods=["GET"])
 def similarity_search():
     import time
     import uuid
@@ -170,7 +163,7 @@ def similarity_search():
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
         min_features = int(request.args.get("min_features", 0))
     except ValueError:
-        return jsonify({"detail": "Invalid numeric parameter"}), 400
+        return {"detail": "Invalid numeric parameter"}, 400
 
     format_arg = request.args.get("format")
     if format_arg in ("csv", "json"):
@@ -235,7 +228,7 @@ def similarity_search():
     sort_order = request.args.get("sort_order", "desc").lower()
 
     if not col:
-        return jsonify({"detail": "Missing collection"}), 400
+        return {"detail": "Missing collection"}, 400
 
     try:
         r = get_redis()
@@ -540,7 +533,9 @@ def similarity_search():
                         # file_tags, func_tags, file_user_tags, func_user_tags etc. are
                         # propagated FROM file/func and need the "both" entity check.
                         sim_native_fields = {"tags", "user_tags", "is_cross_binary"}
-                        is_propagated = (l_name == "similarity" and field not in sim_native_fields)
+                        is_propagated = (
+                            l_name == "similarity" and field not in sim_native_fields
+                        )
 
                         # func_index_prefix: tells Lua which Redis key prefix to use when
                         # building the entity map (function IDs) for "both" mode.
@@ -726,15 +721,13 @@ def similarity_search():
                             logging.info(
                                 f"SIM SEARCH | {session_id} | Filter '{label}={val}' matched 0 targets. Empty."
                             )
-                            return jsonify(
-                                {
-                                    "total": 0,
-                                    "pairs": [],
-                                    "algo": algo,
-                                    "collection": col,
-                                    "pool_truncated": False,
-                                }
-                            )
+                            return {
+                                "total": 0,
+                                "pairs": [],
+                                "algo": algo,
+                                "collection": col,
+                                "pool_truncated": False,
+                            }
 
                         add_group(all_matches, field_name=f"{label}:{val}")
 
@@ -821,6 +814,7 @@ def similarity_search():
 
                 if search_q:
                     from bsimvis.app.services.index_config import INDEX_CONFIG
+
                     all_levels = list(INDEX_CONFIG.keys())
 
                     for word in [w for w in search_q.split() if w.strip()]:
@@ -832,16 +826,14 @@ def similarity_search():
                                 all_matches.extend(matches)
 
                         if not all_matches:
-                            return jsonify(
-                                {
-                                    "total": 0,
-                                    "pairs": [],
-                                    "algo": algo,
-                                    "collection": col,
-                                    "pool_truncated": False,
-                                    "q": search_q,
-                                }
-                            )
+                            return {
+                                "total": 0,
+                                "pairs": [],
+                                "algo": algo,
+                                "collection": col,
+                                "pool_truncated": False,
+                                "q": search_q,
+                            }
 
                         add_group(all_matches, field_name=f"q({word})")
 
@@ -864,17 +856,15 @@ def similarity_search():
                         logging.info(
                             f"SIM SEARCH | {session_id} | Cross-Binary Filter '{cross_binary_val}' matched 0 pairs (Key {cb_key} missing)"
                         )
-                        return jsonify(
-                            {
-                                "total": 0,
-                                "pairs": [],
-                                "algo": algo,
-                                "collection": col,
-                                "pool_truncated": False,
-                                "offset": offset,
-                                "limit": limit,
-                            }
-                        )
+                        return {
+                            "total": 0,
+                            "pairs": [],
+                            "algo": algo,
+                            "collection": col,
+                            "pool_truncated": False,
+                            "offset": offset,
+                            "limit": limit,
+                        }
 
                 # Similarity Score Group
                 sim_weight = r.zcount(algo_zset, min_score, max_score)
@@ -977,7 +967,7 @@ def similarity_search():
                     )
                 except Exception as lua_err:
                     logging.error(f"LUA SEARCH CRASH: {lua_err}")
-                    return jsonify({"detail": f"Search engine error: {lua_err}"}), 500
+                    return {"detail": f"Search engine error: {lua_err}"}, 500
 
                 metrics["inter_time"] = time.perf_counter() - t_lua_start
             except Exception as e:
@@ -996,72 +986,73 @@ def similarity_search():
                     pipe.zscore(min_features_zset, sid)
                 else:
                     pipe.zscore(algo_zset, sid)
-            
+
             sim_raw = pipe.execute()
-            
+
             # Extract unique function IDs and map sim data
             unique_fids = set()
-            sim_data_map = {} # sid -> {id1, id2, sim_doc, other_metric, sort_sc}
+            sim_data_map = {}  # sid -> {id1, id2, sim_doc, other_metric, sort_sc}
 
             def extract_from_sid(sid):
                 sim_prefix = f"{col}:sim:{algo}:"
                 if not sid.startswith(sim_prefix):
                     return None, None
-                parts = sid[len(sim_prefix):].split("::")
+                parts = sid[len(sim_prefix) :].split("::")
                 if len(parts) != 2:
                     return None, None
                 return f"{col}:func:{parts[0]}", f"{col}:func:{parts[1]}"
 
             for i, (sid, sort_sc) in enumerate(page_results):
-                raw_json = sim_raw[i*2]
+                raw_json = sim_raw[i * 2]
                 if not raw_json:
                     continue
                 data = raw_json[0] if isinstance(raw_json, list) else raw_json
                 if isinstance(data, str):
                     data = json.loads(data)
-                
+
                 id1 = data.get("id1")
                 id2 = data.get("id2")
                 if not id1 or not id2:
                     id1, id2 = extract_from_sid(sid)
-                
+
                 if id1 and id2:
                     unique_fids.add(id1)
                     unique_fids.add(id2)
                     sim_data_map[sid] = {
-                        "id1": id1, "id2": id2, 
-                        "sim_doc": data, 
-                        "other_metric": sim_raw[i*2+1],
-                        "sort_sc": sort_sc
+                        "id1": id1,
+                        "id2": id2,
+                        "sim_doc": data,
+                        "other_metric": sim_raw[i * 2 + 1],
+                        "sort_sc": sort_sc,
                     }
 
             # Phase 2: Fetch Function Metadata & Cluster Scores (DEDUPLICATED)
-            f_meta_map = {} # fid -> {meta, scores}
+            f_meta_map = {}  # fid -> {meta, scores}
             unique_fids_list = list(unique_fids)
             f_pipe = r.pipeline()
             for fid in unique_fids_list:
                 f_pipe.json().get(f"{fid}:meta", "$")
                 f_pipe.hgetall(f"{fid}:cluster_scores")
-            
+
             f_results = f_pipe.execute()
-            
+
             unique_cluster_ids = set()
             unique_md5s = set()
 
             for i, fid in enumerate(unique_fids_list):
-                m_json = f_results[i*2]
-                scores_raw = f_results[i*2+1] or {}
-                
+                m_json = f_results[i * 2]
+                scores_raw = f_results[i * 2 + 1] or {}
+
                 meta = (m_json[0] if isinstance(m_json, list) else m_json) or {}
                 if isinstance(meta, str):
                     meta = json.loads(meta)
-                
+
                 scores = {}
                 for k, v in scores_raw.items():
                     k_str = k.decode() if isinstance(k, bytes) else k
                     scores[k_str] = float(v)
                     unique_cluster_ids.add(k_str)
-                
+
                 f_meta_map[fid] = {"meta": meta, "scores": scores}
                 if meta.get("file_md5"):
                     unique_md5s.add(meta["file_md5"])
@@ -1086,7 +1077,11 @@ def similarity_search():
                 c_pipe = r.pipeline()
                 c_list = list(unique_cluster_ids)
                 # Use the requested algo for clusters if it matches a known clustering algo
-                c_algo = algo if algo in ["unweighted_cosine", "weighted_cosine"] else "unweighted_cosine"
+                c_algo = (
+                    algo
+                    if algo in ["unweighted_cosine", "weighted_cosine"]
+                    else "unweighted_cosine"
+                )
                 for cid in c_list:
                     c_pipe.json().get(f"{col}:cluster:{c_algo}:{cid}:meta", "$")
                 c_results = c_pipe.execute()
@@ -1101,34 +1096,45 @@ def similarity_search():
                 s_data = sim_data_map.get(sid)
                 if not s_data:
                     continue
-                
+
                 id1, id2 = s_data["id1"], s_data["id2"]
                 f1_data = f_meta_map.get(id1, {"meta": {}, "scores": {}})
                 f2_data = f_meta_map.get(id2, {"meta": {}, "scores": {}})
-                
+
                 m1, s1 = f1_data["meta"], f1_data["scores"]
                 m2, s2 = f2_data["meta"], f2_data["scores"]
-                
+
                 f1 = file_meta_map.get(m1.get("file_md5"), {})
                 f2 = file_meta_map.get(m2.get("file_md5"), {})
 
-                sim_score = float(s_data["sort_sc"]) if sort_by == "score" else float(s_data["other_metric"] or 0)
-                feat_count = float(s_data["sort_sc"]) if sort_by in ["feat_count", "min_features"] else float(s_data["other_metric"] or 0)
+                sim_score = (
+                    float(s_data["sort_sc"])
+                    if sort_by == "score"
+                    else float(s_data["other_metric"] or 0)
+                )
+                feat_count = (
+                    float(s_data["sort_sc"])
+                    if sort_by in ["feat_count", "min_features"]
+                    else float(s_data["other_metric"] or 0)
+                )
 
                 def build_clusters(scores, meta_map):
                     res = []
                     for cid, score in scores.items():
                         cm = meta_map.get(cid)
                         if cm:
-                            res.append({
-                                "cluster_id": cm.get("cluster_id"),
-                                "cluster_uuid": cm.get("cluster_uuid"),
-                                "cluster_name": cm.get("cluster_name"),
-                                "cohesion_score": cm.get("cohesion_score", 0),
-                                "member_count": cm.get("member_count", 0),
-                                "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                                "avg_features": cm.get("avg_features", 0),
-                            })
+                            res.append(
+                                {
+                                    "cluster_id": cm.get("cluster_id"),
+                                    "cluster_uuid": cm.get("cluster_uuid"),
+                                    "cluster_name": cm.get("cluster_name"),
+                                    "cohesion_score": cm.get("cohesion_score", 0),
+                                    "member_count": cm.get("member_count", 0),
+                                    "cluster_stability": score
+                                    or cm.get("cluster_stability", 0.0),
+                                    "avg_features": cm.get("avg_features", 0),
+                                }
+                            )
                     res.sort(key=lambda x: x.get("member_count", 0), reverse=True)
                     return res
 
@@ -1136,54 +1142,72 @@ def similarity_search():
                 clusters2 = build_clusters(s2, cluster_meta_map)
 
                 # Cleanup function meta before embedding
-                for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+                for field in [
+                    "cluster_id",
+                    "cluster_name",
+                    "cluster_uuid",
+                    "cluster_stability",
+                ]:
                     m1.pop(field, None)
                     m2.pop(field, None)
 
-                enriched_pairs.append({
-                    "id1": id1, "id2": id2,
-                    "name1": m1.get("function_name", id1.split(":")[-1] if id1 else "N/A"),
-                    "name2": m2.get("function_name", id2.split(":")[-1] if id2 else "N/A"),
-                    "score": sim_score,
-                    "feat_count": int(feat_count),
-                    "sid": sid,
-                    "entry_date": parse_timestamp(s_data["sim_doc"].get("entry_date")),
-                    "meta1": {
-                        "file_md5": m1.get("file_md5"),
-                        "file_name": m1.get("file_name"),
-                        "tags": m1.get("tags", []),
-                        "user_tags": m1.get("user_tags", []),
-                        "batch_uuid": m1.get("batch_uuid"),
-                        "language_id": m1.get("language_id"),
-                        "return_type": m1.get("return_type", "N/A"),
-                        "namespace": m1.get("namespace", ""),
-                        "parameters": m1.get("parameters", []),
-                        "bsim_features_count": m1.get("bsim_features_count"),
-                        "clusters": clusters1,
-                        "file_tags": f1.get("tags", []),
-                        "file_user_tags": f1.get("user_tags", []),
-                        "entry_date": parse_timestamp(m1.get("entry_date") or m1.get("file_date")),
-                    },
-                    "meta2": {
-                        "file_md5": m2.get("file_md5"),
-                        "file_name": m2.get("file_name"),
-                        "tags": m2.get("tags", []),
-                        "user_tags": m2.get("user_tags", []),
-                        "batch_uuid": m2.get("batch_uuid"),
-                        "language_id": m2.get("language_id"),
-                        "return_type": m2.get("return_type", "N/A"),
-                        "namespace": m2.get("namespace", ""),
-                        "parameters": m2.get("parameters", []),
-                        "bsim_features_count": m2.get("bsim_features_count"),
-                        "clusters": clusters2,
-                        "file_tags": f2.get("tags", []),
-                        "file_user_tags": f2.get("user_tags", []),
-                        "entry_date": parse_timestamp(m2.get("entry_date") or m2.get("file_date")),
-                    },
-                    "tags": s_data["sim_doc"].get("tags", []),
-                    "user_tags": s_data["sim_doc"].get("user_tags", []),
-                    "algo": algo,
-                })
+                enriched_pairs.append(
+                    {
+                        "id1": id1,
+                        "id2": id2,
+                        "name1": m1.get(
+                            "function_name", id1.split(":")[-1] if id1 else "N/A"
+                        ),
+                        "name2": m2.get(
+                            "function_name", id2.split(":")[-1] if id2 else "N/A"
+                        ),
+                        "score": sim_score,
+                        "feat_count": int(feat_count),
+                        "sid": sid,
+                        "entry_date": parse_timestamp(
+                            s_data["sim_doc"].get("entry_date")
+                        ),
+                        "meta1": {
+                            "file_md5": m1.get("file_md5"),
+                            "file_name": m1.get("file_name"),
+                            "tags": m1.get("tags", []),
+                            "user_tags": m1.get("user_tags", []),
+                            "batch_uuid": m1.get("batch_uuid"),
+                            "language_id": m1.get("language_id"),
+                            "return_type": m1.get("return_type", "N/A"),
+                            "namespace": m1.get("namespace", ""),
+                            "parameters": m1.get("parameters", []),
+                            "bsim_features_count": m1.get("bsim_features_count"),
+                            "clusters": clusters1,
+                            "file_tags": f1.get("tags", []),
+                            "file_user_tags": f1.get("user_tags", []),
+                            "entry_date": parse_timestamp(
+                                m1.get("entry_date") or m1.get("file_date")
+                            ),
+                        },
+                        "meta2": {
+                            "file_md5": m2.get("file_md5"),
+                            "file_name": m2.get("file_name"),
+                            "tags": m2.get("tags", []),
+                            "user_tags": m2.get("user_tags", []),
+                            "batch_uuid": m2.get("batch_uuid"),
+                            "language_id": m2.get("language_id"),
+                            "return_type": m2.get("return_type", "N/A"),
+                            "namespace": m2.get("namespace", ""),
+                            "parameters": m2.get("parameters", []),
+                            "bsim_features_count": m2.get("bsim_features_count"),
+                            "clusters": clusters2,
+                            "file_tags": f2.get("tags", []),
+                            "file_user_tags": f2.get("user_tags", []),
+                            "entry_date": parse_timestamp(
+                                m2.get("entry_date") or m2.get("file_date")
+                            ),
+                        },
+                        "tags": s_data["sim_doc"].get("tags", []),
+                        "user_tags": s_data["sim_doc"].get("user_tags", []),
+                        "algo": algo,
+                    }
+                )
 
         metrics["enrich_time"] = time.perf_counter() - t_enrich_start
 
@@ -1237,16 +1261,18 @@ def similarity_search():
         }
         if format_arg == "csv":
             from bsimvis.app.services.export_service import export_to_csv
+
             return export_to_csv(enriched_pairs, "similarity")
         elif format_arg == "json":
             from bsimvis.app.services.export_service import export_to_json
+
             return export_to_json(response_data, "similarity")
         else:
-            return jsonify(response_data)
+            return response_data
 
     except Exception as e:
         import traceback
 
         logging.error(f"Similarity search error: {e}")
         traceback.print_exc()
-        return jsonify({"detail": str(e)}), 500
+        return {"detail": str(e)}, 500

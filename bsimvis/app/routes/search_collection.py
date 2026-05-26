@@ -1,12 +1,9 @@
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
 import json
 
-search_collection_bp = Blueprint("search_collection", __name__)
 
-
-@search_collection_bp.route("/api/collection/search")
 def search_collections():
     r = get_redis()
 
@@ -14,7 +11,7 @@ def search_collections():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", 100))
     except ValueError:
-        return jsonify({"error": "offset and limit must be integers"}), 400
+        return {"error": "offset and limit must be integers"}, 400
 
     q = request.args.get("q", "").lower().strip()
     format_arg = request.args.get("format")
@@ -22,8 +19,13 @@ def search_collections():
         offset = 0
         limit = 100000
 
-    collection_names = sorted([n.decode() if isinstance(n, bytes) else str(n) for n in r.smembers("global:collections")])
-    
+    collection_names = sorted(
+        [
+            n.decode() if isinstance(n, bytes) else str(n)
+            for n in r.smembers("global:collections")
+        ]
+    )
+
     if q:
         keywords = [k for k in q.split() if k]
         filtered_names = []
@@ -84,15 +86,16 @@ def search_collections():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(results, "collections")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "collections")
     else:
-        return jsonify(response_data)
+        return response_data
 
 
-@search_collection_bp.route("/api/batch/search")
 def search_batches():
     r = get_redis()
 
@@ -100,11 +103,11 @@ def search_batches():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", 100))
     except ValueError:
-        return jsonify({"error": "offset and limit must be integers"}), 400
+        return {"error": "offset and limit must be integers"}, 400
 
     target_collection = request.args.get("collection")
     if not target_collection:
-        return jsonify({"error": "No collection specified"}), 400
+        return {"error": "No collection specified"}, 400
 
     q = request.args.get("q", "").lower().strip()
     format_arg = request.args.get("format")
@@ -127,13 +130,13 @@ def search_batches():
             continue
         data = item[0] if isinstance(item, list) and item else item
         data = json.loads(data) if isinstance(data, str) else data
-        
+
         # Apply q filter
         if keywords:
             b_uuid = str(data.get("batch_uuid", "")).lower()
             b_name = str(data.get("batch_name", "")).lower()
             b_col = str(data.get("collection", "")).lower()
-            
+
             match = True
             for kw in keywords:
                 if not (kw in b_uuid or kw in b_name or kw in b_col):
@@ -167,9 +170,11 @@ def search_batches():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(page, "batches")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "batches")
     else:
-        return jsonify(response_data)
+        return response_data

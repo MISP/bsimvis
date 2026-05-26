@@ -37,7 +37,9 @@ def create_app():
     @app.after_request
     def log_response(response):
         # Prevent proxy and browser caching of all assets/responses to ensure fresh reload
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+        )
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
 
@@ -53,6 +55,7 @@ def create_app():
         return response
 
     from .swagger import api_bp
+
     app.register_blueprint(api_bp)
 
     # Serve the Bare JS frontend

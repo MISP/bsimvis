@@ -102,9 +102,9 @@ NUM_FIELDS = {
 
 EXACT_FIELDS = {
     "cluster_id",
-    #"cluster_uuid",
-    #"file_md5",
-    #"batch_uuid",
+    # "cluster_uuid",
+    # "file_md5",
+    # "batch_uuid",
 }
 
 

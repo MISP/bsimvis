@@ -1,11 +1,9 @@
 import json
 import logging
 
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
-
-search_feature_bp = Blueprint("search_feature", __name__)
 
 
 def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
@@ -224,7 +222,9 @@ def query_features_advanced(r, collection, filters):
         val_lower = search_val.lower()
         matching_buckets = []
         try:
-            for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*", count=1000):
+            for bucket in r.sscan_iter(
+                registry_key, match=f"*{val_lower}*", count=1000
+            ):
                 bucket_str = (
                     bucket.decode() if isinstance(bucket, bytes) else str(bucket)
                 )
@@ -247,8 +247,7 @@ def query_features_advanced(r, collection, filters):
                 for res in pipe.execute():
                     if res:
                         field_candidates.update(
-                            t.decode() if isinstance(t, bytes) else str(t)
-                            for t in res
+                            t.decode() if isinstance(t, bytes) else str(t) for t in res
                         )
         return field_candidates
 
@@ -278,7 +277,9 @@ def query_features_advanced(r, collection, filters):
             fmax = float(max_freq) if max_freq is not None else "+inf"
             freq_matches = {
                 t.decode() if isinstance(t, bytes) else str(t)
-                for t in r.zrangebyscore(f"{collection}:idx:feature:frequency", fmin, fmax)
+                for t in r.zrangebyscore(
+                    f"{collection}:idx:feature:frequency", fmin, fmax
+                )
             }
             candidates.intersection_update(freq_matches)
         except (ValueError, TypeError):
@@ -293,7 +294,9 @@ def query_features_advanced(r, collection, filters):
             tmax = float(max_tf) if max_tf is not None else "+inf"
             tf_matches = {
                 t.decode() if isinstance(t, bytes) else str(t)
-                for t in r.zrangebyscore(f"{collection}:idx:feature:tf_score", tmin, tmax)
+                for t in r.zrangebyscore(
+                    f"{collection}:idx:feature:tf_score", tmin, tmax
+                )
             }
             candidates.intersection_update(tf_matches)
         except (ValueError, TypeError):
@@ -305,7 +308,7 @@ def query_features_advanced(r, collection, filters):
     # 4. Sorting
     sort_by = filters.get("sort_by", "tf_score")
     sort_order = filters.get("sort_order", "desc")
-    reverse_sort = (sort_order == "desc")
+    reverse_sort = sort_order == "desc"
 
     if sort_by in ["frequency", "tf_score"]:
         zset_key = f"{collection}:idx:feature:{sort_by}"
@@ -326,7 +329,9 @@ def query_features_advanced(r, collection, filters):
             pipe = r.pipeline()
             for doc_id in candidate_list:
                 f_hash = doc_id.split(":")[-1]
-                pipe.json().get(f"{collection}:feature:{f_hash}:global_meta", f"$.{sort_by}")
+                pipe.json().get(
+                    f"{collection}:feature:{f_hash}:global_meta", f"$.{sort_by}"
+                )
             sort_vals = pipe.execute()
 
             def get_sort_val(v):
@@ -373,26 +378,25 @@ def query_features_advanced(r, collection, filters):
                     "type": "N/A",
                     "op": "N/A",
                     "pcode_full": "N/A",
-                    "c_code": None
-                }
+                    "c_code": None,
+                },
             }
         features.append(meta)
 
     return features, total
 
 
-@search_feature_bp.route("/api/feature/search")
 def search_features():
     r = get_redis()
     collection = request.args.get("collection")
     if not collection:
-        return jsonify({"error": "No collection specified"}), 400
+        return {"error": "No collection specified"}, 400
 
     try:
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", 20))
     except ValueError:
-        return jsonify({"error": "offset and limit must be integers"}), 400
+        return {"error": "offset and limit must be integers"}, 400
 
     format_arg = request.args.get("format")
     if format_arg in ("csv", "json"):
@@ -407,7 +411,8 @@ def search_features():
         "type": request.args.get("type", ""),
         "op": request.args.get("op", ""),
         "sort_by": request.args.get("sort_by") or request.args.get("sort", "tf_score"),
-        "sort_order": request.args.get("sort_order") or request.args.get("order", "desc"),
+        "sort_order": request.args.get("sort_order")
+        or request.args.get("order", "desc"),
         "offset": offset,
         "limit": limit,
     }
@@ -428,26 +433,27 @@ def search_features():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(feature_list, "features")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "features")
     else:
-        return jsonify(response_data)
+        return response_data
 
 
-@search_feature_bp.route("/api/feature/details/<f_hash>")
 def get_feature_details(f_hash):
     r = get_redis()
     collection = request.args.get("collection")
     if not collection:
-        return jsonify({"error": "No collection specified"}), 400
+        return {"error": "No collection specified"}, 400
 
     try:
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", 1000))
     except ValueError:
-        return jsonify({"error": "offset and limit must be integers"}), 400
+        return {"error": "offset and limit must be integers"}, 400
 
     func_ids = r.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
     raw_meta_vals = r.hvals(f"{collection}:feature:{f_hash}:meta")
@@ -510,14 +516,12 @@ def get_feature_details(f_hash):
         if "batch_id" not in occ and col and b_uuid:
             occ["batch_id"] = f"{col}:batch:{b_uuid}"
 
-    return jsonify(
-        {
-            "hash": f_hash,
-            "occurrence_count": len(func_ids),
-            "total_occurrences": total_occurrences,
-            "offset": offset,
-            "limit": limit,
-            "associated_functions": list(func_ids),
-            "occurrences": paginated_meta,
-        }
-    )
+    return {
+        "hash": f_hash,
+        "occurrence_count": len(func_ids),
+        "total_occurrences": total_occurrences,
+        "offset": offset,
+        "limit": limit,
+        "associated_functions": list(func_ids),
+        "occurrences": paginated_meta,
+    }

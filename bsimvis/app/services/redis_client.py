@@ -100,6 +100,7 @@ REDIS_CONFIG = {
 
 # Global pools to avoid connection leaks
 _kv_pool = None
+_kv_raw_pool = None
 _redis_pool = None
 
 
@@ -119,6 +120,17 @@ def get_redis():
     if _kv_pool is None:
         _kv_pool = redis.ConnectionPool(**KV_CONFIG)
     return TimedRedis(connection_pool=_kv_pool)
+
+
+def get_raw_redis():
+    """Returns the Kvrocks connection with decode_responses=False for binary data."""
+    global _kv_raw_pool
+    if _kv_raw_pool is None:
+        # Create a copy of config and force decode_responses to False
+        raw_config = KV_CONFIG.copy()
+        raw_config["decode_responses"] = False
+        _kv_raw_pool = redis.ConnectionPool(**raw_config)
+    return TimedRedis(connection_pool=_kv_raw_pool)
 
 
 def get_queue_redis():

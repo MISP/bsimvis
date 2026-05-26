@@ -2,11 +2,9 @@ import json
 import logging
 import re
 
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import query_ids, parse_timestamp
-
-search_file_bp = Blueprint("search_file", __name__)
 
 DEFAULT_LIMIT = 100
 
@@ -52,16 +50,16 @@ def query_files_advanced(r, collection, filters):
         val_lower = search_val.lower()
         matching_buckets = []
         try:
-            for bucket in r.sscan_iter(registry_key, match=f"*{val_lower}*", count=1000):
+            for bucket in r.sscan_iter(
+                registry_key, match=f"*{val_lower}*", count=1000
+            ):
                 bucket_str = (
                     bucket.decode() if isinstance(bucket, bytes) else str(bucket)
                 )
                 if val_lower in bucket_str.lower():
                     matching_buckets.append(bucket_str)
         except Exception as e:
-            logging.warning(
-                f"Registry SSCAN failed for {registry_key}: {e}"
-            )
+            logging.warning(f"Registry SSCAN failed for {registry_key}: {e}")
 
         field_candidates = set()
         if matching_buckets:
@@ -77,8 +75,7 @@ def query_files_advanced(r, collection, filters):
                 for res in pipe.execute():
                     if res:
                         field_candidates.update(
-                            t.decode() if isinstance(t, bytes) else str(t)
-                            for t in res
+                            t.decode() if isinstance(t, bytes) else str(t) for t in res
                         )
         return field_candidates
 
@@ -214,7 +211,9 @@ def query_files_advanced(r, collection, filters):
     sort_by = filters.get("sort_by")
     sort_order = filters.get("sort_order", "desc")
 
-    if (min_funcs is not None or max_funcs is not None or sort_by == "function_count") and candidates:
+    if (
+        min_funcs is not None or max_funcs is not None or sort_by == "function_count"
+    ) and candidates:
         pipe = r.pipeline()
         candidates_list = list(candidates)
         for cid in candidates_list:
@@ -237,7 +236,7 @@ def query_files_advanced(r, collection, filters):
         candidates = set(filtered_candidates)
 
         if sort_by == "function_count":
-            reverse = (sort_order == "desc")
+            reverse = sort_order == "desc"
             filtered_candidates.sort(key=lambda x: candidate_counts[x], reverse=reverse)
             return filtered_candidates
 
@@ -255,14 +254,13 @@ def query_files_advanced(r, collection, filters):
             score_val = float(score) if score is not None else 0.0
             scored_candidates.append((cid, score_val))
 
-        reverse = (sort_order == "desc")
+        reverse = sort_order == "desc"
         scored_candidates.sort(key=lambda x: x[1], reverse=reverse)
         return [x[0] for x in scored_candidates]
     else:
         return sorted(list(candidates))
 
 
-@search_file_bp.route("/api/file/search")
 def search_files():
     r = get_redis()
 
@@ -270,7 +268,7 @@ def search_files():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
     except ValueError:
-        return jsonify({"error": "offset and limit must be integers"}), 400
+        return {"error": "offset and limit must be integers"}, 400
 
     format_arg = request.args.get("format")
     if format_arg in ("csv", "json"):
@@ -279,7 +277,7 @@ def search_files():
 
     collection = request.args.get("collection")
     if not collection:
-        return jsonify({"error": "No collection specified"}), 400
+        return {"error": "No collection specified"}, 400
 
     q = request.args.get("q", "").strip()
 
@@ -291,16 +289,41 @@ def search_files():
             fields[field] = val.strip()
 
     # Align standard and file-specific tag parameters
-    tags = [t.strip() for t in request.args.getlist("tag") + request.args.getlist("file_tag") if t.strip()]
-    static_tags = [t.strip() for t in request.args.getlist("static_tag") + request.args.getlist("file_static_tag") if t.strip()]
-    user_tags = [t.strip() for t in request.args.getlist("user_tag") + request.args.getlist("file_user_tag") if t.strip()]
+    tags = [
+        t.strip()
+        for t in request.args.getlist("tag") + request.args.getlist("file_tag")
+        if t.strip()
+    ]
+    static_tags = [
+        t.strip()
+        for t in request.args.getlist("static_tag")
+        + request.args.getlist("file_static_tag")
+        if t.strip()
+    ]
+    user_tags = [
+        t.strip()
+        for t in request.args.getlist("user_tag")
+        + request.args.getlist("file_user_tag")
+        if t.strip()
+    ]
 
-    exclude_tags = [t.strip() for t in request.args.getlist("exclude_tag") + request.args.getlist("exclude_file_tag") if t.strip()]
+    exclude_tags = [
+        t.strip()
+        for t in request.args.getlist("exclude_tag")
+        + request.args.getlist("exclude_file_tag")
+        if t.strip()
+    ]
     exclude_static_tags = [
-        t.strip() for t in request.args.getlist("exclude_static_tag") + request.args.getlist("exclude_file_static_tag") if t.strip()
+        t.strip()
+        for t in request.args.getlist("exclude_static_tag")
+        + request.args.getlist("exclude_file_static_tag")
+        if t.strip()
     ]
     exclude_user_tags = [
-        t.strip() for t in request.args.getlist("exclude_user_tag") + request.args.getlist("exclude_file_user_tag") if t.strip()
+        t.strip()
+        for t in request.args.getlist("exclude_user_tag")
+        + request.args.getlist("exclude_file_user_tag")
+        if t.strip()
     ]
 
     def parse_date_filter(val):
@@ -389,21 +412,25 @@ def search_files():
         files_list.append(data)
 
     # If total is 0 and no filters were specified, fall back to global total_files
-    has_filters = q or any(fields.values()) or any(
-        [
-            tags,
-            static_tags,
-            user_tags,
-            exclude_tags,
-            exclude_static_tags,
-            exclude_user_tags,
-            min_entry_ts,
-            max_entry_ts,
-            min_file_ts,
-            max_file_ts,
-            min_funcs,
-            max_funcs,
-        ]
+    has_filters = (
+        q
+        or any(fields.values())
+        or any(
+            [
+                tags,
+                static_tags,
+                user_tags,
+                exclude_tags,
+                exclude_static_tags,
+                exclude_user_tags,
+                min_entry_ts,
+                max_entry_ts,
+                min_file_ts,
+                max_file_ts,
+                min_funcs,
+                max_funcs,
+            ]
+        )
     )
     if total == 0 and not has_filters:
         total = get_true_total_files(r, collection)
@@ -416,10 +443,11 @@ def search_files():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(files_list, "files")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "files")
     else:
-        return jsonify(response_data)
-
+        return response_data

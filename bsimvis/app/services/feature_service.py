@@ -342,7 +342,9 @@ class FeatureService:
 
         from bsimvis.app.services.index_service import save_feature, delete_feature
 
-        logging.info(f"[*] Starting global indexing for {len(feature_hashes)} features in {collection}")
+        logging.info(
+            f"[*] Starting global indexing for {len(feature_hashes)} features in {collection}"
+        )
 
         # Process in chunks to avoid blocking Kvrocks / Redis
         chunk_size = 200
@@ -356,9 +358,9 @@ class FeatureService:
                 pipe1.hscan(f"{collection}:feature:{fh}:meta", cursor=0, count=1000)
                 pipe1.hlen(f"{collection}:feature:{fh}:meta")
                 pipe1.zscore(f"{collection}:features:by_tf", fh)
-            
+
             res1 = pipe1.execute()
-            
+
             # --- STAGE 2: Identify best occurrences and batch fetch contexts ---
             context_fetch_pipe = self.r.pipeline()
             fetch_map = []
@@ -370,8 +372,12 @@ class FeatureService:
                 tf_score_val = res1[idx * 3 + 2]
 
                 # hscan_res is [cursor, {func_id: occ_str, ...}]
-                data_batch = hscan_res[1] if (isinstance(hscan_res, (list, tuple)) and len(hscan_res) > 1) else {}
-                
+                data_batch = (
+                    hscan_res[1]
+                    if (isinstance(hscan_res, (list, tuple)) and len(hscan_res) > 1)
+                    else {}
+                )
+
                 occurrences = []
                 for func_id, occ_str in data_batch.items():
                     try:
@@ -391,7 +397,10 @@ class FeatureService:
                 # Group by (type, pcode_op) to find the most common pair
                 counts = {}
                 for occ in occurrences:
-                    pair = (str(occ.get("type", "N/A")), str(occ.get("pcode_op", "N/A")))
+                    pair = (
+                        str(occ.get("type", "N/A")),
+                        str(occ.get("pcode_op", "N/A")),
+                    )
                     counts[pair] = counts.get(pair, 0) + 1
 
                 if not counts:
@@ -407,8 +416,10 @@ class FeatureService:
 
                 # Filter occurrences to this best pair, and pick the first one
                 matching_occs = [
-                    occ for occ in occurrences
-                    if str(occ.get("type", "N/A")) == best_type and str(occ.get("pcode_op", "N/A")) == best_op
+                    occ
+                    for occ in occurrences
+                    if str(occ.get("type", "N/A")) == best_type
+                    and str(occ.get("pcode_op", "N/A")) == best_op
                 ]
                 best_occ = matching_occs[0]
 
@@ -426,15 +437,19 @@ class FeatureService:
                 else:
                     context_fetch_pipe.execute_command("ECHO", "no_fallback_meta")
 
-                fetch_map.append({
-                    "fh": fh,
-                    "best_type": best_type,
-                    "best_op": best_op,
-                    "best_occ": best_occ,
-                    "line_idxs": line_idxs,
-                    "frequency": total_freq,
-                    "tf_score": float(tf_score_val) if tf_score_val is not None else 0.0
-                })
+                fetch_map.append(
+                    {
+                        "fh": fh,
+                        "best_type": best_type,
+                        "best_op": best_op,
+                        "best_occ": best_occ,
+                        "line_idxs": line_idxs,
+                        "frequency": total_freq,
+                        "tf_score": (
+                            float(tf_score_val) if tf_score_val is not None else 0.0
+                        ),
+                    }
+                )
 
             context_res = context_fetch_pipe.execute()
 
@@ -449,7 +464,7 @@ class FeatureService:
                 best_type = info["best_type"]
                 best_op = info["best_op"]
                 line_idxs = info["line_idxs"]
-                
+
                 # Each fetch_map entry consumed 2 pipeline calls
                 source_data = context_res[idx * 2]
                 if isinstance(source_data, list) and source_data:
@@ -461,21 +476,27 @@ class FeatureService:
 
                 # Extract C tokens
                 c_code = None
-                target_line = int(line_idxs[0]) if (line_idxs and len(line_idxs) > 0) else -1
+                target_line = (
+                    int(line_idxs[0]) if (line_idxs and len(line_idxs) > 0) else -1
+                )
                 if source_data and isinstance(source_data, dict) and target_line != -1:
                     try:
                         c_tokens = source_data.get("c_tokens", [])
-                        line_tokens = [t for t in c_tokens if int(t.get("line", -1)) == target_line]
+                        line_tokens = [
+                            t for t in c_tokens if int(t.get("line", -1)) == target_line
+                        ]
                         if line_tokens:
                             c_code = [
                                 {
                                     "type": t.get("type"),
-                                    "text": str(t.get("t", t.get("text", "")))
+                                    "text": str(t.get("t", t.get("text", ""))),
                                 }
                                 for t in line_tokens
                             ]
                     except Exception as e:
-                        logging.error(f"Error extracting global tokens for feature {fh}: {e}")
+                        logging.error(
+                            f"Error extracting global tokens for feature {fh}: {e}"
+                        )
 
                 # Extract Pcode fallback
                 pcode_full = best_occ.get("pcode_op_full")
@@ -505,7 +526,7 @@ class FeatureService:
                     "md5": md5,
                     "addr": addr,
                     "name": best_occ.get("function_name", addr),
-                    "c_code": c_code
+                    "c_code": c_code,
                 }
 
                 global_meta = {
@@ -515,11 +536,13 @@ class FeatureService:
                     "op": best_op,
                     "frequency": info["frequency"],
                     "tf_score": info["tf_score"],
-                    "context": context
+                    "context": context,
                 }
 
                 # Write to Kvrocks JSON and Update Secondary Indexes
-                save_pipe.json().set(f"{collection}:feature:{fh}:global_meta", "$", global_meta)
+                save_pipe.json().set(
+                    f"{collection}:feature:{fh}:global_meta", "$", global_meta
+                )
                 save_feature(save_pipe, collection, fh, global_meta)
 
             save_pipe.execute()

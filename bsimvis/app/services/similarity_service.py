@@ -229,7 +229,9 @@ class SimilarityService:
     ):
         """Processes a chunk using Milvus for discovery."""
         if not milvus_service.enabled:
-            logging.error("[!] Attempted to use milvus_sparse algorithm while Milvus is disabled.")
+            logging.error(
+                "[!] Attempted to use milvus_sparse algorithm while Milvus is disabled."
+            )
             return
 
         r = self.r

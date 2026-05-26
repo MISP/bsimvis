@@ -4,12 +4,10 @@ import redis
 import hashlib
 import time
 import uuid
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.lua_manager import lua_manager
-
-search_function_bp = Blueprint("search_function", __name__)
 
 DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
@@ -36,12 +34,11 @@ def normalize_tags(data):
     return data
 
 
-@search_function_bp.route("/api/function/search")
 def search_functions():
     t_req_start = time.perf_counter()
     col = request.args.get("collection")
     if not col:
-        return jsonify({"error": "No collection specified"}), 400
+        return {"error": "No collection specified"}, 400
 
     session_id = str(uuid.uuid4())[:8]
 
@@ -50,7 +47,7 @@ def search_functions():
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
         pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
     except ValueError:
-        return jsonify({"error": "Invalid numeric parameter"}), 400
+        return {"error": "Invalid numeric parameter"}, 400
 
     pool_limit = max(1, min(pool_limit, MAX_POOL_LIMIT))
 
@@ -333,9 +330,7 @@ def search_functions():
                 logging.info(
                     f"FUNC SEARCH | {session_id} | Filter '{label}={val}' matched 0."
                 )
-                return jsonify(
-                    {"total": 0, "functions": [], "offset": offset, "limit": limit}
-                )
+                return {"total": 0, "functions": [], "offset": offset, "limit": limit}
 
             add_group(all_matches, field_name=f"{label}:{val}")
 
@@ -402,8 +397,9 @@ def search_functions():
     # Global search q
     if search_q:
         from bsimvis.app.services.index_config import INDEX_CONFIG
+
         all_levels = list(INDEX_CONFIG.keys())
-        
+
         for word in [w for w in search_q.split() if w.strip()]:
             all_matches = []
             for lvl in all_levels:
@@ -412,15 +408,13 @@ def search_functions():
                     all_matches.extend(matches)
 
             if not all_matches:
-                return jsonify(
-                    {
-                        "total": 0,
-                        "functions": [],
-                        "offset": offset,
-                        "limit": limit,
-                        "q": search_q,
-                    }
-                )
+                return {
+                    "total": 0,
+                    "functions": [],
+                    "offset": offset,
+                    "limit": limit,
+                    "q": search_q,
+                }
 
             add_group(all_matches, field_name=f"q({word})")
 
@@ -461,37 +455,37 @@ def search_functions():
         doc_ids = res[2]
     except Exception as e:
         logging.error(f"FUNC LUA SEARCH CRASH: {e}")
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}, 500
 
     # --- ENRICHMENT (Optimized & Deduplicated) ---
     t_enrich_start = time.perf_counter()
-    
+
     # Phase 1: Fetch Function Metadata & Cluster Scores (Bulk)
     f_pipe = r.pipeline()
     for doc_id in doc_ids:
         f_pipe.json().get(f"{doc_id}:meta", "$")
         f_pipe.hgetall(f"{doc_id}:cluster_scores")
-    
+
     f_results_raw = f_pipe.execute()
-    
-    f_meta_list = [] # List of {doc_id, meta, scores}
+
+    f_meta_list = []  # List of {doc_id, meta, scores}
     unique_md5s = set()
     unique_cluster_ids = set()
-    
+
     for i, doc_id in enumerate(doc_ids):
-        m_json = f_results_raw[i*2]
-        scores_raw = f_results_raw[i*2+1] or {}
-        
+        m_json = f_results_raw[i * 2]
+        scores_raw = f_results_raw[i * 2 + 1] or {}
+
         meta = (m_json[0] if isinstance(m_json, list) and m_json else m_json) or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
-        
+
         scores = {}
         for k, v in scores_raw.items():
             k_str = k.decode() if isinstance(k, bytes) else k
             scores[k_str] = float(v)
             unique_cluster_ids.add(k_str)
-        
+
         f_meta_list.append({"doc_id": doc_id, "meta": meta, "scores": scores})
         if meta.get("file_md5"):
             unique_md5s.add(meta["file_md5"])
@@ -512,7 +506,7 @@ def search_functions():
 
     # Phase 3: Fetch Cluster Metadata (DEDUPLICATED)
     cluster_meta_map = {}
-    algo = "unweighted_cosine" # Default algo
+    algo = "unweighted_cosine"  # Default algo
     if unique_cluster_ids:
         c_pipe = r.pipeline()
         c_list = list(unique_cluster_ids)
@@ -531,7 +525,7 @@ def search_functions():
         doc_id = f_data["doc_id"]
         meta = f_data["meta"]
         scores = f_data["scores"]
-        
+
         if not meta:
             continue
 
@@ -563,29 +557,35 @@ def search_functions():
         for cid, score in scores.items():
             cm = cluster_meta_map.get(cid)
             if cm:
-                clusters.append({
-                    "cluster_id": cm.get("cluster_id"),
-                    "cluster_uuid": cm.get("cluster_uuid"),
-                    "cluster_name": cm.get("cluster_name"),
-                    "cohesion_score": cm.get("cohesion_score", 0),
-                    "member_count": cm.get("member_count", 0),
-                    "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                    "avg_features": cm.get("avg_features", 0),
-                })
+                clusters.append(
+                    {
+                        "cluster_id": cm.get("cluster_id"),
+                        "cluster_uuid": cm.get("cluster_uuid"),
+                        "cluster_name": cm.get("cluster_name"),
+                        "cohesion_score": cm.get("cohesion_score", 0),
+                        "member_count": cm.get("member_count", 0),
+                        "cluster_stability": score or cm.get("cluster_stability", 0.0),
+                        "avg_features": cm.get("avg_features", 0),
+                    }
+                )
         clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
         meta["clusters"] = clusters
 
         # Cleanup
-        for field in ["cluster_id", "cluster_name", "cluster_uuid", "cluster_stability"]:
+        for field in [
+            "cluster_id",
+            "cluster_name",
+            "cluster_uuid",
+            "cluster_stability",
+        ]:
             meta.pop(field, None)
-        
+
         functions_list.append(meta)
 
     total_time = time.perf_counter() - t_req_start
     logging.info(
         f"FUNC SEARCH | {session_id} | Total: {total} | Enrich: {time.perf_counter()-t_enrich_start:.3f}s | Time: {total_time:.3f}s"
     )
-
 
     response_data = {
         "total": total,
@@ -600,9 +600,11 @@ def search_functions():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(functions_list, "functions")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "functions")
     else:
-        return jsonify(response_data)
+        return response_data

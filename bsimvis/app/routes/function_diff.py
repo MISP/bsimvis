@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Blueprint
+from flask import request
 
 import difflib
 import json
@@ -7,8 +7,6 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.node_service import get_enriched_nodes
-
-function_diff_bp = Blueprint("function_diff", __name__)
 
 
 # fetch_function_data and get_feature_map are now in function_service.py
@@ -43,7 +41,15 @@ def get_lines_data(source, f_map, common_hashes):
 
 
 def render_line_content(
-    line_tokens, common_hashes, feature_map, tf_map, side="l", side_tips=None, collection=None, md5=None, meta=None
+    line_tokens,
+    common_hashes,
+    feature_map,
+    tf_map,
+    side="l",
+    side_tips=None,
+    collection=None,
+    md5=None,
+    meta=None,
 ):
     tokens_json = []
     if side_tips is None:
@@ -119,7 +125,21 @@ def render_line_content(
     return tokens_json
 
 
-def render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2, collection1=None, md5_1=None, collection2=None, md5_2=None, meta1=None, meta2=None):
+def render_aligned_diff(
+    s1,
+    f1,
+    s2,
+    f2,
+    common_hashes,
+    tf1,
+    tf2,
+    collection1=None,
+    md5_1=None,
+    collection2=None,
+    md5_2=None,
+    meta1=None,
+    meta2=None,
+):
     f_map1 = get_feature_map(f1)
     f_map2 = get_feature_map(f2)
 
@@ -277,7 +297,6 @@ def render_aligned_diff(s1, f1, s2, f2, common_hashes, tf1, tf2, collection1=Non
     return rows, left_tips, right_tips
 
 
-@function_diff_bp.route("/api/diff", methods=["GET"])
 def diff_api():
     # Use request.args to get query parameters
     id1 = request.args.get("id1")
@@ -285,7 +304,7 @@ def diff_api():
 
     if not id1 or not id2:
 
-        return jsonify({"detail": "Missing id1 or id2"}), 400
+        return {"detail": "Missing id1 or id2"}, 400
 
     # Business logic
     try:
@@ -294,7 +313,7 @@ def diff_api():
 
         if len(parts1) < 4 or len(parts2) < 4:
 
-            return jsonify({"detail": "Invalid ID format"}), 400
+            return {"detail": "Invalid ID format"}, 400
 
         # Standard Robust Resolution
         if parts1[0] == "idx":
@@ -308,7 +327,7 @@ def diff_api():
             collection2, md5_2, addr_2 = parts2[0], parts2[2], parts2[3]
     except Exception:
 
-        return jsonify({"detail": "Malformed ID"}), 400
+        return {"detail": "Malformed ID"}, 400
 
     if (
         not collection1
@@ -319,7 +338,7 @@ def diff_api():
         or not addr_2
     ):
 
-        return jsonify({"detail": "Invalid ID components"}), 400
+        return {"detail": "Invalid ID components"}, 400
 
     s1, f1, meta1, tf1 = fetch_function_data(collection1, md5_1, addr_1)
     s2, f2, meta2, tf2 = fetch_function_data(collection2, md5_2, addr_2)
@@ -327,7 +346,7 @@ def diff_api():
     if s1 is None or s2 is None:
         # In fetch_function_data, s1 being None usually means the Redis fetch failed
 
-        return jsonify({"detail": "Failed to fetch data from Redis"}), 500
+        return {"detail": "Failed to fetch data from Redis"}, 500
 
     # Enrich with callers/callees
     nodes1 = get_enriched_nodes(collection1, md5_1, addr_1)
@@ -345,7 +364,19 @@ def diff_api():
 
     # Reusing your alignment logic
     rows, left_tips, right_tips = render_aligned_diff(
-        s1, f1, s2, f2, common_hashes, tf1, tf2, collection1, md5_1, collection2, md5_2, meta1, meta2
+        s1,
+        f1,
+        s2,
+        f2,
+        common_hashes,
+        tf1,
+        tf2,
+        collection1,
+        md5_1,
+        collection2,
+        md5_2,
+        meta1,
+        meta2,
     )
 
     algo = "unweighted_cosine"
@@ -501,12 +532,10 @@ def diff_api():
 
     # Flask's jsonify handles the dictionary to JSON conversion
 
-    return jsonify(
-        {
-            "rows": rows,
-            "left_tips": left_tips,
-            "right_tips": right_tips,
-            "meta1": meta1 or {},
-            "meta2": meta2 or {},
-        }
-    )
+    return {
+        "rows": rows,
+        "left_tips": left_tips,
+        "right_tips": right_tips,
+        "meta1": meta1 or {},
+        "meta2": meta2 or {},
+    }

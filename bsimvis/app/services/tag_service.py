@@ -27,8 +27,16 @@ class TagService:
                     id1_clean = id1.replace(":function:", ":func:")
                     id2_clean = id2.replace(":function:", ":func:")
                     func_prefix = f"{collection}:func:"
-                    c1 = id1_clean[len(func_prefix) :] if id1_clean.startswith(func_prefix) else id1_clean
-                    c2 = id2_clean[len(func_prefix) :] if id2_clean.startswith(func_prefix) else id2_clean
+                    c1 = (
+                        id1_clean[len(func_prefix) :]
+                        if id1_clean.startswith(func_prefix)
+                        else id1_clean
+                    )
+                    c2 = (
+                        id2_clean[len(func_prefix) :]
+                        if id2_clean.startswith(func_prefix)
+                        else id2_clean
+                    )
 
                     if c1 > c2:
                         return f"{collection}:sim:{algo}:{c1}::{c2}"
@@ -238,15 +246,28 @@ class TagService:
         if not self.r.hexists(meta_key, tag):
             # Deterministic color based on tag name if we want, or just a better palette
             palette = [
-                "#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6",
-                "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700",
-                "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"
+                "#FF5555",
+                "#50FA7B",
+                "#F1FA8C",
+                "#BD93F9",
+                "#FF79C6",
+                "#8BE9FD",
+                "#FFB86C",
+                "#A6E22E",
+                "#66D9EF",
+                "#FFD700",
+                "#FF69B4",
+                "#7B68EE",
+                "#48D1CC",
+                "#00FF7F",
+                "#F4A460",
             ]
             # Use hash of tag name to pick a stable default color from palette
             import hashlib
+
             tag_hash = int(hashlib.md5(tag.encode()).hexdigest(), 16)
             color = palette[tag_hash % len(palette)]
-            
+
             self.r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
 
     def get_tags(self, collection):
@@ -283,7 +304,11 @@ class TagService:
                 bkey = f"{collection}:idx:{lvl}:{field}:{tag_lower}"
                 count = r.scard(bkey)
                 if count > 0:
-                    etype = "function" if lvl == "func" else "file" if lvl == "file" else "similarity"
+                    etype = (
+                        "function"
+                        if lvl == "func"
+                        else "file" if lvl == "file" else "similarity"
+                    )
                     stats[etype] += count
         return stats
 

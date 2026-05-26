@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import request
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.redis_client import get_redis
@@ -6,10 +6,10 @@ from bsimvis.app.services.node_service import get_enriched_nodes
 import traceback
 import json
 
-function_code_bp = Blueprint("function_code", __name__)
 
-
-def render_single_function(source, features, tf_map, collection=None, md5=None, meta=None):
+def render_single_function(
+    source, features, tf_map, collection=None, md5=None, meta=None
+):
     """
     Renders the semantic tokens for a single function without any diffing logic.
     """
@@ -104,16 +104,15 @@ def render_single_function(source, features, tf_map, collection=None, md5=None, 
     return rows, tips
 
 
-@function_code_bp.route("/api/function/code", methods=["GET"])
 def get_function_code():
     func_id = request.args.get("id")
     if not func_id:
-        return jsonify({"detail": "Missing function id"}), 400
+        return {"detail": "Missing function id"}, 400
 
     try:
         parts = func_id.split(":")
         if len(parts) < 4:
-            return jsonify({"detail": f"Invalid ID format: {func_id}"}), 400
+            return {"detail": f"Invalid ID format: {func_id}"}, 400
 
         if parts[0] == "idx":
             # Standardized New Format: idx:collection:func:md5:addr
@@ -128,7 +127,7 @@ def get_function_code():
 
         source, features, meta, tf_map = fetch_function_data(collection, md5, addr)
         if not source:
-            return jsonify({"detail": "Function not found"}), 404
+            return {"detail": "Function not found"}, 404
 
         # Dynamically fetch callers/callees
         nodes = get_enriched_nodes(collection, md5, addr)
@@ -136,7 +135,9 @@ def get_function_code():
             meta["callers"] = nodes["callers"]
             meta["callees"] = nodes["callees"]
 
-        rows, tips = render_single_function(source, features, tf_map, collection, md5, meta)
+        rows, tips = render_single_function(
+            source, features, tf_map, collection, md5, meta
+        )
 
         # Ensure MD5 and Decompiler ID are in meta if missing, but otherwise keep full meta
         if meta:
@@ -227,7 +228,7 @@ def get_function_code():
             except Exception as ex:
                 print(f"Error fetching clusters: {ex}")
 
-        return jsonify({"rows": rows, "tips": tips, "meta": meta or {}})
+        return {"rows": rows, "tips": tips, "meta": meta or {}}
     except Exception as e:
         # Capture the full stack trace as a string
         error_traceback = traceback.format_exc()
@@ -236,33 +237,32 @@ def get_function_code():
         print(error_traceback)
 
         return (
-            jsonify(
-                {
-                    "detail": str(e),
-                    "type": e.__class__.__name__,
-                    "traceback": error_traceback,  # Optional: only for development
-                }
-            ),
+            {
+                "detail": str(e),
+                "type": e.__class__.__name__,
+                "traceback": error_traceback,  # Optional: only for development
+            },
             500,
         )
 
 
-@function_code_bp.route("/api/file/call_graph", methods=["GET"])
 def get_file_call_graph():
     collection = request.args.get("collection")
     file_md5 = request.args.get("file_md5")
 
     if not collection or not file_md5:
-        return jsonify({"detail": "Missing collection or file_md5"}), 400
+        return {"detail": "Missing collection or file_md5"}, 400
 
     try:
         r = get_redis()
         # Get all functions in file
         func_ids_bytes = r.smembers(f"{collection}:idx:file:functions:{file_md5}") or []
-        func_ids = [fid.decode() if isinstance(fid, bytes) else fid for fid in func_ids_bytes]
+        func_ids = [
+            fid.decode() if isinstance(fid, bytes) else fid for fid in func_ids_bytes
+        ]
 
         if not func_ids:
-            return jsonify({"nodes": [], "edges": []})
+            return {"nodes": [], "edges": []}
 
         pipe = r.pipeline()
         for fid in func_ids:
@@ -287,28 +287,29 @@ def get_file_call_graph():
                 if isinstance(meta, str):
                     meta = json.loads(meta)
 
-            func_name = meta.get("function_name") if meta else f"func_{fid.split(':')[-1]}"
+            func_name = (
+                meta.get("function_name") if meta else f"func_{fid.split(':')[-1]}"
+            )
             addr = fid.split(":")[-1]
 
-            nodes.append({
-                "id": fid,
-                "name": func_name,
-                "entrypoint": addr,
-                "namespace": meta.get("namespace") if meta else None,
-                "return_type": meta.get("return_type") if meta else None,
-                "parameters": meta.get("parameters") if meta else None,
-                "features_count": meta.get("bsim_features_count", 0) if meta else 0,
-                "is_external": False,
-                "is_unindexed": False
-            })
+            nodes.append(
+                {
+                    "id": fid,
+                    "name": func_name,
+                    "entrypoint": addr,
+                    "namespace": meta.get("namespace") if meta else None,
+                    "return_type": meta.get("return_type") if meta else None,
+                    "parameters": meta.get("parameters") if meta else None,
+                    "features_count": meta.get("bsim_features_count", 0) if meta else 0,
+                    "is_external": False,
+                    "is_unindexed": False,
+                }
+            )
             node_ids_in_graph.add(fid)
 
             callees = [c.decode() if isinstance(c, bytes) else c for c in callee_bytes]
             for callee_id in callees:
-                edges.append({
-                    "source": fid,
-                    "target": callee_id
-                })
+                edges.append({"source": fid, "target": callee_id})
                 if callee_id.startswith("ext:"):
                     if callee_id not in external_nodes:
                         parts = callee_id.split(":", 1)
@@ -326,42 +327,47 @@ def get_file_call_graph():
             for oid in other_ids:
                 other_pipe.json().get(f"{oid}:meta", "$")
             other_results = other_pipe.execute()
-            
+
             for oid, raw_meta in zip(other_ids, other_results):
                 meta = None
                 if raw_meta:
                     meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
                     if isinstance(meta, str):
                         meta = json.loads(meta)
-                
-                func_name = meta.get("function_name") if meta else f"func_{oid.split(':')[-1]}"
+
+                func_name = (
+                    meta.get("function_name") if meta else f"func_{oid.split(':')[-1]}"
+                )
                 addr = oid.split(":")[-1]
-                nodes.append({
-                    "id": oid,
-                    "name": func_name,
-                    "entrypoint": addr,
-                    "namespace": meta.get("namespace") if meta else None,
-                    "return_type": meta.get("return_type") if meta else None,
-                    "parameters": meta.get("parameters") if meta else None,
-                    "features_count": meta.get("bsim_features_count", 0) if meta else 0,
-                    "is_external": False,
-                    "is_unindexed": True
-                })
+                nodes.append(
+                    {
+                        "id": oid,
+                        "name": func_name,
+                        "entrypoint": addr,
+                        "namespace": meta.get("namespace") if meta else None,
+                        "return_type": meta.get("return_type") if meta else None,
+                        "parameters": meta.get("parameters") if meta else None,
+                        "features_count": (
+                            meta.get("bsim_features_count", 0) if meta else 0
+                        ),
+                        "is_external": False,
+                        "is_unindexed": True,
+                    }
+                )
 
         # Add external nodes to the node list
         for ext_id, ext_name in external_nodes.items():
-            nodes.append({
-                "id": ext_id,
-                "name": ext_name,
-                "entrypoint": None,
-                "features_count": 0,
-                "is_external": True,
-                "is_unindexed": False
-            })
+            nodes.append(
+                {
+                    "id": ext_id,
+                    "name": ext_name,
+                    "entrypoint": None,
+                    "features_count": 0,
+                    "is_external": True,
+                    "is_unindexed": False,
+                }
+            )
 
-        return jsonify({
-            "nodes": nodes,
-            "edges": edges
-        })
+        return {"nodes": nodes, "edges": edges}
     except Exception as e:
-        return jsonify({"detail": str(e)}), 500
+        return {"detail": str(e)}, 500

@@ -1,12 +1,10 @@
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 
-cluster_bp = Blueprint("cluster", __name__)
 job_service = JobService()
 
 
-@cluster_bp.route("/api/cluster/build", methods=["POST"])
 def build_cluster():
     """Enqueues a clustering job."""
     data = request.json or {}
@@ -26,10 +24,9 @@ def build_cluster():
     }
 
     job_id = job_service.create_job(JobType.CLUSTER_FUNCTIONS, payload)
-    return jsonify({"job_id": job_id, "status": "enqueued"})
+    return {"job_id": job_id, "status": "enqueued"}
 
 
-@cluster_bp.route("/api/cluster/rebuild", methods=["POST"])
 def rebuild_cluster():
     """Enqueues a clear + cluster pipeline."""
     data = request.json or {}
@@ -61,12 +58,9 @@ def rebuild_cluster():
     ]
 
     pipeline_id = job_service.create_pipeline(tasks)
-    return jsonify(
-        {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
-    )
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
-@cluster_bp.route("/api/cluster/clear", methods=["POST"])
 def clear_cluster():
     """Enqueues a cluster clear job."""
     data = request.json or {}
@@ -77,10 +71,9 @@ def clear_cluster():
         JobType.CLEAR_CLUSTER,
         {"collection": collection, "algo": algo},
     )
-    return jsonify({"job_id": job_id, "status": "enqueued"})
+    return {"job_id": job_id, "status": "enqueued"}
 
 
-@cluster_bp.route("/api/cluster/list", methods=["GET"])
 def list_clusters():
     """Lists discovered clusters with metadata, filtering, and sorting."""
     collection = request.args.get("collection", "main")
@@ -99,7 +92,7 @@ def list_clusters():
         min_features = float(request.args.get("min_features", 0))
         min_cohesion = float(request.args.get("min_cohesion", 0))
     except ValueError:
-        return jsonify({"error": "Invalid numeric parameter"}), 400
+        return {"error": "Invalid numeric parameter"}, 400
 
     sort_by = request.args.get(
         "sort_by", "count"
@@ -220,15 +213,16 @@ def list_clusters():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(results, "clusters")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "clusters")
     else:
-        return jsonify(response_data)
+        return response_data
 
 
-@cluster_bp.route("/api/cluster/tree", methods=["GET"])
 def get_cluster_tree():
     """Returns the condensed tree for the clustering."""
     collection = request.args.get("collection", "main")
@@ -239,12 +233,13 @@ def get_cluster_tree():
     tree_data = r.get(tree_key)
 
     if not tree_data:
-        return jsonify({"error": "No tree found"}), 404
+        return {"error": "No tree found"}, 404
 
-    return tree_data  # Already JSON string from ClusterService
+    import json
+
+    return json.loads(tree_data)
 
 
-@cluster_bp.route("/api/cluster/meta", methods=["POST"])
 def update_cluster_meta():
     """Updates metadata for a cluster (e.g. rename)."""
     data = request.json or {}
@@ -254,13 +249,13 @@ def update_cluster_meta():
     cluster_name = data.get("cluster_name")
 
     if not cluster_id or not cluster_name:
-        return jsonify({"error": "cluster_id and cluster_name required"}), 400
+        return {"error": "cluster_id and cluster_name required"}, 400
 
     r = get_redis()
     meta_key = f"{collection}:cluster:{algo}:{cluster_id}:meta"
 
     if not r.exists(meta_key):
-        return jsonify({"error": "Cluster meta not found"}), 404
+        return {"error": "Cluster meta not found"}, 404
 
     r.json().set(meta_key, "$.cluster_name", cluster_name)
 
@@ -288,10 +283,9 @@ def update_cluster_meta():
         pipe.json().set(f"{mid_str}:meta", "$.cluster_name", cluster_name)
     pipe.execute()
 
-    return jsonify({"status": "success", "cluster_name": cluster_name})
+    return {"status": "success", "cluster_name": cluster_name}
 
 
-@cluster_bp.route("/api/cluster/members", methods=["GET"])
 def list_cluster_members():
     """Lists all function IDs in a specific cluster."""
     collection = request.args.get("collection", "main")
@@ -301,7 +295,7 @@ def list_cluster_members():
     offset = request.args.get("offset", 0, type=int)
 
     if not cluster_id:
-        return jsonify({"error": "cluster_id required"}), 400
+        return {"error": "cluster_id required"}, 400
 
     r = get_redis()
     cluster_set_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
@@ -326,17 +320,16 @@ def list_cluster_members():
         m = meta[0] if isinstance(meta, list) and meta else {}
         results.append({"id": page[i], "meta": m})
 
-    return jsonify({"cluster_id": cluster_id, "total": total, "results": results})
+    return {"cluster_id": cluster_id, "total": total, "results": results}
 
 
-@cluster_bp.route("/api/cluster/functions", methods=["GET"])
 def get_cluster_functions():
     """Returns a quick sample of function metadata for a given cluster_uuid."""
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
     algo = request.args.get("algo", "unweighted_cosine")
     if not collection or not cluster_uuid:
-        return jsonify({"error": "collection and cluster_uuid required"}), 400
+        return {"error": "collection and cluster_uuid required"}, 400
 
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
@@ -372,11 +365,13 @@ def get_cluster_functions():
                 break
 
         if matching_cluster_id:
-            cluster_set_key = f"{collection}:cluster:{algo}:{matching_cluster_id}:members"
+            cluster_set_key = (
+                f"{collection}:cluster:{algo}:{matching_cluster_id}:members"
+            )
             fids_raw = r.smembers(cluster_set_key)
 
     if not fids_raw:
-        return jsonify({"functions": [], "total": 0})
+        return {"functions": [], "total": 0}
 
     fids = [fid.decode() if isinstance(fid, bytes) else fid for fid in fids_raw]
     fids.sort()
@@ -391,6 +386,7 @@ def get_cluster_functions():
     raw_metas = pipe.execute()
 
     import json
+
     functions = []
     for fid, meta in zip(page, raw_metas):
         m = meta[0] if isinstance(meta, list) and meta else meta
@@ -399,28 +395,28 @@ def get_cluster_functions():
         if not m:
             m = {}
 
-        functions.append({
-            "function_id": m.get("function_id") or fid,
-            "function_name": m.get("function_name", "Unknown"),
-            "parameters": m.get("parameters", []),
-            "return_type": m.get("return_type", "void"),
-            "namespace": m.get("namespace", ""),
-            "entrypoint_address": m.get("entrypoint_address", "0x0"),
-            "bsim_features_count": m.get("bsim_features_count", 0),
-        })
+        functions.append(
+            {
+                "function_id": m.get("function_id") or fid,
+                "function_name": m.get("function_name", "Unknown"),
+                "parameters": m.get("parameters", []),
+                "return_type": m.get("return_type", "void"),
+                "namespace": m.get("namespace", ""),
+                "entrypoint_address": m.get("entrypoint_address", "0x0"),
+                "bsim_features_count": m.get("bsim_features_count", 0),
+            }
+        )
 
-    return jsonify({
+    return {
         "functions": functions,
         "total": total,
         "offset": offset,
         "limit": limit,
         "collection": collection,
-        "cluster_uuid": cluster_uuid
-    })
+        "cluster_uuid": cluster_uuid,
+    }
 
 
-
-@cluster_bp.route("/api/cluster/dendrogram", methods=["GET"])
 def get_cluster_dendrogram():
     """
     Returns a hierarchical tree of clusters, supporting dynamic 'cutting'
@@ -439,13 +435,13 @@ def get_cluster_dendrogram():
         stability_threshold = float(request.args.get("stability_threshold", 0.0))
         show_parents = request.args.get("show_parents", "true").lower() == "true"
     except ValueError:
-        return jsonify({"error": "Invalid numeric parameter"}), 400
+        return {"error": "Invalid numeric parameter"}, 400
 
     r = get_redis()
     links_key = f"{collection}:cluster:tree_links:{algo}"
     links_raw = r.get(links_key)
     if not links_raw:
-        return jsonify({"error": "No dendrogram data found"}), 404
+        return {"error": "No dendrogram data found"}, 404
 
     import json
 
@@ -531,4 +527,4 @@ def get_cluster_dendrogram():
             }
         )
 
-    return jsonify({"collection": collection, "algo": algo, "nodes": nodes})
+    return {"collection": collection, "algo": algo, "nodes": nodes}

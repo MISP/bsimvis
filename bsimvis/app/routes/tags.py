@@ -129,7 +129,16 @@ def get_tag_stats():
     return jsonify(stats)
 
 
+@tags_bp.route("/api/tags", methods=["GET"])
+def get_tags():
+    """Returns the global tag index for a collection."""
+    collection = request.args.get("collection", "main")
+    tags = tag_service.get_tags(collection)
+    return jsonify(tags)
+
+
 @tags_bp.route("/api/tags/set_color", methods=["POST"])
+@tags_bp.route("/api/tags/color", methods=["POST"])
 def set_color():
     """Sets a custom color for a tag."""
     data = request.json
@@ -145,6 +154,7 @@ def set_color():
 
 
 @tags_bp.route("/api/tags/set_priority", methods=["POST"])
+@tags_bp.route("/api/tags/priority", methods=["POST"])
 def set_priority():
     """Sets a custom priority for a tag."""
     data = request.json

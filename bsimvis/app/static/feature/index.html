@@ -403,7 +403,7 @@
                         <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${funcName}</div>
                         <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
                         <div class="dim" style="font-size:0.7rem;">Binary: ${md5}</div>
-                        <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${occ['line_idx'].map(l => l + 1).join(', ')}</span></div>
+                        <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${(occ['line_idx'] || []).map(l => l + 1).join(', ')}</span></div>
                         <div style="display:flex; align-items:center; gap:5px; margin-top:8px;">
                             <code class="origin-id" style="font-size:0.6rem;">${funcId}</code>
                             <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
@@ -474,7 +474,7 @@
                              onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
 
                         const contextLineSet = new Set();
-                        occ['line_idx'].forEach(l => {
+                        (occ['line_idx'] || []).forEach(l => {
                             const normalizedIdx = l + 1;
                             for (let i = -CONTEXT_WINDOW; i <= CONTEXT_WINDOW; i++) {
                                 contextLineSet.add(normalizedIdx + i);
@@ -491,7 +491,7 @@
                                     contextHtml += `<div class="code-card-line" style="opacity: 0.2; justify-content: center; padding: 4px 0;"><span style="font-size: 0.6rem; letter-spacing: 3px;">...</span></div>`;
                                 }
                                 lastLineIdx = lineIdx;
-                                const isFeatureLine = occ['line_idx'].includes(lineIdx - 1);
+                                const isFeatureLine = (occ['line_idx'] || []).includes(lineIdx - 1);
                                 const rowStyle = isFeatureLine ? '' : 'opacity: 0.5;';
                                 contextHtml += `
                                      <div class="code-card-line" style="${rowStyle}">

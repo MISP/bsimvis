@@ -989,14 +989,12 @@ body.sidebar-collapsed nav {
 }
 
 body.sidebar-collapsed nav h2 span,
-body.sidebar-collapsed nav a span,
-body.sidebar-collapsed nav .nav-section-title span {
+body.sidebar-collapsed nav a span {
     display: none;
 }
 
 body.sidebar-collapsed nav h2,
 body.sidebar-collapsed nav a,
-body.sidebar-collapsed nav .nav-section-title,
 body.sidebar-collapsed #nav-collection-trigger {
     justify-content: center;
     padding-left: 0;
@@ -1007,7 +1005,6 @@ body.sidebar-collapsed #nav-collection-trigger {
 
 body.sidebar-collapsed nav h2 i,
 body.sidebar-collapsed nav a i,
-body.sidebar-collapsed nav .nav-section-title i,
 body.sidebar-collapsed nav .collection-label i {
     margin-right: 0;
     font-size: 1.3rem;
@@ -1298,7 +1295,7 @@ body.sidebar-collapsed nav a#nav-collections {
     display: none;
     position: fixed;
     left: 15px;
-    bottom: 55px;
+    bottom: 100px;
     background: rgba(20, 20, 20, 0.95);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1446,7 +1443,7 @@ body.sidebar-collapsed nav a#nav-collections {
 /* Sidebar Collapsed Overrides */
 body.sidebar-collapsed .history-dropdown {
     left: 75px !important;
-    bottom: 15px !important;
+    bottom: 60px !important;
 }
 
 body.sidebar-collapsed nav #nav-history-chevron {

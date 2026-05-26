@@ -249,6 +249,13 @@ class TagService:
             
             self.r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
 
+    def get_tags(self, collection):
+        """Returns the global tag index for a collection."""
+        r = get_redis()
+        # Tags are stored in a hash bsimvis:{collection}:tags:meta or similar
+        # Based on routes, it seems we need to return metadata (color, priority)
+        return self.get_collection_tags(collection)
+
     def get_collection_tags(self, collection):
         """Returns all tags (Analysis + User) and their metadata for a collection."""
         r = self.r

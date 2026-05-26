@@ -35,8 +35,12 @@ def list_similarities():
         return jsonify({"error": "md5 or batch parameter required"}), 400
 
     # Get total and slice
-    total = r.zcard(index_key)
-    sim_keys = r.zrange(index_key, offset, offset + limit - 1)
+    total = r.scard(index_key)
+    # Since it's a set, we don't have a native 'slice' but we can get all or use SSCAN
+    # For a list with limit/offset, we'll fetch members and slice in Python
+    # (Note: In a large system, SSCAN would be better, but for this app SMEMBERS is fine)
+    all_sim_keys = list(r.smembers(index_key))
+    sim_keys = all_sim_keys[offset : offset + limit]
 
     results = []
     if sim_keys:
@@ -237,45 +241,3 @@ def untag_similarity():
             jsonify({"status": "error", "message": "Failed to untag similarity"}),
             500,
         )
-
-
-@similarity_bp.route("/api/tags", methods=["GET"])
-def get_tags():
-    """Returns the global tag index for a collection."""
-    collection = request.args.get("collection", "main")
-    tags = similarity_service.get_tags(collection)
-    return jsonify(tags)
-
-
-@similarity_bp.route("/api/tags/color", methods=["POST"])
-def set_tag_color():
-    """Updates the color for a tag."""
-    data = request.json or {}
-    collection = data.get("collection", "main")
-    tag = data.get("tag")
-    color = data.get("color")
-
-    if not tag or not color:
-        return jsonify({"error": "tag and color required"}), 400
-
-    success = similarity_service.set_tag_color(collection, tag, color)
-    if success:
-        return jsonify({"status": "success", "message": f"Updated color for {tag}"})
-    else:
-        return jsonify({"status": "error", "message": "Failed to update color"}), 500
-
-
-@similarity_bp.route("/api/tags/priority", methods=["POST"])
-def update_tag_priority():
-    data = request.json or {}
-    col = data.get("collection", "main")
-    tag = data.get("tag")
-    priority = data.get("priority")
-    if col is None or tag is None or priority is None:
-        return jsonify({"error": "Missing parameters"}), 400
-
-    try:
-        similarity_service.set_tag_priority(col, tag, int(priority))
-        return jsonify({"status": "ok"})
-    except ValueError:
-        return jsonify({"error": "Priority must be an integer"}), 400

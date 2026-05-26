@@ -262,7 +262,7 @@
                 <h3>Left Side</h3>
                 <div class="form-group">
                     <label>Manual Function ID</label>
-                    <input type="text" id="manual-id-l" placeholder="coll:function:md5:addr"
+                    <input type="text" id="manual-id-l" placeholder="coll:func:md5:addr"
                         oninput="onManualInput('l')">
                 </div>
                 <div class="divider">OR SELECT</div>
@@ -290,7 +290,7 @@
                 <h3>Right Side</h3>
                 <div class="form-group">
                     <label>Manual Function ID</label>
-                    <input type="text" id="manual-id-r" placeholder="coll:function:md5:addr"
+                    <input type="text" id="manual-id-r" placeholder="coll:func:md5:addr"
                         oninput="onManualInput('r')">
                 </div>
                 <div class="divider">OR SELECT</div>
@@ -1105,7 +1105,7 @@
             const addr = document.getElementById(`select-func-${side}`).value;
 
             if (coll && md5 && addr) {
-                document.getElementById(`manual-id-${side}`).value = `${coll}:function:${md5}:${addr}`;
+                document.getElementById(`manual-id-${side}`).value = `${coll}:func:${md5}:${addr}`;
             }
             validateComparison();
         }

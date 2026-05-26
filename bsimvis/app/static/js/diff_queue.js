@@ -17,7 +17,7 @@ function normalizeFuncId(id) {
         if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
             const cleanAddr = addrPart.substring(1);
             const cleanMd5 = md5Part.substring(1);
-            return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
+            return `${colPart}:func:${cleanMd5}:${cleanAddr}`;
         }
     }
     return id;

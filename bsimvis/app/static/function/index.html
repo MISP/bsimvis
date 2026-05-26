@@ -264,7 +264,7 @@
                 funcTips = data.tips;
                 fullMeta = data.meta;
 
-                id = data.meta["function_id"] || data.meta["collection"] + ":function:" + data.meta["file_md5"] + ":" + data.meta["entrypoint_address"];
+                id = data.meta["function_id"] || data.meta["collection"] + ":func:" + data.meta["file_md5"] + ":" + data.meta["entrypoint_address"];
                 window.currentFuncId = normalizeFuncId(id);
                 window.currentFuncName = data.meta['function_name'] || 'unknown';
 

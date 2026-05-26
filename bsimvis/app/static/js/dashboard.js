@@ -1595,7 +1595,7 @@ function renderGlobalFeatures(items) {
 
         let cCodeHtml = '<span class="dim">N/A</span>';
         if (ctx.c_code) {
-            const funcId = ctx.func_id || `${col}:function:${ctx.md5}:${ctx.addr}`;
+            const funcId = ctx.func_id || `${col}:func:${ctx.md5}:${ctx.addr}`;
             const funcName = (ctx.name || ctx.addr);
             const targetLinesStr = (ctx.line_idxs || []).map(l => l + 1).join(',');
             const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';

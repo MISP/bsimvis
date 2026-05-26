@@ -874,34 +874,6 @@ class SimilarityService:
 
             r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
 
-    def get_tags(self, collection: str) -> dict:
-        """Returns all tags and their metadata for a collection (delegates to TagService)."""
-        return self.tag_service.get_collection_tags(collection)
-
-    def set_tag_color(self, collection: str, tag: str, color: str) -> bool:
-        """Updates the color for a tag."""
-        r = self.r
-        meta_key = f"{collection}:tags_metadata"
-        import json
-
-        raw = r.hget(meta_key, tag)
-        meta = json.loads(raw) if raw else {"priority": 0}
-        meta["color"] = color
-        r.hset(meta_key, tag, json.dumps(meta))
-        return True
-
-    def set_tag_priority(self, collection: str, tag: str, priority: int) -> bool:
-        """Updates the priority for a tag."""
-        r = self.r
-        meta_key = f"{collection}:tags_metadata"
-        import json
-
-        raw = r.hget(meta_key, tag)
-        meta = json.loads(raw) if raw else {"color": "#66d9ef"}
-        meta["priority"] = int(priority)
-        r.hset(meta_key, tag, json.dumps(meta))
-        return True
-
     def untag_similarity(
         self, collection: str, id1: str, id2: str, algo: str, tag: str
     ) -> bool:

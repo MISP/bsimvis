@@ -230,7 +230,7 @@ async function startBatchUpload() {
     const minFuncLen = document.getElementById('upload-min-func-len').value;
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     
-    const batchUuid = crypto.randomUUID();
+// batchUuid generated server-side
 
     document.getElementById('upload-progress-container').style.display = 'block';
     document.getElementById('start-upload-btn').disabled = true;
@@ -266,7 +266,7 @@ async function startBatchUpload() {
             const url = new URL('/api/file/upload', window.location.origin);
             url.searchParams.set('collection', collection);
             url.searchParams.set('file_name', file.name);
-            url.searchParams.set('batch_uuid', batchUuid);
+        // batch_uuid omitted; server will generate
             url.searchParams.set('batch_name', batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);

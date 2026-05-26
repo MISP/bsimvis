@@ -7,10 +7,11 @@ job_service = JobService()
 
 @jobs_bp.route("/api/jobs", methods=["GET"])
 def list_jobs():
-    """Lists recent and active jobs."""
+    """Lists recent and active jobs with pagination."""
     limit = request.args.get("limit", 50, type=int)
-    jobs = job_service.list_jobs(limit=limit)
-    return jsonify(jobs)
+    offset = request.args.get("offset", 0, type=int)
+    jobs, total = job_service.list_jobs(limit=limit, offset=offset)
+    return jsonify({"items": jobs, "total": total})
 
 
 @jobs_bp.route("/api/jobs/stats", methods=["GET"])

@@ -295,9 +295,10 @@ class JobService:
             "global_eta": int(global_eta),
         }
 
-    def list_jobs(self, limit=50):
-        """Returns a list of the most recent jobs."""
-        job_ids = self.r.lrange("jobs:global", 0, limit - 1)
+    def list_jobs(self, limit=50, offset=0):
+        """Returns a paged list of jobs and the total count."""
+        total = self.r.llen("jobs:global")
+        job_ids = self.r.lrange("jobs:global", offset, offset + limit - 1)
         # Fetch summary info for each job in a pipeline (MGET equivalent for hashes not possible, but we can do a quick loop)
         results = []
         for jid in job_ids:
@@ -331,4 +332,4 @@ class JobService:
                         "updated_at": int(job.get("updated_at", 0)),
                     }
                 )
-        return results
+        return results, total

@@ -323,6 +323,13 @@ def main():
 
     # Mirroring EXACT arguments from bsimvis_upload.py
     upload_parser.add_argument(
+        "--local-analysis",
+        action="store_true",
+        default=False,
+        help="Perform Ghidra analysis locally instead of on the server",
+    )
+
+    upload_parser.add_argument(
         "--save-json",
         metavar="PATH",
         help="Save analyzed JSON data to a file instead of (or in addition to) uploading",

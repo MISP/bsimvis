@@ -49,7 +49,6 @@ def clear_collection(collection):
 
     # Patterns to wipe
     patterns = [
-        f"idx:{collection}:*",
         f"{collection}:*",
         f"global:batches",  # We filter this one in memory to only remove test batches if needed,
         # but for a test bench, clearing it or leaving it is fine.

@@ -2099,24 +2099,71 @@ window.addEventListener('load', () => {
     // Sidebar History Hover Listeners
     const navHistoryContainer = document.querySelector('.history-dropdown-container');
     if (navHistoryContainer) {
-        navHistoryContainer.addEventListener('mouseenter', () => {
+        let historyHideTimeout = null;
+        const historyFlyout = document.getElementById('history-flyout');
+
+        const showHistoryPanel = () => {
+            if (historyHideTimeout) clearTimeout(historyHideTimeout);
             if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
-            const dropdown = document.getElementById('history-dropdown');
-            if (dropdown) {
-                dropdown.style.display = 'block';
-                const chev = document.getElementById('nav-history-chevron');
-                if (chev) chev.style.transform = 'rotate(180deg)';
+
+            const isCollapsed = document.body.classList.contains('sidebar-collapsed');
+            if (isCollapsed && historyFlyout) {
+                // Populate flyout with same content as the global dropdown
+                const globalDropdown = document.getElementById('history-dropdown');
+                if (globalDropdown) historyFlyout.innerHTML = globalDropdown.innerHTML;
+                // Position vertically at the icon
+                const rect = navHistoryContainer.getBoundingClientRect();
+                historyFlyout.style.top = Math.min(rect.top, window.innerHeight - 420) + 'px';
+                historyFlyout.style.display = 'flex';
+            } else {
+                const dropdown = document.getElementById('history-dropdown');
+                if (dropdown) {
+                    dropdown.style.display = 'block';
+                    const chev = document.getElementById('nav-history-chevron');
+                    if (chev) chev.style.transform = 'rotate(180deg)';
+                }
             }
-        });
-        navHistoryContainer.addEventListener('mouseleave', () => {
-            const dropdown = document.getElementById('history-dropdown');
-            if (dropdown) {
-                dropdown.style.display = 'none';
-                const chev = document.getElementById('nav-history-chevron');
-                if (chev) chev.style.transform = 'rotate(0deg)';
-            }
-        });
+        };
+
+        const hideHistoryPanel = () => {
+            historyHideTimeout = setTimeout(() => {
+                const dropdown = document.getElementById('history-dropdown');
+                if (dropdown) {
+                    dropdown.style.display = 'none';
+                    const chev = document.getElementById('nav-history-chevron');
+                    if (chev) chev.style.transform = 'rotate(0deg)';
+                }
+                if (historyFlyout) historyFlyout.style.display = 'none';
+            }, 200);
+        };
+
+        navHistoryContainer.addEventListener('mouseenter', showHistoryPanel);
+        navHistoryContainer.addEventListener('mouseleave', hideHistoryPanel);
+
+        if (historyFlyout) {
+            historyFlyout.addEventListener('mouseenter', () => {
+                if (historyHideTimeout) clearTimeout(historyHideTimeout);
+            });
+            historyFlyout.addEventListener('mouseleave', hideHistoryPanel);
+            // Allow clicking items inside flyout to work (loadHistoryItemByTimestamp)
+            historyFlyout.addEventListener('click', (e) => {
+                const item = e.target.closest('.history-item');
+                if (item && item.getAttribute('onclick')) {
+                    historyFlyout.style.display = 'none';
+                }
+                const clearBtn = e.target.closest('.history-dropdown-clear-btn');
+                if (clearBtn) {
+                    // Re-render flyout after clearing
+                    setTimeout(() => {
+                        if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
+                        const globalDropdown = document.getElementById('history-dropdown');
+                        if (globalDropdown) historyFlyout.innerHTML = globalDropdown.innerHTML;
+                    }, 50);
+                }
+            });
+        }
     }
+
 
     // View-Specific History Hover Listeners
     const viewHistoryContainer = document.querySelector('.view-history-container');
@@ -3380,17 +3427,19 @@ function toggleViewHistoryDropdown(event) {
 function closeAllHistoryDropdowns() {
     const globalDropdown = document.getElementById('history-dropdown');
     const viewDropdown = document.getElementById('view-history-dropdown');
-    
+    const flyout = document.getElementById('history-flyout');
+
     if (globalDropdown) globalDropdown.style.display = 'none';
     if (viewDropdown) viewDropdown.style.display = 'none';
-    
+    if (flyout) flyout.style.display = 'none';
+
     const chev = document.getElementById('nav-history-chevron');
     if (chev) chev.style.transform = 'rotate(0deg)';
 }
 
 // Close dropdowns on outside click
 document.addEventListener('click', (e) => {
-    if (!e.target.closest('.history-dropdown-container') && !e.target.closest('.view-history-container')) {
+    if (!e.target.closest('.history-dropdown-container') && !e.target.closest('.view-history-container') && !e.target.closest('#history-flyout')) {
         closeAllHistoryDropdowns();
     }
     if (!e.target.closest('.export-dropdown-container')) {

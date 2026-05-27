@@ -2,6 +2,8 @@
 
 BSimVis is a tool to analyze similarities across a collection of binaries, based on [Ghidra](https://github.com/nationalsecurityagency/ghidra) analyzers and the BSim (Behavioral Similarity) plugin. It provides an API and Web interface to upload large quantities of decompiled binaries and BSim feature vectors to a Kvrocks database for similarity analysis, function diffing, and family clustering.
 
+![alt text](img/sim_view.png)
+
 BSimVis uses a custom database because Ghidra's BSim databases don't store decompiled code and other metadata. This alternative BSim database and API provide filtering and visualization of this additional data across multiple binaries at once. It doesn't aim to replace Ghidra's BSim plugin, but to enable more advanced analysis and visualization of the similarities on a large scale (family clustering, etc.).
 
 # Features
@@ -35,17 +37,20 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Screenshots
 
-## Web UI Diffing
 
-![alt text](img/diffing.png)
 
-## Web UI Feature usage in decompiled functions
-
-![alt text](img/feature_usage.png)
 
 ## Web UI Similarity Search Graph view
 
-![alt text](img/sim_view.png)
+![alt text](img/new_sim_view.png)
+
+## Web UI Diffing
+
+![alt text](img/diff.png)
+
+## Web UI Cluster Dendrogram 
+
+![alt text](img/function_cluster_view.png)
 
 # Requirements
 
@@ -54,7 +59,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Installation
 
-Run the install script to set up Redis, Kvrocks, and optionally Ghidra:
+Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 
 ```bash
 ./install.sh
@@ -87,6 +92,11 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 | `DATA_BASE_DIR` | `./data` | Storage path for all service data |
 | `ENABLE_MILVUS` | `false` | Enable optional Milvus vector DB |
 
+# Test script
+
+```
+uv run test_api_endpoints.py
+```
 # CLI
 
 ## Upload BSIM data
@@ -94,7 +104,7 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 Assuming you have the API running, upload data using:
 
 ```bash
-bsimvis upload <target1> <target2> ... <targetN> -c <collection_name> -t <tag> -n <num_threads> --config <config_file> --profile <profile_name>
+uv run bsimvis upload <target1> <target2> ... <targetN> -c <collection_name>
 ```
 
 See `bsimvis_config.toml` for an example config file.
@@ -103,13 +113,13 @@ See `bsimvis_config.toml` for an example config file.
 
 ```bash
 # List all jobs
-bsimvis job list
+uv run bsimvis job list
 
 # View logs of a specific job
-bsimvis job status <job_id>
+uv run bsimvis job status <job_id>
 
 # Cancel a job
-bsimvis job cancel <job_id>
+uv run bsimvis job cancel <job_id>
 ```
 
 ## Worker management

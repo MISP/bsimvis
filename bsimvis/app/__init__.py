@@ -11,12 +11,22 @@ def create_app():
     app = Flask(__name__, static_folder="static")
     CORS(app)
 
+    # Disable default Flask static file caching
+    app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
+    # Allow large JSON uploads (e.g., 1GB)
+    app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024 * 1024
+    # Increase form memory size for multi-part forms if needed
+    app.config["MAX_FORM_MEMORY_SIZE"] = 100 * 1024 * 1024 * 1024
+    app.config["RESTX_MASK_SWAGGER"] = False
+
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
     )
 
     # 1. Initialize Lua Scripts
     from .services.lua_manager import lua_manager
+
     lua_manager.init_app(app)
 
     # 2. Performance Hooks
@@ -26,6 +36,13 @@ def create_app():
 
     @app.after_request
     def log_response(response):
+        # Prevent proxy and browser caching of all assets/responses to ensure fresh reload
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0"
+        )
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
         if hasattr(g, "start_time"):
             elapsed = (time.time() - g.start_time) * 1000
             # Only log API calls to keep the terminal clean from static file spam
@@ -37,37 +54,9 @@ def create_app():
                 )
         return response
 
-    from .routes.function_diff import function_diff_bp
-    from .routes.function_code import function_code_bp
-    from .routes.function_feature import function_feature_bp
-    from .routes.search_collection import search_collection_bp
-    from .routes.search_file import search_file_bp
-    from .routes.search_function import search_function_bp
-    from .routes.search_feature import search_feature_bp
-    from .routes.search_similarity import search_similarity_bp
-    from .routes.function_similarity import function_similarity_bp
-    from .routes.jobs import jobs_bp
-    from .routes.file import file_bp
-    from .routes.similarity import similarity_bp
-    from .routes.features import features_bp
-    from .routes.index import index_bp
-    from .routes.tags import tags_bp
+    from .swagger import api_bp
 
-    app.register_blueprint(function_diff_bp)
-    app.register_blueprint(function_code_bp)
-    app.register_blueprint(function_feature_bp)
-    app.register_blueprint(search_collection_bp)
-    app.register_blueprint(search_file_bp)
-    app.register_blueprint(search_function_bp)
-    app.register_blueprint(search_feature_bp)
-    app.register_blueprint(search_similarity_bp)
-    app.register_blueprint(function_similarity_bp)
-    app.register_blueprint(jobs_bp)
-    app.register_blueprint(file_bp)
-    app.register_blueprint(similarity_bp)
-    app.register_blueprint(features_bp)
-    app.register_blueprint(index_bp)
-    app.register_blueprint(tags_bp)
+    app.register_blueprint(api_bp)
 
     # Serve the Bare JS frontend
     @app.route("/")

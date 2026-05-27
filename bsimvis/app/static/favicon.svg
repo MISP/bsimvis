@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="116 70 280 280" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <!-- Background Gradient combining the colors of the old ring -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="15%" stop-color="#C96CFF"/>
+      <stop offset="35%" stop-color="#7B61FF"/>
+      <stop offset="55%" stop-color="#43B0FF"/>
+      <stop offset="70%" stop-color="#39C7D9"/>
+      <stop offset="85%" stop-color="#49D18A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Gradient Background (replaces the ring) -->
+  <circle cx="256" cy="210" r="140" fill="url(#bgGrad)"/>
+
+  <!-- Primary Rotated Eye -->
+  <g transform="rotate(-25, 256, 210)">
+    <!-- Outer Eye Outline -->
+    <path d="M 151 210 C 190 120, 320 120, 361 210 C 320 300, 190 300, 151 210 Z" 
+          fill="none" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Center Pupil -->
+  <circle cx="256" cy="210" r="36" fill="#FFFFFF"/>
+</svg>

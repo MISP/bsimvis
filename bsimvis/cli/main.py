@@ -4,6 +4,7 @@ import logging
 import time
 import tomllib
 import os
+from dotenv import load_dotenv
 from bsimvis.cli import (
     bsimvis_index,
     bsimvis_sim,
@@ -11,16 +12,20 @@ from bsimvis.cli import (
     bsimvis_features,
     bsimvis_job,
     bsimvis_worker,
+    bsimvis_cluster,
 )
 
 
 def main():
+    # Load environment variables from .env if present
+    load_dotenv()
+
     parser = argparse.ArgumentParser(prog="bsimvis", description="Unified BSimVis CLI")
     parser.add_argument(
         "-H",
         "--host",
         default=None,
-        help="API host:port (default: localhost:5000 or from bsimvis_config.toml)",
+        help="API host:port (default: localhost:5000, or from .env, or from bsimvis_config.toml)",
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -45,7 +50,9 @@ def main():
     feat_list = features_actions.add_parser("list", help="Show batch table and ratios")
     feat_list.add_argument("-c", "--collection", required=True, help="Collection name")
     feat_list.add_argument("--batch", help="Filter by batch UUID")
-    feat_list.add_argument("--md5", action="store_true", help="List status by file (MD5)")
+    feat_list.add_argument(
+        "--md5", action="store_true", help="List status by file (MD5)"
+    )
 
     # features build
     feat_build = features_actions.add_parser("build", help="Index missing functions")
@@ -117,7 +124,7 @@ def main():
         )
         dp.add_argument(
             "--algo",
-            choices=["jaccard", "unweighted_cosine"],
+            choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
             help="Algorithm to target",
         )
 
@@ -125,10 +132,27 @@ def main():
             # Set default for build/rebuild if not provided
             dp.set_defaults(algo="unweighted_cosine")
             dp.add_argument(
-                "-k", "--top-k", type=int, default=1000, help="Top K matches per function"
+                "-k",
+                "--top-k",
+                type=int,
+                default=1000,
+                help="Top K matches per function",
             )
             dp.add_argument("--min-score", type=float, default=0)
+            dp.add_argument(
+                "--min-feature",
+                "--min-features",
+                dest="min_features",
+                type=int,
+                default=0,
+                help="Minimum number of features",
+            )
             dp.add_argument("--delay", type=float, default=0.0)
+            dp.add_argument(
+                "--all",
+                action="store_true",
+                help="Build/Rebuild for all functions in the collection",
+            )
             dp.add_argument(
                 "--batch-size", type=int, default=100, help="Internal SCAN batch size"
             )
@@ -138,32 +162,145 @@ def main():
                 help="Build even for functions not in indexed:functions set",
             )
 
+    # --- CLUSTER ---
+    cluster_parser = subparsers.add_parser(
+        "cluster", help="Unsupervised clustering management"
+    )
+    cluster_actions = cluster_parser.add_subparsers(dest="action", required=True)
+
+    # cluster build
+    c_build = cluster_actions.add_parser(
+        "build", help="Run HDBSCAN clustering discovery"
+    )
+    c_build.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_build.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+        help="Algorithm to cluster",
+    )
+    c_build.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=5,
+        help="Minimum cluster size (default: 5)",
+    )
+    c_build.add_argument(
+        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+    )
+    c_build.add_argument(
+        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+    )
+    c_build.add_argument(
+        "--leaf-method", action="store_true", help="Use 'leaf' selection method"
+    )
+    c_build.add_argument(
+        "--min-sim", type=float, default=0.0, help="Minimum similarity threshold"
+    )
+    c_build.add_argument(
+        "--min-features",
+        type=int,
+        default=0,
+        help="Minimum number of features to include a function in clustering",
+    )
+
+    # cluster rebuild
+    c_rebuild = cluster_actions.add_parser(
+        "rebuild", help="Clear and run HDBSCAN clustering discovery"
+    )
+    c_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_rebuild.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+        help="Algorithm to cluster",
+    )
+    c_rebuild.add_argument(
+        "--min-cluster-size",
+        type=int,
+        default=5,
+        help="Minimum cluster size (default: 5)",
+    )
+    c_rebuild.add_argument(
+        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+    )
+    c_rebuild.add_argument(
+        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+    )
+    c_rebuild.add_argument(
+        "--leaf-method", action="store_true", help="Use 'leaf' selection method"
+    )
+    c_rebuild.add_argument(
+        "--min-sim", type=float, default=0.0, help="Minimum similarity threshold"
+    )
+    c_rebuild.add_argument(
+        "--min-features",
+        type=int,
+        default=0,
+        help="Minimum number of features to include a function in clustering",
+    )
+
+    # cluster clear
+    c_clear = cluster_actions.add_parser("clear", help="Remove clustering data")
+    c_clear.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_clear.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+        help="Algorithm to target",
+    )
+
+    # cluster list
+    c_list = cluster_actions.add_parser(
+        "list", help="List discovered clusters or members"
+    )
+    c_list.add_argument("-c", "--collection", required=True, help="Collection name")
+    c_list.add_argument("--cluster-id", help="See members of a specific cluster")
+    c_list.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        default="unweighted_cosine",
+    )
+    c_list.add_argument("--limit", type=int, default=100)
+    c_list.add_argument("--offset", type=int, default=0)
+
     # sim list
     sim_list = sim_actions.add_parser("list", help="List similarity builds")
     sim_list.add_argument("-c", "--collection", required=True, help="Collection name")
     sim_list.add_argument("--batch", help="Target specific batch UUID")
-    sim_list.add_argument("--md5", action="store_true", help="List status by file (MD5)")
+    sim_list.add_argument(
+        "--md5", action="store_true", help="List status by file (MD5)"
+    )
     sim_list.add_argument(
         "--algo",
-        choices=["jaccard", "unweighted_cosine"],
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
         help="Algorithm to filter",
     )
     # --- JOB ---
     job_parser = subparsers.add_parser("job", help="Job & Pipeline management")
     job_actions = job_parser.add_subparsers(dest="action", required=True)
-    
+
     j_list = job_actions.add_parser("list", help="List recent jobs")
     j_list.add_argument("--limit", type=int, default=20)
-    
+
     j_status = job_actions.add_parser("status", help="Get job status & logs")
-    j_status.add_argument("job_id", nargs="?", help="Job or Pipeline ID (optional for global stats)")
+    j_status.add_argument(
+        "job_id", nargs="?", help="Job or Pipeline ID (optional for global stats)"
+    )
     j_status.add_argument("--watch", action="store_true", help="Watch progress")
     j_status.add_argument("--logs", action="store_true", help="Show logs")
-    
-    j_perf = job_actions.add_parser("perf", help="Display performance statistics for a job or pipeline")
+
+    j_perf = job_actions.add_parser(
+        "perf", help="Display performance statistics for a job or pipeline"
+    )
     j_perf.add_argument("job_id", help="Job or Pipeline ID")
-    j_perf.add_argument("--top", type=int, default=10, help="Show top N most demanding DB commands (default: 10)")
-    
+    j_perf.add_argument(
+        "--top",
+        type=int,
+        default=10,
+        help="Show top N most demanding DB commands (default: 10)",
+    )
+
     j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
     j_cancel.add_argument("job_id", help="Job or Pipeline ID")
 
@@ -171,7 +308,13 @@ def main():
     worker_parser = subparsers.add_parser("worker", help="Worker management")
     worker_actions = worker_parser.add_subparsers(dest="action", required=True)
     w_start = worker_actions.add_parser("start", help="Start background workers")
-    w_start.add_argument("-n", "--count", type=int, default=1, help="Number of workers to start")
+    w_start.add_argument(
+        "-n",
+        "--count",
+        type=int,
+        default=int(os.getenv("WORKERS_COUNT", 1)),
+        help="Number of workers to start (default: from .env WORKERS_COUNT or 1)",
+    )
 
     # --- UPLOAD ---
     upload_parser = subparsers.add_parser(
@@ -179,6 +322,13 @@ def main():
     )
 
     # Mirroring EXACT arguments from bsimvis_upload.py
+    upload_parser.add_argument(
+        "--local-analysis",
+        action="store_true",
+        default=False,
+        help="Perform Ghidra analysis locally instead of on the server",
+    )
+
     upload_parser.add_argument(
         "--save-json",
         metavar="PATH",
@@ -193,7 +343,10 @@ def main():
         "-v", "--verbose", action="count", default=0, help="Increase output verbosity"
     )
     upload_parser.add_argument(
-        "--limit", type=int, default=0, help="Limit the number of targets processed (useful with *)"
+        "--limit",
+        type=int,
+        default=0,
+        help="Limit the number of targets processed (useful with *)",
     )
     upload_parser.add_argument(
         "-H",
@@ -281,13 +434,44 @@ def main():
         "--batch-name", help="Batch name", default="Ghidra Batch"
     )
 
+    sim_options = upload_parser.add_argument_group("Similarity Options")
+    sim_options.add_argument(
+        "-k", "--top-k", type=int, default=None, help="Top K matches per function"
+    )
+    sim_options.add_argument(
+        "--min-score", type=float, default=None, help="Minimum similarity score"
+    )
+    sim_options.add_argument(
+        "--min-features", type=int, default=None, help="Minimum number of features"
+    )
+    sim_options.add_argument(
+        "--algo",
+        choices=["jaccard", "unweighted_cosine", "milvus_sparse"],
+        help="Similarity algorithm to use (default: unweighted_cosine)",
+    )
+    sim_options.add_argument(
+        "--skip-sim",
+        action="store_true",
+        default=False,
+        help="Skip building similarities after upload",
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
-    
+
     def resolve_api_host(cli_host):
         if cli_host:
             return cli_host
-        
+
+        env_host = os.getenv("APP_HOST")
+        env_port = os.getenv("APP_PORT")
+        if env_host and env_port:
+            return f"{env_host}:{env_port}"
+        elif env_host:
+            return f"{env_host}:5000"
+        elif env_port:
+            return f"localhost:{env_port}"
+
         config_path = "bsimvis_config.toml"
         if os.path.exists(config_path):
             try:
@@ -298,12 +482,17 @@ def main():
                 pass
         return "localhost:5000"
 
-    api_host_str = resolve_api_host(args.host)
+    # Use the first host from args.hosts if it exists and args.host is None
+    effective_host = args.host
+    if effective_host is None and hasattr(args, "hosts") and args.hosts:
+        effective_host = args.hosts[0]
+
+    api_host_str = resolve_api_host(effective_host)
     if ":" in api_host_str:
         g_host, g_port = api_host_str.split(":")
     else:
         g_host, g_port = api_host_str, 5000
-    
+
     # For backward compatibility with things that still talk directly to Redis/Kvrocks (like setup)
     # we reuse the same host but we might need a different port if redirected.
     # For now, we assume the API host is what we use.
@@ -328,6 +517,8 @@ def main():
             bsimvis_job.run_job(g_host, int(g_port), args)
         elif args.subcommand == "worker":
             bsimvis_worker.run_worker(g_host, int(g_port), args)
+        elif args.subcommand == "cluster":
+            bsimvis_cluster.run_cluster(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

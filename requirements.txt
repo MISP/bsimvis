@@ -1,10 +1,11 @@
 redis
 pyghidra
-
 flask
 flask-cors
-
-bokeh
-
 black
 tqdm
+pymilvus
+hdbscan
+scikit-learn
+python-dotenv
+requests

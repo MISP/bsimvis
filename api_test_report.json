@@ -1,0 +1,142 @@
+[
+  {
+    "path": "/api/index/status",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/jobs",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/jobs/stats",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/batch/search",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/file/call_graph",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/function/code",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/function/diff",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/function/features",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/feature/search",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/search/autocomplete",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/search/fields",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/similarity",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/similarity/search",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/similarity/list",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/tags/metadata",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/tags/stats",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/cluster/list",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/cluster/tree",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/features/status",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  },
+  {
+    "path": "/api/features/files",
+    "method": "GET",
+    "status": 200,
+    "success": true,
+    "error": null
+  }
+]

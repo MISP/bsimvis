@@ -1,11 +1,9 @@
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.tag_service import tag_service
 from bsimvis.app.services.redis_client import get_redis
 import logging
 
-tags_bp = Blueprint("tags", __name__)
 
-@tags_bp.route("/api/tags/add", methods=["POST"])
 def add_tag():
     """
     Adds a user_tag to an entity.
@@ -23,18 +21,46 @@ def add_tag():
     tag = data.get("tag")
 
     if not all([collection, etype, entry_id, tag]):
-        return jsonify({"error": "Missing parameters"}), 400
+        return {"error": "Missing parameters"}, 400
 
     if etype not in ["file", "function", "similarity"]:
-        return jsonify({"error": "Invalid entity type"}), 400
+        return {"error": "Invalid entity type"}, 400
 
     success = tag_service.add_user_tag(collection, etype, entry_id, tag)
     if success:
-        return jsonify({"status": "success", "tag": tag})
+        return {"status": "success", "tag": tag}
     else:
-        return jsonify({"status": "failed", "message": "Could not add tag"}), 500
+        return {"status": "failed", "message": "Could not add tag"}, 500
 
-@tags_bp.route("/api/tags/remove", methods=["POST"])
+
+def add_bulk_tags():
+    """
+    Adds a user_tag to multiple entities.
+    Payload: {
+        "collection": str,
+        "entity_type": "file" | "function" | "similarity",
+        "entity_ids": list[str],
+        "tag": str
+    }
+    """
+    data = request.json
+    collection = data.get("collection")
+    etype = data.get("entity_type")
+    entity_ids = data.get("entity_ids")
+    tag = data.get("tag")
+
+    if not all([collection, etype, entity_ids, tag]) or not isinstance(
+        entity_ids, list
+    ):
+        return {"error": "Missing or invalid parameters"}, 400
+
+    success = tag_service.bulk_add_user_tag(collection, etype, entity_ids, tag)
+    if success:
+        return {"status": "success", "tag": tag, "count": len(entity_ids)}
+    else:
+        return {"status": "failed", "message": "Could not add tags"}, 500
+
+
 def remove_tag():
     """Removes a user_tag from an entity."""
     data = request.json
@@ -44,48 +70,87 @@ def remove_tag():
     tag = data.get("tag")
 
     if not all([collection, etype, entry_id, tag]):
-        return jsonify({"error": "Missing parameters"}), 400
+        return {"error": "Missing parameters"}, 400
 
     success = tag_service.remove_user_tag(collection, etype, entry_id, tag)
     if success:
-        return jsonify({"status": "success", "tag": tag})
+        return {"status": "success", "tag": tag}
     else:
-        return jsonify({"status": "failed", "message": "Could not remove tag"}), 500
+        return {"status": "failed", "message": "Could not remove tag"}, 500
 
-@tags_bp.route("/api/tags/metadata", methods=["GET"])
+
+def remove_bulk_tags():
+    """Removes a user_tag from multiple entities."""
+    data = request.json
+    collection = data.get("collection")
+    etype = data.get("entity_type")
+    entity_ids = data.get("entity_ids")
+    tag = data.get("tag")
+
+    if not all([collection, etype, entity_ids, tag]) or not isinstance(
+        entity_ids, list
+    ):
+        return {"error": "Missing or invalid parameters"}, 400
+
+    success = tag_service.bulk_remove_user_tag(collection, etype, entity_ids, tag)
+    if success:
+        return {"status": "success", "tag": tag, "count": len(entity_ids)}
+    else:
+        return {"status": "failed", "message": "Could not remove tags"}, 500
+
+
 def get_metadata():
     """Returns all tag metadata for a collection."""
     collection = request.args.get("collection")
     if not collection:
-        return jsonify({"error": "Missing collection"}), 400
-    
-    tags = tag_service.get_collection_tags(collection)
-    return jsonify(tags)
+        return {"error": "Missing collection"}, 400
 
-@tags_bp.route("/api/tags/set_color", methods=["POST"])
+    tags = tag_service.get_collection_tags(collection)
+    return tags
+
+
+def get_tag_stats():
+    """Returns statistics for a specific tag."""
+    collection = request.args.get("collection")
+    tag = request.args.get("tag")
+
+    if not collection or not tag:
+        return {"error": "Missing parameters"}, 400
+
+    stats = tag_service.get_tag_stats(collection, tag)
+    return stats
+
+
+def get_tags():
+    """Returns the global tag index for a collection."""
+    collection = request.args.get("collection", "main")
+    tags = tag_service.get_tags(collection)
+    return tags
+
+
 def set_color():
     """Sets a custom color for a tag."""
     data = request.json
     collection = data.get("collection")
     tag = data.get("tag")
     color = data.get("color")
-    
-    if not all([collection, tag, color]):
-        return jsonify({"error": "Missing parameters"}), 400
-        
-    tag_service.set_tag_color(collection, tag, color)
-    return jsonify({"status": "success"})
 
-@tags_bp.route("/api/tags/set_priority", methods=["POST"])
+    if collection is None or tag is None or color is None:
+        return {"error": "Missing parameters"}, 400
+
+    tag_service.set_tag_color(collection, tag, color)
+    return {"status": "success"}
+
+
 def set_priority():
     """Sets a custom priority for a tag."""
     data = request.json
     collection = data.get("collection")
     tag = data.get("tag")
     priority = data.get("priority")
-    
-    if not all([collection, tag, priority]):
-        return jsonify({"error": "Missing parameters"}), 400
-        
+
+    if collection is None or tag is None or priority is None:
+        return {"error": "Missing parameters"}, 400
+
     tag_service.set_tag_priority(collection, tag, priority)
-    return jsonify({"status": "success"})
+    return {"status": "success"}

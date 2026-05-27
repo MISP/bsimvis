@@ -1,13 +1,13 @@
-from flask import Blueprint, jsonify, request
+from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.similarity_service import SimilarityService
+from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.redis_client import get_redis
 
-similarity_bp = Blueprint("similarity", __name__)
 job_service = JobService()
 similarity_service = SimilarityService()
 
-@similarity_bp.route("/api/similarity/list", methods=["GET"])
+
 def list_similarities():
     """Lists similarities (scores) for a given md5 or batch_uuid."""
     collection = request.args.get("collection", "main")
@@ -18,92 +18,110 @@ def list_similarities():
     offset = request.args.get("offset", 0, type=int)
 
     r = get_redis()
-    
-    # Standardized Involves Index: idx:{col}:sim:involves:{lvl}:{id}
+
+    # Standardized Involves Index: col}:sim:involves:{lvl}:{id}
     index_key = None
     if md5:
         # File level involves
-        index_key = f"{collection}:sim:involves:file:idx:{collection}:file:{md5}"
+        index_key = f"{collection}:sim:involves:file:{md5}"
     elif batch_uuid:
         # Batch involves (currently mapped to all similarities involving ANY function in the batch)
         # For listing, we might just want to check similarity build status primarily.
-        index_key = f"{collection}:batch:{batch_uuid}:functions" # This is just funcs
-    
+        index_key = f"{collection}:batch:{batch_uuid}:functions"  # This is just funcs
+
     if not index_key:
-        return jsonify({"error": "md5 or batch parameter required"}), 400
+        return {"error": "md5 or batch parameter required"}, 400
 
     # Get total and slice
-    total = r.zcard(index_key)
-    sim_keys = r.zrange(index_key, offset, offset + limit - 1)
-    
+    total = r.scard(index_key)
+    # Since it's a set, we don't have a native 'slice' but we can get all or use SSCAN
+    # For a list with limit/offset, we'll fetch members and slice in Python
+    # (Note: In a large system, SSCAN would be better, but for this app SMEMBERS is fine)
+    all_sim_keys = list(r.smembers(index_key))
+    sim_keys = all_sim_keys[offset : offset + limit]
+
     results = []
     if sim_keys:
         pipe = r.pipeline()
         for k in sim_keys:
             pipe.json().get(k, "$")
         raw_docs = pipe.execute()
-        
-        for doc in raw_docs:
+
+        for i, doc in enumerate(raw_docs):
             if doc:
-                results.append(doc[0] if isinstance(doc, list) else doc)
+                d = doc[0] if isinstance(doc, list) else doc
+                sid_key = sim_keys[i]
+                d["sid"] = sid_key.decode() if isinstance(sid_key, bytes) else sid_key
+                results.append(d)
 
-    return jsonify({
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "results": results
-    })
+    return {"total": total, "offset": offset, "limit": limit, "results": results}
 
-@similarity_bp.route("/api/similarity/status", methods=["GET"])
+
 def similarity_status():
     """Returns build status (counts) for a target."""
     collection = request.args.get("collection", "main")
     md5 = request.args.get("md5")
     batch_uuid = request.args.get("batch")
     algo = request.args.get("algo", "unweighted_cosine")
-    
-    status = similarity_service.get_build_status(collection, batch_uuid=batch_uuid, md5=md5, algo=algo)
-    return jsonify(status)
 
-@similarity_bp.route("/api/similarity/batches", methods=["GET"])
+    status = similarity_service.get_build_status(
+        collection, batch_uuid=batch_uuid, md5=md5, algo=algo
+    )
+    return status
+
+
 def list_batches():
     """Returns detailed build status (for batches or files)."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
     by_type = request.args.get("by", "batch")
-    
+
     if by_type == "md5":
         results = similarity_service.list_files_build_status(collection, algo=algo)
     else:
         results = similarity_service.list_batches_build_status(collection, algo=algo)
-    return jsonify({"results": results})
+    return {"results": results}
 
-@similarity_bp.route("/api/similarity/build", methods=["POST"])
+
 def build_similarity():
-    # ... (remains as is)
     """Enqueues a similarity build job."""
     data = request.json or {}
     collection = data.get("collection", "main")
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
     algo = data.get("algo", "unweighted_cosine")
-    
-    if not md5 and not batch_uuid:
-        return jsonify({"error": "md5 or batch required"}), 400
-    
+
+    if not md5 and not batch_uuid and not data.get("all"):
+        return {"error": "md5, batch, or all required"}, 400
+
     payload = {
         "collection": collection,
         "md5": md5,
         "batch_uuid": batch_uuid,
         "algo": algo,
         "min_score": data.get("min_score", 0.95),
-        "top_k": data.get("top_k", 20)
+        "top_k": data.get("top_k", 20),
+        "min_features": data.get("min_features", 0),
+        "all": data.get("all", False),
     }
-    
-    job_id = job_service.create_job(JobType.BUILD_SIM, payload)
-    return jsonify({"job_id": job_id, "status": "enqueued"})
 
-@similarity_bp.route("/api/similarity/rebuild", methods=["POST"])
+    if algo in ["milvus_sparse"]:
+        if not milvus_service.enabled:
+            return {
+                "error": "Milvus is disabled. Cannot use milvus_sparse algorithm."
+            }, 400
+
+        tasks = [
+            (JobType.SYNC_MILVUS, {"collection": collection}),
+            (JobType.BUILD_SIM, payload),
+        ]
+        job_id = job_service.create_pipeline(tasks)
+        return {"job_id": job_id, "pipeline_id": job_id, "status": "enqueued"}
+    else:
+        job_id = job_service.create_job(JobType.BUILD_SIM, payload)
+        return {"job_id": job_id, "status": "enqueued"}
+
+
 def rebuild_similarity():
     """Enqueues a clear + build pipeline."""
     data = request.json or {}
@@ -111,26 +129,47 @@ def rebuild_similarity():
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
     algo = data.get("algo", "unweighted_cosine")
-    
-    if not md5 and not batch_uuid:
-        return jsonify({"error": "md5 or batch required"}), 400
-    
-    tasks = [
-        (JobType.CLEAR_SIM, {"collection": collection, "md5": md5, "batch_uuid": batch_uuid, "algo": algo}),
-        (JobType.BUILD_SIM, {
-            "collection": collection, 
-            "md5": md5, 
-            "batch_uuid": batch_uuid, 
-            "algo": algo,
-            "min_score": data.get("min_score", 0.95),
-            "top_k": data.get("top_k", 20)
-        })
-    ]
-    
-    pipeline_id = job_service.create_pipeline(tasks)
-    return jsonify({"pipeline_id": pipeline_id, "status": "enqueued"})
 
-@similarity_bp.route("/api/similarity/clear", methods=["POST"])
+    if not md5 and not batch_uuid and not data.get("all"):
+        return {"error": "md5, batch, or all required"}, 400
+
+    tasks = [
+        (
+            JobType.CLEAR_SIM,
+            {
+                "collection": collection,
+                "md5": md5,
+                "batch_uuid": batch_uuid,
+                "algo": algo,
+                "all": data.get("all", False),
+            },
+        ),
+        (
+            JobType.BUILD_SIM,
+            {
+                "collection": collection,
+                "md5": md5,
+                "batch_uuid": batch_uuid,
+                "algo": algo,
+                "min_score": data.get("min_score", 0.95),
+                "top_k": data.get("top_k", 20),
+                "min_features": data.get("min_features", 0),
+                "all": data.get("all", False),
+            },
+        ),
+    ]
+
+    if algo in ["milvus_sparse"]:
+        if not milvus_service.enabled:
+            return {
+                "error": "Milvus is disabled. Cannot use milvus_sparse algorithm."
+            }, 400
+        tasks.insert(1, (JobType.SYNC_MILVUS, {"collection": collection}))
+
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+
+
 def clear_similarity():
     """Enqueues a similarity clear job."""
     data = request.json or {}
@@ -138,16 +177,17 @@ def clear_similarity():
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
     algo = data.get("algo", "unweighted_cosine")
-    
+
     if not md5 and not batch_uuid:
-        return jsonify({"error": "md5 or batch required"}), 400
+        return {"error": "md5 or batch required"}, 400
 
-    job_id = job_service.create_job(JobType.CLEAR_SIM, {
-        "collection": collection, "md5": md5, "batch_uuid": batch_uuid, "algo": algo
-    })
-    return jsonify({"job_id": job_id, "status": "enqueued"})
+    job_id = job_service.create_job(
+        JobType.CLEAR_SIM,
+        {"collection": collection, "md5": md5, "batch_uuid": batch_uuid, "algo": algo},
+    )
+    return {"job_id": job_id, "status": "enqueued"}
 
-@similarity_bp.route("/api/similarity/tag", methods=["POST"])
+
 def tag_similarity():
     """Adds a tag to a similarity pair."""
     data = request.json or {}
@@ -156,17 +196,17 @@ def tag_similarity():
     id2 = data.get("id2")
     algo = data.get("algo", "unweighted_cosine")
     tag = data.get("tag")
-    
+
     if not id1 or not id2 or not tag:
-        return jsonify({"error": "id1, id2, and tag required"}), 400
-    
+        return {"error": "id1, id2, and tag required"}, 400
+
     success = similarity_service.tag_similarity(collection, id1, id2, algo, tag)
     if success:
-        return jsonify({"status": "success", "message": f"Tagged similarity with {tag}"})
+        return {"status": "success", "message": f"Tagged similarity with {tag}"}
     else:
-        return jsonify({"status": "error", "message": "Failed to tag similarity"}), 500
+        return {"status": "error", "message": "Failed to tag similarity"}, 500
 
-@similarity_bp.route("/api/similarity/untag", methods=["POST"])
+
 def untag_similarity():
     """Removes a tag from a similarity pair."""
     data = request.json or {}
@@ -175,51 +215,12 @@ def untag_similarity():
     id2 = data.get("id2")
     algo = data.get("algo", "unweighted_cosine")
     tag = data.get("tag")
-    
+
     if not id1 or not id2 or not tag:
-        return jsonify({"error": "id1, id2, and tag required"}), 400
-    
+        return {"error": "id1, id2, and tag required"}, 400
+
     success = similarity_service.untag_similarity(collection, id1, id2, algo, tag)
     if success:
-        return jsonify({"status": "success", "message": f"Untagged similarity from {tag}"})
+        return {"status": "success", "message": f"Untagged similarity from {tag}"}
     else:
-        return jsonify({"status": "error", "message": "Failed to untag similarity"}), 500
-
-@similarity_bp.route("/api/tags", methods=["GET"])
-def get_tags():
-    """Returns the global tag index for a collection."""
-    collection = request.args.get("collection", "main")
-    tags = similarity_service.get_tags(collection)
-    return jsonify(tags)
-
-@similarity_bp.route("/api/tags/color", methods=["POST"])
-def set_tag_color():
-    """Updates the color for a tag."""
-    data = request.json or {}
-    collection = data.get("collection", "main")
-    tag = data.get("tag")
-    color = data.get("color")
-    
-    if not tag or not color:
-        return jsonify({"error": "tag and color required"}), 400
-    
-    success = similarity_service.set_tag_color(collection, tag, color)
-    if success:
-        return jsonify({"status": "success", "message": f"Updated color for {tag}"})
-    else:
-        return jsonify({"status": "error", "message": "Failed to update color"}), 500
-
-@similarity_bp.route("/api/tags/priority", methods=["POST"])
-def update_tag_priority():
-    data = request.json or {}
-    col = data.get("collection", "main")
-    tag = data.get("tag")
-    priority = data.get("priority")
-    if col is None or tag is None or priority is None:
-        return jsonify({"error": "Missing parameters"}), 400
-    
-    try:
-        similarity_service.set_tag_priority(col, tag, int(priority))
-        return jsonify({"status": "ok"})
-    except ValueError:
-        return jsonify({"error": "Priority must be an integer"}), 400
+        return {"status": "error", "message": "Failed to untag similarity"}, 500

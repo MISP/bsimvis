@@ -5,7 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Function Code View</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/utils.js"></script>
+    <script src="/js/code_renderer.js"></script>
+    <script src="/js/metadata.js"></script>
+    <script src="/js/tags.js"></script>
+    <script src="/js/diff_queue.js"></script>
+    <script src="/js/previews.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/js/cluster_views.js"></script>
     <style>
         body {
             background-color: #121212;
@@ -63,63 +73,36 @@
             box-shadow: inset 4px 0 0 var(--success);
         }
 
-        /* Standalone Diff Bar */
-        .standalone-diff-bar {
+        .floating-copy-btn {
             position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: #111;
-            border-top: 2px solid var(--accent);
-            padding: 10px 20px;
-            display: none;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 -4px 15px rgba(0, 0, 0, 0.6);
+            bottom: 25px;
+            right: 25px;
+            background: rgba(30, 30, 30, 0.85);
+            border: 1px solid #444;
+            color: #888;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            cursor: pointer;
             z-index: 1000;
-            animation: slideUp 0.3s ease-out;
-        }
-
-        @keyframes slideUp {
-            from {
-                transform: translateY(100%);
-            }
-
-            to {
-                transform: translateY(0);
-            }
-        }
-
-        .diff-status-text {
-            color: var(--accent);
-            font-size: 0.85rem;
-            font-weight: bold;
             display: flex;
             align-items: center;
-            gap: 10px;
-        }
-
-        .btn-compare {
-            background: var(--accent);
-            color: #000;
-            border: none;
-            padding: 8px 20px;
-            border-radius: 4px;
-            font-weight: bold;
-            cursor: pointer;
+            justify-content: center;
             transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
         }
 
-        .btn-compare:hover {
-            filter: brightness(1.1);
-            transform: translateY(-1px);
+        .floating-copy-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102, 217, 239, 0.15);
+            transform: scale(1.08);
         }
 
-        body {
-            padding-bottom: 60px;
+        .floating-copy-btn i {
+            font-size: 1.1rem;
         }
-
-        /* Space for bar */
     </style>
 </head>
 
@@ -133,61 +116,38 @@
     <div id="code-scroll" style="display: none;">
         <div id="v-height"></div>
         <div id="v-content" class="c-code-container"></div>
+
+        <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="copyFunctionCode(this)">
+            <i class="fas fa-copy"></i>
+        </button>
     </div>
 
     <div id="bsim-tooltip"></div>
 
-    <div id="standalone-diff-bar" class="standalone-diff-bar">
-        <div id="standalone-diff-status" class="diff-status-text"></div>
-        <button id="standalone-diff-btn" class="btn-compare" onclick="openStandaloneDiff()">Compare Functions →</button>
-    </div>
-
     <script>
+        // Sync UI settings from parent if available
+        let UIParams = { cohesionThreshold: 0.5, colorByTag: false };
+        if (window.parent && window.parent.UIParams) {
+            UIParams = window.parent.UIParams;
+        } else {
+            UIParams = {
+                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
+                colorByTag: localStorage.getItem('colorByTag') === 'true'
+            };
+        }
+
         const API_URL = "/api/function/code";
         let funcRows = [];
         let funcTips = {};
         const rowH = 24;
         const OVERSCAN = 20;
 
-        function formatDate(iso) {
-            if (!iso || iso === 'N/A') return '---';
-            if (typeof iso === 'string' && /^\d+$/.test(iso)) {
-                iso = parseInt(iso, 10);
-            }
-            const d = new Date(iso);
-            if (isNaN(d.getTime())) return iso;
-            return d.toLocaleString();
+        function copyFunctionCode(btn) {
+            if (!funcRows || funcRows.length === 0) return;
+            copyRichText(funcRows, btn);
         }
 
-        function copyToClipboard(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const originalHtml = btn.innerHTML;
-                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-            }).catch(err => console.error('Failed to copy', err));
-        }
 
-        function normalizeFuncId(id) {
-            if (!id || typeof id !== 'string') return id;
-            if (id.includes(':function:')) return id;
-
-            // Pattern for raw BSim ID: collection:#md5::funcName:@addr
-            const parts = id.split(':');
-            if (parts.length >= 4) {
-                const addrPart = parts.pop();
-                const funcPart = parts.pop();
-                const emptyPart = parts.pop();
-                const md5Part = parts.pop();
-                const colPart = parts.join(':');
-
-                if (addrPart && addrPart.startsWith('@') && md5Part && md5Part.startsWith('#')) {
-                    const cleanAddr = addrPart.substring(1);
-                    const cleanMd5 = md5Part.substring(1);
-                    return `${colPart}:function:${cleanMd5}:${cleanAddr}`;
-                }
-            }
-            return id;
-        }
 
         let scrollEl, vHeightEl, vContentEl, tooltipEl;
         window.lockedHashes = new Set();
@@ -201,12 +161,12 @@
                 return;
             }
             if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
-                const parts = id.split(':');
-                window.parent.showFeaturePanel(parts[0], parts[2], parts[3]);
+                window.parent.showFeaturePanel(id, e);
             } else {
                 window.location.href = url;
             }
         }
+
 
         function showTokenContextMenu(e) {
             const token = e.target.closest('.feature-highlight');
@@ -305,10 +265,11 @@
                 funcTips = data.tips;
                 fullMeta = data.meta;
 
-                id = data.meta["function_id"] || data.meta["collection"] + ":function:" + data.meta["file_md5"] + ":" + data.meta["entrypoint_address"];
+                id = data.meta["function_id"] || data.meta["collection"] + ":func:" + data.meta["file_md5"] + ":" + data.meta["entrypoint_address"];
                 window.currentFuncId = normalizeFuncId(id);
                 window.currentFuncName = data.meta['function_name'] || 'unknown';
 
+                await fetchTagMetadata(data.meta['collection'] || id.split(':')[0]);
                 renderMeta(data.meta);
 
                 document.getElementById('loader').style.display = 'none';
@@ -326,11 +287,42 @@
                         tooltipEl.style.top = (e.clientY + 15) + "px";
                     }
                 });
+                function navigateToFunction(funcId, isExternal, e) {
+                    if (isExternal) return;  // no navigation for external functions
+                    const url = `/function/index.html?id=${encodeURIComponent(funcId)}`;
+                    if (e && (e.ctrlKey || e.metaKey)) {
+                        window.open(url, '_blank');
+                        return;
+                    }
+                    if (window.parent && window.parent !== window && typeof window.parent.showFunctionCodeById === 'function') {
+                        const name = funcId.split(':').pop();
+                        window.parent.showFunctionCodeById(funcId, name, '', e);
+                    } else {
+                        window.location.href = url;
+                    }
+                }
+
                 scrollEl.addEventListener('click', e => {
                     const token = findToken(e);
-                    if (token) toggleLock(token.getAttribute('data-hashes'), token);
+                    if (token) {
+                        const calledFuncId = token.getAttribute('data-called-func-id');
+                        if (calledFuncId) {
+                            const isExternal = token.getAttribute('data-is-external') === 'true';
+                            navigateToFunction(calledFuncId, isExternal, e);
+                            return;
+                        }
+                        toggleLock(token.getAttribute('data-hashes'), token);
+                    }
                 });
 
+                scrollEl.addEventListener('pointermove', e => {
+                    if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
+                        window.parent.moveCodePreviewFromIframe(window.name, e);
+                    }
+                });
+
+                setupKeyboardSelection();
+                setupRichCopyInterceptor(vContentEl, () => funcRows);
                 scrollToLine();
                 onScroll();
 
@@ -341,63 +333,14 @@
         }
 
         function renderMeta(m) {
-            const container = document.getElementById('meta-container');
-            const label = m['function_name'] || 'unknown_func';
-            const returnType = m['return_type'] || 'N/A';
-            const addr = m['entrypoint_address'] || 'N/A';
-            const fileName = m['file_name'] || 'N/A';
-            const lang = m['language_id'] || 'N/A';
-
-            const tags = (m['tags'] || []);
-            const tagsHtml = tags.length > 0 ? tags.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
-
-            const skipKeys = ['function_name', 'return_type', 'entrypoint_address', 'file_name', 'language_id', 'full_id', 'tags'];
-            let moreHtml = '';
-            Object.keys(m).sort().forEach(k => {
-                if (!skipKeys.includes(k)) {
-                    let val = m[k];
-
-                    // Format dates if the key implies it
-                    if (k.endsWith('_date') || k === 'created_at' || k === 'last_updated') {
-                        val = formatDate(val);
-                    }
-
-                    if (Array.isArray(val)) {
-                        val = val.length > 0 ? val.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
-                    } else if (typeof val === 'object' && val !== null) {
-                        val = JSON.stringify(val);
-                    }
-                    moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value">${val}</span></div>`;
-                }
+            renderFunctionMetadata('meta-container', m, window.currentFuncId, {
+                showFeaturesBtn: true,
+                showDiffBtn: true,
+                diffBtnFullText: false,
+                showSimilarBtn: true,
+                rightHeaderHtml: `<div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>`
             });
-
-            container.innerHTML = `
-                <div class="func-meta-card">
-                    <span class="meta-title">
-                        <div style="display:flex; align-items:center; gap:8px">
-                            
-                            <span class="meta-return-type">${returnType}</span>${label}
-                            <button class="btn-copy" title="Copy Function ID: ${window.currentFuncId}" onclick="copyToClipboard('${window.currentFuncId}', this)">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            </button>
-                            <button class="btn-feat-action" onclick="navigateToFeatures('${id}', event)">
-                                <span>🔍</span> Features
-                            </button>
-                            <button id="add-diff-btn" class="btn-diff-action" onclick="addToDiff(window.currentFuncId, this, window.currentFuncName)">
-                                <span>+</span> Add to Diff
-                            </button>
-                        </div>
-                    </span>
-                    <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
-                    <div class="meta-row"><span class="meta-label">File</span><span class="meta-value">${fileName}</span></div>
-                    <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
-                    <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml}</span></div>
-                    
-                    <div class="meta-more-container" id="meta-more-inline">
-                        ${moreHtml}
-                    </div>
-                </div>
-            `;
+            updateDiffQueueUI();
         }
 
         window.toggleMetaDetail = function () {
@@ -436,25 +379,93 @@
         }
 
         function renderRows(start, end) {
-            let html = '';
+            // Surgical update: keep existing nodes to preserve selection/caret
+            const currentLines = Array.from(vContentEl.children);
+            const lineMap = new Map();
+            currentLines.forEach(el => {
+                const lnEl = el.querySelector('.line-num');
+                if (lnEl) lineMap.set(parseInt(lnEl.innerText), el);
+            });
+
+            // Identify which lines we need
+            const neededLines = [];
             for (let i = start; i < end; i++) {
                 const row = funcRows[i];
-                const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
-                let content = '';
-                for (const t of row.tokens) {
-                    const hashes = t.hash_list.join(' ');
-                    const featClasses = t.hash_list.map(h => `feat-${h}`).join(' ');
-
-                    content += `<span class="token token-${t.type} ${t.diff_class} ${t.has_features ? 'feature-highlight' : ''} ${featClasses}" ` +
-                        `data-idx="${t.global_idx}" data-hashes="${hashes}">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                let lineEl = lineMap.get(row.line_idx);
+                
+                if (!lineEl) {
+                    const isTarget = window.targetLineSet && window.targetLineSet.has(row.line_idx);
+                    let content = '';
+                    for (const t of row.tokens) {
+                        content += renderTokenHtml(t, t.diff_class || '');
+                    }
+                    lineEl = document.createElement('div');
+                    lineEl.className = `code-line ${isTarget ? 'target-highlight' : ''}`;
+                    lineEl.innerHTML = `<div class="gutter" contenteditable="false"><div class="line-num">${row.line_idx}</div></div><div class="line-content">${content}</div>`;
                 }
-                html += `<div class="code-line ${isTarget ? 'target-highlight' : ''}">
-                    <div class="gutter"><div class="line-num">${row.line_idx}</div></div>
-                    <div class="line-content">${content}</div>
-                </div>`;
+                neededLines.push(lineEl);
+                lineMap.delete(row.line_idx);
             }
-            vContentEl.innerHTML = html;
+
+            // Remove lines that are no longer in view
+            lineMap.forEach(el => el.remove());
+
+            // Ensure order and presence without clearing everything (innerHTML = '' kills selection)
+            for (let i = 0; i < neededLines.length; i++) {
+                const line = neededLines[i];
+                if (vContentEl.children[i] !== line) {
+                    vContentEl.insertBefore(line, vContentEl.children[i] || null);
+                }
+            }
+            
             applyLocks();
+        }
+
+        // Handle keyboard navigation and selection
+        function setupKeyboardSelection() {
+            vContentEl.setAttribute('contenteditable', 'true');
+            vContentEl.setAttribute('spellcheck', 'false');
+            
+            vContentEl.addEventListener('keydown', (e) => {
+                const isCmd = e.ctrlKey || e.metaKey;
+                const key = e.key;
+
+                if (isCmd && key.toLowerCase() === 'a') return; 
+                if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
+                
+                const allowedKeys = [
+                    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                    'Home', 'End', 'PageUp', 'PageDown', 'Shift', 'Control', 'Alt', 'Meta'
+                ];
+                
+                if (allowedKeys.includes(key)) {
+                    // Check if we need to scroll because caret is at the edge
+                    requestAnimationFrame(() => {
+                        const sel = window.getSelection();
+                        if (!sel.rangeCount) return;
+                        const rect = sel.getRangeAt(0).getBoundingClientRect();
+                        
+                        // Critical: ignore invalid/collapsed rects to prevent teleporting
+                        if (rect.height === 0 || (rect.top === 0 && rect.left === 0)) return;
+
+                        const containerRect = scrollEl.getBoundingClientRect();
+                        const padding = 60;
+
+                        if (rect.top < containerRect.top + padding) {
+                            scrollEl.scrollTop -= (containerRect.top + padding - rect.top);
+                        } else if (rect.bottom > containerRect.bottom - padding) {
+                            scrollEl.scrollTop += (rect.bottom - (containerRect.bottom - padding));
+                        }
+                    });
+                    return;
+                }
+
+                if (!isCmd) e.preventDefault();
+            });
+
+            vContentEl.addEventListener('beforeinput', (e) => {
+                e.preventDefault();
+            });
         }
 
         function findToken(e) {
@@ -472,21 +483,54 @@
             const hashes = token.getAttribute('data-hashes');
             if (hashes) setHighlight(hashes, state, token);
 
+            const calledFuncId = token.getAttribute('data-called-func-id');
+            const isExternal = token.getAttribute('data-is-external') === 'true';
+
             if (state) {
-                const idx = token.getAttribute('data-idx');
-                const data = funcTips[idx];
-                if (data) {
-                    let h = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<hr>`;
-                    for (const f of data[2]) {
-                        h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Type: ${f[3]}<br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
-                    }
-                    tooltipEl.innerHTML = h;
+                if (calledFuncId && isExternal) {
+                    // External function: show badge tooltip
+                    const extName = token.getAttribute('data-target-name') || calledFuncId.replace('ext:', '');
+                    tooltipEl.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">
+                        <span style="background:rgba(249,38,114,0.2);color:#f92672;border:1px solid rgba(249,38,114,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                        <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
+                    </div>`;
                     tooltipEl.style.display = 'block';
-                    tooltipEl.style.left = (e.clientX + 15) + "px";
-                    tooltipEl.style.top = (e.clientY + 15) + "px";
+                    tooltipEl.style.left = (e.clientX + 15) + 'px';
+                    tooltipEl.style.top = (e.clientY + 15) + 'px';
+                } else if (calledFuncId && !isExternal) {
+                    // Internal function: show code preview (delegate to parent dashboard if available, otherwise show locally)
+                    tooltipEl.style.display = 'none';
+                    const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
+                    if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
+                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, e);
+                    } else if (typeof window.showCodePreview === 'function') {
+                        window.showCodePreview(calledFuncId, targetName, null, null, null, e);
+                    }
+                } else {
+                    // Feature tooltip
+                    const idx = token.getAttribute('data-idx');
+                    const data = funcTips[idx];
+                    if (data) {
+                        let h = `<b>Type:</b> ${data[0]}<br><b>Seq:</b> ${data[1]}<hr>`;
+                        for (const f of data[2]) {
+                            h += `<div style="margin-bottom:8px;"><b style='color:#66d9ef'>${f[0]}</b><br>Type: ${f[3]}<br>Op: ${f[1]}<br>Addr: ${f[5]}<br><b>TF:</b> ${f[7]}</div>`;
+                        }
+                        tooltipEl.innerHTML = h;
+                        tooltipEl.style.display = 'block';
+                        tooltipEl.style.left = (e.clientX + 15) + 'px';
+                        tooltipEl.style.top = (e.clientY + 15) + 'px';
+                    }
                 }
             } else {
                 tooltipEl.style.display = 'none';
+                // Hide parent preview if it was shown for an internal func_call
+                if (calledFuncId && !isExternal) {
+                    if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
+                        window.parent.hideCodePreview();
+                    } else if (typeof window.hideCodePreview === 'function') {
+                        window.hideCodePreview();
+                    }
+                }
             }
         }
 
@@ -531,84 +575,8 @@
 
         // fetchData(); // This call is not needed here as init() already handles data loading.
 
-        function addToDiff(funcId, btn, name) {
-            if (window.parent && window.parent !== window && typeof window.parent.addToDiff === 'function') {
-                window.parent.addToDiff(funcId, name);
-                btn.innerHTML = '<span>✓</span> Added to Queue';
-                btn.style.color = '#a6e22e';
-                btn.style.borderColor = 'rgba(166,226,46,0.3)';
-                btn.style.background = 'rgba(166,226,46,0.1)';
-                btn.disabled = true;
-            } else {
-                // Standalone mode: sync via localStorage
-                try {
-                    let queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
-                    const existing = queue.findIndex(item => item.id === funcId);
-                    if (existing !== -1) {
-                        queue.splice(existing, 1);
-                        btn.innerHTML = '<span>+</span> Add to Diff';
-                        btn.style.color = ''; btn.style.borderColor = ''; btn.style.background = '';
-                    } else {
-                        queue.push({ id: funcId, name: name });
-                        if (queue.length > 2) queue.shift();
-                        btn.innerHTML = '<span>✓</span> Queued (Tab Sync)';
-                        btn.style.color = '#a6e22e';
-                        btn.style.borderColor = 'rgba(166,226,46,0.3)';
-                        btn.style.background = 'rgba(166,226,46,0.1)';
-                    }
-                    localStorage.setItem('bsim_diff_queue', JSON.stringify(queue));
-                    updateDiffQueueUI();
-                } catch (e) {
-                    console.error("Standalone diff queue error", e);
-                }
-            }
-        }
-
-        function loadDiffQueue() {
-            if (window.parent && window.parent !== window) return;
-            const bar = document.getElementById('standalone-diff-bar');
-            bar.style.display = 'flex';
-            updateDiffQueueUI();
-        }
-
-        function updateDiffQueueUI() {
-            if (window.parent && window.parent !== window) return;
-            const status = document.getElementById('standalone-diff-status');
-            const btn = document.getElementById('standalone-diff-btn');
-
-            try {
-                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
-                if (queue.length === 0) {
-                    status.innerHTML = '<span class="dim">Diff Queue is empty. Select functions to compare.</span>';
-                    btn.style.display = 'none';
-                } else if (queue.length === 1) {
-                    status.innerHTML = `<span>1/2 Ready: <b>${queue[0].name}</b></span>`;
-                    btn.style.display = 'none';
-                } else {
-                    status.innerHTML = `<span style="color:var(--success)">2/2 Ready: <b>${queue[0].name}</b> vs <b>${queue[1].name}</b></span>`;
-                    btn.style.display = 'block';
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        function openStandaloneDiff() {
-            try {
-                const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
-                if (queue.length < 2) return;
-                window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
-
-                // Clear queue after opening in new tab
-                localStorage.setItem('bsim_diff_queue', '[]');
-                updateDiffQueueUI();
-            } catch (e) { console.error(e); }
-        }
-
-        window.addEventListener('storage', (e) => {
-            if (e.key === 'bsim_diff_queue') updateDiffQueueUI();
-        });
-
         init();
-        loadDiffQueue();
+        updateDiffQueueUI();
     </script>
 </body>
 

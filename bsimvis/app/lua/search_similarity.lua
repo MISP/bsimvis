@@ -3,6 +3,7 @@ local config = cjson.decode(ARGV[1])
 local collection = config.collection
 local algo = config.algo
 local sort_by = config.sort_by or "score"
+local match_mode = config.match_mode or "any"
 local sort_order = config.sort_order or "desc"
 local pool_limit = tonumber(config.pool_limit or 1000000)
 local groups = config.groups or {}
@@ -18,29 +19,28 @@ local feat_zset = KEYS[2]
 
 -- Helper: Reconstruct FIDs from Lean SID (idx:coll:sim:algo:id1:id2)
 local function extract_ids(sid)
-    -- sid is idx:coll:sim:algo:idx:coll:func:md5:addr:idx:coll:func:md5:addr
-    local sim_prefix = 'idx:' .. collection .. ':sim:' .. algo .. ':'
+    -- sid is {coll}:sim:{algo}:{clean_id1}::{clean_id2}
+    local sim_prefix = collection .. ':sim:' .. algo .. ':'
     if sid:sub(1, #sim_prefix) ~= sim_prefix then return nil, nil end
     
     local rest = sid:sub(#sim_prefix + 1)
-    -- We look for the start of the second ID: ':idx:{coll}:func:'
-    local sep = ':idx:' .. collection .. ':func:'
-    local pivot = rest:find(sep, 2, true) 
+    local pivot = rest:find("::", 1, true)
     if not pivot then return nil, nil end
     
-    local id1 = rest:sub(1, pivot - 1)
-    local id2 = rest:sub(pivot + 1)
+    local id1 = collection .. ':func:' .. rest:sub(1, pivot - 1)
+    local id2 = collection .. ':func:' .. rest:sub(pivot + 2)
     return id1, id2
 end
 
 -- 1. Pre-resolve Filter Maps
 local producer = nil
-local filter_maps = {} -- index -> Map of { member = true }
+local filter_maps = {} -- index -> Map of { sid = true } (for "any" gate)
+local entity_maps = {} -- index -> Map of { func_id = true } (for "both" verification)
 local score_map = nil  -- sid -> score (if narrow range)
 
 -- Identify Producer and handle pre-loading
 for idx, g in ipairs(groups) do
-    if not producer and (g.type == "score_range" or g.type == "feature_range" or g.type == "metadata" or g.type == "direct_zset") then
+    if not producer and not g.exclude and (g.type == "score_range" or g.type == "feature_range" or g.type == "metadata" or g.type == "direct_zset") then
         producer = g
         producer.idx = idx
     end
@@ -54,8 +54,7 @@ for idx, g in ipairs(groups) do
             if sub.level == "binary" then prefix = collection .. ":sim:involves:file:"
             elseif sub.level == "function" then prefix = collection .. ":sim:involves:func:"
             elseif sub.level == "similarity" then 
-                prefix = collection .. ":idx:sim:tags:"
-                if sub.field == "user_tags" then prefix = collection .. ":idx:sim:user_tags:" end
+                prefix = collection .. ":idx:sim:" .. sub.field .. ":"
             end
             
             if prefix ~= "" and sub.targets then
@@ -69,6 +68,30 @@ for idx, g in ipairs(groups) do
             end
         end
         filter_maps[idx] = allowed
+
+        -- "both" mode: build entity_map (func_id -> true) so we can verify
+        -- each function in a pair individually satisfies the filter.
+        if match_mode == "both" then
+            local emap = {}
+            for _, sub in ipairs(sub_groups) do
+                local pfx = sub.func_index_prefix or ""
+                if pfx ~= "" and sub.targets then
+                    if sub.level == "function" then
+                        -- targets are clean func IDs; pfx = "{col}:func:"
+                        for _, t in ipairs(sub.targets) do
+                            emap[pfx .. t] = true
+                        end
+                    else
+                        -- sim-level propagated or binary: look up func-level index
+                        for _, t in ipairs(sub.targets) do
+                            local fids = redis.call('SMEMBERS', pfx .. t) or {}
+                            for _, fid in ipairs(fids) do emap[fid] = true end
+                        end
+                    end
+                end
+            end
+            entity_maps[idx] = emap
+        end
     elseif g.type == "score_range" and g.weight < 50000 then
         -- KILLER FEATURE: Pre-load small score ranges to eliminate ZSCORE in loops
         local s_items = redis.call('ZRANGEBYSCORE', algo_zset, min_score, max_score, 'WITHSCORES')
@@ -80,6 +103,27 @@ end
 
 if not producer then
     producer = {type="score_range", key=algo_zset, min=min_score, max=max_score, idx=0}
+end
+
+-- Fast Path: If there is exactly 1 group (the score_range or feature_range producer) and we are sorting on it
+local is_sorting_on_producer = (sort_by == "score" and producer.type == "score_range") or ((sort_by == "min_features" or sort_by == "feat_count") and producer.type == "feature_range")
+
+if #groups <= 1 and (producer.type == "score_range" or producer.type == "feature_range") and is_sorting_on_producer then
+    local total_count = redis.call('ZCOUNT', producer.key, producer.min or "-inf", producer.max or "+inf")
+    local first, second, range_cmd
+    if sort_order == "desc" then
+        range_cmd = "ZREVRANGEBYSCORE"; first = producer.max or "+inf"; second = producer.min or "-inf"
+    else
+        range_cmd = "ZRANGEBYSCORE"; first = producer.min or "-inf"; second = producer.max or "+inf"
+    end
+    -- We fetch exactly offset + limit items directly from Redis ZSET
+    local slice = redis.call(range_cmd, producer.key, first, second, 'WITHSCORES', 'LIMIT', offset, limit)
+    local res_ids, res_scores = {}, {}
+    for j=1, #slice, 2 do
+        table.insert(res_ids, slice[j])
+        table.insert(res_scores, slice[j+1])
+    end
+    return {total_count, 0, res_ids, res_scores}
 end
 
 local refined = {}
@@ -94,13 +138,26 @@ if producer.type == "metadata" then
     -- The allowed map for the producer already contains the UNION of all sub-group SIDs
     local allowed = filter_maps[producer.idx]
     if allowed then
+        local func_pfx = collection .. ":func:"
         for sid, _ in pairs(allowed) do
+            -- "both" mode: both functions must individually satisfy the filter
+            if match_mode == "both" then
+                local emap = entity_maps[producer.idx]
+                if emap then
+                    local p_id1, p_id2 = extract_ids(sid)
+                    if not (p_id1 and emap[p_id1] and p_id2 and emap[p_id2]) then
+                        goto continue
+                    end
+                end
+            end
+
             local score = (score_map and score_map[sid]) or tonumber(redis.call('ZSCORE', algo_zset, sid) or 0)
             if score >= min_score and score <= max_score then
                 table.insert(sorted_raw, sid)
                 table.insert(sorted_raw, tostring(score))
             end
             if (#sorted_raw / 2) >= pool_limit then break end
+            ::continue::
         end
     end
     raw = sorted_raw
@@ -148,10 +205,27 @@ for i=1, #raw, 2 do
             -- In-Memory Map Check (Fast Intersect)
             local map = filter_maps[idx]
             if map then
-                if not map[sid] then
-                    -- Check constituent FIDs (Deep Join)
+                if g.exclude then
+                    -- Exclusion Check (Filter-Out logic)
+                    if map[sid] then match = false; break end
                     if not id1 then id1, id2 = extract_ids(sid) end
-                    if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+                    if id1 and (map[id1] or map[id2]) then match = false; break end
+                else
+                    -- Normal Inclusion Check: map[sid] proves "at least one" match
+                    if not map[sid] then
+                        if not id1 then id1, id2 = extract_ids(sid) end
+                        if not id1 or (not map[id1] and not map[id2]) then match = false; break end
+                    end
+                    -- "both" mode: use entity_map to verify each function individually
+                    if match_mode == "both" then
+                        local emap = entity_maps[idx]
+                        if emap then
+                            if not id1 then id1, id2 = extract_ids(sid) end
+                            if not (id1 and emap[id1] and id2 and emap[id2]) then
+                                match = false; break
+                            end
+                        end
+                    end
                 end
             end
         elseif g.type == "direct_zset" then
@@ -161,11 +235,6 @@ for i=1, #raw, 2 do
     
     if match then
         total_found = total_found + 1
-        
-        -- DEBUG: Log the first few matches for main2
-        if total_found <= 3 and collection == "main2" then
-            redis.log(redis.LOG_NOTICE, "MATCH SID=" .. sid .. " score=" .. tostring(score) .. " metric=" .. tostring(producer_val))
-        end
 
         local final_metric = score
         if sort_by == "feat_count" or sort_by == "min_features" then
@@ -181,12 +250,14 @@ for i=1, #raw, 2 do
 end
 
 -- 4. Result Finalization
-table.sort(refined, function(a, b)
-    if a[2] ~= b[2] then
-        if sort_order == "desc" then return a[2] > b[2] else return a[2] < b[2] end
-    end
-    return a[1] < b[1]
-end)
+if not sorting_on_producer then
+    table.sort(refined, function(a, b)
+        if a[2] ~= b[2] then
+            if sort_order == "desc" then return tonumber(a[2]) > tonumber(b[2]) else return tonumber(a[2]) < tonumber(b[2]) end
+        end
+        return a[1] < b[1]
+    end)
+end
 
 local res_ids, res_scores = {}, {}
 for i=1, math.min(#refined, limit+offset) do

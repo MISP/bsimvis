@@ -5,7 +5,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BSim Aligned Diff</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <script src="/js/utils.js"></script>
+    <script src="/js/code_renderer.js"></script>
+    <script src="/js/metadata.js"></script>
+    <script src="/js/tags.js"></script>
+    <script src="/js/diff_queue.js"></script>
+    <script src="/js/previews.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/js/cluster_views.js"></script>
     <style>
         #selection-tool {
             display: none;
@@ -186,6 +196,37 @@
         .sim-select:hover {
             border-color: var(--accent);
         }
+
+        .floating-copy-btn {
+            position: absolute;
+            bottom: 25px;
+            right: 25px;
+            background: rgba(30, 30, 30, 0.85);
+            border: 1px solid #444;
+            color: #888;
+            width: 36px;
+            height: 36px;
+            border-radius: 6px;
+            cursor: pointer;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+
+        .floating-copy-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: rgba(102, 217, 239, 0.15);
+            transform: scale(1.08);
+        }
+
+        .floating-copy-btn i {
+            font-size: 1.1rem;
+        }
     </style>
 </head>
 
@@ -196,13 +237,20 @@
     </div>
 
     <div id="similarity-bar">
-        <div class="sim-info">
-            <span class="sim-label">Similarity:</span>
-            <span id="sim-score-val" class="sim-score">---</span>
-            <select id="sim-algo-select" class="sim-select" onchange="updateSimDisplay()">
-                <option value="unweighted_cosine">Cosine</option>
-                <option value="jaccard">Jaccard</option>
-            </select>
+        <div class="sim-info" style="display:flex; width:100%; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span class="sim-label">Similarity:</span>
+                <span id="sim-score-val" class="sim-score">---</span>
+                <select id="sim-algo-select" class="sim-select" onchange="updateSimDisplay()">
+                    <option value="unweighted_cosine">Cosine</option>
+                    <option value="jaccard">Jaccard</option>
+                    <option value="milvus_sparse">Milvus Sparse</option>
+                </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:15px;">
+                <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
+                <div id="similarity-tags-container" style="display:flex; align-items:center;"></div>
+            </div>
         </div>
     </div>
 
@@ -215,7 +263,7 @@
                 <h3>Left Side</h3>
                 <div class="form-group">
                     <label>Manual Function ID</label>
-                    <input type="text" id="manual-id-l" placeholder="coll:function:md5:addr"
+                    <input type="text" id="manual-id-l" placeholder="coll:func:md5:addr"
                         oninput="onManualInput('l')">
                 </div>
                 <div class="divider">OR SELECT</div>
@@ -243,7 +291,7 @@
                 <h3>Right Side</h3>
                 <div class="form-group">
                     <label>Manual Function ID</label>
-                    <input type="text" id="manual-id-r" placeholder="coll:function:md5:addr"
+                    <input type="text" id="manual-id-r" placeholder="coll:func:md5:addr"
                         oninput="onManualInput('r')">
                 </div>
                 <div class="divider">OR SELECT</div>
@@ -275,11 +323,21 @@
     <div id="bsim-scroll" style="display: none;">
         <div id="bsim-vheight" style="position:absolute; width:1px; top:0; left:0; z-index:-1;"></div>
         <div id="bsim-sticky">
-            <div class="diff-pane">
-                <div id="bsim-left-content" class="bsim-vcontent c-code-container"></div>
+            <div style="flex:1; position:relative; display:flex; flex-direction:column; overflow:hidden;">
+                <div class="diff-pane" style="height:100%;">
+                    <div id="bsim-left-content" class="bsim-vcontent c-code-container"></div>
+                </div>
+                <button class="floating-copy-btn" title="Copy left code with colors" onclick="copyDiffCode('l', this)">
+                    <i class="fas fa-copy"></i>
+                </button>
             </div>
-            <div class="diff-pane">
-                <div id="bsim-right-content" class="bsim-vcontent c-code-container"></div>
+            <div style="flex:1; position:relative; display:flex; flex-direction:column; overflow:hidden; border-left:1px solid #3e3d32;">
+                <div class="diff-pane" style="height:100%;">
+                    <div id="bsim-right-content" class="bsim-vcontent c-code-container"></div>
+                </div>
+                <button class="floating-copy-btn" title="Copy right code with colors" onclick="copyDiffCode('r', this)">
+                    <i class="fas fa-copy"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -287,26 +345,51 @@
     <div id="bsim-tooltip"></div>
 
     <script>
+        // Sync UI settings from parent if available
+        let UIParams = { cohesionThreshold: 0.5, colorByTag: false };
+        if (window.parent && window.parent.UIParams) {
+            UIParams = window.parent.UIParams;
+        } else {
+            UIParams = {
+                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
+                colorByTag: localStorage.getItem('colorByTag') === 'true'
+            };
+        }
+
         const API_URL = "/api/diff";
 
 
         window.lockedHashes = new Set();
         let tooltipEl = null;
 
+        function copyDiffCode(side, btn) {
+            const rows = (window.bsimRows || [])
+                .map(row => row[side])
+                .filter(sideData => sideData !== null && sideData !== undefined && sideData.line_idx !== undefined);
+            
+            if (rows.length === 0) return;
+            copyRichText(rows, btn, { showDiffs: true });
+        }
+
+        function navigateToFunction(funcId, e) {
+            const url = `/function/index.html?id=${encodeURIComponent(funcId)}`;
+            if (e && (e.ctrlKey || e.metaKey)) {
+                window.open(url, '_blank');
+                return;
+            }
+            if (window.parent && window.parent !== window && typeof window.parent.showFunctionCodeById === 'function') {
+                const name = funcId.split(':').pop();
+                window.parent.showFunctionCodeById(funcId, name, '', e);
+            } else {
+                window.location.href = url;
+            }
+        }
+
         // Data Globals
         window.bsimRows = [];
         window.tokenTipsL = {};
         window.tokenTipsR = {};
-        
-        function formatDate(iso) {
-            if (!iso || iso === 'N/A') return '---';
-            if (typeof iso === 'string' && /^\d+$/.test(iso)) {
-                iso = parseInt(iso, 10);
-            }
-            const d = new Date(iso);
-            if (isNaN(d.getTime())) return iso;
-            return d.toLocaleString();
-        }
+
 
         function ensureTooltip() {
             if (!tooltipEl) tooltipEl = document.getElementById("bsim-tooltip");
@@ -501,6 +584,41 @@
         const handleHover = (event, state) => {
             const token = findInPath(event, '.feature-highlight');
             const tooltipTarget = findInPath(event, '[data-side]');
+            const funcCallToken = findInPath(event, '[data-called-func-id]');
+
+            // Code preview on func_call hover
+            if (funcCallToken) {
+                const calledFuncId = funcCallToken.getAttribute('data-called-func-id');
+                const isExternal = funcCallToken.getAttribute('data-is-external') === 'true';
+                const targetName = funcCallToken.getAttribute('data-target-name') || calledFuncId.split(':').pop();
+                
+                if (state) {
+                    if (calledFuncId && isExternal) {
+                        // External function: show badge tooltip
+                        const extName = targetName || calledFuncId.replace('ext:', '');
+                        showTooltip(`<div style="display:flex;align-items:center;gap:6px;">
+                            <span style="background:rgba(249,38,114,0.2);color:#f92672;border:1px solid rgba(249,38,114,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                            <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
+                        </div>`, event.clientX, event.clientY);
+                    } else if (calledFuncId && !isExternal) {
+                        if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
+                            window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, event);
+                        } else if (typeof window.showCodePreview === 'function') {
+                            window.showCodePreview(calledFuncId, targetName, null, null, null, event);
+                        }
+                    }
+                } else {
+                    if (calledFuncId && isExternal) {
+                        hideTooltip();
+                    } else if (calledFuncId && !isExternal) {
+                        if (window.parent && window.parent !== window && typeof window.parent.hideCodePreview === 'function') {
+                            window.parent.hideCodePreview();
+                        } else if (typeof window.hideCodePreview === 'function') {
+                            window.hideCodePreview();
+                        }
+                    }
+                }
+            }
 
             if (token) {
                 const hashes = getHashesForToken(token);
@@ -549,19 +667,88 @@
 
             let content = '';
             for (const token of tokens) {
-                const feat_classes = token.hash_list.map(h => `feat-${h}`).join(' ');
-                const t_text = token.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-                content += `<span class="token token-${token.type} ` +
-                    `${token.has_features ? "feature-highlight" : ""} ` +
-                    `${token.diff_class} ${feat_classes}" ` +
-                    `data-side="${token.side}" data-idx="${token.global_idx}">` +
-                    `${t_text}</span>`;
+                const titleAttr = token.called_func_id ? `title="Click to navigate to ${token.target_name || 'called function'}"` : '';
+                content += renderTokenHtml(token, token.diff_class || '')
+                    .replace('<span ', `<span data-side="${token.side}" ${titleAttr} `);
             }
 
             return `<div class="code-line ${chunk_class}" ${data_attrs}>` +
-                `<div class="gutter"><div class="line-num" title="${tooltip_text}">${line_idx}</div></div>` +
+                `<div class="gutter" contenteditable="false"><div class="line-num" title="${tooltip_text}">${line_idx}</div></div>` +
                 `<div class="line-content">${content}</div></div>`;
+        }
+
+        function setupKeyboardSelection() {
+            leftContent.setAttribute('contenteditable', 'true');
+            leftContent.setAttribute('spellcheck', 'false');
+            rightContent.setAttribute('contenteditable', 'true');
+            rightContent.setAttribute('spellcheck', 'false');
+            
+            const syncCaret = () => {
+                const sel = window.getSelection();
+                if (!sel.rangeCount) return;
+                const node = sel.anchorNode;
+                if (!node || !(leftContent.contains(node) || rightContent.contains(node))) return;
+
+                const rect = sel.getRangeAt(0).getBoundingClientRect();
+                if (rect.height === 0 || (rect.top === 0 && rect.left === 0)) return;
+
+                const containerRect = scrollEl.getBoundingClientRect();
+                const padding = 60;
+                let delta = 0;
+
+                if (rect.top < containerRect.top + padding) {
+                    delta = rect.top - (containerRect.top + padding);
+                } else if (rect.bottom > containerRect.bottom - padding) {
+                    delta = rect.bottom - (containerRect.bottom - padding);
+                }
+
+                if (Math.abs(delta) > 1) {
+                    scrollEl.scrollTop += delta;
+                }
+            };
+
+            const handleKeydown = (e) => {
+                const isCmd = e.ctrlKey || e.metaKey;
+                const key = e.key;
+
+                if (isCmd && key.toLowerCase() === 'a') return;
+                if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
+                
+                const allowedKeys = [
+                    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+                    'Home', 'End', 'PageUp', 'PageDown', 'Shift', 'Control', 'Alt', 'Meta'
+                ];
+                
+                if (allowedKeys.includes(key)) {
+                    requestAnimationFrame(syncCaret);
+                    return;
+                }
+                
+                if (!isCmd) e.preventDefault();
+            };
+
+            const preventInput = (e) => e.preventDefault();
+
+            leftContent.addEventListener('keydown', handleKeydown);
+            leftContent.addEventListener('beforeinput', preventInput);
+            rightContent.addEventListener('keydown', handleKeydown);
+            rightContent.addEventListener('beforeinput', preventInput);
+
+            // Force internal scroll to 0 at all times to prevent misalignment
+            const forceZeroScroll = (e) => { e.currentTarget.scrollTop = 0; };
+            leftContent.addEventListener('scroll', forceZeroScroll);
+            rightContent.addEventListener('scroll', forceZeroScroll);
+            const lp = leftContent.closest('.diff-pane');
+            const rp = rightContent.closest('.diff-pane');
+            if (lp) lp.addEventListener('scroll', forceZeroScroll);
+            if (rp) rp.addEventListener('scroll', forceZeroScroll);
+
+            // Also sync on mouse selection/click
+            let selTimeout = null;
+            document.addEventListener('selectionchange', () => {
+                if (selTimeout) clearTimeout(selTimeout);
+                selTimeout = setTimeout(syncCaret, 20);
+            });
         }
 
         function renderRows(start, end) {
@@ -569,16 +756,80 @@
             lastStart = start; lastEnd = end;
 
             const rows = window.bsimRows || [];
-            let lHtml = '', rHtml = '';
+            
+            // Map existing nodes for reuse
+            const lMap = new Map(), rMap = new Map();
+            Array.from(leftContent.children).forEach(el => {
+                const ln = el.querySelector('.line-num');
+                if (ln && ln.innerText.trim()) lMap.set(`L${ln.innerText.trim()}`, el);
+                else if (el.classList.contains('code-spacer')) lMap.set(`S${el.dataset.rowIdx}`, el);
+            });
+            Array.from(rightContent.children).forEach(el => {
+                const ln = el.querySelector('.line-num');
+                if (ln && ln.innerText.trim()) rMap.set(`L${ln.innerText.trim()}`, el);
+                else if (el.classList.contains('code-spacer')) rMap.set(`S${el.dataset.rowIdx}`, el);
+            });
+
+            const neededL = [], neededR = [];
 
             for (let i = start; i < end; i++) {
                 const row = rows[i];
-                lHtml += (row && row.l) ? renderSideHtml(row.l) : SPACER;
-                rHtml += (row && row.r) ? renderSideHtml(row.r) : SPACER;
+                
+                // Left side
+                let lEl;
+                if (row && row.l) {
+                    lEl = lMap.get(`L${row.l.line_idx}`);
+                    if (!lEl) {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = renderSideHtml(row.l);
+                        lEl = temp.firstElementChild;
+                    }
+                    lMap.delete(`L${row.l.line_idx}`);
+                } else {
+                    lEl = lMap.get(`S${i}`);
+                    if (!lEl) {
+                        lEl = document.createElement('div');
+                        lEl.className = 'code-spacer';
+                        lEl.dataset.rowIdx = i;
+                        lEl.setAttribute('contenteditable', 'false');
+                    }
+                    lMap.delete(`S${i}`);
+                }
+                neededL.push(lEl);
+
+                // Right side
+                let rEl;
+                if (row && row.r) {
+                    rEl = rMap.get(`L${row.r.line_idx}`);
+                    if (!rEl) {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = renderSideHtml(row.r);
+                        rEl = temp.firstElementChild;
+                    }
+                    rMap.delete(`L${row.r.line_idx}`);
+                } else {
+                    rEl = rMap.get(`S${i}`);
+                    if (!rEl) {
+                        rEl = document.createElement('div');
+                        rEl.className = 'code-spacer';
+                        rEl.dataset.rowIdx = i;
+                        rEl.setAttribute('contenteditable', 'false');
+                    }
+                    rMap.delete(`S${i}`);
+                }
+                neededR.push(rEl);
             }
 
-            leftContent.innerHTML = lHtml;
-            rightContent.innerHTML = rHtml;
+            // Cleanup
+            lMap.forEach(el => el.remove());
+            rMap.forEach(el => el.remove());
+
+            // Surgical insert: ensure order without clearing everything
+            for (let i = 0; i < neededL.length; i++) {
+                if (leftContent.children[i] !== neededL[i]) leftContent.insertBefore(neededL[i], leftContent.children[i] || null);
+                if (rightContent.children[i] !== neededR[i]) rightContent.insertBefore(neededR[i], rightContent.children[i] || null);
+            }
+
             applyLocks(leftContent);
             applyLocks(rightContent);
         }
@@ -594,6 +845,15 @@
             const offset = (start * rowH) - st;
             leftContent.style.transform = `translateY(${offset}px)`;
             rightContent.style.transform = `translateY(${offset}px)`;
+
+            // Force internal scroll to 0 to prevent browser from misaligning panes
+            // when it tries to "scroll into view" for the caret.
+            leftContent.scrollTop = 0;
+            rightContent.scrollTop = 0;
+            const lp = leftContent.closest('.diff-pane');
+            const rp = rightContent.closest('.diff-pane');
+            if (lp) lp.scrollTop = 0;
+            if (rp) rp.scrollTop = 0;
         }
 
         function initVirtualScroll() {
@@ -618,18 +878,35 @@
                 scrollEl.addEventListener('contextmenu', showTokenContextMenu, true);
                 scrollEl.addEventListener('click', function (event) {
                     const target = event.composedPath ? event.composedPath()[0] : event.target;
-                    const tokenTarget = target?.closest?.('.feature-highlight');
+                    const tokenTarget = target?.closest?.('.token');
                     if (tokenTarget) {
-                        const hashes = getHashesForToken(tokenTarget);
-                        if (hashes) window.toggleLock(hashes, tokenTarget);
+                        const calledFuncId = tokenTarget.getAttribute('data-called-func-id');
+                        if (calledFuncId) {
+                            navigateToFunction(calledFuncId, event);
+                            return;
+                        }
+                        if (tokenTarget.classList.contains('feature-highlight')) {
+                            const hashes = getHashesForToken(tokenTarget);
+                            if (hashes) window.toggleLock(hashes, tokenTarget);
+                        } else {
+                            window.clearAllLocks();
+                        }
                     } else {
                         window.clearAllLocks();
                     }
                 }, true);
-                scrollEl.addEventListener('pointermove', e => moveTooltip(e.clientX, e.clientY));
+                scrollEl.addEventListener('pointermove', e => {
+                    moveTooltip(e.clientX, e.clientY);
+                    if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
+                        window.parent.moveCodePreviewFromIframe(window.name, e);
+                    }
+                });
                 scrollEl.dataset.listenersAttached = "true";
             }
 
+            setupKeyboardSelection();
+            setupRichCopyInterceptor(leftContent, () => (window.bsimRows || []).map(r => r.l).filter(r => r && r.line_idx !== undefined), { showDiffs: true });
+            setupRichCopyInterceptor(rightContent, () => (window.bsimRows || []).map(r => r.r).filter(r => r && r.line_idx !== undefined), { showDiffs: true });
             onScroll();
 
             requestAnimationFrame(() => {
@@ -646,75 +923,21 @@
             });
         }
 
-        function copyToClipboard(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const originalHtml = btn.innerHTML;
-                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-            }).catch(err => console.error('Failed to copy', err));
-        }
 
         // --- Application Logic ---
         function formatMetaCard(m, fullId, isLeft) {
             if (!m) return "";
-            // Handle both dash and underscore conventions
-            const label = m['function_name'] || m['function_name'] || 'unknown_func';
-            const returnType = m['return_type'] || m['return_type'] || 'N/A';
-            const addr = fullId ? fullId.split(':').pop() : 'N/A';
-            const fileName = m['file_name'] || m['file_name'] || 'N/A';
-            const lang = m['language_id'] || m['language_id'] || 'N/A';
-
             const swapIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3L4 7l4 4"/><path d="M4 7h16"/><path d="M16 21l4-4-4-4"/><path d="M20 17H4"/></svg>`;
             const swapBtnHtml = isLeft ? `<button class="swap-btn" id="swap-btn" title="Swap Sides">${swapIcon}</button>` : '';
 
-            // Extract tags for default display
-            const tags = (m['tags'] || []);
-            const tagsHtml = tags.length > 0 ? tags.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
-
-            // Generate "More Info" rows for all other keys (excluding what we show by default)
-            const skipKeys = ['function_name', 'function_name', 'return_type', 'return_type', 'entrypoint_address', 'entrypoint_address', 'file_name', 'file_name', 'language_id', 'language_id', 'full_id', 'full_id', 'tags'];
-            let moreHtml = '';
-            Object.keys(m).sort().forEach(k => {
-                if (!skipKeys.includes(k)) {
-                    let val = m[k];
-                    
-                    // Format dates if the key implies it
-                    if (k.endsWith('_date') || k === 'created_at' || k === 'last_updated') {
-                        val = formatDate(val);
-                    }
-
-                    if (Array.isArray(val)) {
-                        val = val.length > 0 ? val.map(t => `<span class="tag-card">${t}</span>`).join('') : '<span style="color:#75715e">none</span>';
-                    } else if (typeof val === 'object' && val !== null) {
-                        val = JSON.stringify(val);
-                    }
-                    moreHtml += `<div class="meta-row"><span class="meta-label">${k}</span><span class="meta-value">${val}</span></div>`;
-                }
+            return renderFunctionMetadata(null, m, fullId, {
+                showDiffBtn: true,
+                showCodeLink: true,
+                side: isLeft ? 'l' : 'r',
+                detailId: `meta-more-${isLeft ? 'l' : 'r'}`,
+                detailsToggleFn: 'toggleBothDetail()',
+                rightHeaderHtml: swapBtnHtml
             });
-
-            return `
-            <div class="func-meta-card" data-side="${isLeft ? 'l' : 'r'}">
-                <span class="meta-title">
-                    <div style="display:flex; align-items:center; gap:8px">
-                        <span><span class="meta-return-type">${returnType}</span> ${label}</span>
-                        <button class="btn-copy" title="Copy Function ID: ${fullId}" onclick="copyToClipboard('${fullId}', this)">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                        </button>
-                        <button class="meta-more-btn" onclick="toggleBothDetail()">Details</button>
-                        <a href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" class="meta-more-btn" style="text-decoration:none; display:inline-flex; align-items:center;">Code ↗</a>
-                    </div>
-                    ${swapBtnHtml}
-                </span>
-                <div class="meta-row"><span class="meta-label">Address</span><span class="meta-value">${addr}</span></div>
-                <div class="meta-row"><span class="meta-label">File</span><span class="meta-value">${fileName}</span></div>
-                <div class="meta-row"><span class="meta-label">Language</span><span class="meta-value">${lang}</span></div>
-                <div class="meta-row"><span class="meta-label">Tags</span><span class="meta-value" style="white-space:normal">${tagsHtml}</span></div>
-                
-                <div class="meta-more-container" id="meta-more-${isLeft ? 'l' : 'r'}">
-                    ${moreHtml}
-                </div>
-            </div>
-        `;
         }
 
         window.currentScores = {};
@@ -726,6 +949,10 @@
                 if (!res.ok) throw new Error("Failed to fetch similarity");
                 const data = await res.json();
                 window.currentScores = data.scores || {};
+                window.currentSimId1 = id1;
+                window.currentSimId2 = id2;
+                window.currentSimTags = { tags: data.tags || [], user_tags: data.user_tags || [] };
+                
                 bar.style.display = 'flex';
                 updateSimDisplay();
             } catch (e) {
@@ -738,6 +965,12 @@
             const algo = document.getElementById('sim-algo-select').value;
             const scoreVal = document.getElementById('sim-score-val');
             const score = window.currentScores?.[algo];
+
+            if (window.currentSimId1 && window.currentSimId2) {
+                const simId = `${window.currentSimId1}|${window.currentSimId2}|${algo}`;
+                const tagsData = window.currentSimTags || { tags: [], user_tags: [] };
+                document.getElementById('similarity-tags-container').innerHTML = renderTagEditor('similarity', simId, tagsData.tags, tagsData.user_tags);
+            }
 
             if (score === null || score === undefined) {
                 scoreVal.innerText = "N/A";
@@ -781,8 +1014,10 @@
                 if (!response.ok) throw new Error("API Network error");
                 const data = await response.json();
 
+                await fetchTagMetadata(id1.split(':')[0]);
                 metaContainer.innerHTML = formatMetaCard(data.meta1, id1, true) + formatMetaCard(data.meta2, id2, false);
                 fetchSimilarity(id1, id2);
+                if (typeof updateDiffQueueUI === 'function') updateDiffQueueUI();
 
                 window.bsimRows = data.rows;
                 window.tokenTipsL = data.left_tips || {};
@@ -871,7 +1106,7 @@
             const addr = document.getElementById(`select-func-${side}`).value;
 
             if (coll && md5 && addr) {
-                document.getElementById(`manual-id-${side}`).value = `${coll}:function:${md5}:${addr}`;
+                document.getElementById(`manual-id-${side}`).value = `${coll}:func:${md5}:${addr}`;
             }
             validateComparison();
         }

@@ -1,12 +1,9 @@
-from flask import Blueprint, request, jsonify
+from flask import request
 from bsimvis.app.services.function_service import fetch_function_data
 from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.routes.function_code import render_single_function
 
-function_feature_bp = Blueprint("function_feature", __name__)
 
-
-@function_feature_bp.route("/api/function/features", methods=["GET"])
 def get_function_features():
     """
     Returns a list of all raw features for a function, enriched with the
@@ -14,12 +11,71 @@ def get_function_features():
     """
     func_id = request.args.get("id")
     if not func_id:
-        return jsonify({"detail": "Missing function id"}), 400
+
+        try:
+            r = get_redis()
+            fid = f"{collection}:func:{md5}:{addr}"
+            cluster_ids = r.smembers(f"{fid}:clusters")
+            clusters = []
+            algo = "unweighted_cosine"
+            if cluster_ids:
+                cluster_pipe = r.pipeline()
+                for cid_bytes in cluster_ids:
+                    cid = (
+                        cid_bytes.decode()
+                        if isinstance(cid_bytes, bytes)
+                        else cid_bytes
+                    )
+                    cluster_pipe.json().get(
+                        f"{collection}:cluster:{algo}:{cid}:meta", "$"
+                    )
+
+                raw_cluster_metas = cluster_pipe.execute()
+
+                for raw_cm in raw_cluster_metas:
+                    if raw_cm:
+                        cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                        if isinstance(cm, str):
+                            import json
+
+                            cm = json.loads(cm)
+                        if cm:
+                            clusters.append(
+                                {
+                                    "cluster_id": cm.get("cluster_id"),
+                                    "cluster_uuid": cm.get("cluster_uuid"),
+                                    "cluster_name": cm.get("cluster_name"),
+                                    "cohesion_score": cm.get("cohesion_score", 0),
+                                    "member_count": cm.get("member_count", 0),
+                                    "cluster_stability": cm.get(
+                                        "cluster_stability", 0.0
+                                    ),
+                                    "avg_features": cm.get("avg_features", 0),
+                                }
+                            )
+
+                clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+
+            meta["clusters"] = clusters
+
+        except Exception as ex:
+            print(f"Error fetching clusters: {ex}")
+
+        for field in [
+            "cluster_id",
+            "cluster_name",
+            "cluster_uuid",
+            "cluster_stability",
+        ]:
+            if "meta" in locals() and isinstance(meta, dict):
+                meta.pop(field, None)
+
+        return {"detail": "Missing function id"}, 400
 
     try:
         parts = func_id.split(":")
         if len(parts) < 4:
-            return jsonify({"detail": f"Invalid ID format: {func_id}"}), 400
+            return {"detail": f"Invalid ID format: {func_id}"}, 400
 
         if parts[0] == "idx":
             # New Format: idx:collection:func:md5:addr
@@ -35,7 +91,7 @@ def get_function_features():
         source, features, meta, tf_map = fetch_function_data(collection, md5, addr)
 
         if not source:
-            return jsonify({"detail": "Function not found"}), 404
+            return {"detail": "Function not found"}, 404
 
         # 1. Get the rendered rows (lines with tokens) to maintain consistent format
         rows, tips = render_single_function(source, features, tf_map)
@@ -76,23 +132,26 @@ def get_function_features():
 
         if meta:
             if "function_id" not in meta:
-                meta["function_id"] = f"idx:{collection}:func:{md5}:{addr}"
+                meta["function_id"] = f"{collection}:func:{md5}:{addr}"
             if "file_id" not in meta:
-                meta["file_id"] = f"idx:{collection}:file:{md5}"
+                meta["file_id"] = f"{collection}:file:{md5}"
             if "batch_id" not in meta and meta.get("batch_uuid"):
-                meta["batch_id"] = f"idx:{collection}:batch:{meta['batch_uuid']}"
+                meta["batch_id"] = f"{collection}:batch:{meta['batch_uuid']}"
             if "entry_date" in meta:
                 meta["entry_date"] = parse_timestamp(meta["entry_date"])
             if "file_date" in meta:
                 meta["file_date"] = parse_timestamp(meta["file_date"])
 
-        return jsonify(
-            {"id": func_id, "meta": meta or {}, "features": rich_features, "tips": tips}
-        )
+        return {
+            "id": func_id,
+            "meta": meta or {},
+            "features": rich_features,
+            "tips": tips,
+        }
 
     except Exception as e:
         import traceback
 
         logging_err = f"Feature API error: {str(e)}\n{traceback.format_exc()}"
         print(logging_err)
-        return jsonify({"detail": str(e)}), 500
+        return {"detail": str(e)}, 500

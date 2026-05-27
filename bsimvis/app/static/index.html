@@ -4,7 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BSim Vis Dashboard</title>
+    <title>BSimVis Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
         integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
         crossorigin="anonymous" referrerpolicy="no-referrer" />
@@ -26,12 +27,17 @@
     <script src="/js/dashboard.js"></script>
     <script src="/js/jobs.js"></script>
     <script src="/js/table_selection.js"></script>
-
+</head>
 <body>
+
     <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
     <nav>
-        <h2 title="BSim Vis"><i class="fa-solid fa-circle-nodes" style="color: var(--accent);"></i> <span>BSim
-                Vis</span></h2>
+        <h2 title="BSimVis">
+            <a href="https://github.com/MISP/bsimvis" target="_blank" id="brand-link">
+                <img src="/logo.svg" alt="Logo">
+                <span>BSimVis</span>
+            </a>
+        </h2>
         <a href="#collections" id="nav-collections" title="Collections"
             style="border-bottom: 1px solid var(--border); margin-bottom: 15px; padding-bottom: 15px;">
             <i class="fa-solid fa-layer-group"></i>
@@ -48,7 +54,8 @@
                 class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
         <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
             style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i> <span>Clusters</span></a>
+        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i>
+            <span>Clusters</span></a>
         <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
                 class="fa-solid fa-sitemap"></i>
             <span>Call Graph</span></a>
@@ -57,22 +64,22 @@
             <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"
                 style="color:var(--accent); font-weight:bold;"><i class="fa-solid fa-plus-minus"
                     style="color: var(--accent);"></i> <span>Diffing Tool</span></a>
-            <a href="#upload" id="nav-upload" title="Upload Binaries"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
-            <a href="#jobs" id="nav-jobs" title="Background Jobs"
-                style="color:var(--text);"><i id="nav-jobs-icon" class="fa-solid fa-server"
-                    style="color: var(--subtle);"></i><div id="nav-jobs-loader" class="nav-job-spinner" style="display:none;"></div> <span>Jobs</span>
+            <a href="#upload" id="nav-upload" title="Upload Binaries"><i class="fa-solid fa-cloud-arrow-up"></i>
+                <span>Upload</span></a>
+            <a href="#jobs" id="nav-jobs" title="Background Jobs" style="color:var(--text);"><i id="nav-jobs-icon"
+                    class="fa-solid fa-server" style="color: var(--subtle);"></i>
+                <div id="nav-jobs-loader" class="nav-job-spinner" style="display:none;"></div> <span>Jobs</span>
             </a>
             <div class="history-dropdown-container" style="position: relative;">
-                <a href="javascript:void(0)" id="nav-history" title="Search History"
-                    style="color:var(--text);"><i class="fa-solid fa-clock-rotate-left"
-                        style="color: var(--subtle);"></i> <span>History</span>
-                    <i class="fa-solid fa-chevron-down" id="nav-history-chevron" style="font-size:0.75rem; margin-left:auto; transition: transform 0.2s;"></i>
+                <a href="javascript:void(0)" id="nav-history" title="Search History" style="color:var(--text);"><i
+                        class="fa-solid fa-clock-rotate-left" style="color: var(--subtle);"></i> <span>History</span>
+                    <i class="fa-solid fa-chevron-down" id="nav-history-chevron"
+                        style="font-size:0.75rem; margin-left:auto; transition: transform 0.2s;"></i>
                 </a>
                 <div id="history-dropdown" class="history-dropdown" style="display:none;"></div>
             </div>
-            <a href="/api/" target="_blank" id="nav-api" title="API Documentation"
-                style="color:var(--text);"><i class="fa-solid fa-book"
-                    style="color: var(--subtle);"></i> <span>API</span></a>
+            <a href="/api/" target="_blank" id="nav-api" title="API Documentation" style="color:var(--text);"><i
+                    class="fa-solid fa-book" style="color: var(--subtle);"></i> <span>API</span></a>
         </div>
     </nav>
 
@@ -103,19 +110,31 @@
                         <button id="view-history-btn" class="top-action-btn" title="View Search History">
                             <i class="fa-solid fa-clock-rotate-left"></i> History
                         </button>
-                        <div id="view-history-dropdown" class="history-dropdown view-history-dropdown" style="display:none;"></div>
+                        <div id="view-history-dropdown" class="history-dropdown view-history-dropdown"
+                            style="display:none;"></div>
                     </div>
-                    <div class="export-dropdown-container" id="export-dropdown-container" style="position:relative; display:none;">
-                        <button id="export-btn" class="top-action-btn" title="Export Results" onclick="toggleExportDropdown(event)">
+                    <div class="export-dropdown-container" id="export-dropdown-container"
+                        style="position:relative; display:none;">
+                        <button id="export-btn" class="top-action-btn" title="Export Results"
+                            onclick="toggleExportDropdown(event)">
                             <i class="fa-solid fa-download" style="color:var(--accent);"></i>
                         </button>
-                        <div id="export-dropdown" class="history-dropdown view-history-dropdown" style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
+                        <div id="export-dropdown" class="history-dropdown view-history-dropdown"
+                            style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
                             <div class="history-dropdown-title" style="color:var(--accent);">Export Options</div>
-                            <a href="#" onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();" class="history-item" style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
-                                <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as CSV
+                            <a href="#"
+                                onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();"
+                                class="history-item"
+                                style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as
+                                CSV
                             </a>
-                            <a href="#" onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();" class="history-item" style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
-                                <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as JSON
+                            <a href="#"
+                                onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();"
+                                class="history-item"
+                                style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as
+                                JSON
                             </a>
                         </div>
                     </div>
@@ -311,7 +330,9 @@
     </div>
 
     <div id="window-tray"></div>
-    <div id="notification-container" style="position: fixed; bottom: 60px; right: 20px; z-index: 100000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
+    <div id="notification-container"
+        style="position: fixed; bottom: 60px; right: 20px; z-index: 100000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;">
+    </div>
 
 
     <!-- Extracted script block 2 -->

@@ -7,6 +7,8 @@
 * Cluster search view
 * Dendrogram and Packing diagram
 
+![alt text](/img/function_cluster_view.png)
+
 ## Search
 * Full text file search, sorting and filtering
 * Full text feature search, sorting and filtering
@@ -44,6 +46,8 @@
 * New window management, allowing multiple code preview in the same page
 * Modular frontend JS
 
+![alt text](/img/new_sim_view.png)
+
 # Experimental
 
-* Tests with Milvus vector database
+* Tests with Milvus vector database for building similarities

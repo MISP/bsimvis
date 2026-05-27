@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="120 74 272 272" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <!-- Branding Eye Gradients -->
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#C96CFF"/>
+      <stop offset="100%" stop-color="#5BE7FF"/>
+    </linearGradient>
+
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7B61FF"/>
+      <stop offset="100%" stop-color="#39E0B8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Ring Segments (Thicker for small scale visibility) -->
+  <g fill="none" stroke-width="28" stroke-linecap="round">
+    <path d="M 375.54 220.46 A 120 120 0 0 1 354.30 278.83" stroke="#5B6CFF"/>
+    <path d="M 333.13 301.93 A 120 120 0 0 1 276.84 328.18" stroke="#6279FF"/>
+    <path d="M 245.54 329.54 A 120 120 0 0 1 187.17 308.30" stroke="#5B8CFF"/>
+    <path d="M 164.07 287.13 A 120 120 0 0 1 137.82 230.84" stroke="#43B0FF"/>
+    <path d="M 136.46 199.54 A 120 120 0 0 1 157.70 141.17" stroke="#39C7D9"/>
+    <path d="M 178.87 118.07 A 120 120 0 0 1 235.16 91.82" stroke="#49D18A"/>
+    <path d="M 266.46 90.46 A 120 120 0 0 1 324.83 111.70" stroke="#76D65E"/>
+    <path d="M 347.93 132.87 A 120 120 0 0 1 374.18 189.16" stroke="#8AD95A"/>
+  </g>
+
+  <!-- Primary Rotated Eye (Rotated by -25 degrees, bold styling, flat no-glow) -->
+  <g transform="rotate(-25, 256, 210)">
+    <!-- Outer Eye Filled Zone -->
+    <path d="M 151 210 C 190 120, 320 120, 361 210 C 320 300, 190 300, 151 210 Z" 
+          fill="url(#grad1)" fill-opacity="0.3" stroke="url(#grad1)" stroke-width="16" stroke-opacity="1"/>
+  </g>
+
+  <!-- Center Hub -->
+  <circle cx="256" cy="210" r="36" fill="#F4F7FF"/>
+</svg>

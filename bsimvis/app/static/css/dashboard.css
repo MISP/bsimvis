@@ -29,19 +29,58 @@ nav {
 }
 
 nav h2 {
-    padding: 0 20px;
+    padding: 0;
     color: var(--accent);
     font-size: 1.1rem;
     text-transform: uppercase;
     letter-spacing: 2px;
     display: flex;
     align-items: center;
+    justify-content: center; /* centered */
     gap: 12px;
     white-space: nowrap;
-    overflow: hidden;
+    overflow: visible;
     box-sizing: border-box;
-    margin: 0;
+    margin: 0 0 20px 0; /* space below logo */
 }
+
+#brand-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: inherit;
+    text-decoration: none;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+#brand-link:hover {
+    transform: scale(1.08);
+}
+
+/* Center the logo image within its container */
+nav h2 img {
+    display: block;
+    margin: 0;
+    flex-shrink: 0;
+    height: 48px;
+    width: 48px;
+}
+
+/* Collapsed sidebar adjustments */
+body.sidebar-collapsed nav h2 {
+    padding: 0;                   /* remove padding to allow bigger logo */
+    justify-content: center;      /* center the icon */
+    margin-bottom: 10px;
+}
+body.sidebar-collapsed nav h2 span {
+    display: none;                /* hide text label */
+}
+body.sidebar-collapsed nav h2 img {
+    height: 44px;                 /* larger logo for narrow bar */
+    width: 44px;
+}
+
 
 nav h2 i {
     font-size: 1.3rem;
@@ -1160,16 +1199,21 @@ body.sidebar-collapsed #sidebar-toggle {
 }
 
 body.sidebar-collapsed #current-collection-name {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     max-width: 50px;
-    margin-top: 4px;
+    margin-top: 0;
     display: inline-block;
+    text-align: center;
 }
 
 body.sidebar-collapsed nav a#nav-collections {
     flex-direction: column;
     height: auto;
     padding: 15px 0;
+}
+
+body.sidebar-collapsed nav a#nav-collections i {
+    display: none;
 }
 
 /* Top Bar Buttons */
@@ -1441,13 +1485,29 @@ body.sidebar-collapsed nav a#nav-collections {
 }
 
 /* Sidebar Collapsed Overrides */
-body.sidebar-collapsed .history-dropdown {
-    left: 75px !important;
-    bottom: 60px !important;
-}
-
 body.sidebar-collapsed nav #nav-history-chevron {
     display: none !important;
+}
+
+/* History Flyout (collapsed sidebar) */
+#history-flyout {
+    position: fixed;
+    left: var(--sidebar-width);
+    top: 200px;
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    z-index: 30000;
+    display: none;
+    flex-direction: column;
+    min-width: 300px;
+    max-width: 380px;
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 20px 0 50px rgba(0,0,0,0.9);
+    border-radius: 0 8px 8px 0;
+    padding: 0;
+    animation: collectionFlyoutFade 0.2s ease-out;
 }
 
 

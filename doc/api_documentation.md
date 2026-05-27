@@ -68,6 +68,46 @@ High-performance similarity search with advanced filtering.
   - `metrics`: Performance metrics for the search operation.
   - `total`, `pool_truncated`: Search result statistics.
 
+### Similarity Calculation & Management
+
+#### Similarity List
+**`GET /api/similarity/list`**
+Lists pre-calculated similarity results for a file or ingestion batch.
+- **Parameters:**
+  - `collection`: (default: `main`)
+  - `md5`: File MD5 (required unless `batch` is provided).
+  - `batch`: Batch UUID (required unless `md5` is provided).
+  - `algo`: Similarity algorithm (default: `unweighted_cosine`).
+  - `limit`: Max results to return (default: `20`).
+  - `offset`: Pagination offset (default: `0`).
+
+#### Build Similarity
+**`POST /api/similarity/build`**
+Enqueues a background job to pre-calculate similarity pairs.
+- **Request Body (JSON):**
+  - `collection`: (required)
+  - `md5`: File MD5.
+  - `batch`: Batch UUID.
+  - `algo`: (default: `unweighted_cosine`)
+  - `min_score`: (default: `0.95`)
+  - `top_k`: (default: `20`)
+  - `min_features`: (default: `0`)
+  - `all`: (default: `false`)
+
+#### Rebuild Similarity
+**`POST /api/similarity/rebuild`**
+Enqueues a clear + build pipeline to recalculate similarity pairs.
+- **Request Body (JSON):** (Same schema as Build Similarity)
+
+#### Clear Similarity
+**`POST /api/similarity/clear`**
+Enqueues a background job to delete calculated similarity pairs.
+- **Request Body (JSON):**
+  - `collection`: (required)
+  - `md5`: File MD5.
+  - `batch`: Batch UUID.
+  - `algo`: (default: `unweighted_cosine`)
+
 ---
 
 ## Clustering APIs
@@ -87,12 +127,40 @@ Tags can be applied to files, functions, and similarities.
 
 ---
 
-## Upload API
+## Ingestion & Upload APIs
+
+### Raw Binary Upload
 **`POST /api/file/upload`**
 Uploads a raw binary file for server-side analysis.
-- **Configuration Params**: `collection`, `profile` (fast/full), `processor` (Ghidra Language ID), `cspec` (Ghidra Compiler Spec ID), `min_func_len`.
-- **Similarity Config**: `algo`, `top_k`, `min_score`, `min_features`, `skip_sim`.
-- **Metadata**: `batch_uuid`, `batch_name`, `tags`.
+- **Configuration Params (Query or Form):**
+  - `collection`: Collection name (default: `main`).
+  - `profile`: Ghidra analysis profile: `fast` or `full` (default: `fast`).
+  - `processor`: Force a specific Ghidra Language ID (e.g., `x86:LE:64:default`).
+  - `cspec`: Force a specific Ghidra Compiler Spec ID (e.g., `gcc`).
+  - `min_func_len`: Minimum function length in instructions (default: `10`).
+- **Similarity Config (Query or Form):**
+  - `algo`: Similarity algorithm (`jaccard`, `unweighted_cosine`, `milvus_sparse`).
+  - `top_k`: Top K matches per function.
+  - `min_score`: Minimum similarity score threshold.
+  - `min_features`: Minimum feature count required.
+  - `skip_sim`: Set to `true` to skip building similarities.
+- **Metadata (Query or Form):**
+  - `batch_uuid`: Ingestion batch UUID.
+  - `batch_name`: Ingestion batch name.
+  - `tags`: Optional tags to associate with the uploaded file.
+
+### Pre-analyzed Ingestion Data Upload
+**`POST /api/file/upload_file_data`**
+Uploads JSON metadata and function feature maps directly from client-side extractor tools.
+- **Request Body (JSON):**
+  - `collection`: Collection name (default: `main`).
+  - `file_md5`: File MD5 (optional, will be calculated if missing).
+  - `top_k`: Top K matches per function.
+  - `min_score`: Minimum similarity score threshold.
+  - `min_features`: Minimum feature count required.
+  - `algo`: Ingestion/similarity algorithm.
+  - `skip_sim`: Set to `true` to skip similarity calculation step.
+  - Plus standard Ghidra feature extraction payload fields (e.g. `file_name`, `functions`, `features`, `language_id`).
 
 ---
 

@@ -100,7 +100,45 @@ function_meta_model = api.model(
     },
 )
 
+# File Models
+file_upload_data_model = api.model(
+    "FileUploadData",
+    {
+        "collection": fields.String(default="main", description="Collection name"),
+        "file_md5": fields.String(description="File MD5 (will be calculated if missing)"),
+        "top_k": fields.Integer(description="Top K matches per function"),
+        "min_score": fields.Float(description="Minimum similarity score threshold"),
+        "min_features": fields.Integer(description="Minimum feature count required"),
+        "algo": fields.String(default="unweighted_cosine", description="Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)"),
+        "skip_sim": fields.Boolean(default=False, description="Skip similarity build"),
+    }
+)
+
 # Similarity Models
+similarity_build_model = api.model(
+    "SimilarityBuild",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "md5": fields.String(example="16c2addf..."),
+        "batch": fields.String(example="uuid..."),
+        "algo": fields.String(default="unweighted_cosine"),
+        "min_score": fields.Float(default=0.95),
+        "top_k": fields.Integer(default=20),
+        "min_features": fields.Integer(default=0),
+        "all": fields.Boolean(default=False),
+    },
+)
+
+similarity_clear_model = api.model(
+    "SimilarityClear",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "md5": fields.String(example="16c2addf..."),
+        "batch": fields.String(example="uuid..."),
+        "algo": fields.String(default="unweighted_cosine"),
+    },
+)
+
 sim_pair_model = api.model(
     "SimilarityPair",
     {
@@ -318,9 +356,33 @@ class FileSearch(Resource):
                 "description": "Filter by user-assigned tag only",
                 "example": "reviewed",
             },
+            "file_tag": {
+                "description": "Filter by file-level tag (alias for tag)",
+            },
+            "file_static_tag": {
+                "description": "Filter by file-level static tag",
+            },
+            "file_user_tag": {
+                "description": "Filter by file-level user tag",
+            },
             "exclude_tag": {
                 "description": "Exclude files with this tag",
                 "example": "benign",
+            },
+            "exclude_static_tag": {
+                "description": "Exclude files with this static tag",
+            },
+            "exclude_user_tag": {
+                "description": "Exclude files with this user tag",
+            },
+            "exclude_file_tag": {
+                "description": "Exclude files with this file-level tag",
+            },
+            "exclude_file_static_tag": {
+                "description": "Exclude files with this file-level static tag",
+            },
+            "exclude_file_user_tag": {
+                "description": "Exclude files with this file-level user tag",
             },
             "min_function_count": {
                 "description": "Minimum number of indexed functions",
@@ -335,6 +397,12 @@ class FileSearch(Resource):
                 "example": "2026-01-01",
             },
             "max_entry_date": {"description": "Latest upload date (ISO or timestamp)"},
+            "min_file_date": {
+                "description": "Earliest file date (ISO or timestamp)",
+            },
+            "max_file_date": {
+                "description": "Latest file date (ISO or timestamp)",
+            },
             "sort_by": {
                 "description": "Sort field: entry_date, file_date, function_count",
                 "example": "entry_date",
@@ -357,6 +425,7 @@ class FileSearch(Resource):
 
 @ns_file.route("/upload_file_data")
 class FileUpload(Resource):
+    @ns_file.expect(file_upload_data_model)
     def post(self):
         """Uploads raw analysis data for a new file."""
         from bsimvis.app.routes.file import upload_file_data
@@ -443,8 +512,21 @@ class FunctionSearch(Resource):
             },
             "static_tag": {"description": "Filter by static analysis tag only"},
             "user_tag": {"description": "Filter by user-assigned tag only"},
+            "func_tag": {"description": "Filter by function-level tag"},
+            "func_static_tag": {"description": "Filter by function-level static tag"},
+            "func_user_tag": {"description": "Filter by function-level user tag"},
             "file_tag": {"description": "Filter by file-level tag"},
+            "file_static_tag": {"description": "Filter by file-level static tag"},
+            "file_user_tag": {"description": "Filter by file-level user tag"},
             "exclude_tag": {"description": "Exclude functions with this tag"},
+            "exclude_static_tag": {"description": "Exclude functions with this static tag"},
+            "exclude_user_tag": {"description": "Exclude functions with this user tag"},
+            "exclude_func_tag": {"description": "Exclude functions with this function-level tag"},
+            "exclude_func_static_tag": {"description": "Exclude functions with this function-level static tag"},
+            "exclude_func_user_tag": {"description": "Exclude functions with this function-level user tag"},
+            "exclude_file_tag": {"description": "Exclude functions with this file-level tag"},
+            "exclude_file_static_tag": {"description": "Exclude functions with this file-level static tag"},
+            "exclude_file_user_tag": {"description": "Exclude functions with this file-level user tag"},
             "min_features": {"description": "Minimum BSim feature count", "example": 5},
             "sort_by": {
                 "description": "Sort field: id, function_name, bsim_features_count",
@@ -505,8 +587,15 @@ class FeatureSearch(Resource):
     @ns_feature.doc(
         params={
             "collection": "Collection name",
+            "q": "Search query",
             "hash": "Filter by feature hash (hex prefix)",
-            "sort": "Sort by 'tf' or 'default'",
+            "type": "Filter by feature type",
+            "op": "Filter by opcode",
+            "sort_by": "Sort by 'tf_score' or 'default'",
+            "sort_order": "Sort direction (asc/desc)",
+            "offset": "Pagination offset",
+            "limit": "Max results",
+            "format": "Output format (json/csv)",
         }
     )
     def get(self):
@@ -637,10 +726,33 @@ class SimilaritySearch(Resource):
                 "description": "Filter by tag (static or user, any entity)",
                 "example": "crypto",
             },
+            "static_tag": {"description": "Filter by static analysis tag only"},
+            "user_tag": {"description": "Filter by user-assigned tag only"},
             "sim_tag": {"description": "Filter by similarity-level tag"},
+            "sim_static_tag": {"description": "Filter by similarity-level static tag"},
+            "sim_user_tag": {"description": "Filter by similarity-level user tag"},
             "func_tag": {"description": "Filter by function-level tag"},
+            "func_static_tag": {"description": "Filter by function-level static tag"},
+            "func_user_tag": {"description": "Filter by function-level user tag"},
             "file_tag": {"description": "Filter by file-level tag"},
+            "file_static_tag": {"description": "Filter by file-level static tag"},
+            "file_user_tag": {"description": "Filter by file-level user tag"},
             "exclude_tag": {"description": "Exclude pairs with this tag"},
+            "exclude_static_tag": {"description": "Exclude pairs with this static tag"},
+            "exclude_user_tag": {"description": "Exclude pairs with this user tag"},
+            "exclude_sim_tag": {"description": "Exclude pairs with this similarity-level tag"},
+            "exclude_sim_static_tag": {"description": "Exclude pairs with this similarity-level static tag"},
+            "exclude_sim_user_tag": {"description": "Exclude pairs with this similarity-level user tag"},
+            "exclude_func_tag": {"description": "Exclude pairs with this function-level tag"},
+            "exclude_func_static_tag": {"description": "Exclude pairs with this function-level static tag"},
+            "exclude_func_user_tag": {"description": "Exclude pairs with this function-level user tag"},
+            "exclude_file_tag": {"description": "Exclude pairs with this file-level tag"},
+            "exclude_file_static_tag": {"description": "Exclude pairs with this file-level static tag"},
+            "exclude_file_user_tag": {"description": "Exclude pairs with this file-level user tag"},
+            "language": {"description": "Filter by language ID", "example": "x86:LE:64:default"},
+            "namespace": {"description": "Filter by namespace", "example": "std"},
+            "ret_type": {"description": "Filter by return type", "example": "int"},
+            "address": {"description": "Filter by entrypoint address", "example": "0x401000"},
             "cross_binary": {
                 "description": "Only cross-binary pairs: true or false",
                 "example": "true",
@@ -782,7 +894,16 @@ class SimilarityBatches(Resource):
 
 @ns_similarity.route("/list")
 class SimilarityList(Resource):
-    @ns_similarity.doc(params={"collection": "Collection", "md5": "File MD5"})
+    @ns_similarity.doc(
+        params={
+            "collection": "Collection name (default: main)",
+            "md5": "File MD5 (required unless batch is provided)",
+            "batch": "Batch UUID (required unless md5 is provided)",
+            "algo": "Similarity algorithm (default: unweighted_cosine)",
+            "limit": "Max results to return (default: 20)",
+            "offset": "Pagination offset (default: 0)",
+        }
+    )
     def get(self):
         """Lists pre-calculated similarity results for a file."""
         from bsimvis.app.routes.similarity import list_similarities
@@ -792,19 +913,7 @@ class SimilarityList(Resource):
 
 @ns_similarity.route("/build")
 class SimilarityBuild(Resource):
-    @ns_similarity.expect(
-        api.model(
-            "SimilarityBuild",
-            {
-                "collection": fields.String(required=True, example="main"),
-                "md5": fields.String(example="16c2addf..."),
-                "batch": fields.String(example="uuid..."),
-                "algo": fields.String(default="unweighted_cosine"),
-                "min_score": fields.Float(default=0.95),
-                "top_k": fields.Integer(default=20),
-            },
-        )
-    )
+    @ns_similarity.expect(similarity_build_model)
     def post(self):
         """Enqueues a job to pre-calculate similarities."""
         from bsimvis.app.routes.similarity import build_similarity
@@ -814,6 +923,7 @@ class SimilarityBuild(Resource):
 
 @ns_similarity.route("/rebuild")
 class SimilarityRebuild(Resource):
+    @ns_similarity.expect(similarity_build_model)
     def post(self):
         """Enqueues a clear + build pipeline for similarities."""
         from bsimvis.app.routes.similarity import rebuild_similarity
@@ -823,6 +933,7 @@ class SimilarityRebuild(Resource):
 
 @ns_similarity.route("/clear")
 class SimilarityClear(Resource):
+    @ns_similarity.expect(similarity_clear_model)
     def post(self):
         """Enqueues a similarity clear job."""
         from bsimvis.app.routes.similarity import clear_similarity
@@ -999,7 +1110,11 @@ class ClusterBuild(Resource):
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
                 "min_cluster_size": fields.Integer(default=5),
+                "min_samples": fields.Integer(),
+                "epsilon": fields.Float(default=0.0),
+                "selection_method": fields.String(default="eom"),
                 "min_sim": fields.Float(default=0.0),
+                "min_features": fields.Integer(default=0),
             },
         )
     )
@@ -1012,6 +1127,7 @@ class ClusterBuild(Resource):
 
 @ns_cluster.route("/rebuild")
 class ClusterRebuild(Resource):
+    @ns_cluster.expect(api.models["ClusterBuild"])
     def post(self):
         """Enqueues a clear + cluster pipeline."""
         from bsimvis.app.routes.cluster import rebuild_cluster
@@ -1021,6 +1137,15 @@ class ClusterRebuild(Resource):
 
 @ns_cluster.route("/clear")
 class ClusterClear(Resource):
+    @ns_cluster.expect(
+        api.model(
+            "ClusterClear",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+            },
+        )
+    )
     def post(self):
         """Enqueues a cluster clear job."""
         from bsimvis.app.routes.cluster import clear_cluster
@@ -1036,7 +1161,15 @@ class ClusterList(Resource):
             "algo": "Algorithm",
             "min_stability": "Min cluster stability",
             "min_count": "Min member count",
+            "min_features": "Min features",
+            "min_cohesion": "Min cohesion score",
             "sort_by": "Sort field (count, stability, features, cohesion)",
+            "sort_order": "Sort order (asc/desc)",
+            "format": "Output format (json/csv)",
+            "q": "Search query across IDs and names",
+            "cluster_id": "Filter by cluster ID",
+            "cluster_uuid": "Filter by cluster UUID",
+            "cluster_name": "Filter by cluster name",
         }
     )
     def get(self):
@@ -1048,6 +1181,7 @@ class ClusterList(Resource):
 
 @ns_cluster.route("/tree")
 class ClusterTree(Resource):
+    @ns_cluster.doc(params={"collection": "Collection name", "algo": "Algorithm"})
     def get(self):
         """Returns the condensed tree for the clustering."""
         from bsimvis.app.routes.cluster import get_cluster_tree
@@ -1062,6 +1196,7 @@ class ClusterMeta(Resource):
             "ClusterMetaUpdate",
             {
                 "collection": fields.String(required=True),
+                "algo": fields.String(default="unweighted_cosine"),
                 "cluster_id": fields.String(required=True),
                 "cluster_name": fields.String(required=True),
             },
@@ -1076,7 +1211,15 @@ class ClusterMeta(Resource):
 
 @ns_cluster.route("/members")
 class ClusterMembers(Resource):
-    @ns_cluster.doc(params={"cluster_id": "Target cluster ID", "limit": "Max results"})
+    @ns_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "cluster_id": "Target cluster ID",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
     def get(self):
         """Lists all function IDs in a specific cluster."""
         from bsimvis.app.routes.cluster import list_cluster_members
@@ -1086,7 +1229,15 @@ class ClusterMembers(Resource):
 
 @ns_cluster.route("/functions")
 class ClusterFunctions(Resource):
-    @ns_cluster.doc(params={"cluster_uuid": "Target cluster UUID"})
+    @ns_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "cluster_uuid": "Target cluster UUID",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
     def get(self):
         """Returns a quick sample of function metadata for a cluster UUID."""
         from bsimvis.app.routes.cluster import get_cluster_functions
@@ -1098,8 +1249,16 @@ class ClusterFunctions(Resource):
 class ClusterDendrogram(Resource):
     @ns_cluster.doc(
         params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
             "stability_threshold": "Cut-off stability",
             "min_cluster_size": "Min size filter",
+            "max_cluster_size": "Max size filter",
+            "cohesion_min": "Min cohesion filter",
+            "cohesion_max": "Max cohesion filter",
+            "min_features": "Min features filter",
+            "max_features": "Max features filter",
+            "show_parents": "Show parent clusters (true/false)",
         }
     )
     def get(self):

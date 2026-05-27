@@ -126,10 +126,18 @@ def job_perf(job_id, top_n=10):
 
 
 def list_jobs(limit):
+    """Fetch and display a list of jobs from the API.
+
+    The API returns a JSON object with an 'items' list and a 'total' count.
+    This function now correctly extracts the list and prints a formatted table.
+    """
     try:
         resp = requests.get(f"{API_BASE}/jobs", params={"limit": limit})
         resp.raise_for_status()
-        jobs = resp.json()
+        data = resp.json()
+        # Expected structure: {"items": [...], "total": N}
+        jobs = data.get("items", [])
+        total = data.get("total")
 
         print(
             f"{'ID':<30} | {'TYPE':<15} | {'STATUS':<10} | {'PROGRESS':<8} | {'CREATED'}"
@@ -140,8 +148,10 @@ def list_jobs(limit):
                 "%Y-%m-%d %H:%M", time.localtime(j["created_at"] / 1000)
             )
             print(
-                f"{j['id']:<30} | {j['type']:<15} | {j['status']:<10} | {j['progress']:>7}% | {created}"
+                f"{j['id']:<30} | {j['type']:<15} | {j['status']:<10} | {j['progress']:<7}% | {created}"
             )
+        if total is not None:
+            print(f"\nTotal jobs reported by server: {total}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
 

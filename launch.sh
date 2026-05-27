@@ -12,6 +12,24 @@ start_screen() {
     fi
 }
 
+# Wait until a TCP port is accepting connections (max 30s)
+wait_for_port() {
+    local port=$1
+    local name=$2
+    local max=30
+    local i=0
+    echo -n "  Waiting for ${name} on port ${port}..."
+    while ! (echo > /dev/tcp/localhost/${port}) 2>/dev/null; do
+        sleep 1
+        i=$((i+1))
+        if [ $i -ge $max ]; then
+            echo " TIMEOUT (${max}s). Service may not be ready."
+            return 1
+        fi
+    done
+    echo " ready (${i}s)."
+}
+
 # Check for screen
 if ! command -v screen > /dev/null; then
     echo "Error: 'screen' is not installed. Please install it first."
@@ -81,6 +99,10 @@ start_screen "bsimvis-redis" "redis-server --port ${REDIS_PORT} --dir ${DATA_BAS
 
 # Start Kvrocks
 start_screen "bsimvis-kvrocks" "kvrocks -c kvrocks.conf --port ${KVROCKS_PORT} --dir ${DATA_BASE_DIR}/kvrocks"
+
+# Wait for both datastores to be ready before launching dependent services
+wait_for_port "${REDIS_PORT}" "Redis"
+wait_for_port "${KVROCKS_PORT}" "Kvrocks"
 
 # Start Milvus stack if enabled
 if [ "$ENABLE_MILVUS" = "true" ]; then

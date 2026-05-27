@@ -544,15 +544,15 @@ def run_all_tests():
         )
         test_endpoint(
             "POST",
-            "/api/tags/set_color",
+            "/api/tags/color",
             data={"collection": COLLECTION, "tag": "test_tag", "color": "#ff6600"},
-            label="POST /api/tags/set_color",
+            label="POST /api/tags/color",
         )
         test_endpoint(
             "POST",
-            "/api/tags/set_priority",
+            "/api/tags/priority",
             data={"collection": COLLECTION, "tag": "test_tag", "priority": 1},
-            label="POST /api/tags/set_priority",
+            label="POST /api/tags/priority",
         )
         # Bulk add
         test_endpoint(

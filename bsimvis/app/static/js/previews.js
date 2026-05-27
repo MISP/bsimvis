@@ -25,7 +25,6 @@
             'hierarchy-tooltip',
             'binary-preview-tooltip',
             'tag-tooltip',
-            'tag-custom-context-menu',
             'graph-context-menu'
         ];
 

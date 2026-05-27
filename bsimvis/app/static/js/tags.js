@@ -254,12 +254,12 @@ window.handleTagContextMenu = (e, tag) => {
         
         try {
             await Promise.all([
-                fetch('/api/tags/set_color', {
+                fetch('/api/tags/color', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({collection: coll, tag: tag, color: newColor})
                 }),
-                fetch('/api/tags/set_priority', {
+                fetch('/api/tags/priority', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({collection: coll, tag: tag, priority: newPrio})

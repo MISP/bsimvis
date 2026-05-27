@@ -951,7 +951,6 @@ class TagStats(Resource):
         return get_tag_stats()
 
 
-@ns_tags.route("/set_color")
 @ns_tags.route("/color")
 class TagSetColor(Resource):
     @ns_tags.expect(
@@ -971,7 +970,6 @@ class TagSetColor(Resource):
         return set_color()
 
 
-@ns_tags.route("/set_priority")
 @ns_tags.route("/priority")
 class TagSetPriority(Resource):
     @ns_tags.expect(

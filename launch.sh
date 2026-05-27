@@ -18,10 +18,28 @@ if ! command -v screen > /dev/null; then
     exit 1
 fi
 
+# Parse optional flags
+CLEAR=false
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        --clear) CLEAR=true ;;
+        *) echo "Unknown option: $1" ; exit 1 ;;
+    esac
+    shift
+done
+
 # Load environment variables
 if [ -f .env ]; then
-    # Filter out comments and export
     export $(grep -v '^#' .env | xargs)
+fi
+
+# Optional screen cleanup (default off, enable with --clear or CLEAN_SCREEN=true)
+CLEAN_SCREEN=${CLEAN_SCREEN:-$CLEAR}
+if [ "$CLEAN_SCREEN" = "true" ]; then
+    if screen -list | grep -q "bsimvis-"; then
+        echo "Cleaning up stale bsimvis screen sessions..."
+        screen -ls | grep bsimvis- | cut -d. -f1 | awk '{print $1}' | xargs -I{} screen -X -S {} quit
+    fi
 fi
 
 # Add local bin to PATH

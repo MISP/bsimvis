@@ -49,6 +49,24 @@ These keys store the actual analysis results and decompiler output.
 |:--- |:--- |:--- |
 | `{coll}:sim:{algo}:{id1}:{id2}` | **JSON** | Metadata for a similarity match (e.g., user tags). |
 
+### Global Features
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{coll}:all_features` | **Set** | Master list of all feature IDs. |
+| `{coll}:feature:{hash}:global_meta` | **JSON** | Global metadata for a specific feature. |
+| `{coll}:feature:{hash}:meta` | **Hash** | Context occurrences (Field: `func_id`, Value: Context JSON). |
+| `{coll}:feature:{hash}:functions` | **ZSet** | Functions containing this feature. |
+| `{coll}:features:by_tf` | **ZSet** | Feature TF scores (Member: `hash`, Score: `TF`). |
+
+### Clusters
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{coll}:cluster:list:{algo}` | **Set** | All cluster IDs discovered for the algorithm. |
+| `{coll}:cluster:{algo}:{cluster_id}:meta` | **JSON** | Metadata for a specific cluster. |
+| `{coll}:cluster:{algo}:{cluster_id}:members` | **Set** | Member function IDs of the cluster. |
+| `{coll}:cluster:tree:{algo}` | **String** | Serialized dendrogram tree. |
+| `{coll}:cluster:tree_links:{algo}` | **String** | Raw parent-child links for dynamic tree building. |
+
 ---
 
 Where id1 and id2 are {md5:addr}.
@@ -60,13 +78,13 @@ Indices are optimized for search and do not use the `idx:` prefix at the root le
 ### Tag & Metadata Buckets
 **Pattern:** `{coll}:idx:{level}:{field}:{value}` (**Set**)
 Stores a set of document IDs (e.g. `{coll}:func:...`).
-- `level`: `file`, `func`, or `sim`.
-- `field`: `batch_uuid`, `language_id`, `function_name`, `tags`, etc.
+- `level`: `file`, `func`, `sim`, or `feature`.
+- `field`: `batch_uuid`, `language_id`, `function_name`, `tags`, `cluster_uuid`, etc.
 
 ### Numeric & Sorting Indexes
 **Pattern:** `{coll}:idx:{level}:{field}` (**ZSet**)
 Stores `doc_id` as member and the numeric value as score.
-- **Fields:** `instruction_count`, `bsim_features_count`, `entry_date`.
+- **Fields:** `instruction_count`, `bsim_features_count`, `entry_date`, `frequency`, `tf_score`.
 
 ### Structural Relationships
 **Pattern:** `{coll}:idx:file:functions:{md5}` (**Set**)
@@ -81,6 +99,7 @@ Stores a list of all existing bucket keys for a specific field.
 - `{coll}:sim:score:{algo}` (**ZSet**): Global scoreboard (Member: `sid`, Score: `similarity`).
 - `{coll}:sim:built:{algo}` (**Set**): IDs of functions already processed for similarity.
 - `{coll}:sim:involves:{level}:{doc_id}` (**ZSet**): Map of which similarities involve a specific file or function.
+- `{coll}:sim:min_features` (**ZSet**): Optimization for feature count filtering.
 
 ---
 
@@ -90,3 +109,4 @@ The similarity search engine in `search_similarity.lua` leverages these indices:
 1. Filters are resolved by intersecting bucket Sets from `{coll}:idx:...`.
 2. Ranges are resolved using ZSets from `{coll}:idx:...`.
 3. The resulting candidate Set is used to rank similarities from `{coll}:sim:score:{algo}`.
+

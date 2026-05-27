@@ -1,6 +1,6 @@
 # BSimVis API Documentation
 
-This document describes the primary API endpoints for the BSimVis backend.
+This document describes the primary API endpoints for the BSimVis backend. The API is built using Flask-RESTX, and interactive Swagger documentation is available at `/api/`.
 
 ## Function Data APIs
 
@@ -41,6 +41,11 @@ Computes an aligned diff between two functions.
 - **`GET /api/function/search`**: Searches for functions with comprehensive filters.
   - Params: `collection` (required), `function_name`, `file_name`, `tag`, `file_md5`, `batch_uuid`, `language_id`, `decompiler_id`, `return_type`, `calling_convention`, `entrypoint_address`, `offset`, `limit`.
 
+### Global Feature Search
+- **`GET /api/feature/search`**: Searches for BSim features globally.
+  - Params: `collection`, `hash`, `sort`
+- **`GET /api/feature/details/<f_hash>`**: Returns all function occurrences for a specific feature.
+
 ### Similarity Search
 **`GET /api/similarity/search`**
 High-performance similarity search with advanced filtering.
@@ -54,7 +59,8 @@ High-performance similarity search with advanced filtering.
   - `name`, `tag`, `language`: Specific metadata filters.
   - `md5`: Binary MD5 filter (can be specified multiple times).
   - `cross_binary`: (boolean) Filter for similarities between different binaries.
-  - `pool_limit`: (default: 1,000,000) Maximum number of candidates to process in DB.
+  - `match_mode`: `any` or `both`.
+  - `pool_limit`: Maximum number of candidates to process in DB.
   - `sort_by`: `score` or `feat_count`.
   - `sort_order`: `desc` or `asc`.
 - **Returns:**
@@ -64,22 +70,39 @@ High-performance similarity search with advanced filtering.
 
 ---
 
+## Clustering APIs
+- **`POST /api/cluster/build`**: Enqueues a clustering job.
+- **`GET /api/cluster/list`**: Lists discovered clusters with metadata and filtering.
+- **`GET /api/cluster/dendrogram`**: Returns a hierarchical tree of clusters for D3 visualization.
+
+---
+
+## Tag Management APIs
+Tags can be applied to files, functions, and similarities.
+- **`GET /api/tags`**: Returns the global tag index for a collection.
+- **`POST /api/tags/add`** / **`POST /api/tags/remove`**: Add/remove a tag from an entity.
+- **`POST /api/tags/bulk_add`** / **`POST /api/tags/bulk_remove`**: Add/remove tags from multiple entities.
+- **`POST /api/tags/color`**: Sets a custom color for a tag.
+- **`POST /api/tags/priority`**: Sets a custom priority for a tag.
+
+---
+
+## Upload API
+**`POST /api/file/upload`**
+Uploads a raw binary file for server-side analysis.
+- **Configuration Params**: `collection`, `profile` (fast/full), `processor` (Ghidra Language ID), `cspec` (Ghidra Compiler Spec ID), `min_func_len`.
+- **Similarity Config**: `algo`, `top_k`, `min_score`, `min_features`, `skip_sim`.
+- **Metadata**: `batch_uuid`, `batch_name`, `tags`.
+
+---
+
 ## Job & Worker APIs
 
-### List Jobs
-**`GET /api/jobs`**
-Lists recent and active background jobs.
-- **Parameters:**
-  - `limit`: (default: 50) Max jobs to return.
+### List & Stats
+- **`GET /api/jobs`**: Lists recent and active background jobs.
+- **`GET /api/jobs/stats`**: Returns aggregate metrics across all jobs.
 
-### Global Stats
-**`GET /api/jobs/stats`**
-Returns aggregate metrics across all jobs.
-
-### Job Status
-**`GET /api/jobs/<job_id>`**
-Returns detailed status and logs for a specific job or pipeline.
-
-### Cancel Job
-**`POST /api/jobs/<job_id>/cancel`**
-Cancels a pending or running job.
+### Job Management
+- **`GET /api/jobs/<job_id>`**: Returns detailed status and logs for a specific job or pipeline.
+- **`POST /api/jobs/<job_id>/cancel`**: Cancels a pending or running job.
+- **`POST /api/jobs/<job_id>/retry`**: Retries a failed or cancelled job/pipeline.

@@ -2,7 +2,7 @@
 
 ## Python
 
-Use uv run to run commands. 
+Use uv run to run
 
 
 ## Ports
@@ -44,3 +44,10 @@ Always minimal code change unless user asks drastic change.
 Dont be destructive of features when building new.
 Comments must be simple, they are only required for complex code
 Use `uv run black .` to clear up python synthax.
+
+## API Development
+
+The backend API uses Flask-RESTX for routing and Swagger documentation.
+- **Serialization**: Do not mix `jsonify()` and Flask-RESTX `api.model` marshaling. When using Flask-RESTX `@api.response`, simply return a Python dictionary (e.g., `return {"status": "success"}`) instead of `jsonify(...)` to avoid double-serialization bugs or missing headers.
+- **Endpoints**: Routes are defined in `bsimvis/app/swagger.py` and import their implementation from `bsimvis/app/routes/`.
+- **Validation**: Rely on Swagger doc and `@api.expect` for parameter validation and schema definition.

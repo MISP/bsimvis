@@ -15,6 +15,7 @@ from bsimvis.app.services.job_service import JobService, JobStatus, JobType
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
 from bsimvis.app.services.similarity_service import SimilarityService
+from bsimvis.app.services.bin_sim_service import bin_sim_service
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.timer_service import job_timer
 from bsimvis.app.services.ghidra_service import ghidra_service
@@ -427,6 +428,33 @@ class Worker:
             algo = payload.get("algo", "unweighted_cosine")
             return cluster_service.clear_clustering(
                 collection, algo=algo, job_service=self.job_service, job_id=job_id
+            )
+
+        elif jtype == JobType.BUILD_BIN_SIM.value:
+            algo = payload.get("algo", "unweighted_cosine")
+            md5_a = payload.get("md5_a")
+            md5_b = payload.get("md5_b")
+            min_cohesion = payload.get("min_cohesion", 0.0)
+
+            return bin_sim_service.build_bin_sim(
+                collection,
+                algo=algo,
+                md5_a=md5_a,
+                md5_b=md5_b,
+                min_cohesion=min_cohesion,
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
+        elif jtype == JobType.CLEAR_BIN_SIM.value:
+            algo = payload.get("algo", "unweighted_cosine")
+            md5 = payload.get("md5")
+            return bin_sim_service.clear_bin_sim(
+                collection,
+                algo=algo,
+                md5=md5,
+                job_service=self.job_service,
+                job_id=job_id,
             )
 
         return False

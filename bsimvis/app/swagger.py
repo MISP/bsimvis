@@ -28,6 +28,7 @@ ns_tags = Namespace("tags", description="Tag management")
 ns_cluster = Namespace("cluster", description="Hierarchical clustering and analysis")
 ns_features = Namespace("features", description="Global feature indexing and status")
 ns_diff = Namespace("diff", description="Function diff and alignment")
+ns_bin_sim = Namespace("bin_sim", description="Binary-level similarity and clustering comparison")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -42,6 +43,7 @@ api.add_namespace(ns_tags)
 api.add_namespace(ns_cluster)
 api.add_namespace(ns_features)
 api.add_namespace(ns_diff)
+api.add_namespace(ns_bin_sim)
 
 # --- Models & Examples ---
 
@@ -136,6 +138,26 @@ similarity_clear_model = api.model(
         "md5": fields.String(example="16c2addf..."),
         "batch": fields.String(example="uuid..."),
         "algo": fields.String(default="unweighted_cosine"),
+    },
+)
+
+bin_sim_build_model = api.model(
+    "BinSimBuild",
+    {
+        "collection": fields.String(default="main"),
+        "algo": fields.String(default="unweighted_cosine"),
+        "md5_a": fields.String(),
+        "md5_b": fields.String(),
+        "min_cohesion": fields.Float(default=0.0),
+    },
+)
+
+bin_sim_clear_model = api.model(
+    "BinSimClear",
+    {
+        "collection": fields.String(default="main"),
+        "algo": fields.String(default="unweighted_cosine"),
+        "md5": fields.String(),
     },
 )
 
@@ -1336,3 +1358,68 @@ class DiffView(Resource):
         from bsimvis.app.routes.function_diff import diff_api
 
         return diff_api()
+
+
+# --- Bin Sim Namespace ---
+@ns_bin_sim.route("/build")
+class BinSimBuild(Resource):
+    @ns_bin_sim.expect(bin_sim_build_model)
+    def post(self):
+        """Enqueues a job to build binary similarities."""
+        from bsimvis.app.routes.bin_sim import build_bin_sim
+
+        return build_bin_sim()
+
+
+@ns_bin_sim.route("/rebuild")
+class BinSimRebuild(Resource):
+    @ns_bin_sim.expect(bin_sim_build_model)
+    def post(self):
+        """Enqueues a pipeline to clear and build binary similarities."""
+        from bsimvis.app.routes.bin_sim import rebuild_bin_sim
+
+        return rebuild_bin_sim()
+
+@ns_bin_sim.route("/clear")
+class BinSimClear(Resource):
+    @ns_bin_sim.expect(bin_sim_clear_model)
+    def post(self):
+        """Enqueues a job to clear binary similarities."""
+        from bsimvis.app.routes.bin_sim import clear_bin_sim
+
+        return clear_bin_sim()
+
+
+@ns_bin_sim.route("/diff")
+class BinSimDiff(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": "Collection name (default: main)",
+            "algo": "Algorithm (default: unweighted_cosine)",
+            "md5_a": "First binary MD5",
+            "md5_b": "Second binary MD5",
+        }
+    )
+    def get(self):
+        """Returns binary similarity diff doc for a pair of binaries."""
+        from bsimvis.app.routes.bin_sim import get_bin_sim
+
+        return get_bin_sim()
+
+
+@ns_bin_sim.route("/list")
+class BinSimList(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": "Collection name (default: main)",
+            "algo": "Algorithm (default: unweighted_cosine)",
+            "md5": "Target binary MD5",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Lists pre-calculated similar binaries for a given binary MD5."""
+        from bsimvis.app.routes.bin_sim import list_bin_sims
+
+        return list_bin_sims()

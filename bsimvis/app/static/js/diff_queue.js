@@ -1,5 +1,6 @@
 // Universal Diff Queue Manager for BSimVis
 let diffSelection = [];
+let fileDiffSelection = [];
 let diffPreviewTimer = null;
 let activeDiffKey = null;
 const diffPreviewCache = new Map();
@@ -48,6 +49,18 @@ function loadDiffQueue() {
             diffSelection = JSON.parse(stored) || [];
             updateDiffQueueUI();
         }
+        
+        const storedFile = localStorage.getItem('bsim_file_diff_queue');
+        if (storedFile) {
+            fileDiffSelection = JSON.parse(storedFile) || [];
+            updateFileDiffQueueUI();
+        }
+    } catch(e) {}
+}
+
+function saveFileDiffQueue() {
+    try {
+        localStorage.setItem('bsim_file_diff_queue', JSON.stringify(fileDiffSelection));
     } catch(e) {}
 }
 
@@ -90,6 +103,50 @@ function clearDiffSelection() {
     diffSelection = [];
     updateDiffQueueUI();
     saveDiffQueue();
+}
+
+function addToFileDiff(id, name) {
+    if (window.parent && window.parent !== window && typeof window.parent.addToFileDiff === 'function') {
+        window.parent.addToFileDiff(id, name);
+        return;
+    }
+
+    const existing = fileDiffSelection.findIndex(item => item.id === id);
+    if (existing !== -1) {
+        fileDiffSelection.splice(existing, 1);
+    } else {
+        fileDiffSelection.push({ id, name });
+    }
+
+    if (fileDiffSelection.length > 2) {
+        fileDiffSelection.shift();
+    }
+
+    updateFileDiffQueueUI();
+    saveFileDiffQueue();
+
+    if (fileDiffSelection.length === 2) {
+        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+        const collection = params.get('collection') || 'main';
+        const md5a = fileDiffSelection[0].id.split(':').pop();
+        const md5b = fileDiffSelection[1].id.split(':').pop();
+        
+        fileDiffSelection = [];
+        updateFileDiffQueueUI();
+        saveFileDiffQueue();
+        
+        window.location.hash = `#binary-similarity?collection=${collection}&md5_a=${md5a}&md5_b=${md5b}`;
+    }
+}
+
+function clearFileDiffSelection() {
+    if (window.parent && window.parent !== window && typeof window.parent.clearFileDiffSelection === 'function') {
+        window.parent.clearFileDiffSelection();
+        return;
+    }
+    fileDiffSelection = [];
+    updateFileDiffQueueUI();
+    saveFileDiffQueue();
 }
 
 function updateDiffQueueUI() {
@@ -176,6 +233,39 @@ function updateDiffQueueUI() {
             }
         });
     }
+}
+
+function updateFileDiffQueueUI() {
+    if (window.parent && window.parent !== window && typeof window.parent.updateFileDiffQueueUI === 'function') {
+        // let parent manage
+    }
+
+    const queue = window.parent && window.parent !== window ? 
+        JSON.parse(localStorage.getItem('bsim_file_diff_queue') || '[]') : fileDiffSelection;
+
+    // File Diff Queue Status Card
+    document.querySelectorAll('#file-diff-queue-status').forEach(status => {
+        if (queue.length === 0) {
+            status.innerHTML = '';
+        } else if (queue.length === 1) {
+            status.innerHTML = `
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
+                    <i class="fa-solid fa-file-code"></i> 1/2 Selected: ${queue[0].name}
+                    <button onclick="clearFileDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear File Diff Selection">&times;</button>
+                </span>`;
+        }
+    });
+
+    // Sync file-diff buttons
+    document.querySelectorAll('.btn-file-diff-action[data-file-id]').forEach(btn => {
+        const id = btn.dataset.fileId;
+        const inQueue = queue.some(item => item.id === id);
+        if (inQueue) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
 }
 
 function openStandaloneDiff() {
@@ -427,6 +517,9 @@ function renderPreviewSide(sideData, side) {
 
 window.addEventListener('storage', (e) => {
     if (e.key === 'bsim_diff_queue') {
+        loadDiffQueue();
+    }
+    if (e.key === 'bsim_file_diff_queue') {
         loadDiffQueue();
     }
 });

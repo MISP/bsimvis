@@ -435,6 +435,13 @@ class ClusterService:
             else:
                 cohesion_score = 1.0
 
+            unique_md5s = set()
+            for fid in members:
+                # fid format: collection:func:md5:address
+                parts = fid.split(":")
+                if len(parts) >= 3:
+                    unique_md5s.add(parts[2])
+
             # Find representative function name/snippet
             rep_fid = members[0] if members else None
             rep_meta = all_member_meta.get(rep_fid, {}) if rep_fid else {}
@@ -450,6 +457,7 @@ class ClusterService:
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
+                "unique_files_count": len(unique_md5s),
                 "sample_members": names[:5],  # Include a few actual function names
                 "created_at": int(time.time() * 1000),
             }

@@ -13,6 +13,7 @@ from bsimvis.cli import (
     bsimvis_job,
     bsimvis_worker,
     bsimvis_cluster,
+    bsimvis_binsim,
 )
 
 
@@ -263,6 +264,49 @@ def main():
     )
     c_list.add_argument("--limit", type=int, default=100)
     c_list.add_argument("--offset", type=int, default=0)
+
+    # --- BINSIM ---
+    binsim_parser = subparsers.add_parser(
+        "binsim", help="Binary-level similarity management"
+    )
+    binsim_actions = binsim_parser.add_subparsers(dest="action", required=True)
+    
+    # binsim build
+    bs_build = binsim_actions.add_parser("build", help="Build binary similarities")
+    bs_build.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_build.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_build.add_argument("--md5-a", help="First binary MD5 (optional)")
+    bs_build.add_argument("--md5-b", help="Second binary MD5 (optional)")
+    bs_build.add_argument("--min-cohesion", type=float, default=0.0, help="Min cohesion")
+
+    # binsim rebuild
+    bs_rebuild = binsim_actions.add_parser("rebuild", help="Clear and build binary similarities")
+    bs_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_rebuild.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_rebuild.add_argument("--md5-a", help="First binary MD5 (optional)")
+    bs_rebuild.add_argument("--md5-b", help="Second binary MD5 (optional)")
+    bs_rebuild.add_argument("--min-cohesion", type=float, default=0.0, help="Min cohesion")
+
+    # binsim clear
+    bs_clear = binsim_actions.add_parser("clear", help="Clear binary similarities")
+    bs_clear.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_clear.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_clear.add_argument("--md5", help="Target specific MD5")
+
+    # binsim list
+    bs_list = binsim_actions.add_parser("list", help="List similar binaries")
+    bs_list.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_list.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_list.add_argument("--md5", required=True, help="Target specific MD5")
+    bs_list.add_argument("--limit", type=int, default=20)
+    bs_list.add_argument("--offset", type=int, default=0)
+
+    # binsim diff
+    bs_diff = binsim_actions.add_parser("diff", help="Get binary similarity diff")
+    bs_diff.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_diff.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_diff.add_argument("--md5-a", required=True, help="First binary MD5")
+    bs_diff.add_argument("--md5-b", required=True, help="Second binary MD5")
 
     # sim list
     sim_list = sim_actions.add_parser("list", help="List similarity builds")
@@ -519,6 +563,8 @@ def main():
             bsimvis_worker.run_worker(g_host, int(g_port), args)
         elif args.subcommand == "cluster":
             bsimvis_cluster.run_cluster(g_host, int(g_port), args)
+        elif args.subcommand == "binsim":
+            bsimvis_binsim.run_binsim(g_host, int(g_port), args)
 
     except Exception as e:
         import traceback

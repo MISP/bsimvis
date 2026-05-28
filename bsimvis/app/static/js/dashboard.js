@@ -268,6 +268,12 @@ const routes = {
         headers: [],
         renderer: null
     },
+    '#binary-similarity': {
+        title: 'Binary Similarity',
+        api: null,
+        headers: [],
+        renderer: null
+    },
     '#file-call-graph': {
         title: 'File Call Graph',
         api: null,
@@ -458,6 +464,7 @@ function updateUI(path, params, route) {
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
     if (document.getElementById('call-graph-view-container')) document.getElementById('call-graph-view-container').style.display = 'none';
     if (document.getElementById('upload-view-container')) document.getElementById('upload-view-container').style.display = 'none';
+    if (document.getElementById('binary-similarity-container')) document.getElementById('binary-similarity-container').style.display = 'none';
 
     // Clear all autocomplete dropdowns to prevent leftovers from previous navigation
     document.querySelectorAll('.tag-autocomplete-dropdown').forEach(el => el.remove());
@@ -485,6 +492,15 @@ function updateUI(path, params, route) {
         tableWrap.style.display = 'none';
         if (tableBodyWrap) tableBodyWrap.style.display = 'none';
         document.getElementById('pagination-container').style.display = 'none';
+    } else if (path === '#binary-similarity') {
+        tableWrap.style.display = 'none';
+        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+        document.getElementById('pagination-container').style.display = 'none';
+        document.getElementById('binary-similarity-container').style.display = 'flex';
+        document.getElementById('header-top-actions').style.display = 'none';
+        if (typeof renderBinarySimilarityView === 'function') renderBinarySimilarityView(params);
+    } else {
+        document.getElementById('header-top-actions').style.display = 'flex';
     }
 
     // Sidebar
@@ -543,6 +559,7 @@ function updateUI(path, params, route) {
         updateNavLink('nav-features-global', '#features-global');
         updateNavLink('nav-function-similarity', '#function-similarity');
         updateNavLink('nav-clusters', '#clusters');
+        updateNavLink('nav-binary-similarity', '#binary-similarity');
         updateNavLink('nav-jobs', '#jobs');
         updateNavLink('nav-upload', '#upload');
         
@@ -607,7 +624,7 @@ function updateUI(path, params, route) {
     const settingsEl = document.getElementById('search-settings-container');
     settingsEl.style.display = 'none';
     settingsEl.innerHTML = '';
-    if (path !== '#upload' && path !== '#file-call-graph') {
+    if (path !== '#upload' && path !== '#file-call-graph' && path !== '#binary-similarity') {
         tableWrap.style.display = 'flex';
         tableWrap.style.flex = '1';
         if (tableBodyWrap) tableBodyWrap.style.display = '';
@@ -1525,6 +1542,13 @@ function renderFiles(data) {
             <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
                     <span style="font-weight: bold; color: var(--text); min-width: 20px; text-align: right;">${funcCount}</span>
+                    <button class="btn-file-diff-action ${fileDiffSelection.some(item => item.id === fileId) ? 'active' : ''}" 
+                            data-file-id="${fileId}" 
+                            onclick="addToFileDiff('${fileId}', '${f['file_name'].replace(/'/g, "\\'")}')" 
+                            title="Add to File Diff" 
+                            style="padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); cursor:pointer;">
+                        <span>±</span>
+                    </button>
                     <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}" title="Functions" style="padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
                         <i class="fa-solid fa-code" style="font-size:0.65rem;"></i>
                     </a>

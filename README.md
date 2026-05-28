@@ -134,6 +134,14 @@ uv run bsimvis job cancel <job_id>
 uv run bsimvis worker start --count 5
 ```
 
+## Building clusters
+
+For now clustering is a manual job to run after ingesting all binaries. 
+
+```bash
+uv run bsimvis cluster build -c <collection_name>
+```
+
 ## Full CLI reference
 
 ```

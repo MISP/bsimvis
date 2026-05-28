@@ -36,12 +36,11 @@ class BinSimService:
             binaries = [md5_a, md5_b]
         else:
             # Get all md5s
-            cursor = 0
-            while True:
-                cursor, keys = r.scan(cursor=cursor, match=f"{collection}:file:*", count=1000)
-                file_keys.extend([k.decode() if isinstance(k, bytes) else k for k in keys])
-                if cursor == 0:
-                    break
+            all_files_key = f"{collection}:all_files"
+            file_keys = [
+                d.decode() if isinstance(d, bytes) else str(d)
+                for d in r.smembers(all_files_key)
+            ]
             
             binaries = []
             for k in file_keys:

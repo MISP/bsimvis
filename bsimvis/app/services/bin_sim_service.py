@@ -16,7 +16,7 @@ class BinSimService:
         algo="unweighted_cosine",
         md5_a=None,
         md5_b=None,
-        min_cohesion=0.0,
+        min_cohesion=0.5,
         job_service=None,
         job_id=None,
     ):

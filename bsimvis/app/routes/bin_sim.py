@@ -14,7 +14,7 @@ def build_bin_sim():
     algo = data.get("algo", "unweighted_cosine")
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
-    min_cohesion = data.get("min_cohesion", 0.0)
+    min_cohesion = data.get("min_cohesion", 0.5)
 
     job_id = job_service.create_job(
         JobType.BUILD_BIN_SIM.value,
@@ -54,7 +54,7 @@ def rebuild_bin_sim():
     algo = data.get("algo", "unweighted_cosine")
     md5_a = data.get("md5_a")
     md5_b = data.get("md5_b")
-    min_cohesion = data.get("min_cohesion", 0.0)
+    min_cohesion = data.get("min_cohesion", 0.5)
 
     clear_payload = {
         "collection": collection,

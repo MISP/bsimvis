@@ -10,13 +10,13 @@ def build_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", 5)
+    min_cluster_size = data.get("min_cluster_size", 2)
 
     payload = {
         "collection": collection,
         "algo": algo,
         "min_cluster_size": min_cluster_size,
-        "min_samples": data.get("min_samples"),
+        "min_samples": data.get("min_samples", 1),
         "epsilon": data.get("epsilon", 0.0),
         "selection_method": data.get("selection_method", "eom"),
         "min_sim": data.get("min_sim", 0.0),
@@ -32,7 +32,7 @@ def rebuild_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", 5)
+    min_cluster_size = data.get("min_cluster_size", 2)
 
     tasks = [
         (
@@ -48,7 +48,7 @@ def rebuild_cluster():
                 "collection": collection,
                 "algo": algo,
                 "min_cluster_size": min_cluster_size,
-                "min_samples": data.get("min_samples"),
+                "min_samples": data.get("min_samples", 1),
                 "epsilon": data.get("epsilon", 0.0),
                 "selection_method": data.get("selection_method", "eom"),
                 "min_sim": data.get("min_sim", 0.0),

@@ -148,7 +148,7 @@ bin_sim_build_model = api.model(
         "algo": fields.String(default="unweighted_cosine"),
         "md5_a": fields.String(),
         "md5_b": fields.String(),
-        "min_cohesion": fields.Float(default=0.0),
+        "min_cohesion": fields.Float(default=0.5),
     },
 )
 
@@ -1131,8 +1131,8 @@ class ClusterBuild(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
-                "min_cluster_size": fields.Integer(default=5),
-                "min_samples": fields.Integer(),
+                "min_cluster_size": fields.Integer(default=2),
+                "min_samples": fields.Integer(default=1),
                 "epsilon": fields.Float(default=0.0),
                 "selection_method": fields.String(default="eom"),
                 "min_sim": fields.Float(default=0.0),

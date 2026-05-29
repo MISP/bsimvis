@@ -6,6 +6,94 @@ from collections import defaultdict
 from bsimvis.app.services.redis_client import get_redis
 
 
+def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
+    """Write secondary indexes for a bin_sim pair doc."""
+    def tag_index(field, value):
+        if value is None:
+            return
+        values = value if isinstance(value, list) else [value]
+        for v in values:
+            if v is None or v == "":
+                continue
+            bucket_key = f"{collection}:idx:bin_sim:{field}:{str(v).lower()}"
+            pipe.sadd(bucket_key, sid)
+            registry_key = f"{collection}:reg:bin_sim:{field}"
+            pipe.sadd(registry_key, bucket_key)
+
+    def num_index(field, value):
+        if value is None:
+            return
+        try:
+            pipe.zadd(f"{collection}:idx:bin_sim:{field}", {sid: float(value)})
+        except (ValueError, TypeError):
+            pass
+
+    # Tag indexes from doc
+    tag_index("md5_a", doc.get("md5_a"))
+    tag_index("md5_b", doc.get("md5_b"))
+    tag_index("algo", doc.get("algo"))
+
+    # Denormalized file metadata
+    if file_meta_a:
+        tag_index("file_name_a", file_meta_a.get("file_name"))
+        tag_index("file_tags_a", file_meta_a.get("tags"))
+        tag_index("file_user_tags_a", file_meta_a.get("user_tags"))
+        tag_index("architecture_a", file_meta_a.get("language_id"))
+    if file_meta_b:
+        tag_index("file_name_b", file_meta_b.get("file_name"))
+        tag_index("file_tags_b", file_meta_b.get("tags"))
+        tag_index("file_user_tags_b", file_meta_b.get("user_tags"))
+        tag_index("architecture_b", file_meta_b.get("language_id"))
+
+    # Numeric indexes
+    num_index("score", doc.get("score"))
+    num_index("score_sim_weighted", doc.get("score_sim_weighted"))
+    num_index("score_collection_weighted", doc.get("score_collection_weighted"))
+    num_index("coverage_a", doc.get("coverage_a"))
+    num_index("coverage_b", doc.get("coverage_b"))
+    num_index("shared_clusters", doc.get("shared_clusters"))
+    num_index("computed_at", doc.get("computed_at"))
+    num_index("functions_count_a", doc.get("functions_count_a"))
+    num_index("functions_count_b", doc.get("functions_count_b"))
+
+    pipe.sadd(f"{collection}:all_bin_sims", sid)
+
+
+def _unindex_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
+    """Remove secondary indexes for a bin_sim pair doc."""
+    def tag_unindex(field, value):
+        if value is None:
+            return
+        values = value if isinstance(value, list) else [value]
+        for v in values:
+            if v is None or v == "":
+                continue
+            bucket_key = f"{collection}:idx:bin_sim:{field}:{str(v).lower()}"
+            pipe.srem(bucket_key, sid)
+
+    tag_unindex("md5_a", doc.get("md5_a"))
+    tag_unindex("md5_b", doc.get("md5_b"))
+    tag_unindex("algo", doc.get("algo"))
+    if file_meta_a:
+        tag_unindex("file_name_a", file_meta_a.get("file_name"))
+        tag_unindex("file_tags_a", file_meta_a.get("tags"))
+        tag_unindex("file_user_tags_a", file_meta_a.get("user_tags"))
+        tag_unindex("architecture_a", file_meta_a.get("language_id"))
+    if file_meta_b:
+        tag_unindex("file_name_b", file_meta_b.get("file_name"))
+        tag_unindex("file_tags_b", file_meta_b.get("tags"))
+        tag_unindex("file_user_tags_b", file_meta_b.get("user_tags"))
+        tag_unindex("architecture_b", file_meta_b.get("language_id"))
+
+    for num_field in ["score", "score_sim_weighted", "score_collection_weighted",
+                      "coverage_a", "coverage_b", "shared_clusters", "computed_at",
+                      "functions_count_a", "functions_count_b"]:
+        pipe.zrem(f"{collection}:idx:bin_sim:{num_field}", sid)
+
+    pipe.srem(f"{collection}:all_bin_sims", sid)
+
+
+
 class BinSimService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -67,10 +155,11 @@ class BinSimService:
         binary_cluster_maps = {}
         cluster_binary_count_job = defaultdict(int)
         
-        # We need to load all functions for all binaries in the job
+        binary_func_counts = {}
         for i, md5 in enumerate(binaries):
             func_set_key = f"{collection}:idx:file:functions:{md5}"
             raw_ids = r.smembers(func_set_key)
+            binary_func_counts[md5] = len(raw_ids)
             fids = [fid.decode().replace(":meta", "") if isinstance(fid, bytes) else str(fid).replace(":meta", "") for fid in raw_ids]
             
             # Map of cid -> set of function IDs for this binary
@@ -152,10 +241,29 @@ class BinSimService:
         # 5. Process Pairs (Greedy Sweep)
         processed = 0
         pipe = r.pipeline()
+        pair_scores = {}
+
+        # Pre-fetch file metadata for all binaries (for indexing)
+        file_meta_cache = {}
+        pipe_meta = r.pipeline()
+        for md5 in binaries:
+            pipe_meta.json().get(f"{collection}:file:{md5}:meta", "$")
+        meta_results = pipe_meta.execute()
+        for md5, res in zip(binaries, meta_results):
+            if res:
+                m = res[0] if isinstance(res, list) else res
+                if isinstance(m, str):
+                    m = json.loads(m)
+                file_meta_cache[md5] = m if isinstance(m, dict) else {}
+            else:
+                file_meta_cache[md5] = {}
         
         for m_a, m_b in pairs:
+
             cmap_a = binary_cluster_maps[m_a]
             cmap_b = binary_cluster_maps[m_b]
+            file_meta_a = file_meta_cache.get(m_a, {})
+            file_meta_b = file_meta_cache.get(m_b, {})
             
             def get_pair_sim_rarity(cid):
                 count_in_pair = len(cmap_a.get(cid, [])) + len(cmap_b.get(cid, []))
@@ -323,11 +431,16 @@ class BinSimService:
             cov_b = len(assigned_b) / len(all_funcs_b) if all_funcs_b else 0.0
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
+            pair_scores[(m_a, m_b)] = score_collection_weighted
             
             doc = {
                 "md5_a": m_a,
                 "md5_b": m_b,
                 "algo": algo,
+                "architecture_a": file_meta_a.get("language_id", ""),
+                "architecture_b": file_meta_b.get("language_id", ""),
+                "functions_count_a": binary_func_counts.get(m_a, 0),
+                "functions_count_b": binary_func_counts.get(m_b, 0),
                 "score": score_unweighted,
                 "score_sim_weighted": score_sim_weighted,
                 "score_collection_weighted": score_collection_weighted,
@@ -353,21 +466,75 @@ class BinSimService:
             pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)
             pipe.sadd(f"{collection}:bin_sim:involves:{m_b}", sid)
             pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
+
+            # Secondary indexes
+            _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a, file_meta_b)
             
             processed += 1
             
             if processed % 100 == 0:
                 pipe.execute()
                 if job_service and job_id:
-                    pct = 10 + int(processed / num_pairs * 90)
+                    pct = 10 + int(processed / num_pairs * 80)
                     job_service.update_progress(job_id, pct, f"Processed {processed}/{num_pairs} pairs")
 
         pipe.execute()
+
+        # 6. UMAP Projection for Density Graph
+        if num_binaries >= 2:
+            if job_service and job_id:
+                job_service.add_log(job_id, f"[*] Computing UMAP projection for {num_binaries} binaries...")
+            try:
+                import umap
+                import numpy as np
+
+                md5_to_idx = {m: i for i, m in enumerate(binaries)}
+                n = len(binaries)
+
+                # Build symmetric distance matrix
+                dist_matrix = np.ones((n, n), dtype=np.float32)
+                np.fill_diagonal(dist_matrix, 0.0)
+
+                for (m_a, m_b), score in pair_scores.items():
+                    if m_a in md5_to_idx and m_b in md5_to_idx:
+                        i, j = md5_to_idx[m_a], md5_to_idx[m_b]
+                        d = 1.0 - float(score)
+                        d = max(0.0, min(1.0, d))
+                        dist_matrix[i, j] = d
+                        dist_matrix[j, i] = d
+
+                # n_neighbors must be < n_samples
+                n_neighbors = min(15, n - 1)
+                reducer = umap.UMAP(
+                    metric="precomputed", 
+                    n_neighbors=n_neighbors, 
+                    random_state=42,
+                    n_components=2
+                )
+                embedding = reducer.fit_transform(dist_matrix)
+
+                umap_doc = {}
+                for m, idx in md5_to_idx.items():
+                    umap_doc[m] = [float(embedding[idx, 0]), float(embedding[idx, 1])]
+
+                umap_key = f"{collection}:bin_sim:umap:{algo}"
+                r.json().set(umap_key, "$", umap_doc)
+                
+                if job_service and job_id:
+                    job_service.add_log(job_id, "[+] UMAP projection completed.")
+
+            except ImportError:
+                if job_service and job_id:
+                    job_service.add_log(job_id, "[!] umap-learn or numpy not installed, skipping projection.")
+            except Exception as e:
+                if job_service and job_id:
+                    job_service.add_log(job_id, f"[!] UMAP projection failed: {str(e)}")
         
         if job_service and job_id:
             job_service.update_progress(job_id, 100, f"Completed binary similarity build for {processed} pairs.")
             
         return True
+
 
     def clear_bin_sim(self, collection, algo="unweighted_cosine", md5=None, job_service=None, job_id=None):
         """
@@ -420,10 +587,86 @@ class BinSimService:
             
             r.delete(f"{collection}:bin_sim:score:{algo}")
             r.delete(f"{collection}:bin_sim:built:{algo}")
+            r.delete(f"{collection}:bin_sim:umap:{algo}")
 
         if job_service and job_id:
             job_service.update_progress(job_id, 100, "Cleared binary similarities.")
             
+        return True
+
+    def reindex_bin_sim(self, collection, algo="unweighted_cosine", job_service=None, job_id=None):
+        """
+        Rebuilds secondary indexes for all existing bin_sim pairs in the collection.
+        Use after deploy or when indexes are missing.
+        """
+        r = self.r
+        if job_service and job_id:
+            job_service.add_log(job_id, f"[*] Reindexing bin_sim pairs for collection {collection}")
+
+        built_key = f"{collection}:bin_sim:built:{algo}"
+        sids = list(r.smembers(built_key))
+        if not sids:
+            if job_service and job_id:
+                job_service.add_log(job_id, "No bin_sim docs found to reindex.")
+                job_service.update_progress(job_id, 100)
+            return True
+
+        sids = [s.decode() if isinstance(s, bytes) else s for s in sids]
+        total = len(sids)
+
+        # Pre-fetch all file meta we might need
+        md5s = set()
+        for sid in sids:
+            try:
+                rest = sid.split(f"bin_sim:{algo}:")[1]
+                m_a, m_b = rest.split("::")
+                md5s.update([m_a, m_b])
+            except Exception:
+                pass
+
+        file_meta_cache = {}
+        md5_list = list(md5s)
+        if md5_list:
+            pipe_meta = r.pipeline()
+            for md5 in md5_list:
+                pipe_meta.json().get(f"{collection}:file:{md5}:meta", "$")
+            for md5, res in zip(md5_list, pipe_meta.execute()):
+                if res:
+                    m = res[0] if isinstance(res, list) else res
+                    if isinstance(m, str):
+                        m = json.loads(m)
+                    file_meta_cache[md5] = m if isinstance(m, dict) else {}
+                else:
+                    file_meta_cache[md5] = {}
+
+        # Fetch all docs and reindex
+        pipe = r.pipeline()
+        for sid in sids:
+            pipe.json().get(sid, "$")
+        docs = pipe.execute()
+
+        pipe = r.pipeline()
+        for i, (sid, res) in enumerate(zip(sids, docs)):
+            if not res:
+                continue
+            doc = res[0] if isinstance(res, list) else res
+            if isinstance(doc, str):
+                doc = json.loads(doc)
+            m_a = doc.get("md5_a", "")
+            m_b = doc.get("md5_b", "")
+            _index_bin_sim_pair(pipe, collection, sid, doc,
+                                file_meta_cache.get(m_a),
+                                file_meta_cache.get(m_b))
+            if (i + 1) % 200 == 0:
+                pipe.execute()
+                pipe = r.pipeline()
+                if job_service and job_id:
+                    job_service.update_progress(job_id, int((i + 1) / total * 100))
+
+        pipe.execute()
+
+        if job_service and job_id:
+            job_service.update_progress(job_id, 100, f"Reindexed {total} bin_sim pairs.")
         return True
 
 bin_sim_service = BinSimService()

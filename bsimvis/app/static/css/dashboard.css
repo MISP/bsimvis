@@ -123,6 +123,34 @@ nav a.active {
     color: var(--accent);
 }
 
+.nav-rebuild-btn {
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    margin-left: auto;
+    padding: 2px 5px;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nav-rebuild-btn:hover {
+    color: var(--accent);
+    transform: rotate(30deg);
+}
+
+.nav-rebuild-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+body.sidebar-collapsed .nav-rebuild-btn {
+    display: none !important;
+}
+
 /* Main */
 main {
     flex: 1;
@@ -874,6 +902,21 @@ body.resizing {
     display: flex;
     flex-direction: column;
     gap: 2px;
+}
+
+.graph-tooltip {
+    position: fixed;
+    pointer-events: none;
+    z-index: 20005;
+    background: rgba(13, 15, 20, 0.95);
+    color: #fff;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 0.8rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    backdrop-filter: blur(5px);
+    display: none;
 }
 
 #graph-loading-text {

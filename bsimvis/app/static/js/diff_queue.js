@@ -45,16 +45,12 @@ function saveDiffQueue() {
 function loadDiffQueue() {
     try {
         const stored = localStorage.getItem('bsim_diff_queue');
-        if (stored) {
-            diffSelection = JSON.parse(stored) || [];
-            updateDiffQueueUI();
-        }
+        diffSelection = stored ? (JSON.parse(stored) || []) : [];
+        updateDiffQueueUI();
         
         const storedFile = localStorage.getItem('bsim_file_diff_queue');
-        if (storedFile) {
-            fileDiffSelection = JSON.parse(storedFile) || [];
-            updateFileDiffQueueUI();
-        }
+        fileDiffSelection = storedFile ? (JSON.parse(storedFile) || []) : [];
+        updateFileDiffQueueUI();
     } catch(e) {}
 }
 
@@ -105,9 +101,9 @@ function clearDiffSelection() {
     saveDiffQueue();
 }
 
-function addToFileDiff(id, name) {
+function addToFileDiff(id, name, event) {
     if (window.parent && window.parent !== window && typeof window.parent.addToFileDiff === 'function') {
-        window.parent.addToFileDiff(id, name);
+        window.parent.addToFileDiff(id, name, event);
         return;
     }
 
@@ -122,20 +118,33 @@ function addToFileDiff(id, name) {
         fileDiffSelection.shift();
     }
 
-    updateFileDiffQueueUI();
     saveFileDiffQueue();
+    updateFileDiffQueueUI();
 
     if (fileDiffSelection.length === 2) {
         const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
         const collection = params.get('collection') || 'main';
-        const md5a = fileDiffSelection[0].id.split(':').pop();
-        const md5b = fileDiffSelection[1].id.split(':').pop();
+        const itemA = fileDiffSelection[0];
+        const itemB = fileDiffSelection[1];
+        const md5a = itemA.id.split(':').pop();
+        const md5b = itemB.id.split(':').pop();
         
         fileDiffSelection = [];
-        updateFileDiffQueueUI();
         saveFileDiffQueue();
+        updateFileDiffQueueUI();
         
-        window.location.hash = `#binary-similarity?collection=${collection}&md5_a=${md5a}&md5_b=${md5b}`;
+        const url = `/static/bin_sim/index.html?collection=${collection}&md5_a=${md5a}&md5_b=${md5b}`;
+        const title = `Binary Diff: ${itemA.name} vs ${itemB.name}`;
+
+        if (event && (event.ctrlKey || event.metaKey)) {
+            window.open(url, '_blank');
+        } else if (window.windowManager) {
+            window.windowManager.createWindow(title, url, { type: 'diff' });
+        } else if (window.parent && window.parent.windowManager) {
+            window.parent.windowManager.createWindow(title, url, { type: 'diff' });
+        } else {
+            window.open(url, '_blank');
+        }
     }
 }
 
@@ -262,17 +271,37 @@ function updateFileDiffQueueUI() {
         const inQueue = queue.some(item => item.id === id);
         if (inQueue) {
             btn.classList.add('active');
+            if (btn.dataset.fullText) {
+                btn.innerHTML = '<i class="fa-solid fa-file-code"></i> In Diff Queue';
+            }
         } else {
             btn.classList.remove('active');
+            if (btn.dataset.fullText) {
+                btn.innerHTML = '<i class="fa-solid fa-file-code"></i> Add to Diff';
+            }
         }
     });
+
+    // Update binary force graph if it exists
+    if (window.binaryDensityMapInstance && typeof window.binaryDensityMapInstance.updateSelection === 'function') {
+        window.binaryDensityMapInstance.updateSelection();
+    }
 }
 
 function openStandaloneDiff() {
     try {
         const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
         if (queue.length < 2) return;
-        window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
+        const url = `/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`;
+        const title = `Diff: ${queue[0].name} vs ${queue[1].name}`;
+        
+        if (window.windowManager) {
+            window.windowManager.createWindow(title, url, { type: 'diff' });
+        } else if (window.parent && window.parent.windowManager) {
+            window.parent.windowManager.createWindow(title, url, { type: 'diff' });
+        } else {
+            window.open(url, '_blank');
+        }
         clearDiffSelection();
     } catch(e) {}
 }

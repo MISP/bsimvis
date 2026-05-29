@@ -7,5 +7,6 @@ tqdm
 pymilvus
 hdbscan
 scikit-learn
+umap-learn
 python-dotenv
 requests

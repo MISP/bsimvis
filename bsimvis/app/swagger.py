@@ -1157,6 +1157,16 @@ class ClusterRebuild(Resource):
         return rebuild_cluster()
 
 
+@ns_cluster.route("/rebuild_all")
+class ClusterRebuildAll(Resource):
+    @ns_cluster.expect(api.models["ClusterBuild"])
+    def post(self):
+        """Enqueues a full re-analysis pipeline (Clusters + Binary Sim)."""
+        from bsimvis.app.routes.cluster import rebuild_all_pipeline
+
+        return rebuild_all_pipeline()
+
+
 @ns_cluster.route("/clear")
 class ClusterClear(Resource):
     @ns_cluster.expect(
@@ -1423,3 +1433,64 @@ class BinSimList(Resource):
         from bsimvis.app.routes.bin_sim import list_bin_sims
 
         return list_bin_sims()
+
+
+@ns_bin_sim.route("/search")
+class BinSimSearch(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": {"description": "Collection name", "required": True, "example": "main"},
+            "algo": {"description": "Algorithm (default: unweighted_cosine)", "default": "unweighted_cosine"},
+            "q": {"description": "Keyword search (MD5, file names)", "example": "libc"},
+            "md5": {"description": "Filter pairs involving this MD5 (either side)"},
+            "md5_a": {"description": "Filter by exact md5_a"},
+            "md5_b": {"description": "Filter by exact md5_b"},
+            "file_name": {"description": "Filter by file name substring (either side)", "example": "libc"},
+            "file_tag": {"description": "Filter by file tag (either side)", "example": "malware"},
+            "min_score": {"description": "Minimum score (collection-weighted)", "example": 0.5},
+            "max_score": {"description": "Maximum score", "example": 1.0},
+            "min_coverage_a": {"description": "Minimum coverage for binary A", "example": 0.5},
+            "max_coverage_a": {"description": "Maximum coverage for binary A"},
+            "min_coverage_b": {"description": "Minimum coverage for binary B"},
+            "max_coverage_b": {"description": "Maximum coverage for binary B"},
+            "min_shared": {"description": "Minimum shared clusters", "example": 5},
+            "max_shared": {"description": "Maximum shared clusters"},
+            "sort_by": {"description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"},
+            "sort_order": {"description": "Sort direction: desc (default) or asc"},
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Results per page", "default": 50},
+        }
+    )
+    def get(self):
+        """Search binary similarity pairs with rich filtering and sorting."""
+        from bsimvis.app.routes.search_bin_sim import search_bin_sims
+
+        return search_bin_sims()
+
+
+@ns_bin_sim.route("/umap")
+class BinSimUmap(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": {"description": "Collection name", "default": "main"},
+            "algo": {"description": "Algorithm name", "default": "unweighted_cosine"},
+        }
+    )
+    def get(self):
+        """Retrieve 2D UMAP coordinates for all binaries in the collection."""
+        from bsimvis.app.routes.search_bin_sim import search_umap
+
+        return search_umap()
+
+
+@ns_bin_sim.route("/reindex")
+class BinSimReindex(Resource):
+    @ns_bin_sim.expect(api.model("BinSimReindex", {
+        "collection": fields.String(default="main"),
+        "algo": fields.String(default="unweighted_cosine"),
+    }))
+    def post(self):
+        """Rebuilds secondary indexes for all existing binary similarity pairs (backfill)."""
+        from bsimvis.app.routes.bin_sim import reindex_bin_sim
+
+        return reindex_bin_sim()

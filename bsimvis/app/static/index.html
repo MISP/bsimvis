@@ -24,6 +24,8 @@
     <script src="/js/cluster_views.js"></script>
     <script src="/js/call_graph.js"></script>
     <script src="/js/binary_similarity.js"></script>
+    <script src="/js/chord_graph.js"></script>
+    <script src="/js/binary_density_map.js"></script>
     <script src="/js/window_manager.js"></script>
     <script src="/js/upload.js"></script>
     <script src="/js/dashboard.js"></script>
@@ -56,13 +58,23 @@
                 class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
         <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
             style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none"><i class="fa-solid fa-bullseye"></i>
-            <span>Clusters</span></a>
+        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none">
+            <i class="fa-solid fa-bullseye"></i>
+            <span>Clusters</span>
+            <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
+                <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
+            </button>
+        </a>
         <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
                 class="fa-solid fa-sitemap"></i>
             <span>Call Graph</span></a>
-        <a href="#binary-similarity" id="nav-binary-similarity" title="Binary Similarity" style="display:none"><i class="fa-solid fa-not-equal"></i>
-            <span>Binary Sim</span></a>
+        <a href="#binary-similarity" id="nav-binary-similarity" title="Binary Similarity" style="display:none">
+            <i class="fa-solid fa-not-equal"></i>
+            <span>Binary Sim</span>
+            <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
+                <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
+            </button>
+        </a>
 
         <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
             <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"
@@ -103,6 +115,10 @@
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
                     <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+
+                    <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn" title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
+                        <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
+                    </button>
 
                     <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
                         <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
@@ -318,6 +334,22 @@
 
             <div id="binary-similarity-container"
                 style="display:none; flex: 1; flex-direction:column; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow-y:auto; margin: 10px; position:relative;">
+            </div>
+
+            <div id="chord-view-container"
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
+            </div>
+
+            <div id="binary-density-view-container"
+                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
+                <div class="graph-settings"
+                    style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 120px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="density-show-labels" checked
+                            onchange="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.toggleLabels(this.checked)">
+                        <label style="font-size:0.8rem; margin-bottom:0; cursor:pointer;" for="density-show-labels">Show Labels</label>
+                    </div>
+                </div>
             </div>
 
         </div>

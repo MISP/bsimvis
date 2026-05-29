@@ -115,3 +115,31 @@ function showConfirm(message, onConfirm) {
         toast.remove();
     };
 }
+
+/**
+ * Generates a deterministic color for an MD5 hash.
+ * Ensures the color is bright enough for a dark theme.
+ */
+function getMd5Color(md5) {
+    if (!md5) return "#888888";
+    let hash = 0;
+    for (let i = 0; i < md5.length; i++) {
+        hash = md5.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+    const hex = "00000".substring(0, 6 - c.length) + c;
+
+    let r = parseInt(hex.substring(0, 2), 16);
+    let g = parseInt(hex.substring(2, 4), 16);
+    let b = parseInt(hex.substring(4, 6), 16);
+
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    if (brightness < 60) {
+        r = Math.min(255, r + 80);
+        g = Math.min(255, g + 80);
+        b = Math.min(255, b + 80);
+    }
+
+    return `rgb(${r}, ${g}, ${b})`;
+}
+window.getMd5Color = getMd5Color;

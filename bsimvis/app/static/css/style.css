@@ -863,11 +863,12 @@ body {
 }
 
 /* --- Action Buttons --- */
-.btn-diff-action {
+.btn-diff-action,
+.btn-file-diff-action {
     background-color: rgba(253, 151, 31, 0.15); /* Orange hint */
     color: #fd971f;
     border: 1px solid rgba(253, 151, 31, 0.3);
-    padding: 4px 10px;
+    padding: 2px 5px;
     border-radius: 4px;
     font-size: 0.75rem;
     cursor: pointer;
@@ -875,15 +876,44 @@ body {
     transition: all 0.2s;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 5px;
+    height: 24px;
+    width: 24px;
+    box-sizing: border-box;
 }
-.btn-diff-action:hover {
+.btn-diff-action:hover,
+.btn-file-diff-action:hover {
     background-color: rgba(253, 151, 31, 0.25);
     border-color: #fd971f;
 }
-.btn-diff-action span {
+.btn-diff-action span,
+.btn-file-diff-action span {
     font-size: 1.1rem;
     line-height: 1;
+}
+
+.btn-action {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 24px;
+    width: 24px;
+    transition: all 0.2s;
+    text-decoration: none;
+    box-sizing: border-box;
+}
+
+.btn-action:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
 }
 
 .btn-feat-action {
@@ -1609,7 +1639,8 @@ body {
     margin-right: 10px;
 }
 
-.btn-diff-action.active {
+.btn-diff-action.active,
+.btn-file-diff-action.active {
     background-color: #fd971f !important;
     color: #000 !important;
     box-shadow: 0 0 10px rgba(253, 151, 31, 0.5);

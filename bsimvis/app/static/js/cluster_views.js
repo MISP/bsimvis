@@ -55,7 +55,7 @@ class ClusterHierarchy {
         this.g = null;
         this.zoom = null;
         this.params = {
-            min_cluster_size: 5,
+            min_cluster_size: 2,
             stability_threshold: 0.0,
             show_parents: true,
             path_compression: true
@@ -176,7 +176,7 @@ class ClusterHierarchy {
         this.container.innerHTML = hierControls;
 
         // Initialize defaults
-        this.params.min_cluster_size = this.params.min_cluster_size || 5;
+        this.params.min_cluster_size = this.params.min_cluster_size || 2;
         this.params.max_cluster_size = this.params.max_cluster_size || 0;
         this.params.cohesion_min = this.params.cohesion_min || 0;
         this.params.cohesion_max = this.params.cohesion_max || 0;
@@ -836,7 +836,7 @@ class ClusterPacking {
         this.root = null;
         this.svg = null;
         this.params = {
-            min_cluster_size: 5,
+            min_cluster_size: 2,
             stability_threshold: 0.0,
             show_parents: true,
             path_compression: true
@@ -956,7 +956,7 @@ class ClusterPacking {
         this.container.innerHTML = packControls;
 
         // Initialize defaults
-        this.params.min_cluster_size = this.params.min_cluster_size || 5;
+        this.params.min_cluster_size = this.params.min_cluster_size || 2;
         this.params.max_cluster_size = this.params.max_cluster_size || 0;
         this.params.cohesion_min = this.params.cohesion_min || 0;
         this.params.cohesion_max = this.params.cohesion_max || 0;

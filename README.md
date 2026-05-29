@@ -106,11 +106,70 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 ```
 uv run test_api_endpoints.py
 ```
-# CLI
+
+# API
+
+## Binary upload
+
+```
+# upload to /api/file/upload
+curl -X POST --data-binary "@/path/to/file" \
+  "http://localhost:5000/api/file/upload?collection=main&file_name=my_binary&profile=fast"
+
+# Follow pipeline with response
+{
+    "status": "processing",
+    "file_md5": "b7680c697c69aff3cd8f44fffcb7d683",
+    "pipeline_id": "pipe_f4f87081-ab7d-4077",
+    "message": "Binary uploaded. Analysis pipeline started."
+}
+```
+
+## Ghidra project upload 
+
+Files in ghidra projects won´t get reanalyzed to not overwrite analyst work, meaning if no analyzers were ran in this project, no functions will be found
+
+```
+# Zip your .gpr and .rep project
+gpr_name="my_project" # .gpr
+zip -r "$gpr_name.gpr.zip" "$gpr_name.gpr" "$gpr_name.rep"
+
+# upload to /api/file/upload
+curl -X POST --data-binary @$gpr_name.gpr.zip \
+  "http://localhost:5000/api/file/upload?file_name=$gpr_name&collection=main&profile=fast"
+```
+
+## Follow pipeline progress
+
+```
+curl -s "http://localhost:5001/api/jobs/pipe_f4f87081-ab7d-4077"
+
+# Wait for completed status 
+{
+...
+    "id": "pipe_f4f87081-ab7d-4077",
+    "progress": "100",
+    "status": "completed",
+...
+}
+```
+
+## Build function clusters and Binary similarities
+
+```
+# With all binaries uploaded and ingestion pipeline completed
+# Or periodically schedule 
+
+curl -X POST -H "Content-Type: application/json" \
+ -d '{"collection": "main", "algo": "unweighted_cosine"}' \
+ http://localhost:5000/api/cluster/rebuild_all
+```
+
+# CLI tool
 
 ## Upload BSIM data
 
-Assuming you have the API running, upload data using:
+Assuming you have the API running, upload binary or ghidra project (files in ghidra projects won´t get reanalyzed to not overwrite analyst work, meaning if no analyzers were ran in this project, no functions will be found)
 
 ```bash
 uv run bsimvis upload <target1> <target2> ... <targetN> -c <collection_name>

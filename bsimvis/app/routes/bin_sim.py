@@ -219,3 +219,18 @@ def list_bin_sims():
         "limit": limit,
         "results": results
     }
+
+
+def reindex_bin_sim():
+    """Trigger background job to rebuild secondary indexes for existing bin_sim docs."""
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    algo = data.get("algo", "unweighted_cosine")
+
+    job_id = job_service.create_job(
+        JobType.REINDEX_BIN_SIM.value,
+        {"collection": collection, "algo": algo},
+    )
+    job_service.enqueue_job(job_id)
+    return {"status": "success", "job_id": job_id, "message": "Bin sim reindex job enqueued"}
+

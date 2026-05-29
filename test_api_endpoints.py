@@ -626,34 +626,12 @@ def run_all_tests():
             params={"collection": COLLECTION, "cluster_uuid": cluster_uuid},
         )
 
-    # ── Similarity tag/untag ───────────────────────────────────────────────
-    # (only if we have two distinct functions with a similarity pair)
-    if func_id1 and func_id2 and func_id1 != func_id2:
-        print(_color("\n  [Similarity tagging]", BOLD))
-        test_endpoint(
-            "POST",
-            "/api/similarity/tag",
-            data={
-                "collection": COLLECTION,
-                "id1": func_id1,
-                "id2": func_id2,
-                "tag": "sim_test",
-            },
-            label="POST /api/similarity/tag",
-            expected_ok=False,
-        )
-        test_endpoint(
-            "POST",
-            "/api/similarity/untag",
-            data={
-                "collection": COLLECTION,
-                "id1": func_id1,
-                "id2": func_id2,
-                "tag": "sim_test",
-            },
-            label="POST /api/similarity/untag",
-            expected_ok=False,
-        )
+    # ── Binary Similarity ──────────────────────────────────────────────────
+    print(_color("\n  [Binary Similarity]", BOLD))
+    test_endpoint("GET", "/api/bin_sim/search", params={"collection": COLLECTION})
+    test_endpoint("GET", "/api/bin_sim/umap", params={"collection": COLLECTION}, label="GET /api/bin_sim/umap")
+    if file_md5:
+        test_endpoint("GET", "/api/bin_sim/list", params={"collection": COLLECTION, "md5": file_md5})
 
 
 # ---------------------------------------------------------------------------

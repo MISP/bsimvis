@@ -27,6 +27,7 @@ class JobType(Enum):
     CLEAR_CLUSTER = "clear_cluster"
     BUILD_BIN_SIM = "build_bin_sim"
     CLEAR_BIN_SIM = "clear_bin_sim"
+    REINDEX_BIN_SIM = "reindex_bin_sim"
 
 
 class JobService:
@@ -294,6 +295,36 @@ class JobService:
 
         global_eta = remaining_items / total_speed if total_speed > 0 else 0
 
+        # Collect active collections
+        active_collections = set()
+        # Check processing jobs
+        all_processing_ids = self.r.lrange("jobs:processing", 0, -1)
+        # Also check pending jobs (last 100 for efficiency)
+        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
+            "jobs:pending:high", 0, 100
+        )
+
+        for jid in set(all_processing_ids + pending_ids):
+            job = self.r.hgetall(f"job:{jid}")
+            if not job:
+                continue
+            if job.get("status") in [
+                JobStatus.CANCELLED.value,
+                JobStatus.FAILED.value,
+                JobStatus.COMPLETED.value,
+            ]:
+                continue
+
+            payload_raw = job.get("payload")
+            if payload_raw:
+                try:
+                    payload = json.loads(payload_raw)
+                    coll = payload.get("collection")
+                    if coll:
+                        active_collections.add(coll)
+                except:
+                    pass
+
         return {
             "active_workers": active_jobs_count,
             "pending_jobs": pending_count,
@@ -301,6 +332,7 @@ class JobService:
             "total_speed": round(total_speed, 2),
             "remaining_items": remaining_items,
             "global_eta": int(global_eta),
+            "active_collections": list(active_collections),
         }
 
     def list_jobs(self, limit=50, offset=0):

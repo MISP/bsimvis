@@ -47,7 +47,7 @@ function renderBinarySimilarityView(params) {
             </div>
         </div>
         
-        <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0;">
+        <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
             <!-- Sankey Graph Placeholder -->
             <div class="resizable-card" id="bin-sim-sankey-card" style="position:relative; width:100%; height:400px; min-height:200px; margin-bottom:20px; border:1px solid var(--border); background:#121212; border-radius:8px; flex-shrink:0; display:flex; flex-direction:column; overflow:hidden;">
                 <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
@@ -1108,3 +1108,145 @@ window.setSankeyScale = function(scale) {
         renderBinaryDiffSankey(binSimDataCache);
     }
 };
+
+function applyBinSimSearch() {
+    if (window.filterDebounceTimer) clearTimeout(window.filterDebounceTimer);
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+
+    const inputs = {
+        'q': 'bsim-search-input',
+        'sort': 'bsim-score-type',
+        'min_score': 'bsim-min-score',
+        'max_score': 'bsim-max-score',
+        'file_name': 'bsim-file-name',
+        'md5': 'bsim-md5',
+        'arch': 'bsim-arch',
+        'min_funcs': 'bsim-min-funcs',
+        'max_funcs': 'bsim-max-funcs',
+        'min_coverage': 'bsim-min-cov',
+        'max_coverage': 'bsim-max-cov',
+        'min_shared': 'bsim-min-shared'
+    };
+
+    for (const [paramKey, elemId] of Object.entries(inputs)) {
+        const val = document.getElementById(elemId)?.value;
+        if (val) params.set(paramKey, val);
+        else params.delete(paramKey);
+    }
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    if (countLimit) params.set('limit', countLimit);
+
+    const tagCols = ['bin-sim'];
+    const allTagKeys = ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'];
+    allTagKeys.forEach(k => params.delete(k));
+
+    tagCols.forEach(colId => {
+        const container = document.getElementById(`tag-container-${colId}`);
+        if (!container) return;
+        const cards = container.querySelectorAll('.tag-filter-card');
+        cards.forEach(card => {
+            const type = card.dataset.type;
+            const val = card.dataset.value;
+            const isEx = card.dataset.exclude === 'true';
+            const key = (isEx ? 'exclude_' : '') + type;
+            params.append(key, val);
+        });
+    });
+
+    const newHash = hashPath + '?' + params.toString();
+    window.location.hash = newHash;
+}
+
+function renderBinSimPairs(items) {
+    if (!items || items.length === 0) return '';
+    let html = '';
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+    const collection = params.get('collection') || 'main';
+
+    items.forEach(item => {
+        const activeScoreType = params.get('sort') || 'score';
+        const score = item[activeScoreType] || item.score || 0;
+        const scoreFormatted = (score * 100).toFixed(1) + '%';
+        const archA = item.architecture_a || '---';
+        const archB = item.architecture_b || '---';
+        const funcsA = item.functions_count_a || 0;
+        const funcsB = item.functions_count_b || 0;
+        const covA = (item.coverage_a || 0).toFixed(4);
+        const covB = (item.coverage_b || 0).toFixed(4);
+        const shared = item.shared_clusters || 0;
+        
+        let tagsA = Array.isArray(item.file_tags_a) ? item.file_tags_a : [];
+        let userTagsA = Array.isArray(item.file_user_tags_a) ? item.file_user_tags_a : [];
+        
+        let tagsB = Array.isArray(item.file_tags_b) ? item.file_tags_b : [];
+        let userTagsB = Array.isArray(item.file_user_tags_b) ? item.file_user_tags_b : [];
+        
+        const diffUrl = `/static/bin_sim/index.html?collection=${collection}&md5_a=${item.md5_a}&md5_b=${item.md5_b}`;
+        const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+        const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+        const onClickHandler = `event.stopPropagation(); if(event.ctrlKey || event.metaKey) { window.open('${diffUrl}', '_blank'); } else if(typeof windowManager !== 'undefined') { windowManager.createWindow('Bin Diff: ${safeNameA} vs ${safeNameB}', '${diffUrl}', { type: 'diff' }); } else if(window.parent && window.parent.windowManager) { window.parent.windowManager.createWindow('Bin Diff: ${safeNameA} vs ${safeNameB}', '${diffUrl}', { type: 'diff' }); } else { window.open('${diffUrl}', '_blank'); }`;
+
+        html += `
+            <tr class="sim-row">
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${scoreFormatted}</div>
+                        <button class="btn-diff-action" onclick="${onClickHandler}" title="Open Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
+                            <span>±</span>
+                        </button>
+                    </div>
+                </td>
+                <td class="sim-cell">
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
+                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.file_name_a || 'Unknown'}</b>
+                        </div>
+                        <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
+                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.file_name_b || 'Unknown'}</b>
+                        </div>
+                    </div>
+                </td>
+                <td class="sim-cell">
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="min-height:24px; display:flex; align-items:center;"><span class="mono dim" style="font-size:0.7rem;"># ${item.md5_a}</span></div>
+                        <div style="min-height:24px; display:flex; align-items:center;"><span class="mono dim" style="font-size:0.7rem;"># ${item.md5_b}</span></div>
+                    </div>
+                </td>
+                <td class="sim-cell">
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.75rem;">${archA}</span></div>
+                        <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.75rem;">${archB}</span></div>
+                    </div>
+                </td>
+                <td class="sim-cell">
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.8rem;">${funcsA}</span></div>
+                        <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.8rem;">${funcsB}</span></div>
+                    </div>
+                </td>
+                <td class="sim-cell">
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="min-height:24px; display:flex; align-items:center;">${covA}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${covB}</div>
+                    </div>
+                </td>
+                <td class="sim-cell" style="vertical-align:middle;">
+                    <div style="display:flex; align-items:center; justify-content:center; height:100%; font-weight:bold;">${shared}</div>
+                </td>
+                <td class="sim-cell">
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${collection}:file:${item.md5_a}`, tagsA, userTagsA)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${collection}:file:${item.md5_b}`, tagsB, userTagsB)}</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+    return html;
+}
+
+window.applyBinSimSearch = applyBinSimSearch;
+window.renderBinSimPairs = renderBinSimPairs;

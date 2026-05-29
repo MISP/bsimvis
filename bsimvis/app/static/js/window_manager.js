@@ -39,8 +39,16 @@ class WindowManager {
         winEl.className = 'floating-window';
         winEl.id = id;
 
-        const width = options.width || 800;
-        const height = options.height || 500;
+        let defaultWidth = 800;
+        let defaultHeight = 500;
+        
+        if (type === 'diff' || type === 'features' || type === 'global-feature') {
+            defaultWidth = Math.min(1200, window.innerWidth - 100);
+            defaultHeight = Math.min(750, window.innerHeight - 100);
+        }
+        
+        const width = options.width || defaultWidth;
+        const height = options.height || defaultHeight;
         
         // Stagger windows
         const offset = this.windows.length * 30;

@@ -1,7 +1,7 @@
 """
 IndexConfig — single source of truth for all secondary index declarations.
 
-Configured by source entity ("file", "func", "sim").
+Configured by source entity ("file", "func", "sim", "bin_sim").
 For each field on a source entity, we declare which target levels it should
 propagate to via the list: ["file", "func", "sim"].
 
@@ -10,6 +10,9 @@ If the field is 'tags' or 'user_tags' and it is propagated to a DIFFERENT level,
 it is prefixed with the source level.
 e.g. file -> tags -> sim becomes 'file_tags' at the sim level.
 This avoids namespace collisions and allows direct sim-level queries like ?file_tag=x.
+
+bin_sim level uses native fields only (no propagation to other levels).
+File metadata is denormalized directly into the bin_sim index at build time.
 """
 
 INDEX_CONFIG = {
@@ -53,6 +56,29 @@ INDEX_CONFIG = {
         "op": ["feature"],
         "frequency": ["feature"],
         "tf_score": ["feature"],
+    },
+    # bin_sim: native fields only, written directly from bin_sim doc + denormalized file meta
+    "bin_sim": {
+        "md5_a": ["bin_sim"],
+        "md5_b": ["bin_sim"],
+        "algo": ["bin_sim"],
+        "file_name_a": ["bin_sim"],   # denormalized from file meta at build time
+        "file_name_b": ["bin_sim"],
+        "file_tags_a": ["bin_sim"],   # denormalized tags for binary A
+        "file_tags_b": ["bin_sim"],
+        "file_user_tags_a": ["bin_sim"],
+        "file_user_tags_b": ["bin_sim"],
+        "score": ["bin_sim"],                     # numeric
+        "score_sim_weighted": ["bin_sim"],         # numeric
+        "score_collection_weighted": ["bin_sim"],  # numeric
+        "coverage_a": ["bin_sim"],                 # numeric
+        "coverage_b": ["bin_sim"],                 # numeric
+        "shared_clusters": ["bin_sim"],            # numeric
+        "computed_at": ["bin_sim"],                # numeric (timestamp)
+        "architecture_a": ["bin_sim"],
+        "architecture_b": ["bin_sim"],
+        "functions_count_a": ["bin_sim"],          # numeric
+        "functions_count_b": ["bin_sim"],          # numeric
     },
 }
 
@@ -98,6 +124,14 @@ NUM_FIELDS = {
     "cluster_stability",
     "frequency",
     "tf_score",
+    # bin_sim numeric fields
+    "score",
+    "score_sim_weighted",
+    "score_collection_weighted",
+    "coverage_a",
+    "coverage_b",
+    "shared_clusters",
+    "computed_at",
 }
 
 EXACT_FIELDS = {
@@ -155,6 +189,8 @@ def get_propagated_fields(target_level: str) -> dict:
     """
     result = {"file": [], "func": [], "sim": []}
     for src_level, fields in INDEX_CONFIG.items():
+        if src_level == "bin_sim":
+            continue  # bin_sim is standalone, not propagated
         for field, targets in fields.items():
             if target_level in targets and field not in NUM_FIELDS:
                 target_field = resolve_target_field(src_level, target_level, field)

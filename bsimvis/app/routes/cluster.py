@@ -61,6 +61,42 @@ def rebuild_cluster():
     return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
+def rebuild_all_pipeline():
+    """Enqueues a full re-analysis pipeline: clear clusters -> clear bin_sim -> cluster functions -> build bin_sim."""
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    algo = data.get("algo", "unweighted_cosine")
+
+    tasks = [
+        (JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}),
+        (JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}),
+        (
+            JobType.CLUSTER_FUNCTIONS,
+            {
+                "collection": collection,
+                "algo": algo,
+                "min_cluster_size": data.get("min_cluster_size", 2),
+                "min_samples": data.get("min_samples", 1),
+                "epsilon": data.get("epsilon", 0.0),
+                "selection_method": data.get("selection_method", "eom"),
+                "min_sim": data.get("min_sim", 0.0),
+                "min_features": data.get("min_features", 0),
+            },
+        ),
+        (
+            JobType.BUILD_BIN_SIM,
+            {
+                "collection": collection,
+                "algo": algo,
+                "min_cohesion": data.get("min_cohesion", 0.5),
+            },
+        ),
+    ]
+
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+
+
 def clear_cluster():
     """Enqueues a cluster clear job."""
     data = request.json or {}

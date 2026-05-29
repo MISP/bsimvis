@@ -1,6 +1,7 @@
 // Main Dashboard Controller for BSimVis
 
 const windowManager = new WindowManager();
+window.windowManager = windowManager;
 
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
@@ -134,6 +135,9 @@ function toggleSidebar() {
 
     // Trigger window resize for D3 plots
     setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+
+    // Update header buttons visibility immediately
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
 }
 
 function toggleHeader() {
@@ -270,9 +274,18 @@ const routes = {
     },
     '#binary-similarity': {
         title: 'Binary Similarity',
-        api: null,
-        headers: [],
-        renderer: null
+        api: '/api/bin_sim/search',
+        headers: [
+            { label: 'Score', width: '10%', sort: 'score' },
+            { label: 'Binary Pair', width: '20%' },
+            { label: 'MD5', width: '15%' },
+            { label: 'Arch', width: '8%', sort: 'architecture' },
+            { label: 'Funcs', width: '8%', sort: 'functions_count' },
+            { label: 'Coverage', width: '12%', sort: 'coverage' },
+            { label: 'Shared Clusters', width: '7%', sort: 'shared_clusters' },
+            { label: 'Tags', width: '20%' },
+        ],
+        renderer: renderBinSimPairs
     },
     '#file-call-graph': {
         title: 'File Call Graph',
@@ -351,7 +364,7 @@ async function refreshData(appendArg = false, force = false) {
     }
 
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
-    if (hashPath === '#functions' || hashPath === '#function-similarity' || hashPath === '#files') {
+    if (hashPath === '#functions' || hashPath === '#function-similarity' || hashPath === '#binary-similarity' || hashPath === '#files') {
         await fetchTagMetadata(collection);
     }
 
@@ -380,7 +393,8 @@ async function refreshData(appendArg = false, force = false) {
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
     updateUI(hashPath, params, route);
 
-    if (params.get('view') === 'graph' && hashPath === '#function-similarity' || !route.api) {
+    const isGraphView = params.get('view') === 'graph' || params.get('view') === 'hierarchy' || params.get('view') === 'packing';
+    if ((isGraphView && (hashPath === '#function-similarity' || hashPath === '#binary-similarity' || hashPath === '#clusters')) || !route.api) {
         document.getElementById('loader').style.display = 'none';
         return;
     }
@@ -465,6 +479,7 @@ function updateUI(path, params, route) {
     if (document.getElementById('call-graph-view-container')) document.getElementById('call-graph-view-container').style.display = 'none';
     if (document.getElementById('upload-view-container')) document.getElementById('upload-view-container').style.display = 'none';
     if (document.getElementById('binary-similarity-container')) document.getElementById('binary-similarity-container').style.display = 'none';
+    if (document.getElementById('chord-view-container')) document.getElementById('chord-view-container').style.display = 'none';
 
     // Clear all autocomplete dropdowns to prevent leftovers from previous navigation
     document.querySelectorAll('.tag-autocomplete-dropdown').forEach(el => el.remove());
@@ -481,6 +496,8 @@ function updateUI(path, params, route) {
     if (window.hierarchyInstance) window.hierarchyInstance.stop();
     if (window.packingInstance) window.packingInstance.stop();
     if (window.callGraphInstance) window.callGraphInstance.stop();
+    if (window.chordGraphInstance) window.chordGraphInstance.stop();
+    if (window.binaryDensityMapInstance) window.binaryDensityMapInstance.stop();
 
     if (path === '#upload') {
         tableWrap.style.display = 'none';
@@ -492,13 +509,11 @@ function updateUI(path, params, route) {
         tableWrap.style.display = 'none';
         if (tableBodyWrap) tableBodyWrap.style.display = 'none';
         document.getElementById('pagination-container').style.display = 'none';
+        document.getElementById('call-graph-view-container').style.display = 'block';
+        if (!window.callGraphInstance) window.callGraphInstance = new FileCallGraph('call-graph-view-container');
+        window.callGraphInstance.fetch(params);
     } else if (path === '#binary-similarity') {
-        tableWrap.style.display = 'none';
-        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-        document.getElementById('pagination-container').style.display = 'none';
-        document.getElementById('binary-similarity-container').style.display = 'flex';
-        document.getElementById('header-top-actions').style.display = 'none';
-        if (typeof renderBinarySimilarityView === 'function') renderBinarySimilarityView(params);
+        document.getElementById('header-top-actions').style.display = 'flex';
     } else {
         document.getElementById('header-top-actions').style.display = 'flex';
     }
@@ -560,6 +575,7 @@ function updateUI(path, params, route) {
         updateNavLink('nav-function-similarity', '#function-similarity');
         updateNavLink('nav-clusters', '#clusters');
         updateNavLink('nav-binary-similarity', '#binary-similarity');
+        updateNavLink('nav-chord-map', '#chord-map');
         updateNavLink('nav-jobs', '#jobs');
         updateNavLink('nav-upload', '#upload');
         
@@ -624,7 +640,7 @@ function updateUI(path, params, route) {
     const settingsEl = document.getElementById('search-settings-container');
     settingsEl.style.display = 'none';
     settingsEl.innerHTML = '';
-    if (path !== '#upload' && path !== '#file-call-graph' && path !== '#binary-similarity') {
+    if (path !== '#upload' && path !== '#file-call-graph') {
         tableWrap.style.display = 'flex';
         tableWrap.style.flex = '1';
         if (tableBodyWrap) tableBodyWrap.style.display = '';
@@ -634,11 +650,11 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
 
-    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global') {
-        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : 'applyClusterSearch')));
+    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global' || path === '#binary-similarity') {
+        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : (path === '#binary-similarity' ? 'applyBinSimSearch' : 'applyClusterSearch'))));
 
         let settingsHtml = '';
-        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global') {
+        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global' || path === '#binary-similarity') {
             settingsEl.style.display = 'flex';
             const viewMode = params.get('view') || 'table';
             const poolLimit = params.get('pool_limit') || '1000000';
@@ -649,6 +665,13 @@ function updateUI(path, params, route) {
                     <div class="view-toggle">
                         <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
                         <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
+                    </div>`;
+            } else if (path === '#binary-similarity') {
+                settingsHtml += `
+                    <div class="view-toggle">
+                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinSimView('table')">Table</button>
+                        <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchBinSimView('graph')">Graph</button>
+                        <button class="view-btn ${viewMode === 'density' ? 'active' : ''}" onclick="switchBinSimView('density')">Density</button>
                     </div>`;
             } else if (path === '#clusters') {
                 settingsHtml += `
@@ -692,22 +715,40 @@ function updateUI(path, params, route) {
         const pag = document.getElementById('pagination-container');
         const gview = document.getElementById('graph-view-container');
 
-        if (path === '#function-similarity') {
+        if (path === '#function-similarity' || path === '#binary-similarity') {
             const viewMode = params.get('view') || 'table';
-            if (viewMode === 'graph') {
+            if (viewMode === 'graph' || viewMode === 'density') {
                 tableWrap.style.display = 'flex';
                 tableWrap.style.flex = 'none';
                 if (tableBodyWrap) tableBodyWrap.style.display = 'none';
                 pag.style.display = 'none';
-                gview.style.display = 'flex';
-                console.log("updateUI: Loading Graph...");
-                loadGraphView(params);
+                
+                if (path === '#function-similarity') {
+                    gview.style.display = 'flex';
+                    loadGraphView(params);
+                } else {
+                    const chordView = document.getElementById('chord-view-container');
+                    const densityView = document.getElementById('binary-density-view-container');
+                    if (viewMode === 'graph') {
+                        if (chordView) chordView.style.display = 'flex';
+                        if (densityView) densityView.style.display = 'none';
+                        loadChordView(params);
+                    } else {
+                        if (chordView) chordView.style.display = 'none';
+                        if (densityView) densityView.style.display = 'flex';
+                        loadBinaryDensityMap(params);
+                    }
+                }
             } else {
                 tableWrap.style.display = 'flex';
                 tableWrap.style.flex = '1';
                 if (tableBodyWrap) tableBodyWrap.style.display = '';
                 pag.style.display = 'block';
                 gview.style.display = 'none';
+                const chordView = document.getElementById('chord-view-container');
+                const densityView = document.getElementById('binary-density-view-container');
+                if (chordView) chordView.style.display = 'none';
+                if (densityView) densityView.style.display = 'none';
             }
         } else {
             tableWrap.style.display = 'flex';
@@ -715,6 +756,10 @@ function updateUI(path, params, route) {
             if (tableBodyWrap) tableBodyWrap.style.display = '';
             pag.style.display = 'block';
             if (gview) gview.style.display = 'none';
+            const chordView = document.getElementById('chord-view-container');
+            const densityView = document.getElementById('binary-density-view-container');
+            if (chordView) chordView.style.display = 'none';
+            if (densityView) densityView.style.display = 'none';
         }
 
         const p = new URLSearchParams(params);
@@ -869,23 +914,6 @@ function updateUI(path, params, route) {
             headHtml += `</tr>`;
             thead.innerHTML = headHtml;
 
-            // Re-inject tags
-            const tagFields = [
-                { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
-                { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
-                { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
-            ];
-            tagFields.forEach(col => {
-                col.fields.forEach(f => {
-                    const values = p.getAll(f);
-                    const isEx = f.startsWith('exclude_');
-                    const baseType = isEx ? f.substring(8) : f;
-                    values.forEach(v => {
-                        if (v) createTagCard(col.key, baseType, v, isEx);
-                    });
-                });
-            });
-
             if (path === '#files') {
                 loadFieldCardinalities(col, 'file', {
                     'file_name': 'flt-file-name',
@@ -933,6 +961,58 @@ function updateUI(path, params, route) {
             <th><input type="number" id="flt-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
             <th></th>
             <th><button onclick="applyClusterSearch()" style="width:100%; padding:2px; font-size:0.65rem; cursor:pointer">Search</button></th>
+        </tr>`;
+        thead.innerHTML = headHtml;
+    }
+
+    if (path === '#binary-similarity') {
+        const p = new URLSearchParams(params);
+        headHtml += `<tr class="filter-row">
+            <th>
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <select id="bsim-score-type" onchange="debouncedSearch(applyBinSimSearch)" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                        <option value="score" ${p.get('sort') === 'score' || !p.get('sort') ? 'selected' : ''}>Unweighted</option>
+                        <option value="score_sim_weighted" ${p.get('sort') === 'score_sim_weighted' ? 'selected' : ''}>Sim Weighted</option>
+                        <option value="score_collection_weighted" ${p.get('sort') === 'score_collection_weighted' ? 'selected' : ''}>Col Weighted</option>
+                    </select>
+                    <div style="display:flex; align-items:center; gap:2px;">
+                        <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${p.get('min_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                        <span class="dim" style="font-size:0.6rem">-</span>
+                        <input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${p.get('max_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                    </div>
+                </div>
+            </th>
+            <th>
+                <input type="text" id="bsim-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
+            </th>
+            <th>
+                <input type="text" id="bsim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;">
+            </th>
+            <th>
+                <input type="text" id="bsim-arch" placeholder="Arch..." value="${p.get('arch') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box;">
+            </th>
+            <th>
+                <div style="display:flex; align-items:center; gap:2px;">
+                    <input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${p.get('min_funcs') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                    <span class="dim" style="font-size:0.6rem">-</span>
+                    <input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${p.get('max_funcs') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                </div>
+            </th>
+            <th>
+                <div style="display:flex; align-items:center; gap:2px;">
+                    <input type="number" id="bsim-min-cov" placeholder="Min..." step="0.1" min="0" max="1" value="${p.get('min_coverage') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                    <span class="dim" style="font-size:0.6rem">-</span>
+                    <input type="number" id="bsim-max-cov" placeholder="Max..." step="0.1" min="0" max="1" value="${p.get('max_coverage') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                </div>
+            </th>
+            <th>
+                <input type="number" id="bsim-min-shared" placeholder="Min..." min="0" value="${p.get('min_shared') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
+            </th>
+            <th style="position:relative">
+                <div class="tag-filter-container" id="tag-container-bin-sim">
+                    <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-sim', 'file_tag', val); this.value=''; triggerTagSearch(); })">
+                </div>
+            </th>
         </tr>`;
         thead.innerHTML = headHtml;
     }
@@ -1035,9 +1115,40 @@ function updateUI(path, params, route) {
                 <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i>
             </div>
         </div>`;
-    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global' && path !== '#clusters') {
+    } else if (path === '#binary-similarity') {
+        const p = new URLSearchParams(params);
+        searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
+            <div style="display:flex; gap:10px; align-items:center;">
+                <div class="search-input-wrapper">
+                    <input type="text" id="bsim-search-input" placeholder="Search similarities by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)">
+                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinSimSearch()" title="Search"></i>
+                </div>
+            </div>
+        </div>`;
+    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global' && path !== '#clusters' && path !== '#function-similarity' && path !== '#binary-similarity') {
         searchArea.innerHTML = '';
     }
+
+    // Re-inject tags for all views that support them
+    setTimeout(() => {
+        const tagSearchParams = new URLSearchParams(params);
+        const tagFields = [
+            { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
+            { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
+            { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] },
+            { key: 'bin-sim', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] }
+        ];
+        tagFields.forEach(col => {
+            col.fields.forEach(f => {
+                const values = tagSearchParams.getAll(f);
+                const isEx = f.startsWith('exclude_');
+                const baseType = isEx ? f.substring(8) : f;
+                values.forEach(v => {
+                    if (v) createTagCard(col.key, baseType, v, isEx);
+                });
+            });
+        });
+    }, 0);
 
     // Sync body colgroup from the header row's actual rendered widths.
     // We use requestAnimationFrame so the header table has laid out first.
@@ -1222,6 +1333,12 @@ function switchSimView(mode) {
     window.location.hash = `#function-similarity?${params.toString()}`;
 }
 
+function switchBinSimView(mode) {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    params.set('view', mode);
+    window.location.hash = `#binary-similarity?${params.toString()}`;
+}
+
 function loadGraphView(params) {
     document.getElementById('graph-view-container').style.display = 'flex';
     if (!window.graphInstance) {
@@ -1229,6 +1346,22 @@ function loadGraphView(params) {
         document.getElementById('graph-stop-btn').onclick = () => window.graphInstance.stop();
     }
     window.graphInstance.fetch(params);
+}
+
+function loadChordView(params) {
+    document.getElementById('chord-view-container').style.display = 'flex';
+    if (!window.chordGraphInstance) {
+        window.chordGraphInstance = new ChordGraph('chord-view-container');
+    }
+    window.chordGraphInstance.fetch(params);
+}
+
+function loadBinaryDensityMap(params) {
+    document.getElementById('binary-density-view-container').style.display = 'flex';
+    if (!window.binaryDensityMapInstance) {
+        window.binaryDensityMapInstance = new BinaryDensityMap('binary-density-view-container');
+    }
+    window.binaryDensityMapInstance.fetch(params);
 }
 
 function applySimSearch() {
@@ -1367,6 +1500,7 @@ function applyAdvancedFileSearch() {
 
 function triggerTagSearch() {
     if (window.location.hash.startsWith('#function-similarity')) debouncedSearch(applySimSearch);
+    else if (window.location.hash.startsWith('#binary-similarity')) debouncedSearch(applyBinSimSearch);
     else if (window.location.hash.startsWith('#functions')) debouncedSearch(applyAdvancedFuncSearch);
     else if (window.location.hash.startsWith('#files')) debouncedSearch(applyAdvancedFileSearch);
     else if (window.location.hash.startsWith('#features-global')) debouncedSearch(applyAdvancedFeatureSearch);
@@ -1542,20 +1676,18 @@ function renderFiles(data) {
             <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
                     <span style="font-weight: bold; color: var(--text); min-width: 20px; text-align: right;">${funcCount}</span>
-                    <button class="btn-file-diff-action ${fileDiffSelection.some(item => item.id === fileId) ? 'active' : ''}" 
-                            data-file-id="${fileId}" 
-                            onclick="addToFileDiff('${fileId}', '${f['file_name'].replace(/'/g, "\\'")}')" 
-                            title="Add to File Diff" 
-                            style="padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); cursor:pointer;">
+                    <button class="btn-file-diff-action ${fileDiffSelection.some(item => item.id === fileId) ? 'active' : ''}"
+                            data-file-id="${fileId}"
+                            onclick="addToFileDiff('${fileId}', '${f['file_name'].replace(/'/g, "\\'")}', event)"
+                            title="Add to File Diff">
                         <span>±</span>
                     </button>
-                    <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}" title="Functions" style="padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
-                        <i class="fa-solid fa-code" style="font-size:0.65rem;"></i>
+                    <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}" title="Functions">
+                        <i class="fa-solid fa-code"></i>
                     </a>
-                    <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" title="Call Graph" style="color: var(--accent); padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
-                        <i class="fa-solid fa-network-wired" style="font-size:0.65rem;"></i>
-                    </a>
-                </div>
+                    <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" title="Call Graph" style="color: var(--accent);">
+                        <i class="fa-solid fa-network-wired"></i>
+                    </a>                </div>
             </td>
             <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
             <td>
@@ -1998,6 +2130,10 @@ window.addEventListener('hashchange', (e) => {
         const [hashPathPart, queryStringPart] = (window.location.hash || '').split('?');
         if (applySimViewDefaults(hashPathPart, queryStringPart)) return;
     }
+    
+    // Update rebuild buttons state for the new collection/view immediately
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
+
     refreshData();
 });
 
@@ -2208,7 +2344,49 @@ window.addEventListener('load', () => {
     }
 
     // Navbar Job Status Polling
-    const updateJobStatusIcon = async () => {
+    window.triggerRebuildAll = async function () {
+        const [hashPath, queryString] = (window.location.hash || '').split('?');
+        const params = new URLSearchParams(queryString);
+        const collection = params.get('collection') || 'main';
+        const algo = params.get('algo') || 'unweighted_cosine';
+
+        // Select all possible buttons
+        const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
+        const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+
+        btns.forEach(btn => btn.disabled = true);
+        icons.forEach(icon => icon.classList.add('fa-spin'));
+
+        try {
+            const resp = await fetch('/api/cluster/rebuild_all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    collection: collection,
+                    algo: algo
+                })
+            });
+
+            if (resp.ok) {
+                if (typeof showToast === 'function') {
+                    showToast(`Analysis rebuild pipeline enqueued!`, 'success');
+                }
+                if (window.refreshData) window.refreshData();
+            } else {
+                const data = await resp.json();
+                if (typeof showToast === 'function') {
+                    showToast(`Failed to trigger rebuild: ${data.error || 'Unknown error'}`, 'error');
+                }
+            }
+        } catch (e) {
+            console.error(e);
+            if (typeof showToast === 'function') {
+                showToast('Error triggering rebuild', 'error');
+            }
+        }
+    };
+
+    window.updateJobStatusIcon = async () => {
         try {
             const res = await fetch('/api/jobs/stats');
             if (!res.ok) return;
@@ -2216,8 +2394,11 @@ window.addEventListener('load', () => {
             const loader = document.getElementById('nav-jobs-loader');
             const icon = document.getElementById('nav-jobs-icon');
             const navLink = document.getElementById('nav-jobs');
+
+            const isActive = stats.active_workers > 0 || stats.pending_jobs > 0;
+
             if (loader && icon && navLink) {
-                if (stats.active_workers > 0 || stats.pending_jobs > 0) {
+                if (isActive) {
                     loader.style.display = 'block';
                     icon.style.display = 'none';
                     navLink.title = `${stats.active_workers} active, ${stats.pending_jobs} pending jobs`;
@@ -2227,12 +2408,48 @@ window.addEventListener('load', () => {
                     navLink.title = "Background Jobs";
                 }
             }
+
+            // Update rebuild buttons
+            const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
+            const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+            
+            const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+            const currentCollection = params.get('collection');
+            
+            // Rebuild animation should only show if a job FOR THIS COLLECTION is active
+            const activeCollections = stats.active_collections || [];
+            const isCollectionActive = currentCollection && activeCollections.includes(currentCollection);
+            const showAnimation = isActive && isCollectionActive;
+
+            btns.forEach(btn => {
+                btn.disabled = showAnimation;
+                btn.title = showAnimation ? "A job for this collection is already running" : "Rebuild Clusters & Binary Sim";
+            });
+            
+            icons.forEach(icon => {
+                if (showAnimation) icon.classList.add('fa-spin');
+                else icon.classList.remove('fa-spin');
+            });
+
+            // Handle Header Rebuild Button Visibility (only if sidebar is collapsed AND view is Clusters/BinSim)
+            const headerRebuildBtn = document.getElementById('header-rebuild-all-btn');
+            if (headerRebuildBtn) {
+                const isCollapsed = document.body.classList.contains('sidebar-collapsed');
+                const [path] = (window.location.hash || '').split('?');
+                const isRelevantView = (path === '#clusters' || path === '#binary-similarity');
+                
+                if (isCollapsed && isRelevantView) {
+                    headerRebuildBtn.style.display = 'inline-flex';
+                } else {
+                    headerRebuildBtn.style.display = 'none';
+                }
+            }
         } catch (e) {
             // Silently fail for navbar polling
         }
     };
-    updateJobStatusIcon();
-    setInterval(updateJobStatusIcon, 10000); // Check every 10s
+    window.updateJobStatusIcon();
+    setInterval(window.updateJobStatusIcon, 10000); // Check every 10s
 });
 
 async function populateCollectionDropdown() {
@@ -2304,7 +2521,7 @@ function selectCollection(name) {
 }
 
 function updateNavVisibility(collection) {
-    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-file-call-graph'];
+    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-file-call-graph', 'nav-binary-similarity', 'nav-chord-map'];
     navItems.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = collection ? 'flex' : 'none';
@@ -2930,6 +3147,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
 window.applySimSearch = applySimSearch;
+window.applyBinSimSearch = applyBinSimSearch;
 window.applyClusterSearch = applyClusterSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;

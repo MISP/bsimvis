@@ -281,7 +281,19 @@ async function refreshJobModal(jobId, isInitial = false) {
         if (job.logs && job.logs.length > 0) {
             const sortedLogs = [...job.logs].reverse();
             sortedLogs.forEach(log => {
-                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${log.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+                let htmlLine = '';
+                // Try to match [timestamp] message
+                const match = log.match(/^\[(\d+)\] (.*)/);
+                if (match) {
+                    const timestamp = parseInt(match[1]);
+                    const message = match[2];
+                    const dateStr = formatDate(timestamp);
+                    const escapedMessage = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    htmlLine = `<span style="color: var(--accent); opacity: 0.8; font-weight: 500;">[${dateStr}]</span> ${escapedMessage}`;
+                } else {
+                    htmlLine = log.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                }
+                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${htmlLine}</div>`;
             });
         } else {
             logsInnerHtml = '<div style="font-style: italic;">No logs available yet.</div>';

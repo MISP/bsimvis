@@ -2,6 +2,8 @@ import requests
 import json
 import time
 import sys
+import datetime
+import re
 
 API_BASE = "http://localhost:5000/api"
 
@@ -213,7 +215,14 @@ def job_status(job_id, watch, logs):
             if logs and job.get("logs"):
                 print("Recent Logs:")
                 for log in reversed(job["logs"][:10]):
-                    print(f"  {log}")
+                    match = re.match(r"^\[(\d+)\] (.*)", log)
+                    if match:
+                        ts = int(match.group(1))
+                        msg = match.group(2)
+                        date_str = datetime.datetime.fromtimestamp(ts / 1000.0).strftime('%Y-%m-%d %H:%M:%S')
+                        print(f"  [{date_str}] {msg}")
+                    else:
+                        print(f"  {log}")
 
             if job["status"] in ["completed", "failed", "cancelled"]:
                 print("\nJob finished.")

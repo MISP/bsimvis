@@ -480,6 +480,7 @@ function updateUI(path, params, route) {
     if (document.getElementById('upload-view-container')) document.getElementById('upload-view-container').style.display = 'none';
     if (document.getElementById('binary-similarity-container')) document.getElementById('binary-similarity-container').style.display = 'none';
     if (document.getElementById('chord-view-container')) document.getElementById('chord-view-container').style.display = 'none';
+    if (document.getElementById('binary-density-view-container')) document.getElementById('binary-density-view-container').style.display = 'none';
 
     // Clear all autocomplete dropdowns to prevent leftovers from previous navigation
     document.querySelectorAll('.tag-autocomplete-dropdown').forEach(el => el.remove());

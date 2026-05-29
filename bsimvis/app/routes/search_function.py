@@ -261,7 +261,10 @@ def search_functions():
                                 break
 
                 if val:
-                    filter_configs.append((val, target_field, _paths(field)))
+                    paths = _paths_for_source(src_lvl, field)
+                    if paths:
+                        filter_configs.append((val, target_field, paths))
+
 
     # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
     # The existing code had some manual additions for unions, keeping them for now if not redundant.

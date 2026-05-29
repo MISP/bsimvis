@@ -632,9 +632,9 @@ def similarity_search():
                                         break
 
                         if val:
-                            filter_configs.append(
-                                (val, target_field, _paths_for_source(src_lvl, field))
-                            )
+                            paths = _paths_for_source(src_lvl, field)
+                            if paths:
+                                filter_configs.append((val, target_field, paths))
 
                 # 2. Tag-specific logic (for unions)
                 tag_filter_configs = [

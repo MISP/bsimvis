@@ -153,24 +153,63 @@ window.copyRichText = async function (rows, btn, options = {}) {
         return lineNum + r.tokens.map(t => t.text).join('');
     }).join('\n');
 
-    try {
-        const blob = new Blob([html], { type: 'text/html' });
-        const textBlob = new Blob([plainText], { type: 'text/plain' });
-        const item = new ClipboardItem({
-            'text/html': blob,
-            'text/plain': textBlob
-        });
-        await navigator.clipboard.write([item]);
+    let success = false;
 
-        if (btn) {
-            const originalHtml = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-check" style="color:#a6e22e"></i>';
-            setTimeout(() => { btn.innerHTML = originalHtml; }, 2000);
+    // Check if ClipboardItem and navigator.clipboard.write are available (secure context / modern browsers)
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.write === 'function') {
+        try {
+            const blob = new Blob([html], { type: 'text/html' });
+            const textBlob = new Blob([plainText], { type: 'text/plain' });
+            const item = new ClipboardItem({
+                'text/html': blob,
+                'text/plain': textBlob
+            });
+            await navigator.clipboard.write([item]);
+            success = true;
+        } catch (err) {
+            console.warn("Modern navigator.clipboard.write failed, trying fallback...", err);
         }
-    } catch (err) {
-        console.error("Rich copy failed", err);
-        // Fallback to plain text if ClipboardItem is not supported or fails
-        navigator.clipboard.writeText(plainText);
+    }
+
+    if (!success) {
+        // Fallback 1: Try document.execCommand('copy') with custom copy listener for rich text (works in HTTP context)
+        try {
+            const listener = function(e) {
+                e.clipboardData.setData('text/html', html);
+                e.clipboardData.setData('text/plain', plainText);
+                e.preventDefault();
+            };
+            document.addEventListener('copy', listener);
+            success = document.execCommand('copy');
+            document.removeEventListener('copy', listener);
+        } catch (err) {
+            console.warn("Fallback rich copy failed, trying plain text copy...", err);
+        }
+    }
+
+    if (!success) {
+        // Fallback 2: Try document.execCommand('copy') with a temporary textarea (plain text only)
+        try {
+            const textArea = document.createElement("textarea");
+            textArea.value = plainText;
+            textArea.style.position = "fixed";
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.opacity = "0";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            success = document.execCommand('copy');
+            document.body.removeChild(textArea);
+        } catch (err) {
+            console.error("All copy methods failed", err);
+        }
+    }
+
+    if (success && btn) {
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check" style="color:#a6e22e"></i>';
+        setTimeout(() => { btn.innerHTML = originalHtml; }, 2000);
     }
 };
 

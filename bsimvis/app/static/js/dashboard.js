@@ -1589,11 +1589,44 @@ function renderPagination(path) {
 }
 
 function copyToClipboard(text, btn) {
-    navigator.clipboard.writeText(text).then(() => {
-        const originalHtml = btn.innerHTML;
-        btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-        setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-    }).catch(err => console.error('Failed to copy', err));
+    let success = false;
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(text).then(() => {
+            if (btn) {
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+            }
+        }).catch(err => {
+            console.warn('navigator.clipboard.writeText failed, using fallback', err);
+            fallbackCopyToClipboard(text, btn);
+        });
+    } else {
+        fallbackCopyToClipboard(text, btn);
+    }
+}
+
+function fallbackCopyToClipboard(text, btn) {
+    try {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (success && btn) {
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+            setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+        }
+    } catch (err) {
+        console.error('Fallback copy failed', err);
+    }
 }
 
 function renderCollections(data) {

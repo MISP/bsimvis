@@ -10,8 +10,12 @@ class BinaryDensityMap {
         this.abortController = null;
         this.nodes = [];
         this.links = [];
-        this.tension = 0.95; // Increased Local Gravity factor for tighter bundling
+        this.tension = 0.95; 
+        this.localGravity = false; // By default, don't enable k-means local gravity
+        this.clusterGranularity = 0.5; // Default granularity (0.5 * nodes.length / 2)
         this.showLabels = true;
+        this.isolatedMode = 'gray'; // 'all', 'gray', 'hide'
+        this.linkColorScheme = 'gradient'; // 'gradient', 'score'
         
         window.binaryDensityMapInstance = this;
         this.initSVG();
@@ -29,8 +33,51 @@ class BinaryDensityMap {
         this.render();
     }
 
+    setIsolatedMode(mode) {
+        this.isolatedMode = mode;
+        this.render();
+        this.updateIsolatedUI();
+    }
+
+    updateIsolatedUI() {
+        const container = document.getElementById('isolated-toggle');
+        if (!container) return;
+        container.querySelectorAll('.view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-mode') === this.isolatedMode);
+        });
+    }
+
+    setLinkColorScheme(scheme) {
+        this.linkColorScheme = scheme;
+        this.render();
+        this.updateLinkColorUI();
+    }
+
+    updateLinkColorUI() {
+        const container = document.getElementById('link-color-toggle');
+        if (!container) return;
+        container.querySelectorAll('.view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.getAttribute('data-scheme') === this.linkColorScheme);
+        });
+    }
+
+    toggleGravity(enabled) {
+        this.localGravity = enabled;
+        this.render();
+    }
+
+    setTension(value) {
+        this.tension = parseFloat(value);
+        if (this.localGravity) this.render();
+    }
+
+    setClusterGranularity(value) {
+        this.clusterGranularity = parseFloat(value);
+        if (this.localGravity) this.render();
+    }
+
     initSVG() {
-        this.container.selectAll("*").remove();
+        this.container.selectAll("svg").remove();
         const rect = this.container.node().getBoundingClientRect();
         this.width = rect.width || 800;
         this.height = rect.height || 600;
@@ -141,9 +188,30 @@ class BinaryDensityMap {
             return;
         }
 
-        // 1. Setup Scales
-        const xExtent = d3.extent(this.nodes, d => d.x);
-        const yExtent = d3.extent(this.nodes, d => d.y);
+        // 1. Identify Isolated Nodes
+        const linkedNodes = new Set();
+        this.links.forEach(l => {
+            linkedNodes.add(l.source);
+            linkedNodes.add(l.target);
+        });
+
+        const visibleNodes = this.isolatedMode === 'hide' 
+            ? this.nodes.filter(n => linkedNodes.has(n.id))
+            : this.nodes;
+
+        if (!visibleNodes.length) {
+            this.g.append("text")
+                .attr("x", this.width / 2)
+                .attr("y", this.height / 2)
+                .attr("text-anchor", "middle")
+                .attr("fill", "#888")
+                .text(this.isolatedMode === 'hide' ? "No binaries with similarities found." : "No UMAP density data found.");
+            return;
+        }
+
+        // 2. Setup Scales
+        const xExtent = d3.extent(visibleNodes, d => d.x);
+        const yExtent = d3.extent(visibleNodes, d => d.y);
         
         const xPadding = (xExtent[1] - xExtent[0]) * 0.1 || 1;
         const yPadding = (yExtent[1] - yExtent[0]) * 0.1 || 1;
@@ -156,45 +224,32 @@ class BinaryDensityMap {
             .domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
             .range([this.height, 0]);
 
-        // 2. Identify Local Cluster Centers
-        const numClusters = Math.max(10, Math.floor(this.nodes.length / 2)); // High granularity for very local gravity
-        const centroids = this.calculateClusters(this.nodes, numClusters);
-        const screenCentroids = centroids.map(c => [xScale(c.x), yScale(c.y)]);
-
-        /* 
-        // 3. Draw Density Contours (Background)
-        const densityData = d3.contourDensity()
-            .x(d => xScale(d.x))
-            .y(d => yScale(d.y))
-            .size([this.width, this.height])
-            .bandwidth(30)
-            .thresholds(20)
-            (this.nodes);
-
-        const colorScale = d3.scaleSequential(d3.interpolateCividis)
-            .domain([0, d3.max(densityData, d => d.value)]);
-
-        this.g.append("g")
-            .attr("class", "contours")
-            .selectAll("path")
-            .data(densityData)
-            .join("path")
-            .attr("d", d3.geoPath())
-            .attr("fill", d => colorScale(d.value))
-            .attr("fill-opacity", 0.3)
-            .attr("stroke", "none");
-        */
-
-        // 4. Draw Curved Links with Local Gravity
         const nodeMap = new Map(this.nodes.map(n => [n.id, n]));
-        
-        const lineGenerator = d3.line()
-            .curve(d3.curveBundle.beta(0.98)) // Extremely high beta for maximum local bundling
-            .x(d => d[0])
-            .y(d => d[1]);
-
         const linkGroup = this.g.append("g").attr("class", "links");
 
+        // 3. Identify Local Cluster Centers & Setup Line Generator
+        let screenCentroids = [];
+        let lineGenerator;
+
+        if (this.localGravity) {
+            // Gravity Path (Slower, requires K-Means)
+            const numClusters = Math.max(2, Math.floor(visibleNodes.length * this.clusterGranularity));
+            const centroids = this.calculateClusters(visibleNodes, numClusters);
+            screenCentroids = centroids.map(c => [xScale(c.x), yScale(c.y)]);
+
+            lineGenerator = d3.line()
+                .curve(d3.curveBundle.beta(0.98))
+                .x(d => d[0])
+                .y(d => d[1]);
+        } else {
+            // Fast Path (Straight lines)
+            lineGenerator = d3.line()
+                .curve(d3.curveLinear)
+                .x(d => d[0])
+                .y(d => d[1]);
+        }
+
+        // 4. Draw Links
         linkGroup.selectAll("path")
             .data(this.links)
             .join("path")
@@ -206,39 +261,70 @@ class BinaryDensityMap {
                 const p1 = [xScale(n1.x), yScale(n1.y)];
                 const p2 = [xScale(n2.x), yScale(n2.y)];
                 
-                // Target local center (average of endpoints' cluster centers)
-                const c1 = screenCentroids[n1.clusterIdx];
-                const c2 = screenCentroids[n2.clusterIdx];
-                const targetCP = [(c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2];
-                
-                // Calculate control point pulled towards local cluster centers (Local Gravity)
-                const mid = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
-                const cp = [
-                    mid[0] + (targetCP[0] - mid[0]) * this.tension,
-                    mid[1] + (targetCP[1] - mid[1]) * this.tension
-                ];
-                
-                d.points = [p1, cp, p2];
+                if (this.localGravity) {
+                    const c1 = screenCentroids[n1.clusterIdx];
+                    const c2 = screenCentroids[n2.clusterIdx];
+                    const targetCP = [(c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2];
+                    
+                    const mid = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+                    const cp = [
+                        mid[0] + (targetCP[0] - mid[0]) * this.tension,
+                        mid[1] + (targetCP[1] - mid[1]) * this.tension
+                    ];
+                    d.points = [p1, cp, p2];
+                } else {
+                    d.points = [p1, p2];
+                }
                 
                 const color1 = getMd5Color(d.source);
                 const color2 = getMd5Color(d.target);
-                const gradId = `link_grad_${i}`;
-                const grad = this.defs.append("linearGradient")
-                    .attr("id", gradId)
-                    .attr("gradientUnits", "userSpaceOnUse")
-                    .attr("x1", p1[0])
-                    .attr("y1", p1[1])
-                    .attr("x2", p2[0])
-                    .attr("y2", p2[1]);
                 
-                grad.append("stop").attr("offset", "0%").attr("stop-color", color1);
-                grad.append("stop").attr("offset", "100%").attr("stop-color", color2);
-                
-                d.gradientId = gradId;
+                if (this.linkColorScheme === 'score') {
+                    // Determine domain based on filters if available, otherwise data extent
+                    let minScore = parseFloat(document.getElementById('bsim-min-score')?.value) || 0;
+                    let maxScore = parseFloat(document.getElementById('bsim-max-score')?.value) || 1;
+                    
+                    // Fallback to data extent if no filters are set
+                    if (!document.getElementById('bsim-min-score')?.value && !document.getElementById('bsim-max-score')?.value) {
+                         const scores = this.links.map(l => l.value);
+                         if (scores.length) {
+                             minScore = Math.min(...scores);
+                             maxScore = Math.max(...scores);
+                         }
+                    }
+                    
+                    // If all scores are the same, ensure a valid range
+                    if (minScore === maxScore) {
+                        minScore = 0;
+                        maxScore = 1;
+                    }
+
+                    // Use the same color from sankey graph cohesion (hsl(score * 120, 70%, 55%))
+                    const scoreColorScale = d3.scaleSequential(t => `hsl(${t * 120}, 70%, 55%)`)
+                        .domain([minScore, maxScore]);
+                        
+                    d.linkColor = scoreColorScale(d.value);
+                    d.gradientId = null;
+                } else {
+                    const gradId = `link_grad_${i}`;
+                    const grad = this.defs.append("linearGradient")
+                        .attr("id", gradId)
+                        .attr("gradientUnits", "userSpaceOnUse")
+                        .attr("x1", p1[0])
+                        .attr("y1", p1[1])
+                        .attr("x2", p2[0])
+                        .attr("y2", p2[1]);
+                    
+                    grad.append("stop").attr("offset", "0%").attr("stop-color", color1);
+                    grad.append("stop").attr("offset", "100%").attr("stop-color", color2);
+                    
+                    d.gradientId = gradId;
+                    d.linkColor = null;
+                }
             })
             .attr("d", d => lineGenerator(d.points))
             .attr("fill", "none")
-            .attr("stroke", d => `url(#${d.gradientId})`)
+            .attr("stroke", d => d.gradientId ? `url(#${d.gradientId})` : d.linkColor)
             .attr("stroke-opacity", 0.4)
             .attr("stroke-width", d => Math.max(1, d.value * 4))
             .style("cursor", "pointer")
@@ -262,14 +348,17 @@ class BinaryDensityMap {
         const node = this.g.append("g")
             .attr("class", "nodes")
             .selectAll("g")
-            .data(this.nodes)
+            .data(visibleNodes)
             .join("g")
             .attr("class", "node-group")
             .attr("transform", d => `translate(${xScale(d.x)},${yScale(d.y)})`);
 
         node.append("circle")
             .attr("r", 5)
-            .attr("fill", d => getMd5Color(d.id))
+            .attr("fill", d => {
+                if (this.isolatedMode === 'gray' && !linkedNodes.has(d.id)) return "#333";
+                return getMd5Color(d.id);
+            })
             .attr("stroke", "#fff")
             .attr("stroke-width", 1.0)
             .style("cursor", "pointer")
@@ -284,7 +373,10 @@ class BinaryDensityMap {
         node.append("text")
             .attr("dy", 12)
             .attr("text-anchor", "middle")
-            .attr("fill", d => getMd5Color(d.id))
+            .attr("fill", d => {
+                if (this.isolatedMode === 'gray' && !linkedNodes.has(d.id)) return "#666";
+                return getMd5Color(d.id);
+            })
             .style("font-size", "8px")
             .style("pointer-events", "none")
             .style("text-shadow", "1px 1px 1px #000")

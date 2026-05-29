@@ -498,16 +498,20 @@ class BinSimService:
                 for (m_a, m_b), score in pair_scores.items():
                     if m_a in md5_to_idx and m_b in md5_to_idx:
                         i, j = md5_to_idx[m_a], md5_to_idx[m_b]
+                        # Use a power transform to emphasize high similarities (low distances)
+                        # This pulls similar binaries much closer together
                         d = 1.0 - float(score)
                         d = max(0.0, min(1.0, d))
-                        dist_matrix[i, j] = d
-                        dist_matrix[j, i] = d
+                        d_final = float(d ** 4) # Stronger pull for small distances
+                        dist_matrix[i, j] = d_final
+                        dist_matrix[j, i] = d_final
 
                 # n_neighbors must be < n_samples
                 n_neighbors = min(15, n - 1)
                 reducer = umap.UMAP(
                     metric="precomputed", 
                     n_neighbors=n_neighbors, 
+                    min_dist=0.05, # Allow tighter clustering
                     random_state=42,
                     n_components=2
                 )

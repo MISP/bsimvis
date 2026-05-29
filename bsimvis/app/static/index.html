@@ -343,11 +343,59 @@
             <div id="binary-density-view-container"
                 style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
                 <div class="graph-settings"
-                    style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 120px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
+                    style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 140px;">
+                    <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
                         <input type="checkbox" id="density-show-labels" checked
                             onchange="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.toggleLabels(this.checked)">
-                        <label style="font-size:0.8rem; margin-bottom:0; cursor:pointer;" for="density-show-labels">Show Labels</label>
+                        <label style="margin-bottom:0; cursor:pointer;" for="density-show-labels">Show Labels</label>
+                    </div>
+
+                    <div class="graph-setting-item" style="align-items: center;">
+                        <label style="margin-bottom: 5px;">Isolated</label>
+                        <div class="view-toggle" id="isolated-toggle"
+                            style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
+                            <button class="view-btn" data-mode="all" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('all')"
+                                title="Show all nodes colored normally">All</button>
+                            <button class="view-btn active" data-mode="gray" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('gray')"
+                                title="Show isolated nodes in gray">Gray</button>
+                            <button class="view-btn" data-mode="hide" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('hide')"
+                                title="Hide isolated nodes">Hide</button>
+                        </div>
+                    </div>
+
+                    <div class="graph-setting-item" style="align-items: center;">
+                        <label style="margin-bottom: 5px;">Link Color</label>
+                        <div class="view-toggle" id="link-color-toggle"
+                            style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
+                            <button class="view-btn active" data-scheme="gradient" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setLinkColorScheme('gradient')"
+                                title="Color links by MD5 gradient">Grad</button>
+                            <button class="view-btn" data-scheme="score" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setLinkColorScheme('score')"
+                                title="Color links by similarity score">Score</button>
+                        </div>
+                    </div>
+
+                    <div id="density-more-options-toggle"
+                        style="cursor:pointer; font-size:0.75rem; color:var(--accent); text-align:center; padding-top:5px; border-top:1px solid var(--border);"
+                        onclick="const extra = document.getElementById('density-extra-settings'); extra.style.display = extra.style.display === 'none' ? 'flex' : 'none'; this.innerText = extra.style.display === 'none' ? 'More options ▾' : 'Fewer options ▴';">
+                        More options ▾
+                    </div>
+
+                    <div id="density-extra-settings" style="display:none; flex-direction:column; gap:10px;">
+                        <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
+                            <input type="checkbox" id="density-local-gravity"
+                                onchange="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.toggleGravity(this.checked)">
+                            <label style="margin-bottom:0; cursor:pointer;" for="density-local-gravity">Local Gravity</label>
+                        </div>
+                        <div class="graph-setting-item">
+                            <label style="font-size:0.7rem; margin-bottom:5px; display:block;">Tension</label>
+                            <input type="range" id="density-tension" min="0" max="1" step="0.01" value="0.95"
+                                style="width:100%" oninput="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setTension(this.value)">
+                        </div>
+                        <div class="graph-setting-item">
+                            <label style="font-size:0.7rem; margin-bottom:5px; display:block;">Granularity</label>
+                            <input type="range" id="density-granularity" min="0.01" max="0.99" step="0.01" value="0.5"
+                                style="width:100%" oninput="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setClusterGranularity(this.value)">
+                        </div>
                     </div>
                 </div>
             </div>

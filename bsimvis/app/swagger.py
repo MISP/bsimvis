@@ -788,6 +788,10 @@ class SimilaritySearch(Resource):
                 "default": "any",
             },
             "min_features": {"description": "Minimum feature count", "example": 5},
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0-1.0). Clusters below this threshold are excluded.",
+                "example": 0.5,
+            },
             "sort_by": {
                 "description": "Sort field: score or feat_count",
                 "default": "score",

@@ -1406,10 +1406,12 @@ function applySimSearch() {
     const retTypeFlt = document.getElementById('flt-func-ret_type')?.value;
     const clusterFlt = document.getElementById('flt-func-cluster')?.value;
     const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
+    const minCohesionFlt = document.getElementById('flt-func-min-cohesion')?.value;
     const fileNameFlt = document.getElementById('flt-func-file_name')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
+    if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
 
     if (nameFlt) params.set('name', nameFlt); else params.delete('name');
     if (addressFlt) params.set('address', addressFlt); else params.delete('address');

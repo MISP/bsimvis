@@ -502,7 +502,7 @@ class BinSimService:
                         # This pulls similar binaries much closer together
                         d = 1.0 - float(score)
                         d = max(0.0, min(1.0, d))
-                        d_final = float(d ** 4) # Stronger pull for small distances
+                        d_final = d # float(d ** 4) # Stronger pull for small distances
                         dist_matrix[i, j] = d_final
                         dist_matrix[j, i] = d_final
 

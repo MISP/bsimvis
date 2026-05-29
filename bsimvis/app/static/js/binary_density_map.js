@@ -16,6 +16,7 @@ class BinaryDensityMap {
         this.showLabels = true;
         this.isolatedMode = 'gray'; // 'all', 'gray', 'hide'
         this.linkColorScheme = 'gradient'; // 'gradient', 'score'
+        this.autoResizeOnZoom = true;
         
         window.binaryDensityMapInstance = this;
         this.initSVG();
@@ -31,6 +32,58 @@ class BinaryDensityMap {
     toggleLabels(show) {
         this.showLabels = show;
         this.render();
+    }
+
+    toggleAutoResize(enabled) {
+        this.autoResizeOnZoom = enabled;
+        if (this.svg) {
+            this.updateElementsSize(d3.zoomTransform(this.svg.node()).k);
+        }
+    }
+
+    updateElementsSize(k) {
+        const autoResize = this.autoResizeOnZoom;
+        const transformK = autoResize ? k : 1.0;
+        
+        const r = Math.max(1.5, 9 / Math.pow(transformK, 0.7));
+        
+        let queue = [];
+        try {
+            queue = JSON.parse(localStorage.getItem('bsim_file_diff_queue') || '[]');
+        } catch (e) { console.error("Error reading diff queue", e); }
+            
+        const selectedMd5s = new Set(queue.map(item => {
+            if (!item.id) return null;
+            return item.id.includes(':') ? item.id.split(':').pop() : item.id;
+        }).filter(Boolean));
+
+        // Update nodes
+        this.g.selectAll("g.node-group").each(function(d) {
+            const g = d3.select(this);
+            const isSelected = selectedMd5s.has(d.id);
+            
+            const baseSw = isSelected ? 3.0 : 1.0;
+            const sw = Math.max(0.2, baseSw / Math.sqrt(transformK));
+            
+            g.select("circle")
+                .attr("r", r)
+                .attr("stroke-width", sw);
+                
+            const baseFs = isSelected ? 13 : 11;
+            const fs = Math.max(2.5, baseFs / Math.pow(transformK, 0.7));
+            const dy = Math.max(3.0, (isSelected ? 18 : 16) / Math.pow(transformK, 0.7));
+            
+            g.select("text")
+                .style("font-size", `${fs}px`)
+                .attr("dy", dy);
+        });
+            
+        // Update links
+        this.g.selectAll(".similarity-link")
+            .attr("stroke-width", d => {
+                const baseWidth = Math.max(1, d.value * 4);
+                return Math.max(0.3, baseWidth / Math.pow(transformK, 0.6));
+            });
     }
 
     setIsolatedMode(mode) {
@@ -96,6 +149,7 @@ class BinaryDensityMap {
             .scaleExtent([0.1, 40])
             .on("zoom", (event) => {
                 this.g.attr("transform", event.transform);
+                this.updateElementsSize(event.transform.k);
             });
         this.svg.call(zoom);
     }
@@ -329,15 +383,21 @@ class BinaryDensityMap {
             .attr("stroke-width", d => Math.max(1, d.value * 4))
             .style("cursor", "pointer")
             .on("mouseover", (event, d) => {
+                const k = d3.zoomTransform(this.svg.node()).k;
+                const transformK = this.autoResizeOnZoom ? k : 1.0;
+                const hoverWidth = Math.max(2, d.value * 7);
                 d3.select(event.currentTarget)
                     .attr("stroke-opacity", 1)
-                    .attr("stroke-width", d => Math.max(2, d.value * 7));
+                    .attr("stroke-width", Math.max(0.6, hoverWidth / Math.pow(transformK, 0.6)));
                 this.showLinkTooltip(event, nodeMap.get(d.source), nodeMap.get(d.target), d.value);
             })
             .on("mouseout", (event, d) => {
+                const k = d3.zoomTransform(this.svg.node()).k;
+                const transformK = this.autoResizeOnZoom ? k : 1.0;
+                const baseWidth = Math.max(1, d.value * 4);
                 d3.select(event.currentTarget)
                     .attr("stroke-opacity", 0.4)
-                    .attr("stroke-width", d => Math.max(1, d.value * 4));
+                    .attr("stroke-width", Math.max(0.3, baseWidth / Math.pow(transformK, 0.6)));
                 this.hideTooltip();
             })
             .on("click", (event, d) => {
@@ -354,7 +414,7 @@ class BinaryDensityMap {
             .attr("transform", d => `translate(${xScale(d.x)},${yScale(d.y)})`);
 
         node.append("circle")
-            .attr("r", 5)
+            .attr("r", 9)
             .attr("fill", d => {
                 if (this.isolatedMode === 'gray' && !linkedNodes.has(d.id)) return "#333";
                 return getMd5Color(d.id);
@@ -371,13 +431,13 @@ class BinaryDensityMap {
             });
 
         node.append("text")
-            .attr("dy", 12)
+            .attr("dy", 16)
             .attr("text-anchor", "middle")
             .attr("fill", d => {
                 if (this.isolatedMode === 'gray' && !linkedNodes.has(d.id)) return "#666";
                 return getMd5Color(d.id);
             })
-            .style("font-size", "8px")
+            .style("font-size", "11px")
             .style("pointer-events", "none")
             .style("text-shadow", "1px 1px 1px #000")
             .style("display", this.showLabels ? "block" : "none")
@@ -431,15 +491,15 @@ class BinaryDensityMap {
                 
                 g.select("circle")
                     .attr("stroke", isSelected ? orange : "#fff")
-                    .attr("stroke-width", isSelected ? 3 : 1.0)
                     .attr("stroke-dasharray", isSelected ? "2,1" : "none")
                     .style("filter", isSelected ? "url(#selection-glow)" : "none");
 
                 g.select("text")
                     .attr("fill", isSelected ? orange : getMd5Color(d.id))
-                    .style("font-weight", isSelected ? "bold" : "normal")
-                    .style("font-size", isSelected ? "10px" : "8px");
+                    .style("font-weight", isSelected ? "bold" : "normal");
             });
+
+        this.updateElementsSize(d3.zoomTransform(this.svg.node()).k);
     }
 
     showTooltip(event, node) {

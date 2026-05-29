@@ -350,6 +350,12 @@
                         <label style="margin-bottom:0; cursor:pointer;" for="density-show-labels">Show Labels</label>
                     </div>
 
+                    <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
+                        <input type="checkbox" id="density-auto-resize" checked
+                            onchange="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.toggleAutoResize(this.checked)">
+                        <label style="margin-bottom:0; cursor:pointer;" for="density-auto-resize">Auto Resize</label>
+                    </div>
+
                     <div class="graph-setting-item" style="align-items: center;">
                         <label style="margin-bottom: 5px;">Isolated</label>
                         <div class="view-toggle" id="isolated-toggle"

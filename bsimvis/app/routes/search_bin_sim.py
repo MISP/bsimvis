@@ -45,7 +45,7 @@ def search_bin_sims():
     min_funcs = parse_float(request.args.get("min_funcs"))
     max_funcs = parse_float(request.args.get("max_funcs"))
 
-    sort_by = request.args.get("sort_by", "score")
+    sort_by = (request.args.get("sort_by") or request.args.get("sort") or "score").strip()
     sort_order = request.args.get("sort_order", "desc")
 
     # The UI now sends unified filters instead of A/B specific ones.
@@ -95,12 +95,17 @@ def search_bin_sims():
             continue
 
     file_meta_cache = {}
+    file_funcs_count = {}
     if unique_md5s:
         md5_list = list(unique_md5s)
         pipe = r.pipeline()
         for md5 in md5_list:
             pipe.json().get(f"{collection}:file:{md5}:meta", "$")
-        for md5, res in zip(md5_list, pipe.execute()):
+            pipe.scard(f"{collection}:idx:file:functions:{md5}")
+        results = pipe.execute()
+        for i, md5 in enumerate(md5_list):
+            res = results[2 * i]
+            func_count = results[2 * i + 1]
             if res:
                 m = res[0] if isinstance(res, list) else res
                 if isinstance(m, str):
@@ -108,6 +113,7 @@ def search_bin_sims():
                 file_meta_cache[md5] = m if isinstance(m, dict) else {}
             else:
                 file_meta_cache[md5] = {}
+            file_funcs_count[md5] = func_count or 0
     t3 = time.perf_counter()
 
     # 3. Fetch Required Numeric Fields via Pipeline
@@ -127,8 +133,12 @@ def search_bin_sims():
     if sort_zset_field:
         numeric_fields_to_fetch.add(sort_zset_field)
         
+    score_filter_field = "score_collection_weighted"
+    if sort_by in ["score", "score_sim_weighted", "score_collection_weighted"]:
+        score_filter_field = sort_by
+
     if min_score is not None or max_score is not None:
-        numeric_fields_to_fetch.add("score_collection_weighted")
+        numeric_fields_to_fetch.add(score_filter_field)
     if min_cov is not None or max_cov is not None:
         numeric_fields_to_fetch.add("coverage_a")
         numeric_fields_to_fetch.add("coverage_b")
@@ -171,8 +181,8 @@ def search_bin_sims():
         ld["file_user_tags_b"] = meta_b.get("user_tags", [])
         ld["architecture_a"] = meta_a.get("language_id", "")
         ld["architecture_b"] = meta_b.get("language_id", "")
-        ld["functions_count_a"] = meta_a.get("functions_count", 0)
-        ld["functions_count_b"] = meta_b.get("functions_count", 0)
+        ld["functions_count_a"] = file_funcs_count.get(m_a, 0)
+        ld["functions_count_b"] = file_funcs_count.get(m_b, 0)
 
         # Filters
         if file_name_filter:
@@ -194,8 +204,8 @@ def search_bin_sims():
                not any(q_lower in t.lower() for t in ld["file_user_tags_b"]):
                 continue
 
-        if min_score is not None and ld.get("score_collection_weighted", 0) < min_score: continue
-        if max_score is not None and ld.get("score_collection_weighted", 0) > max_score: continue
+        if min_score is not None and ld.get(score_filter_field, 0) < min_score: continue
+        if max_score is not None and ld.get(score_filter_field, 0) > max_score: continue
 
         cov_a = ld.get("coverage_a", 0)
         cov_b = ld.get("coverage_b", 0)
@@ -285,8 +295,8 @@ def search_bin_sims():
             
             doc["architecture_a"] = doc.get("architecture_a") or meta_a.get("language_id", "")
             doc["architecture_b"] = doc.get("architecture_b") or meta_b.get("language_id", "")
-            doc["functions_count_a"] = doc.get("functions_count_a") or meta_a.get("functions_count", 0)
-            doc["functions_count_b"] = doc.get("functions_count_b") or meta_b.get("functions_count", 0)
+            doc["functions_count_a"] = doc.get("functions_count_a") or file_funcs_count.get(m_a, 0)
+            doc["functions_count_b"] = doc.get("functions_count_b") or file_funcs_count.get(m_b, 0)
             
             doc["compiler_a"] = meta_a.get("compiler") or meta_a.get("compiler_id", "")
             doc["compiler_b"] = meta_b.get("compiler") or meta_b.get("compiler_id", "")

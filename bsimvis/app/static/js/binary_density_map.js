@@ -177,12 +177,35 @@ class BinaryDensityMap {
         if (loadingText) loadingText.innerText = "Building Density Map...";
 
         try {
-            const url = `/api/bin_sim/umap?${params.toString()}`;
-            const res = await fetch(url, { signal });
-            const data = await res.json();
+            // 1. Fetch UMAP coordinates (nodes only)
+            const umapParams = new URLSearchParams();
+            umapParams.set('collection', params.get('collection') || 'main');
+            umapParams.set('algo', params.get('algo') || 'unweighted_cosine');
             
-            this.nodes = data.nodes || [];
-            this.links = data.links || [];
+            const umapUrl = `/api/bin_sim/umap?${umapParams.toString()}`;
+            const umapRes = await fetch(umapUrl, { signal });
+            const umapData = await umapRes.json();
+            
+            this.nodes = umapData.nodes || [];
+            
+            // 2. Fetch binary similarity links from the standard search API
+            const searchParams = new URLSearchParams(params);
+            searchParams.set('limit', 5000);
+            searchParams.set('offset', 0);
+            
+            const searchUrl = `/api/bin_sim/search?${searchParams.toString()}`;
+            const searchRes = await fetch(searchUrl, { signal });
+            const searchData = await searchRes.json();
+            
+            const searchPairs = searchData.results || searchData.pairs || [];
+            
+            // Map search results to links format: { source, target, value }
+            this.links = searchPairs.map(p => ({
+                source: p.md5_a,
+                target: p.md5_b,
+                value: p.score_collection_weighted !== undefined ? p.score_collection_weighted : p.score
+            }));
+            
             this.render();
         } catch (e) {
             if (e.name !== 'AbortError') console.error("Binary Density Map Error:", e);

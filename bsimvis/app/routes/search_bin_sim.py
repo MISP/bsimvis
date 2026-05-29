@@ -330,7 +330,7 @@ def search_bin_sims():
 
 
 def search_umap():
-    """Retrieve UMAP projection coordinates and filtered links for a collection."""
+    """Retrieve UMAP projection coordinates and file metadata for all binaries in a collection."""
     r = get_redis()
     collection = request.args.get("collection")
     if not collection:
@@ -343,11 +343,11 @@ def search_umap():
     umap_data_raw = r.json().get(umap_key, "$")
     
     if not umap_data_raw:
-        return {"nodes": [], "links": []}
+        return {"nodes": []}
         
     umap_data = umap_data_raw[0] if isinstance(umap_data_raw, list) else umap_data_raw
     if not isinstance(umap_data, dict):
-        return {"nodes": [], "links": []}
+        return {"nodes": []}
 
     md5_list = list(umap_data.keys())
     
@@ -359,7 +359,6 @@ def search_umap():
     results = pipe.execute()
     
     nodes = []
-    node_map = {}
     for i, md5 in enumerate(md5_list):
         coords = umap_data.get(md5)
         if not coords or len(coords) < 2:
@@ -378,8 +377,10 @@ def search_umap():
         if res:
             m = res[0] if isinstance(res, list) else res
             if isinstance(m, str):
-                try: m = json.loads(m)
-                except: pass
+                try:
+                    m = json.loads(m)
+                except:
+                    pass
             
             if isinstance(m, dict):
                 node["file_name"] = m.get("file_name", md5)
@@ -393,92 +394,5 @@ def search_umap():
             node["file_name"] = md5
             
         nodes.append(node)
-        node_map[md5] = node
 
-    # 3. Fetch and filter links (similarities)
-    # We use similar filtering logic as search_bin_sims but without pagination limit
-    # because we want to see all links in the graph view (within reason)
-    
-    def parse_float(v):
-        try:
-            return float(v) if v is not None and v.strip() != "" else None
-        except (ValueError, AttributeError):
-            return None
-
-    min_score = parse_float(request.args.get("min_score"))
-    max_score = parse_float(request.args.get("max_score"))
-    min_cov = parse_float(request.args.get("min_coverage"))
-    max_cov = parse_float(request.args.get("max_coverage"))
-    min_shared = parse_float(request.args.get("min_shared"))
-    
-    arch_filter = request.args.get("arch", "").strip().lower()
-    md5_filter = request.args.get("md5", "").strip().lower()
-    file_name_filter = request.args.get("file_name", "").strip().lower()
-    
-    # Get all candidate links
-    if md5_filter:
-        sids = r.smembers(f"{collection}:bin_sim:involves:{md5_filter}")
-    else:
-        sids = r.smembers(f"{collection}:bin_sim:built:{algo}")
-        
-    links = []
-    if sids:
-        candidates = [s.decode() if isinstance(s, bytes) else s for s in sids]
-        candidates = [s for s in candidates if f":bin_sim:{algo}:" in s]
-        
-        # Batch fetch docs
-        pipe = r.pipeline()
-        for sid in candidates:
-            pipe.json().get(sid, "$")
-        docs_raw = pipe.execute()
-        
-        for sid, res in zip(candidates, docs_raw):
-            if not res: continue
-            doc = res[0] if isinstance(res, list) else res
-            if isinstance(doc, str): doc = json.loads(doc)
-            if not isinstance(doc, dict): continue
-            
-            m_a = doc.get("md5_a")
-            m_b = doc.get("md5_b")
-            
-            # Basic existence check in UMAP
-            if m_a not in node_map or m_b not in node_map:
-                continue
-                
-            # Score filter
-            score = doc.get("score_collection_weighted", doc.get("score", 0))
-            if min_score is not None and score < min_score: continue
-            if max_score is not None and score > max_score: continue
-            
-            # Coverage filter
-            cov_a = doc.get("coverage_a", 0)
-            cov_b = doc.get("coverage_b", 0)
-            if min_cov is not None and max(cov_a, cov_b) < min_cov: continue
-            if min_shared is not None and doc.get("shared_clusters", 0) < min_shared: continue
-
-            # Name/MD5 filters (already handled if md5_filter was used for initial set, 
-            # but we need to check both sides if file_name_filter is active)
-            if file_name_filter:
-                name_a = node_map[m_a].get("file_name", "").lower()
-                name_b = node_map[m_b].get("file_name", "").lower()
-                if file_name_filter not in name_a and file_name_filter not in name_b:
-                    continue
-
-            if arch_filter:
-                arch_a = node_map[m_a].get("architecture", "").lower()
-                arch_b = node_map[m_b].get("architecture", "").lower()
-                if arch_filter not in arch_a and arch_filter not in arch_b:
-                    continue
-
-            links.append({
-                "source": m_a,
-                "target": m_b,
-                "value": score
-            })
-
-    # Limit links to avoid crashing browser (e.g. 5000 links)
-    if len(links) > 5000:
-        links.sort(key=lambda x: x["value"], reverse=True)
-        links = links[:5000]
-
-    return {"nodes": nodes, "links": links}
+    return {"nodes": nodes}

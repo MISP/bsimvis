@@ -3145,6 +3145,9 @@ function renderContextMenuTagsList(etype, eid, tagsList, userTagsList) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    if (window.self !== window.top) {
+        document.body.classList.add('in-iframe');
+    }
 
     // Intercept wheel events for scrolling code/diff preview tooltips while hovering trigger elements
     // [REMOVED: Now handled in previews.js to prevent double-scroll]

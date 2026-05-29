@@ -9,6 +9,47 @@ let binSimSortState = {
     uniqueA: { col: 'cohesion', dir: -1 },
     uniqueB: { col: 'cohesion', dir: -1 }
 };
+function openClusterView(uuid, name, event) {
+    const col = new URLSearchParams(window.location.search).get('collection') || 'main';
+    const fullUrl = `/#functions?collection=${encodeURIComponent(col)}&cluster_uuid=${encodeURIComponent(uuid)}`;
+    
+    if (event.ctrlKey || event.metaKey) {
+        window.open(fullUrl, '_blank');
+    } else {
+        if (window.parent && window.parent.windowManager) {
+            window.parent.windowManager.createWindow(`Cluster: ${name}`, fullUrl, { type: 'cluster' });
+        } else if (typeof windowManager !== 'undefined') {
+            windowManager.createWindow(`Cluster: ${name}`, fullUrl, { type: 'cluster' });
+        } else {
+            window.open(fullUrl, '_blank');
+        }
+    }
+}
+window.openClusterView = openClusterView;
+
+function handleIframeMouseLeave(event) {
+    const relatedTarget = event.relatedTarget;
+    const isIframe = window.parent && (window.parent !== window) && window.parent.showClusterTableTooltipFromIframe;
+    const parentWin = isIframe ? window.parent : window;
+    const tooltip = parentWin.document.getElementById('hierarchy-tooltip');
+    if (tooltip) {
+        if (tooltip === relatedTarget || tooltip.contains(relatedTarget)) {
+            return;
+        }
+        const rect = tooltip.getBoundingClientRect();
+        const iframeRect = (isIframe && window.frameElement) ? window.frameElement.getBoundingClientRect() : { left: 0, top: 0 };
+        const parentX = event.clientX + iframeRect.left;
+        const parentY = event.clientY + iframeRect.top;
+        if (parentX >= rect.left - 5 && parentX <= rect.right + 5 && parentY >= rect.top - 5 && parentY <= rect.bottom + 5) {
+            return;
+        }
+    }
+    if (isIframe) {
+        window.parent.hideClusterTableTooltipFromIframe();
+    } else if (window.hideClusterTableTooltip) {
+        window.hideClusterTableTooltip();
+    }
+}
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
@@ -540,6 +581,11 @@ function renderBinaryDiffSankey(data) {
             const cColor = `hsl(${cohesion * 120}, 70%, 55%)`;
             const cNode = getNode('cluster_' + m.cluster_uuid, m.cluster_name, cColor);
             cNode.cohesion = cohesion;
+            cNode.cluster_uuid = m.cluster_uuid;
+            cNode.cluster_name = m.cluster_name;
+            cNode.size = m.count_a + m.count_b;
+            cNode.stability = 1.0;
+            cNode.avg_features = m.avg_features || 0;
             
             if (m.funcs_a && m.funcs_a.length > 0) {
                 const fNames = m.funcs_a.map(fa => getFuncDisplayName(fa));
@@ -563,6 +609,12 @@ function renderBinaryDiffSankey(data) {
         // 2. Unique to A Clusters
         sortedUniqueA.forEach(u => {
             const cNode = getNode('cluster_' + u.cluster_uuid, u.cluster_name, '#f92672');
+            cNode.cluster_uuid = u.cluster_uuid;
+            cNode.cluster_name = u.cluster_name;
+            cNode.size = u.funcs.length;
+            cNode.stability = 1.0;
+            cNode.cohesion = u.cohesion || 0;
+            cNode.avg_features = u.avg_features || 0;
             
             if (u.funcs && u.funcs.length > 0) {
                 const fNames = u.funcs.map(fa => getFuncDisplayName(fa));
@@ -576,6 +628,12 @@ function renderBinaryDiffSankey(data) {
         // 3. Unique to B Clusters
         sortedUniqueB.forEach(u => {
             const cNode = getNode('cluster_' + u.cluster_uuid, u.cluster_name, '#66d9ef');
+            cNode.cluster_uuid = u.cluster_uuid;
+            cNode.cluster_name = u.cluster_name;
+            cNode.size = u.funcs.length;
+            cNode.stability = 1.0;
+            cNode.cohesion = u.cohesion || 0;
+            cNode.avg_features = u.avg_features || 0;
             
             if (u.funcs && u.funcs.length > 0) {
                 const fNames = u.funcs.map(fb => getFuncDisplayName(fb));
@@ -699,12 +757,78 @@ function renderBinaryDiffSankey(data) {
         .attr("stroke-width", 0)
         .attr("fill", d => d.target.color || '#fff')
         .style("fill-opacity", 0.4)
-        .style("transition", "fill-opacity 0.2s")
-        .on("mouseover", function() { 
-            d3.select(this).style("fill-opacity", 0.8); 
+        .style("cursor", d => (d.source.id.startsWith('funcgroup_') || d.target.id.startsWith('funcgroup_')) ? "pointer" : "default")
+        .on("mouseenter", function(event, d) { 
+            d3.select(this).style("fill-opacity", 0.8);
+            const sourceIsFuncGroup = d.source.id.startsWith('funcgroup_');
+            const targetIsFuncGroup = d.target.id.startsWith('funcgroup_');
+            const isDetailedLink = sourceIsFuncGroup || targetIsFuncGroup;
+            if (isDetailedLink) {
+                const funcNode = sourceIsFuncGroup ? d.source : d.target;
+                const clusterNode = sourceIsFuncGroup ? d.target : d.source;
+                const funcsList = funcNode.funcs || [];
+                
+                const customMembers = funcsList.map(fid => {
+                    const meta = (binSimDataCache && binSimDataCache.functions_metadata) ? binSimDataCache.functions_metadata[fid] : null;
+                    const parts = fid.split(':');
+                    const entry = parts.pop();
+                    const md5 = parts.pop();
+                    const function_name = meta && meta.name ? meta.name : ('sub_' + entry);
+                    const return_type = meta && meta.return_type ? meta.return_type : 'void';
+                    const parameters = meta && meta.parameters ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
+                    const bsim_features_count = meta && meta.bsim_features_count ? parseInt(meta.bsim_features_count) : 0;
+                    const namespace = meta && meta.namespace ? meta.namespace : '';
+                    const entrypoint_address = meta && meta.entrypoint_address ? meta.entrypoint_address : ('0x' + entry);
+                    
+                    return {
+                        function_id: fid,
+                        function_name: function_name,
+                        return_type: return_type,
+                        parameters: parameters,
+                        bsim_features_count: bsim_features_count,
+                        namespace: namespace,
+                        entrypoint_address: entrypoint_address
+                    };
+                });
+                
+                if (window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) {
+                    const cleanName = clusterNode.cluster_name.replace(/'/g, "\\'");
+                    window.parent.showClusterTableTooltipFromIframe(
+                        window.name, 
+                        clusterNode.cluster_uuid + '_path_' + funcNode.id, 
+                        cleanName + ' (Path Functions)', 
+                        customMembers.length, 
+                        1.0, 
+                        clusterNode.cohesion || 0, 
+                        clusterNode.avg_features || 0, 
+                        event,
+                        customMembers
+                    );
+                } else if (window.showClusterTableTooltip) {
+                    const cleanName = clusterNode.cluster_name.replace(/'/g, "\\'");
+                    window.showClusterTableTooltip(
+                        event,
+                        clusterNode.cluster_uuid + '_path_' + funcNode.id, 
+                        cleanName + ' (Path Functions)', 
+                        customMembers.length, 
+                        1.0, 
+                        clusterNode.cohesion || 0, 
+                        clusterNode.avg_features || 0, 
+                        customMembers
+                    );
+                }
+            }
         })
-        .on("mouseout", function() { 
+        .on("mousemove", function(event) {
+            if (window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) {
+                window.parent.moveClusterTableTooltipFromIframe(window.name, event);
+            } else if (window.moveClusterTableTooltip) {
+                window.moveClusterTableTooltip(event);
+            }
+        })
+        .on("mouseleave", function(event) { 
             d3.select(this).style("fill-opacity", 0.4); 
+            handleIframeMouseLeave(event);
         })
         .append("title")
         .text(d => {
@@ -772,6 +896,48 @@ function renderBinaryDiffSankey(data) {
                 .text(`${d.funcs.length} Functions (Total: ${V} ${metricSuffix})${cohesionText}:\n` + 
                       d.funcs.map((fid, idx) => `  - ${d.name[idx]} (${getFuncValue(fid)} ${metricSuffix})`).join('\n'));
         } else {
+            if (d.id.startsWith('cluster_')) {
+                el.style("cursor", "pointer")
+                  .on("mouseenter", function(event) {
+                      if (window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) {
+                          const cleanName = d.cluster_name.replace(/'/g, "\\'");
+                          window.parent.showClusterTableTooltipFromIframe(
+                              window.name, 
+                              d.cluster_uuid, 
+                              cleanName, 
+                              d.size, 
+                              d.stability || 1.0, 
+                              d.cohesion || 0, 
+                              d.avg_features || 0, 
+                              event
+                          );
+                      } else if (window.showClusterTableTooltip) {
+                          const cleanName = d.cluster_name.replace(/'/g, "\\'");
+                          window.showClusterTableTooltip(
+                              event,
+                              d.cluster_uuid, 
+                              cleanName, 
+                              d.size, 
+                              d.stability || 1.0, 
+                              d.cohesion || 0, 
+                              d.avg_features || 0
+                          );
+                      }
+                  })
+                  .on("mousemove", function(event) {
+                      if (window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) {
+                          window.parent.moveClusterTableTooltipFromIframe(window.name, event);
+                      } else if (window.moveClusterTableTooltip) {
+                          window.moveClusterTableTooltip(event);
+                      }
+                  })
+                  .on("mouseleave", handleIframeMouseLeave)
+                  .on("click", function(event) {
+                      const cleanName = d.cluster_name.replace(/'/g, "\\'");
+                      openClusterView(d.cluster_uuid, cleanName, event);
+                  });
+            }
+
             el.append("rect")
                 .attr("height", height)
                 .attr("width", width)
@@ -963,10 +1129,22 @@ function renderBinSimTables(isFilterChange = false) {
         matched = sortItems(matched, binSimSortState.matched);
         
         if (matched.length > 0) {
-            tbodyMatched.innerHTML = matched.map(m => `
+            tbodyMatched.innerHTML = matched.map(m => {
+                const cleanName = m.cluster_name.replace(/'/g, "\\'");
+                const escUuid = m.cluster_uuid;
+                const size = m.count_a + m.count_b;
+                const cohesion = m.cohesion || 0;
+                const avgFeat = m.avg_features || 0;
+                return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                     <td style="padding:10px;">
-                        <div style="font-weight:bold; color:var(--accent);">${m.cluster_name}</div>
+                        <div class="clickable" style="font-weight:bold; color:var(--accent);"
+                             onmouseenter="if(window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) { window.parent.showClusterTableTooltipFromIframe(window.name, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}, event); } else if(window.showClusterTableTooltip) { window.showClusterTableTooltip(event, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}); }"
+                             onmousemove="if(window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) { window.parent.moveClusterTableTooltipFromIframe(window.name, event); } else if(window.moveClusterTableTooltip) { window.moveClusterTableTooltip(event); }"
+                             onmouseleave="if(window.parent && window.parent.hideClusterTableTooltipFromIframe && window.parent !== window) { window.parent.hideClusterTableTooltipFromIframe(); } else if(window.hideClusterTableTooltip) { window.hideClusterTableTooltip(); }"
+                             onclick="openClusterView('${escUuid}', '${cleanName}', event)">
+                             ${m.cluster_name}
+                        </div>
                         <div class="mono dim" style="font-size:0.65rem;">UUID: ${m.cluster_uuid}</div>
                     </td>
                     <td style="padding:10px; text-align:center;">
@@ -996,7 +1174,8 @@ function renderBinSimTables(isFilterChange = false) {
                         <div class="mono dim">${m.sim_rarity.toFixed(2)}</div>
                     </td>
                 </tr>
-            `).join('');
+                `;
+            }).join('');
         } else {
             tbodyMatched.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No matched clusters</td></tr>';
         }
@@ -1030,10 +1209,22 @@ function renderBinSimTables(isFilterChange = false) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No unique clusters</td></tr>';
             return;
         }
-        tbody.innerHTML = items.map(u => `
+        tbody.innerHTML = items.map(u => {
+            const cleanName = u.cluster_name.replace(/'/g, "\\'");
+            const escUuid = u.cluster_uuid;
+            const size = u.funcs.length;
+            const cohesion = u.cohesion || 0;
+            const avgFeat = u.avg_features || 0;
+            return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                 <td style="padding:10px;">
-                    <div style="font-weight:bold; color:var(--accent);">${u.cluster_name}</div>
+                    <div class="clickable" style="font-weight:bold; color:var(--accent);"
+                         onmouseenter="if(window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) { window.parent.showClusterTableTooltipFromIframe(window.name, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}, event); } else if(window.showClusterTableTooltip) { window.showClusterTableTooltip(event, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}); }"
+                         onmousemove="if(window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) { window.parent.moveClusterTableTooltipFromIframe(window.name, event); } else if(window.moveClusterTableTooltip) { window.moveClusterTableTooltip(event); }"
+                         onmouseleave="if(window.parent && window.parent.hideClusterTableTooltipFromIframe && window.parent !== window) { window.parent.hideClusterTableTooltipFromIframe(); } else if(window.hideClusterTableTooltip) { window.hideClusterTableTooltip(); }"
+                         onclick="openClusterView('${escUuid}', '${cleanName}', event)">
+                         ${u.cluster_name}
+                    </div>
                     <div class="mono dim" style="font-size:0.65rem;">UUID: ${u.cluster_uuid}</div>
                 </td>
                 <td style="padding:10px; text-align:center;">
@@ -1054,7 +1245,8 @@ function renderBinSimTables(isFilterChange = false) {
                     </div>
                 </td>
             </tr>
-        `).join('');
+            `;
+        }).join('');
     };
 
     renderUnique(data.diff.unique_to_a, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');

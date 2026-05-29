@@ -1923,3 +1923,15 @@ body.sidebar-collapsed nav #nav-history-chevron {
     border-radius: 6px;
     padding: 12px;
 }
+
+/* If loaded inside a floating window iframe, hide sidebar and main layout components */
+body.in-iframe nav,
+body.in-iframe #sidebar-toggle,
+body.in-iframe main > .header {
+    display: none !important;
+}
+body.in-iframe main {
+    margin-left: 0 !important;
+    padding: 0 !important;
+    height: 100vh !important;
+}

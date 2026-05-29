@@ -27,6 +27,31 @@ function getHierarchyTooltip() {
         el.id = 'hierarchy-tooltip';
         el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
+        
+        el.addEventListener('click', (event) => {
+            const item = event.target.closest('.hier-function-item');
+            if (item) {
+                const idx = parseInt(item.getAttribute('data-index'));
+                const activeInstance = (window.hierarchyInstance && window.hierarchyInstance._activeD)
+                    ? window.hierarchyInstance
+                    : ((window.packingInstance && window.packingInstance._activeD) ? window.packingInstance : null);
+                
+                if (activeInstance && activeInstance._activeD) {
+                    const d = activeInstance._activeD;
+                    const members = d.data.runtime_members || [];
+                    const func = members[idx];
+                    if (func && func.function_id) {
+                        const name = func.function_name || 'Unknown';
+                        if (typeof showFunctionCodeById === 'function') {
+                            showFunctionCodeById(func.function_id, name, '', event);
+                        } else {
+                            const url = `/function/index.html?id=${encodeURIComponent(func.function_id)}`;
+                            window.open(url, '_blank');
+                        }
+                    }
+                }
+            }
+        });
     }
     return el;
 }
@@ -1633,7 +1658,7 @@ class ClusterPacking {
 
 const clusterTooltipMockCache = new Map();
 
-function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features) {
+function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null) {
     if (window.setTrigger) window.setTrigger(event);
     if (!window.hierarchyInstance) {
         window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
@@ -1644,6 +1669,9 @@ function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, a
         });
     }
     const mockD = clusterTooltipMockCache.get(uuid);
+    if (customMembers) {
+        mockD.data.runtime_members = customMembers;
+    }
     window.hierarchyInstance.showTooltip(event, mockD);
 }
 
@@ -1664,3 +1692,45 @@ function moveClusterTableTooltip(e) {
         tooltip.style.top = y + 'px';
     }
 }
+
+window.showClusterTableTooltip = showClusterTableTooltip;
+window.hideClusterTableTooltip = hideClusterTableTooltip;
+window.moveClusterTableTooltip = moveClusterTableTooltip;
+
+window.showClusterTableTooltipFromIframe = function (iframeId, uuid, name, size, stability, cohesion, avg_features, e, customMembers = null) {
+    const iframe = document.getElementById(iframeId);
+    if (!iframe) {
+        showClusterTableTooltip(e, uuid, name, size, stability, cohesion, avg_features, customMembers);
+        return;
+    }
+    const rect = iframe.getBoundingClientRect();
+    const fakeEvent = { 
+        clientX: e.clientX + rect.left, 
+        clientY: e.clientY + rect.top,
+        target: e.target,
+        currentTarget: e.currentTarget,
+        preventDefault: () => { if (e.preventDefault) e.preventDefault(); },
+        stopPropagation: () => { if (e.stopPropagation) e.stopPropagation(); }
+    };
+    showClusterTableTooltip(fakeEvent, uuid, name, size, stability, cohesion, avg_features, customMembers);
+};
+
+window.moveClusterTableTooltipFromIframe = function (iframeId, e) {
+    const iframe = document.getElementById(iframeId);
+    if (!iframe) {
+        moveClusterTableTooltip(e);
+        return;
+    }
+    const rect = iframe.getBoundingClientRect();
+    const fakeEvent = { 
+        clientX: e.clientX + rect.left, 
+        clientY: e.clientY + rect.top,
+        target: e.target,
+        currentTarget: e.currentTarget
+    };
+    moveClusterTableTooltip(fakeEvent);
+};
+
+window.hideClusterTableTooltipFromIframe = function () {
+    hideClusterTableTooltip();
+};

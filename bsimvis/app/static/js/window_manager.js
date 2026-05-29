@@ -254,14 +254,12 @@ class WindowManager {
     }
 
     focusWindow(win) {
-        if (this.activeWindow === win && !win.isSticky) return;
+        if (this.activeWindow === win) return;
         this.activeWindow = win;
         
         this.zIndexBase += 10;
         
-        // Sticky windows get an even higher boost
-        const zIndex = win.isSticky ? (this.zIndexBase + 5000) : this.zIndexBase;
-        win.el.style.zIndex = zIndex;
+        win.el.style.zIndex = this.zIndexBase;
         
         this.windows.forEach(w => {
             w.el.classList.remove('active');

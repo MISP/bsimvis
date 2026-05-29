@@ -1250,3 +1250,27 @@ function renderBinSimPairs(items) {
 
 window.applyBinSimSearch = applyBinSimSearch;
 window.renderBinSimPairs = renderBinSimPairs;
+
+// Expose showFunctionCodeById if not already defined, supporting iframe/standalone/Ctrl-click
+if (typeof window.showFunctionCodeById === 'undefined') {
+    window.showFunctionCodeById = function(id, name, lineHash = '', e) {
+        if (window.parent && window.parent !== window && window.parent.showFunctionCodeById) {
+            window.parent.showFunctionCodeById(id, name, lineHash, e);
+        } else {
+            if (window.getSelection && window.getSelection().toString().trim()) {
+                return;
+            }
+            const url = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
+            if (e && (e.ctrlKey || e.metaKey)) {
+                window.open(url, '_blank');
+                return;
+            }
+            if (typeof windowManager !== 'undefined') {
+                windowManager.createWindow(`Code: ${name}`, url, { type: 'code' });
+            } else {
+                window.open(url, '_blank');
+            }
+        }
+    };
+}
+

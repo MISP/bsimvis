@@ -877,7 +877,7 @@ function updateUI(path, params, route) {
                         <div style="display:flex; flex-direction:column; gap:2px;">
                             <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                             <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                            <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${p.get('min_cohesion') || ''}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                         </div>
                     </th>
                     <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
@@ -1291,7 +1291,7 @@ function applyAdvancedFuncSearch() {
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
-    if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
+    params.set('min_cohesion', minCohesionFlt || '0.95');
 
     if (nameFlt) params.set('function_name', nameFlt); else params.delete('function_name');
     if (addressFlt) params.set('entrypoint_address', addressFlt); else params.delete('entrypoint_address');
@@ -1411,7 +1411,7 @@ function applySimSearch() {
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
-    if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
+    params.set('min_cohesion', minCohesionFlt || '0.95');
 
     if (nameFlt) params.set('name', nameFlt); else params.delete('name');
     if (addressFlt) params.set('address', addressFlt); else params.delete('address');

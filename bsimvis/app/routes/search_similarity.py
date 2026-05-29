@@ -162,7 +162,7 @@ def similarity_search():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
         min_features = int(request.args.get("min_features", 0))
-        min_cohesion = float(request.args.get("min_cohesion", 0.0))
+        min_cohesion = float(request.args.get("min_cohesion", 0.95))
     except ValueError:
         return {"detail": "Invalid numeric parameter"}, 400
 

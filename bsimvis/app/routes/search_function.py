@@ -46,7 +46,7 @@ def search_functions():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
         pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
-        min_cohesion = float(request.args.get("min_cohesion", 0.0))
+        min_cohesion = float(request.args.get("min_cohesion", 0.95))
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 

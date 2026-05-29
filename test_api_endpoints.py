@@ -21,7 +21,7 @@ import uuid
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BASE_URL = os.getenv("API_URL", "http://localhost:5001")
+BASE_URL = os.getenv("API_URL", "http://localhost:5000")
 COLLECTION = f"test_collection_{uuid.uuid4().hex[:8]}"
 TEST_BINARY = "./data/test/crypto_test"
 POLL_INTERVAL = 3  # seconds between pipeline status polls

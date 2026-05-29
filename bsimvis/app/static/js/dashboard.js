@@ -446,7 +446,9 @@ async function refreshData(appendArg = false, force = false) {
         if (items.length === 0 && !append) {
             tbody.innerHTML = '<tr><td colspan="100" style="text-align:center; padding:40px;">No data found</td></tr>';
         } else {
-            const html = route.renderer(items);
+            // Pass clusters map for views that use it
+            const clustersMap = (hashPath === '#functions' || hashPath === '#function-similarity') ? (data.clusters || {}) : undefined;
+            const html = clustersMap !== undefined ? route.renderer(items, clustersMap) : route.renderer(items);
             if (html) tbody.insertAdjacentHTML('beforeend', html);
         }
 
@@ -875,6 +877,7 @@ function updateUI(path, params, route) {
                         <div style="display:flex; flex-direction:column; gap:2px;">
                             <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                             <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${p.get('min_cohesion') || ''}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                         </div>
                     </th>
                     <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
@@ -1283,10 +1286,12 @@ function applyAdvancedFuncSearch() {
     const langFlt = document.getElementById('flt-func-language')?.value;
     const clusterFlt = document.getElementById('flt-func-cluster')?.value;
     const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
+    const minCohesionFlt = document.getElementById('flt-func-min-cohesion')?.value;
     const minFeatFlt = document.getElementById('flt-func-min-features')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
+    if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
 
     if (nameFlt) params.set('function_name', nameFlt); else params.delete('function_name');
     if (addressFlt) params.set('entrypoint_address', addressFlt); else params.delete('entrypoint_address');
@@ -1732,7 +1737,7 @@ function renderFiles(data) {
     }).join('');
 }
 
-function renderFunctions(data) {
+function renderFunctions(data, clustersMap = {}) {
     return data.map(f => {
         const name = f['function_name'] || 'Unknown';
         const namespace = f['namespace'] || '';
@@ -1775,7 +1780,7 @@ function renderFunctions(data) {
             </td>
             <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
             <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
-            <td class="cluster-cards-cell" data-clusters='${JSON.stringify(f['clusters'] || []).replace(/'/g, "&apos;")}'>${renderClusterCards(f['clusters'])}</td>
+            <td class="cluster-cards-cell" data-clusters='${JSON.stringify((f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean)).replace(/'/g, "&apos;")}'>${renderClusterCards((f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean))}</td>
             <td class="sim-cell" style="text-align:center;">
 
                 <div style="display:inline-flex; align-items:center; gap:6px;">
@@ -1866,7 +1871,7 @@ function renderGlobalFeatures(items) {
     `}).join('');
 }
 
-function renderTopCorrelations(items) {
+function renderTopCorrelations(items, clustersMap = {}) {
     if (!items || !items.length) return '<tr><td colspan="11" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
 
     return items.map(p => {
@@ -1960,8 +1965,8 @@ function renderTopCorrelations(items) {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(p.meta1?.clusters || []).replace(/'/g, "&apos;")}'>${renderClusterCards(p.meta1?.clusters)}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(p.meta2?.clusters || []).replace(/'/g, "&apos;")}'>${renderClusterCards(p.meta2?.clusters)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify((p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean)).replace(/'/g, "&apos;")}'>${renderClusterCards((p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean))}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify((p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean)).replace(/'/g, "&apos;")}'>${renderClusterCards((p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean))}</div>
                 </div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">

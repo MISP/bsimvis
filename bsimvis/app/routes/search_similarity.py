@@ -162,6 +162,7 @@ def similarity_search():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
         min_features = int(request.args.get("min_features", 0))
+        min_cohesion = float(request.args.get("min_cohesion", 0.0))
     except ValueError:
         return {"detail": "Invalid numeric parameter"}, 400
 
@@ -1089,7 +1090,9 @@ def similarity_search():
                     cm = (res[0] if isinstance(res, list) else res) or {}
                     if isinstance(cm, str):
                         cm = json.loads(cm)
-                    cluster_meta_map[cid] = cm
+                    # Apply cohesion threshold server-side
+                    if (cm.get("cohesion_score") or 0) >= min_cohesion:
+                        cluster_meta_map[cid] = cm
 
             # Phase 5: Reconstruct Enriched Pairs
             for sid, sort_sc in page_results:
@@ -1118,28 +1121,9 @@ def similarity_search():
                     else float(s_data["other_metric"] or 0)
                 )
 
-                def build_clusters(scores, meta_map):
-                    res = []
-                    for cid, score in scores.items():
-                        cm = meta_map.get(cid)
-                        if cm:
-                            res.append(
-                                {
-                                    "cluster_id": cm.get("cluster_id"),
-                                    "cluster_uuid": cm.get("cluster_uuid"),
-                                    "cluster_name": cm.get("cluster_name"),
-                                    "cohesion_score": cm.get("cohesion_score", 0),
-                                    "member_count": cm.get("member_count", 0),
-                                    "cluster_stability": score
-                                    or cm.get("cluster_stability", 0.0),
-                                    "avg_features": cm.get("avg_features", 0),
-                                }
-                            )
-                    res.sort(key=lambda x: x.get("member_count", 0), reverse=True)
-                    return res
-
-                clusters1 = build_clusters(s1, cluster_meta_map)
-                clusters2 = build_clusters(s2, cluster_meta_map)
+                # Cluster references — plain list of UUIDs (metadata is in top-level map)
+                clusters1 = [cid for cid in s1 if cid in cluster_meta_map]
+                clusters2 = [cid for cid in s2 if cid in cluster_meta_map]
 
                 # Cleanup function meta before embedding
                 for field in [
@@ -1229,6 +1213,20 @@ def similarity_search():
             f"Enrich: {metrics['enrich_time']:.3f}s | Total: {total_time:.3f}s"
         )
 
+        # Build top-level cluster metadata map (keyed by cid, sent once)
+        clusters_response = {
+            cid: {
+                "cluster_id": cm.get("cluster_id"),
+                "cluster_uuid": cm.get("cluster_uuid"),
+                "cluster_name": cm.get("cluster_name"),
+                "cohesion_score": cm.get("cohesion_score", 0),
+                "member_count": cm.get("member_count", 0),
+                "cluster_stability": cm.get("cluster_stability", 0.0),
+                "avg_features": cm.get("avg_features", 0),
+            }
+            for cid, cm in cluster_meta_map.items()
+        }
+
         response_data = {
             "collection": col,
             "algo": algo,
@@ -1254,6 +1252,7 @@ def similarity_search():
             "limit": limit,
             "pool_limit": pool_limit,
             "pool_truncated": pool_truncated,
+            "clusters": clusters_response,
             "pairs": enriched_pairs,
             "sort_by": sort_by,
             "sort_order": sort_order,

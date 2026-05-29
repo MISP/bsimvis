@@ -191,24 +191,47 @@ class Worker:
                 with open(temp_path, "wb") as f:
                     f.write(raw_bytes)
 
-                self.job_service.add_log(
-                    job_id, f"Starting Ghidra analysis for {orig_name}..."
-                )
-
                 # 3. Run Analysis
-                analysis_data = ghidra_service.analyze_file(temp_path, payload)
+                all_analysis_data = []
 
-                # 4. Store JSON result in Kvrocks
-                # The result needs to be at '{collection}:file:{file_md5}:data'
-                file_id = f"{collection}:file:{file_md5}:data"
-                self.r_data.set(file_id, json.dumps(analysis_data))
+                if temp_path.endswith(".gpr.zip"):
+                    self.job_service.add_log(
+                        job_id, f"Extracting Ghidra project archive {orig_name}..."
+                    )
+                    import zipfile
 
-                self.job_service.add_log(
-                    job_id, "Ghidra analysis complete. Result stored."
-                )
+                    with zipfile.ZipFile(temp_path, "r") as zip_ref:
+                        zip_ref.extractall(temp_dir)
 
-                # 5. Chain next tasks (if this is part of a pipeline)
-                # In our case, we need to add the indexing tasks to the pipeline.
+                    # Find .gpr file
+                    gpr_path = None
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            if file.endswith(".gpr"):
+                                gpr_path = os.path.join(root, file)
+                                break
+                        if gpr_path:
+                            break
+
+                    if not gpr_path:
+                        self.job_service.add_log(
+                            job_id, "Error: No .gpr file found in archive."
+                        )
+                        return False
+
+                    self.job_service.add_log(
+                        job_id, f"Starting Ghidra project analysis for {orig_name}..."
+                    )
+                    all_analysis_data = ghidra_service.analyze_project(
+                        gpr_path, payload
+                    )
+                else:
+                    self.job_service.add_log(
+                        job_id, f"Starting Ghidra analysis for {orig_name}..."
+                    )
+                    all_analysis_data = [ghidra_service.analyze_file(temp_path, payload)]
+
+                # 4. Store JSON results and chain indexing
                 parent_id = self.r_queue.hget(f"job:{job_id}", "parent_id")
                 if parent_id:
                     parent_id = (
@@ -216,78 +239,102 @@ class Worker:
                         if isinstance(parent_id, bytes)
                         else parent_id
                     )
-                    pipe_data = self.r_queue.hgetall(f"job:{parent_id}")
-                    if pipe_data and "task_ids" in pipe_data:
-                        task_ids = json.loads(pipe_data["task_ids"])
 
-                        # Define remaining tasks
-                        next_tasks = [
-                            (
-                                JobType.INDEX_META,
-                                {
-                                    "collection": collection,
-                                    "file_id": file_id,
-                                    "md5": file_md5,
-                                },
-                            ),
-                            (
-                                JobType.INDEX_FUNCTIONS,
-                                {
-                                    "collection": collection,
-                                    "file_id": file_id,
-                                    "md5": file_md5,
-                                },
-                            ),
-                            (
-                                JobType.INDEX_FEATURES,
-                                {
-                                    "collection": collection,
-                                    "file_id": file_id,
-                                    "md5": file_md5,
-                                },
-                            ),
-                        ]
+                for analysis_data in all_analysis_data:
+                    real_md5 = analysis_data.get("file_metadata", {}).get("file_md5")
+                    if not real_md5:
+                        continue
 
-                        if not payload.get("skip_sim"):
-                            from bsimvis.app.services.milvus_service import (
-                                milvus_service,
-                            )
+                    file_id = f"{collection}:file:{real_md5}:data"
+                    self.r_data.set(file_id, json.dumps(analysis_data))
 
-                            build_sim_payload = {
-                                "collection": collection,
-                                "file_id": file_id,
-                                "md5": file_md5,
-                            }
-                            # Copy similarity options
-                            for opt in ["top_k", "min_score", "min_features", "algo"]:
-                                if opt in payload:
-                                    build_sim_payload[opt] = payload[opt]
+                    self.job_service.add_log(
+                        job_id,
+                        f"Analysis complete for {analysis_data['file_metadata'].get('file_name')}. Result stored.",
+                    )
 
-                            if (
-                                milvus_service.enabled
-                                and build_sim_payload.get("algo") == "milvus_sparse"
-                            ):
-                                next_tasks.append(
-                                    (JobType.SYNC_MILVUS, {"collection": collection})
+                    # 5. Chain next tasks (if this is part of a pipeline)
+                    if parent_id:
+                        pipe_data = self.r_queue.hgetall(f"job:{parent_id}")
+                        if pipe_data and "task_ids" in pipe_data:
+                            task_ids = json.loads(pipe_data["task_ids"])
+
+                            # Define remaining tasks for this file
+                            next_tasks = [
+                                (
+                                    JobType.INDEX_META,
+                                    {
+                                        "collection": collection,
+                                        "file_id": file_id,
+                                        "md5": real_md5,
+                                    },
+                                ),
+                                (
+                                    JobType.INDEX_FUNCTIONS,
+                                    {
+                                        "collection": collection,
+                                        "file_id": file_id,
+                                        "md5": real_md5,
+                                    },
+                                ),
+                                (
+                                    JobType.INDEX_FEATURES,
+                                    {
+                                        "collection": collection,
+                                        "file_id": file_id,
+                                        "md5": real_md5,
+                                    },
+                                ),
+                            ]
+
+                            if not payload.get("skip_sim"):
+                                from bsimvis.app.services.milvus_service import (
+                                    milvus_service,
                                 )
-                            next_tasks.append((JobType.BUILD_SIM, build_sim_payload))
 
-                        # Create these jobs and append to task_ids
-                        new_tids = []
-                        for jt, pl in next_tasks:
-                            tid = self.job_service.create_job(
-                                jt, pl, parent_id=parent_id, is_subtask=True
+                                build_sim_payload = {
+                                    "collection": collection,
+                                    "file_id": file_id,
+                                    "md5": real_md5,
+                                }
+                                # Copy similarity options
+                                for opt in [
+                                    "top_k",
+                                    "min_score",
+                                    "min_features",
+                                    "algo",
+                                ]:
+                                    if opt in payload:
+                                        build_sim_payload[opt] = payload[opt]
+
+                                if (
+                                    milvus_service.enabled
+                                    and build_sim_payload.get("algo") == "milvus_sparse"
+                                ):
+                                    next_tasks.append(
+                                        (
+                                            JobType.SYNC_MILVUS,
+                                            {"collection": collection},
+                                        )
+                                    )
+                                next_tasks.append((JobType.BUILD_SIM, build_sim_payload))
+
+                            # Create these jobs and append to task_ids
+                            new_tids = []
+                            for jt, pl in next_tasks:
+                                tid = self.job_service.create_job(
+                                    jt, pl, parent_id=parent_id, is_subtask=True
+                                )
+                                new_tids.append(tid)
+
+                            task_ids.extend(new_tids)
+                            self.r_queue.hset(
+                                f"job:{parent_id}", "task_ids", json.dumps(task_ids)
                             )
-                            new_tids.append(tid)
-
-                        task_ids.extend(new_tids)
-                        self.r_queue.hset(
-                            f"job:{parent_id}", "task_ids", json.dumps(task_ids)
-                        )
-                        self.job_service.add_log(
-                            parent_id,
-                            f"Appended {len(new_tids)} indexing tasks to pipeline.",
-                        )
+                            self.job_service.add_log(
+                                parent_id,
+                                f"Appended {len(new_tids)} indexing tasks for {analysis_data['file_metadata'].get('file_name')} to pipeline.",
+                            )
 
                 return True
             except Exception as e:
@@ -402,8 +449,8 @@ class Worker:
             from bsimvis.app.services.cluster_service import cluster_service
 
             algo = payload.get("algo", "unweighted_cosine")
-            min_cluster_size = payload.get("min_cluster_size", 5)
-            min_samples = payload.get("min_samples")
+            min_cluster_size = payload.get("min_cluster_size", 2)
+            min_samples = payload.get("min_samples", 1)
             epsilon = payload.get("epsilon", 0.0)
             selection_method = payload.get("selection_method", "eom")
             min_sim = payload.get("min_sim", 0.0)
@@ -434,7 +481,7 @@ class Worker:
             algo = payload.get("algo", "unweighted_cosine")
             md5_a = payload.get("md5_a")
             md5_b = payload.get("md5_b")
-            min_cohesion = payload.get("min_cohesion", 0.0)
+            min_cohesion = payload.get("min_cohesion", 0.5)
 
             return bin_sim_service.build_bin_sim(
                 collection,
@@ -453,6 +500,15 @@ class Worker:
                 collection,
                 algo=algo,
                 md5=md5,
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
+        elif jtype == JobType.REINDEX_BIN_SIM.value:
+            algo = payload.get("algo", "unweighted_cosine")
+            return bin_sim_service.reindex_bin_sim(
+                collection,
+                algo=algo,
                 job_service=self.job_service,
                 job_id=job_id,
             )

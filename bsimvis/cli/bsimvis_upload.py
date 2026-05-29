@@ -1,8 +1,9 @@
 import tomllib, json, uuid
 
-import time, logging, argparse, os, tempfile
+import time, logging, argparse, os, tempfile, zipfile
 from pathlib import Path
 from collections import Counter
+from typing import Optional
 import concurrent.futures, threading
 
 from tqdm import tqdm
@@ -12,10 +13,38 @@ from bsimvis.app.services.ghidra_service import ghidra_service
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
-import time
-import uuid
-import datetime
-import logging
+
+
+def archive_ghidra_project(gpr_path: Path) -> Optional[str]:
+    """
+    Bundles a .gpr file and its associated .rep directory into a zip for remote analysis.
+    """
+    rep_dir = gpr_path.with_suffix(".rep")
+    if not rep_dir.exists():
+        logging.error(f"[!] Associated .rep directory not found for {gpr_path.name}")
+        return None
+
+    # Create temp zip
+    fd, tmp_zip = tempfile.mkstemp(suffix=".gpr.zip")
+    os.close(fd)
+
+    try:
+        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+            # Add .gpr
+            zipf.write(gpr_path, gpr_path.name)
+            # Add .rep content
+            for root, dirs, files in os.walk(rep_dir):
+                for file in files:
+                    full_path = Path(root) / file
+                    # arcname should be <project>.rep/...
+                    arcname = full_path.relative_to(gpr_path.parent)
+                    zipf.write(full_path, arcname)
+        return tmp_zip
+    except Exception as e:
+        logging.error(f"[!] Failed to archive Ghidra project: {e}")
+        if os.path.exists(tmp_zip):
+            os.remove(tmp_zip)
+        return None
 
 
 def upload_bsim_data(data, args, config):
@@ -104,32 +133,64 @@ def upload_bsim_data(data, args, config):
 
 def upload_raw_binary(target_path, args):
     """
-    Uploads a raw binary file to the server for analysis.
+    Uploads a raw binary file or a Ghidra project to the server for analysis.
     """
     target_path = Path(target_path).resolve()
     if not target_path.exists():
         logging.error(f"[!] Target path does not exist: {target_path}")
         return 0
 
+    is_gpr = target_path.suffix == ".gpr"
+
+    if is_gpr:
+        logging.info(
+            f"[*] Archiving Ghidra project {target_path.name} for remote analysis..."
+        )
+        archive_path = archive_ghidra_project(target_path)
+        if not archive_path:
+            return 0
+        try:
+            with open(archive_path, "rb") as f:
+                raw_bytes = f.read()
+            # Override file_name for the API
+            file_name = target_path.name + ".zip"
+            result = _perform_raw_upload(raw_bytes, file_name, args)
+            return result
+        finally:
+            if os.path.exists(archive_path):
+                os.remove(archive_path)
+
+    if not target_path.is_file():
+        logging.error(f"[!] Target path is not a file: {target_path}")
+        return 0
+
+    try:
+        with open(target_path, "rb") as f:
+            raw_bytes = f.read()
+
+        if not raw_bytes:
+            logging.warning(f"[!] File {target_path.name} is empty. Skipping upload.")
+            return 0
+
+        return _perform_raw_upload(raw_bytes, target_path.name, args)
+    except Exception as e:
+        logging.error(f"[!] Failed to read {target_path}: {e}")
+        return 0
+
+
+def _perform_raw_upload(raw_bytes, file_name, args):
     hosts = getattr(args, "hosts", [])
     if not hosts:
         hosts = [getattr(args, "host", "localhost:5000")]
 
     collections = args.collections if args.collections else ["main"]
 
-    try:
-        with open(target_path, "rb") as f:
-            raw_bytes = f.read()
-    except Exception as e:
-        logging.error(f"[!] Failed to read {target_path}: {e}")
-        return 0
-
     success = True
     for collection in collections:
         for api_host in hosts:
             params = {
                 "collection": collection,
-                "file_name": target_path.name,
+                "file_name": file_name,
                 "batch_uuid": args.batch_uuid,
                 "batch_name": args.batch_name,
                 "profile": args.profile,
@@ -159,19 +220,17 @@ def upload_raw_binary(target_path, args):
 
             api_url = f"http://{api_host}/api/file/upload"
             try:
-                logging.info(
-                    f"[*] Uploading raw binary {target_path.name} to {api_url}..."
-                )
+                logging.info(f"[*] Uploading {file_name} to {api_url}...")
                 resp = requests.post(
                     api_url, params=params, data=raw_bytes, timeout=600
                 )
                 resp.raise_for_status()
                 result = resp.json()
                 logging.info(
-                    f"[+] Raw Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
                 )
             except Exception as e:
-                logging.error(f"[!] Raw Upload failed for {api_url}: {e}")
+                logging.error(f"[!] Upload failed for {api_url}: {e}")
                 success = False
 
     return 1 if success else 0
@@ -180,8 +239,8 @@ def upload_raw_binary(target_path, args):
 def process_target(target, args, config, batch_order) -> int:
     target_path = Path(target).resolve()
 
-    # CASE 1: Existing Ghidra Project OR Local Analysis forced
-    if target_path.suffix == ".gpr" or getattr(args, "local_analysis", False):
+    # CASE 1: Local Analysis forced
+    if getattr(args, "local_analysis", False):
         try:
             t0 = time.time()
             options = vars(args).copy()
@@ -238,11 +297,6 @@ def main(args):
 
     # Check if we need local Ghidra
     needs_local_ghidra = getattr(args, "local_analysis", False)
-    if not needs_local_ghidra:
-        for target in args.targets:
-            if Path(target).suffix == ".gpr":
-                needs_local_ghidra = True
-                break
 
     if needs_local_ghidra:
         ghidra_service.ensure_launcher(
@@ -252,7 +306,7 @@ def main(args):
         )
     else:
         logging.info(
-            "[i] Remote analysis selected or no .gpr files. Skipping local Ghidra JVM start."
+            "[i] Remote analysis selected. Skipping local Ghidra JVM start."
         )
 
     logging.info(f"[i] Loading config {args.config}")

@@ -544,18 +544,27 @@ class GhidraService:
         decomp_interface.dispose()
         return {"file_metadata": file_metadata, "functions": all_function_data}
 
-    def run_profile_analysis(self, program, profile_name):
+    def run_profile_analysis(self, program, profile_name, force_reanalysis=False):
         from ghidra.app.plugin.core.analysis import AutoAnalysisManager
         from ghidra.util.task import ConsoleTaskMonitor
+
+        # Initialize manager first to populate options
+        mgr = AutoAnalysisManager.getAnalysisManager(program)
+        monitor = ConsoleTaskMonitor()
 
         profile = self.config.get("profiles", {}).get(profile_name)
         if not profile:
             logging.warning(
                 f"Profile '{profile_name}' not found. Using default analysis."
             )
-            mgr = AutoAnalysisManager.getAnalysisManager(program)
-            mgr.reAnalyzeAll(None)
-            mgr.startAnalysis(ConsoleTaskMonitor())
+            tx_id = program.startTransaction("Default Analysis")
+            try:
+                if force_reanalysis:
+                    mgr.reAnalyzeAll(None)
+                mgr.startAnalysis(monitor)
+            finally:
+                program.endTransaction(tx_id, True)
+            mgr.waitForAnalysis(None, monitor)
             return
 
         if profile.get("no_analysis", False):
@@ -563,18 +572,25 @@ class GhidraService:
             return
 
         logging.info(f"Applying Profile: {profile_name}")
-        options = program.getOptions("Analyzers")
-        analyzer_settings = profile.get("analyzers", {})
+        
+        tx_id = program.startTransaction(f"Apply Profile: {profile_name}")
+        try:
+            options = program.getOptions("Analyzers")
+            analyzer_settings = profile.get("analyzers", {})
 
-        for name, enabled in analyzer_settings.items():
-            if options.contains(name):
-                options.setBoolean(name, enabled)
-            else:
-                logging.warning(f"Analyzer '{name}' not found.")
+            for name, enabled in analyzer_settings.items():
+                if options.contains(name):
+                    options.setBoolean(name, enabled)
+                else:
+                    logging.warning(f"Analyzer '{name}' not found.")
 
-        mgr = AutoAnalysisManager.getAnalysisManager(program)
-        mgr.reAnalyzeAll(None)
-        mgr.startAnalysis(ConsoleTaskMonitor())
+            if force_reanalysis:
+                mgr.reAnalyzeAll(None)
+            mgr.startAnalysis(monitor)
+        finally:
+            program.endTransaction(tx_id, True)
+
+        mgr.waitForAnalysis(None, monitor)
 
     def analyze_file(self, file_path, options=None):
         from ghidra.base.project import GhidraProject
@@ -602,9 +618,11 @@ class GhidraService:
                     )
                     program = project.importProgram(target_path, lang, cspec)
                 else:
-                    program = project.importProgram(target_path, readOnly=True)
+                    program = project.importProgram(target_path)
 
-                self.run_profile_analysis(program, options.get("profile", "fast"))
+                self.run_profile_analysis(
+                    program, options.get("profile", "fast"), force_reanalysis=True
+                )
                 data = self.get_bsim_data(program, options)
                 return data
             except Exception as e:
@@ -626,9 +644,12 @@ class GhidraService:
             root_folder = project.getProjectData().getRootFolder()
             files = root_folder.getFiles()
             for file in files:
-                program = file.getImmutableDomainObject(project, -1, None)
+                from ghidra.util.task import ConsoleTaskMonitor
+                program = file.getDomainObject(project, True, False, ConsoleTaskMonitor())
                 try:
-                    self.run_profile_analysis(program, options.get("profile", "fast"))
+                    self.run_profile_analysis(
+                        program, options.get("profile", "fast"), force_reanalysis=False
+                    )
                     data = self.get_bsim_data(program, options)
                     all_data.append(data)
                 finally:

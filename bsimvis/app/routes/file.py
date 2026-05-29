@@ -113,9 +113,13 @@ def upload_raw_binary():
     Stores it in Kvrocks and triggers the Ghidra analysis job.
     """
     try:
+        logging.info(f"[*] Raw upload request received. Args: {request.args}")
         raw_bytes = request.get_data()
         if not raw_bytes:
+            logging.warning("[-] No data provided in raw upload request")
             return {"error": "No data provided"}, 400
+        
+        logging.info(f"[*] Received {len(raw_bytes)} bytes for raw upload")
 
         # Get metadata from headers or query params
         collection = request.args.get("collection", "main")

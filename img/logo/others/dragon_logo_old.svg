@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="690" viewBox="-400 -200 1250 950" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <!-- Branding Eye Gradients -->
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#C96CFF"/>
+      <stop offset="100%" stop-color="#5BE7FF"/>
+    </linearGradient>
+
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7B61FF"/>
+      <stop offset="100%" stop-color="#39E0B8"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark Backdrop for contrast in white browser tabs, centering the eye -->
+  <circle cx="256" cy="210" r="140" fill="#121212"/>
+
+  <!-- Stylized Ghidra-inspired Dragon Frame (Low-poly Vector Art) -->
+  <g stroke="#FFFFFF" stroke-width="3" stroke-opacity="0.15" stroke-linejoin="round">
+    <!-- F1: Snout Side -->
+    <path d="M -350,280 L -350,220 L -150,150 L 80,210 L -100,320 Z" fill="url(#grad1)" fill-opacity="0.5"/>
+    <!-- F2: Upper Snout -->
+    <path d="M -150,150 L 0,60 L 130,90 L 80,210 Z" fill="url(#grad2)" fill-opacity="0.6"/>
+    <!-- F3: Forehead -->
+    <path d="M 0,60 L 200,-30 L 256,70 L 130,90 Z" fill="#5BE7FF" fill-opacity="0.4"/>
+    <!-- F4: Main Horn -->
+    <path d="M 200,-30 L 650,-150 L 480,20 Z" fill="url(#grad1)" fill-opacity="0.7"/>
+    <!-- F5: Horn Base / Brow -->
+    <path d="M 200,-30 L 480,20 L 380,90 L 256,70 Z" fill="#7B61FF" fill-opacity="0.5"/>
+    <!-- F6: Secondary Horn -->
+    <path d="M 480,20 L 800,100 L 520,210 Z" fill="url(#grad2)" fill-opacity="0.6"/>
+    <!-- F7: Upper Back Head -->
+    <path d="M 480,20 L 520,210 L 400,210 L 380,90 Z" fill="#39C7D9" fill-opacity="0.5"/>
+    <!-- F8: Neck Spike / Fin -->
+    <path d="M 520,210 L 750,300 L 450,480 Z" fill="url(#grad1)" fill-opacity="0.4"/>
+    <!-- F9: Upper Neck -->
+    <path d="M 520,210 L 450,480 L 380,330 L 400,210 Z" fill="#5B8CFF" fill-opacity="0.5"/>
+    <!-- F10: Mid Neck -->
+    <path d="M 450,480 L 350,580 L 256,350 L 380,330 Z" fill="url(#grad2)" fill-opacity="0.6"/>
+    <!-- F11: Lower Neck / Throat -->
+    <path d="M 350,580 L 200,520 L 130,330 L 256,350 Z" fill="#43B0FF" fill-opacity="0.5"/>
+    <!-- F12: Jaw Base -->
+    <path d="M 200,520 L 80,480 L -100,380 L 130,330 Z" fill="url(#grad1)" fill-opacity="0.6"/>
+    <!-- F13: Chin -->
+    <path d="M 80,480 L -100,540 L -300,500 Z" fill="url(#grad2)" fill-opacity="0.5"/>
+    <!-- F14: Lower Jaw -->
+    <path d="M 80,480 L -300,500 L -320,420 L -100,380 Z" fill="#49D18A" fill-opacity="0.4"/>
+    <!-- F15: Cheek Gap -->
+    <path d="M -100,320 L -100,380 L 130,330 L 80,210 Z" fill="#7B61FF" fill-opacity="0.6"/>
+    <!-- Lower Neck Fin -->
+    <polygon points="450,480 350,580 550,650" fill="url(#grad2)" fill-opacity="0.5"/>
+
+    <!-- Floating Energy Shards -->
+    <polygon points="680,-80 720,-60 690,-30" fill="url(#grad1)" fill-opacity="0.5"/>
+    <polygon points="600,280 640,300 620,330" fill="url(#grad2)" fill-opacity="0.6"/>
+    <polygon points="200,-100 240,-80 210,-50" fill="#39E0B8" fill-opacity="0.4"/>
+  </g>
+
+  <!-- Dragon Teeth -->
+  <path d="
+    M -140,313 L -170,308 L -155,345 Z
+    M -200,303 L -230,298 L -215,335 Z
+    M -260,293 L -290,288 L -275,325 Z
+    M -310,285 L -330,282 L -320,315 Z
+    M -130,385 L -160,390 L -145,355 Z
+    M -190,395 L -220,400 L -205,365 Z
+    M -240,405 L -260,410 L -250,375 Z
+    M -270,410 L -290,415 L -280,380 Z
+  " fill="#F4F7FF" stroke="#39C7D9" stroke-width="1"/>
+
+  <!-- Nostril -->
+  <path d="M -300,220 L -330,230 L -310,245 Z" fill="#121212" opacity="0.6"/>
+
+  <!-- Original BSimVis Logo Elements -->
+  <!-- Outer Ring Segments -->
+  <g fill="none" stroke-width="28" stroke-linecap="round">
+    <path d="M 375.54 220.46 A 120 120 0 0 1 354.30 278.83" stroke="#5B6CFF"/>
+    <path d="M 333.13 301.93 A 120 120 0 0 1 276.84 328.18" stroke="#6279FF"/>
+    <path d="M 245.54 329.54 A 120 120 0 0 1 187.17 308.30" stroke="#5B8CFF"/>
+    <path d="M 164.07 287.13 A 120 120 0 0 1 137.82 230.84" stroke="#43B0FF"/>
+    <path d="M 136.46 199.54 A 120 120 0 0 1 157.70 141.17" stroke="#39C7D9"/>
+    <path d="M 178.87 118.07 A 120 120 0 0 1 235.16 91.82" stroke="#49D18A"/>
+    <path d="M 266.46 90.46 A 120 120 0 0 1 324.83 111.70" stroke="#76D65E"/>
+    <path d="M 347.93 132.87 A 120 120 0 0 1 374.18 189.16" stroke="#8AD95A"/>
+  </g>
+
+  <!-- Primary Rotated Eye -->
+  <g transform="rotate(-25, 256, 210)">
+    <path d="M 151 210 C 190 120, 320 120, 361 210 C 320 300, 190 300, 151 210 Z" 
+          fill="url(#grad1)" fill-opacity="0.3" stroke="url(#grad1)" stroke-width="16" stroke-opacity="1"/>
+  </g>
+
+  <!-- Center Hub -->
+  <circle cx="256" cy="210" r="36" fill="#F4F7FF"/>
+</svg>

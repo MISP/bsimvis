@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#060812"/>
+      <stop offset="100%" stop-color="#0B1020"/>
+    </linearGradient>
+
+    <!-- Branding Eye Gradients -->
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#C96CFF"/>
+      <stop offset="100%" stop-color="#5BE7FF"/>
+    </linearGradient>
+
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7B61FF"/>
+      <stop offset="100%" stop-color="#39E0B8"/>
+    </linearGradient>
+
+    <!-- Full Spectrum Brand Gradient (from favicon) -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="15%" stop-color="#C96CFF"/>
+      <stop offset="35%" stop-color="#7B61FF"/>
+      <stop offset="55%" stop-color="#43B0FF"/>
+      <stop offset="70%" stop-color="#39C7D9"/>
+      <stop offset="85%" stop-color="#49D18A"/>
+    </linearGradient>
+
+    <!-- Glow Filter (Tuned down for a clean bloom) -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.0" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Structured Chord Gradients (Node → Node) -->
+    <!-- Left Cluster (Node 4 to 3 & 5) -->
+    <linearGradient id="ch_4_3" x1="157" y1="174" x2="161" y2="254" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#39C7D9"/><stop offset="100%" stop-color="#43B0FF"/>
+    </linearGradient>
+    <linearGradient id="ch_4_5" x1="157" y1="174" x2="212" y2="115" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#39C7D9"/><stop offset="100%" stop-color="#49D18A"/>
+    </linearGradient>
+
+    <!-- Right Cluster (Node 0 to 7 & 1) -->
+    <linearGradient id="ch_0_7" x1="355" y1="246" x2="351" y2="166" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5B6CFF"/><stop offset="100%" stop-color="#8AD95A"/>
+    </linearGradient>
+    <linearGradient id="ch_0_1" x1="355" y1="246" x2="300" y2="305" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5B6CFF"/><stop offset="100%" stop-color="#6279FF"/>
+    </linearGradient>
+
+    <!-- Multi-Node Eye Chord Gradients -->
+    <!-- ch_eye1: Node 4 (157,174) to Node 0 (355,246) and Node 1 (300,305) -->
+    <linearGradient id="ch_eye1" x1="157" y1="174" x2="327" y2="275" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#39C7D9"/>
+      <stop offset="100%" stop-color="#5B6CFF"/>
+    </linearGradient>
+    <!-- ch_eye2: Node 7 (351,166) to Node 3 (161,254) and Node 5 (212,115) -->
+    <linearGradient id="ch_eye2" x1="351" y1="166" x2="186" y2="184" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8AD95A"/>
+      <stop offset="100%" stop-color="#43B0FF"/>
+    </linearGradient>
+
+    <!-- Weak link -->
+    <linearGradient id="ch_2_6" x1="220" y1="309" x2="292" y2="111" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5B8CFF"/><stop offset="100%" stop-color="#76D65E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+
+  <!-- Outer Ring Segments -->
+  <g fill="none" stroke-width="28" stroke-linecap="round">
+    <path d="M 375.54 220.46 A 120 120 0 0 1 354.30 278.83" stroke="#5B6CFF"/>
+    <path d="M 333.13 301.93 A 120 120 0 0 1 276.84 328.18" stroke="#6279FF"/>
+    <path d="M 245.54 329.54 A 120 120 0 0 1 187.17 308.30" stroke="#5B8CFF"/>
+    <path d="M 164.07 287.13 A 120 120 0 0 1 137.82 230.84" stroke="#43B0FF"/>
+    <path d="M 136.46 199.54 A 120 120 0 0 1 157.70 141.17" stroke="#39C7D9"/>
+    <path d="M 178.87 118.07 A 120 120 0 0 1 235.16 91.82" stroke="#49D18A"/>
+    <path d="M 266.46 90.46 A 120 120 0 0 1 324.83 111.70" stroke="#76D65E"/>
+    <path d="M 347.93 132.87 A 120 120 0 0 1 374.18 189.16" stroke="#8AD95A"/>
+  </g>
+
+  <!-- Primary Rotated Eye (Rotated by -25 degrees, bold styling, flat no-glow) -->
+  <g transform="rotate(-25, 256, 210)">
+    <!-- Outer Eye Filled Zone -->
+    <path d="M 151 210 C 190 120, 320 120, 361 210 C 320 300, 190 300, 151 210 Z" 
+          fill="url(#grad1)" fill-opacity="0.3" stroke="url(#grad1)" stroke-width="16" stroke-opacity="1"/>
+
+    <!-- Middle Eye Filled Zone (Kept for detail) -->
+    <path d="M 151 210 C 195 155, 315 155, 361 210 C 315 265, 195 265, 151 210 Z" 
+          fill="url(#grad2)" fill-opacity="0.2" stroke="url(#grad2)" stroke-width="8" stroke-opacity="0.9"/>
+  </g>
+
+  <!-- Structured Similarity Chord Ribbons (Filled Zones with central gravity and repulsion forming an eye) -->
+  <g filter="url(#glow)">
+    <!-- CLUSTER A (Left Side Hub) -->
+    <!-- Ribbon 1: Node 4 to 3 (Adjacent: swoops deep, repelled by center to the left) -->
+    <path d="M 154 171 C 220 185, 220 235, 158 251 L 164 257 C 228 235, 228 185, 160 177 Z" 
+          fill="url(#ch_4_3)" fill-opacity="0.45" stroke="url(#ch_4_3)" stroke-width="3" stroke-opacity="0.85"/>
+
+    <!-- Ribbon 2: Node 4 to 5 (Adjacent: swoops deep, repelled by center to the top-left) -->
+    <path d="M 154 171 C 220 180, 245 160, 209 112 L 215 118 C 250 165, 225 185, 160 177 Z" 
+          fill="url(#ch_4_5)" fill-opacity="0.45" stroke="url(#ch_4_5)" stroke-width="3" stroke-opacity="0.85"/>
+
+    <!-- CLUSTER B (Right Side Hub) -->
+    <!-- Ribbon 3: Node 0 to 7 (Adjacent: swoops deep, repelled by center to the top-right) -->
+    <path d="M 352 243 C 290 230, 275 180, 348 163 L 354 169 C 280 185, 295 235, 358 249 Z" 
+          fill="url(#ch_0_7)" fill-opacity="0.45" stroke="url(#ch_0_7)" stroke-width="3" stroke-opacity="0.85"/>
+
+    <!-- Ribbon 4: Node 0 to 1 (Adjacent: swoops deep, repelled by center to the bottom-right) -->
+    <path d="M 352 243 C 290 250, 265 280, 297 302 L 303 308 C 270 285, 295 255, 358 249 Z" 
+          fill="url(#ch_0_1)" fill-opacity="0.45" stroke="url(#ch_0_1)" stroke-width="3" stroke-opacity="0.85"/>
+
+    <!-- MULTI-NODE EYE CHORDS (Bridges connecting one node to multiple targets, forming eye apertures) -->
+    <!-- Eye Chord 1: Node 4 (Left) splits to Node 0 (Top-Right) & Node 1 (Bottom-Right), forming an eye outline -->
+    <path d="M 155 171 C 200 140, 310 180, 353 243 L 303 308 C 265 295, 215 235, 159 177 Z" 
+          fill="url(#ch_eye1)" fill-opacity="0.28" stroke="url(#ch_eye1)" stroke-width="2" stroke-opacity="0.6"/>
+
+    <!-- Eye Chord 2: Node 7 (Right) splits to Node 3 (Bottom-Left) & Node 5 (Top-Left), forming an eye outline -->
+    <path d="M 348 163 C 290 190, 210 220, 158 251 L 215 118 C 230 190, 290 190, 354 169 Z" 
+          fill="url(#ch_eye2)" fill-opacity="0.28" stroke="url(#ch_eye2)" stroke-width="2" stroke-opacity="0.6"/>
+
+    <!-- Ribbon 7: Node 2 to 6 (Minor/Weak diagonal connection) -->
+    <path d="M 217 306 C 180 270, 230 150, 289 108 L 295 114 C 235 155, 185 275, 223 312 Z" 
+          fill="url(#ch_2_6)" fill-opacity="0.08" stroke="url(#ch_2_6)" stroke-width="1" stroke-opacity="0.25"/>
+  </g>
+
+  <!-- Nodes (at midpoints of ring arcs, rendered on top of ribbons) -->
+  <g fill="#F4F7FF">
+    <circle cx="355" cy="246" r="12"/>
+    <circle cx="300" cy="305" r="12"/>
+    <circle cx="220" cy="309" r="12"/>
+    <circle cx="161" cy="254" r="12"/>
+    <circle cx="157" cy="174" r="12"/>
+    <circle cx="212" cy="115" r="12"/>
+    <circle cx="292" cy="111" r="12"/>
+    <circle cx="351" cy="166" r="12"/>
+  </g>
+
+  <!-- Center Hub (Retained for visual anchor) -->
+  <circle cx="256" cy="210" r="36" fill="#F4F7FF"/>
+
+  <!-- Branding -->
+  <g fill="url(#bgGrad)" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">
+    <text x="256" y="410" font-size="46" font-weight="700" letter-spacing="4">BSIMVIS</text>
+    <text x="256" y="440" font-size="12" letter-spacing="2" fill="#8D98B8">Similarity Analysis • Function Diffing • Family Clustering</text>
+  </g>
+</svg>

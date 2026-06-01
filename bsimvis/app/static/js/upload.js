@@ -230,7 +230,7 @@ async function startBatchUpload() {
     const minFuncLen = document.getElementById('upload-min-func-len').value;
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     
-// batchUuid generated server-side
+    let currentBatchUuid = null;
 
     document.getElementById('upload-progress-container').style.display = 'block';
     document.getElementById('start-upload-btn').disabled = true;
@@ -266,7 +266,10 @@ async function startBatchUpload() {
             const url = new URL('/api/file/upload', window.location.origin);
             url.searchParams.set('collection', collection);
             url.searchParams.set('file_name', file.name);
-        // batch_uuid omitted; server will generate
+            url.searchParams.set('enqueue', 'false');
+            if (currentBatchUuid) {
+                url.searchParams.set('batch_uuid', currentBatchUuid);
+            }
             url.searchParams.set('batch_name', batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
@@ -279,6 +282,9 @@ async function startBatchUpload() {
 
             if (response.ok) {
                 const data = await response.json();
+                if (!currentBatchUuid && data.batch_uuid) {
+                    currentBatchUuid = data.batch_uuid;
+                }
                 statusEl.innerText = 'QUEUED';
                 statusEl.style.color = 'var(--success)';
                 progressEl.style.width = '100%';
@@ -301,12 +307,36 @@ async function startBatchUpload() {
         document.getElementById('global-progress-text').innerText = `${totalProgress}%`;
     }
 
+    if (results.length > 0) {
+        try {
+            document.getElementById('global-progress-text').innerText = 'Finalizing Batch...';
+            const pipelineIds = results.map(r => r.pipeline_id);
+            const finalizeRes = await fetch('/api/file/upload/batch_finalize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pipeline_ids: pipelineIds,
+                    batch_uuid: currentBatchUuid,
+                    collection: collection,
+                    algo: 'unweighted_cosine' // Default or grab from UI if available
+                })
+            });
+
+            if (finalizeRes.ok) {
+                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${results.length} binaries`, 'success');
+            } else {
+                console.error("Failed to finalize batch", await finalizeRes.text());
+                if (typeof showToast === 'function') showToast('Binaries uploaded, but master pipeline orchestration failed.', 'warning');
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
     const globalSpinner = document.getElementById('global-upload-spinner');
     if (globalSpinner) globalSpinner.style.display = 'none';
     
     document.getElementById('start-upload-btn').innerHTML = '<i class="fa-solid fa-check"></i> Finished';
-    
-    if (typeof showToast === 'function') showToast(`Successfully queued ${results.length} binaries for analysis`, 'success');
 }
 
 async function populateUploadCollectionDropdown(currentCollection) {

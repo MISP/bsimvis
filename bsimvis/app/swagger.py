@@ -491,6 +491,24 @@ class RawFileUpload(Resource):
         return upload_raw_binary()
 
 
+@ns_file.route("/upload/batch_finalize")
+class BatchFinalize(Resource):
+    @ns_file.doc(
+        params={
+            "pipeline_ids": "List of pipeline IDs to group",
+            "batch_uuid": "Batch UUID",
+            "collection": "Collection name",
+            "algo": "Similarity algorithm",
+            "skip_sim": "Skip binary similarity",
+        }
+    )
+    def post(self):
+        """Finalizes a batch upload by orchestrating a master pipeline."""
+        from bsimvis.app.routes.file import finalize_batch_upload
+
+        return finalize_batch_upload()
+
+
 @ns_file.route("/call_graph")
 class FileCallGraph(Resource):
     @ns_file.doc(params={"collection": "Collection name", "file_md5": "File MD5"})

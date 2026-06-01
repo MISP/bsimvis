@@ -28,6 +28,7 @@ class JobType(Enum):
     BUILD_BIN_SIM = "build_bin_sim"
     CLEAR_BIN_SIM = "clear_bin_sim"
     REINDEX_BIN_SIM = "reindex_bin_sim"
+    ENRICH_FEATURES = "enrich_features"
 
 
 class JobService:
@@ -65,20 +66,29 @@ class JobService:
 
         return job_id
 
-    def create_pipeline(self, tasks):
+    def _resolve_task(self, task, parent_id):
+        """Resolves a task definition into a job_id."""
+        if isinstance(task, str):
+            # Existing job_id
+            self.r.hset(f"job:{task}", "parent_id", parent_id)
+            return task
+        elif isinstance(task, (list, tuple)) and len(task) >= 2:
+            jtype, payload = task[0], task[1]
+            return self.create_job(jtype, payload, parent_id=parent_id, is_subtask=True)
+        else:
+            raise ValueError(f"Invalid task format: {task}")
+
+    def create_pipeline(self, tasks, parent_id=None, enqueue=True):
         """
         Creates a pipeline with a list of tasks.
-        tasks: list of (JobType, payload)
+        tasks: list of (JobType, payload) or job_id strings
         """
         pipeline_id = f"pipe_{str(uuid.uuid4())[:18]}"
         timestamp = int(time.time() * 1000)
 
         task_ids = []
-        for i, (jtype, payload) in enumerate(tasks):
-            # Create subtasks but don't enqueue them independently (is_subtask=True)
-            tid = self.create_job(
-                jtype, payload, parent_id=pipeline_id, is_subtask=True
-            )
+        for task in tasks:
+            tid = self._resolve_task(task, pipeline_id)
             task_ids.append(tid)
 
         pipeline_data = {
@@ -86,10 +96,10 @@ class JobService:
             "type": "pipeline",
             "status": JobStatus.PENDING.value,
             "task_ids": json.dumps(task_ids),
-            "current_task_idx": 0,
             "created_at": timestamp,
             "updated_at": timestamp,
             "progress": 0,
+            "parent_id": parent_id or "",
             "error": "",
         }
 
@@ -97,11 +107,44 @@ class JobService:
         self.r.lpush("jobs:global", pipeline_id)
         self.r.ltrim("jobs:global", 0, 999)
 
-        # Enqueue only the first task of the pipeline
-        if task_ids:
-            self.enqueue_job(task_ids[0])
+        if enqueue:
+            self.start_job(pipeline_id)
 
         return pipeline_id
+
+    def create_group(self, tasks, parent_id=None, enqueue=True):
+        """
+        Creates a group with a list of tasks to run in parallel.
+        tasks: list of (JobType, payload) or job_id strings
+        """
+        group_id = f"group_{str(uuid.uuid4())[:18]}"
+        timestamp = int(time.time() * 1000)
+
+        task_ids = []
+        for task in tasks:
+            tid = self._resolve_task(task, group_id)
+            task_ids.append(tid)
+
+        group_data = {
+            "id": group_id,
+            "type": "group",
+            "status": JobStatus.PENDING.value,
+            "task_ids": json.dumps(task_ids),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "progress": 0,
+            "parent_id": parent_id or "",
+            "error": "",
+        }
+
+        self.r.hset(f"job:{group_id}", mapping=group_data)
+        self.r.lpush("jobs:global", group_id)
+        self.r.ltrim("jobs:global", 0, 999)
+
+        if enqueue:
+            self.start_job(group_id)
+
+        return group_id
 
     def enqueue_job(self, job_id):
         """Pushes a job ID onto the appropriate priority queue."""
@@ -120,6 +163,100 @@ class JobService:
             self.r.lpush("jobs:pending:high", job_id)
         else:
             self.r.lpush("jobs:pending", job_id)
+
+    def start_job(self, job_id):
+        """Starts a job. If it's a group or pipeline, it resolves down to leaf jobs."""
+        job = self.r.hgetall(f"job:{job_id}")
+        if not job:
+            return
+            
+        jtype = job.get("type")
+        
+        if job.get("status") == JobStatus.CANCELLED.value:
+            return
+
+        if jtype in ["pipeline", "group"]:
+            self.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+        
+        if jtype == "pipeline":
+            tids = json.loads(job.get("task_ids", "[]"))
+            if tids:
+                self.start_job(tids[0])
+            else:
+                self.complete_job(job_id)
+        elif jtype == "group":
+            tids = json.loads(job.get("task_ids", "[]"))
+            if tids:
+                for tid in tids:
+                    self.start_job(tid)
+            else:
+                self.complete_job(job_id)
+        else:
+            self.enqueue_job(job_id)
+
+    def complete_job(self, job_id):
+        """Marks a job as completed and advances its parent if applicable."""
+        self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
+        self.update_progress(job_id, 100)
+        
+        parent_id = self.r.hget(f"job:{job_id}", "parent_id")
+        if parent_id:
+            self.advance_parent(parent_id, job_id)
+
+    def advance_parent(self, parent_id, finished_job_id):
+        """Advances the parent job based on its type (pipeline sequence or group barrier)."""
+        parent = self.r.hgetall(f"job:{parent_id}")
+        if not parent or parent.get("status") == JobStatus.CANCELLED.value:
+            return
+            
+        ptype = parent.get("type")
+        tids = json.loads(parent.get("task_ids", "[]"))
+        
+        if ptype == "pipeline":
+            try:
+                current_idx = tids.index(finished_job_id)
+                if current_idx + 1 < len(tids):
+                    next_tid = tids[current_idx + 1]
+                    self.add_log(parent_id, f"Sub-task {finished_job_id} done. Starting next: {next_tid}")
+                    self.start_job(next_tid)
+                else:
+                    self.add_log(parent_id, "All tasks in pipeline completed.")
+                    self.complete_job(parent_id)
+            except ValueError:
+                pass
+                
+        elif ptype == "group":
+            all_done = True
+            any_failed = False
+            for tid in tids:
+                status = self.r.hget(f"job:{tid}", "status")
+                if status not in [JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]:
+                    all_done = False
+                    break
+                if status == JobStatus.FAILED.value:
+                    any_failed = True
+                    
+            if all_done:
+                if any_failed:
+                    self.add_log(parent_id, "All tasks in group finished, but some failed.")
+                else:
+                    self.add_log(parent_id, "All tasks in group completed.")
+                self.complete_job(parent_id)
+
+    def fail_job(self, job_id, error_msg):
+        """Marks a job as failed and cascades failure to its parent."""
+        self.r.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
+        self.r.hset(f"job:{job_id}", "error", error_msg)
+        self.add_log(job_id, f"Execution error: {error_msg}")
+        
+        parent_id = self.r.hget(f"job:{job_id}", "parent_id")
+        if parent_id:
+            parent_type = self.r.hget(f"job:{parent_id}", "type")
+            if parent_type == "group":
+                # For groups, we don't fail the group instantly. We wait for other tasks.
+                self.advance_parent(parent_id, job_id)
+            else:
+                self.fail_job(parent_id, f"Failed because sub-task {job_id} failed.")
 
     def get_job_status(self, job_id):
         """Returns the full job or pipeline status."""

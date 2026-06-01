@@ -90,6 +90,8 @@ def upload_file_data():
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
             pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
 
+        pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
+
         pipeline_id = job_service.create_pipeline(pipeline_tasks)
 
         return {
@@ -171,12 +173,14 @@ def upload_raw_binary():
         # Trigger Pipeline: Analysis -> Indexing -> Similarity
         pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
 
-        pipeline_id = job_service.create_pipeline(pipeline_tasks)
+        enqueue = request.args.get("enqueue", "true").lower() == "true"
+        pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
         return {
-            "status": "processing",
+            "status": "processing" if enqueue else "queued",
             "file_md5": file_md5,
             "pipeline_id": pipeline_id,
+            "batch_uuid": batch_uuid,
             "message": "Binary uploaded. Analysis pipeline started.",
         }
 
@@ -185,3 +189,40 @@ def upload_raw_binary():
 
         logging.error(f"Raw upload failed: {str(e)}")
         return {"error": str(e), "detail": traceback.format_exc()}, 500
+
+
+def finalize_batch_upload():
+    """
+    Finalizes a batch upload by wrapping all file pipelines in a group,
+    and appending clustering/bin_sim at the end.
+    """
+    data = request.json
+    if not data:
+        return {"error": "Missing JSON payload"}, 400
+        
+    pipeline_ids = data.get("pipeline_ids", [])
+    batch_uuid = data.get("batch_uuid")
+    collection = data.get("collection", "main")
+    algo = data.get("algo", "unweighted_cosine")
+    skip_sim = data.get("skip_sim", False)
+    
+    if not pipeline_ids:
+        return {"error": "No pipelines provided"}, 400
+        
+    group_id = job_service.create_group(pipeline_ids, enqueue=False)
+    
+    master_tasks = [group_id]
+    
+    # After the group finishes, we do clustering:
+    master_tasks.append((JobType.CLUSTER_FUNCTIONS.value, {"collection": collection, "algo": algo, "batch_uuid": batch_uuid}))
+    
+    # After clustering, we do binary similarity:
+    if not skip_sim:
+        master_tasks.append((JobType.BUILD_BIN_SIM.value, {"collection": collection, "algo": algo, "batch_uuid": batch_uuid}))
+        
+    # Enrich features must be the absolute last job to run:
+    master_tasks.append((JobType.ENRICH_FEATURES.value, {"collection": collection, "batch_uuid": batch_uuid}))
+        
+    master_id = job_service.create_pipeline(master_tasks, enqueue=True)
+    
+    return {"status": "success", "master_pipeline_id": master_id, "batch_uuid": batch_uuid}

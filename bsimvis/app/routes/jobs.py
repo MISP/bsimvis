@@ -46,20 +46,20 @@ def retry_job(job_id):
     if not job:
         return {"error": "Job not found"}, 404
 
-    # If it's a pipeline
-    if job.get("type") == "pipeline":
+    # If it's a pipeline or group
+    jtype = job.get("type")
+    if jtype in ["pipeline", "group"]:
         task_ids = job.get("task_ids", [])
         if not task_ids:
-            return {"error": "Pipeline has no tasks"}, 400
+            return {"error": f"{jtype.capitalize()} has no tasks"}, 400
 
-        # Reset pipeline metadata
+        # Reset parent metadata
         job_service.r.hset(
             f"job:{job_id}",
             mapping={
                 "status": "pending",
                 "error": "",
                 "progress": 0,
-                "current_task_idx": 0,
             },
         )
 
@@ -69,13 +69,13 @@ def retry_job(job_id):
                 f"job:{tid}", mapping={"status": "pending", "error": "", "progress": 0}
             )
 
-        # Enqueue the first task to restart the pipeline
-        job_service.enqueue_job(task_ids[0])
+        # Restart via start_job
+        job_service.start_job(job_id)
         job_service.add_log(
             job_id,
-            f"Pipeline retried by user. Restarting from first task: {task_ids[0]}.",
+            f"{jtype.capitalize()} retried by user. Restarting tasks.",
         )
-        return {"status": "retried", "job_id": task_ids[0], "pipeline_id": job_id}
+        return {"status": "retried", "job_id": job_id}
     else:
         # Standard job retry
         job_service.r.hset(

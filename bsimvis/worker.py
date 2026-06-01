@@ -119,37 +119,16 @@ class Worker:
                     self.job_service.add_log(
                         job_id, f"Job {jtype} completed successfully."
                     )
-                    self.job_service.update_progress(job_id, 100)
-                    self.r_queue.hset(
-                        f"job:{job_id}", "status", JobStatus.COMPLETED.value
-                    )
-
-                    # Pipeline Chaining: Check if we need to enqueue the next task
-                    if parent_id:
-                        self._handle_pipeline_next(parent_id, job_id)
+                    self.job_service.complete_job(job_id)
                 else:
-                    self.r_queue.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
-                    self.job_service.add_log(
-                        job_id, "Job failed (returned False from dispatcher)."
-                    )
+                    self.job_service.fail_job(job_id, "Job failed (returned False from dispatcher).")
 
             except Exception as e:
                 logging.error(f"[!] Job {job_id} failed with error: {e}")
                 import traceback
 
                 traceback.print_exc()
-                self.r_queue.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
-                self.r_queue.hset(f"job:{job_id}", "error", str(e))
-                self.job_service.add_log(job_id, f"Execution error: {e}")
-
-                # If sub-task fails, mark parent pipeline as failed
-                if parent_id:
-                    self.r_queue.hset(
-                        f"job:{parent_id}", "status", JobStatus.FAILED.value
-                    )
-                    self.job_service.add_log(
-                        parent_id, f"Pipeline failed because sub-task {job_id} failed."
-                    )
+                self.job_service.fail_job(job_id, str(e))
             finally:
                 # Finalize and save performance stats
                 stats = timer.finalize()
@@ -318,6 +297,17 @@ class Worker:
                                         )
                                     )
                                 next_tasks.append((JobType.BUILD_SIM, build_sim_payload))
+
+                            # Check if the parent pipeline is part of a group/batch
+                            has_grandparent = False
+                            grandparent_id = self.r_queue.hget(f"job:{parent_id}", "parent_id")
+                            if grandparent_id:
+                                grandparent_id = grandparent_id.decode() if isinstance(grandparent_id, bytes) else grandparent_id
+                                if grandparent_id:
+                                    has_grandparent = True
+
+                            if not has_grandparent:
+                                next_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
 
                             # Create these jobs and append to task_ids
                             new_tids = []
@@ -513,43 +503,14 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.ENRICH_FEATURES.value:
+            return self.feature_service.enrich_features(
+                collection, self.job_service, job_id
+            )
+
         return False
 
-    def _handle_pipeline_next(self, pipeline_id, finished_job_id):
-        """Finds and enqueues the next task in the pipeline."""
-        pipe_data = self.r_queue.hgetall(f"job:{pipeline_id}")
-        if not pipe_data or "task_ids" not in pipe_data:
-            return
 
-        if pipe_data.get("status") == JobStatus.CANCELLED.value:
-            return
-
-        tids = json.loads(pipe_data["task_ids"])
-        try:
-            current_idx = tids.index(finished_job_id)
-            if current_idx + 1 < len(tids):
-                next_tid = tids[current_idx + 1]
-                logging.info(
-                    f"[*] Pipeline {pipeline_id}: Enqueueing next sub-task {next_tid}"
-                )
-                self.job_service.add_log(
-                    pipeline_id,
-                    f"Sub-task {finished_job_id} done. Enqueueing next: {next_tid}",
-                )
-                self.job_service.enqueue_job(next_tid)
-            else:
-                logging.info(f"[+] Pipeline {pipeline_id} complete!")
-                self.r_queue.hset(
-                    f"job:{pipeline_id}", "status", JobStatus.COMPLETED.value
-                )
-                self.job_service.add_log(
-                    pipeline_id, "All tasks in pipeline completed."
-                )
-                self.job_service.update_progress(pipeline_id, 100)
-        except ValueError:
-            logging.error(
-                f"[!] Job {finished_job_id} not found in pipeline {pipeline_id} task list."
-            )
 
 
 if __name__ == "__main__":

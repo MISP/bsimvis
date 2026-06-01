@@ -251,6 +251,15 @@ class JobDetail(Resource):
         return get_job(job_id)
 
 
+@ns_jobs.route("/all/cancel")
+class JobCancelAll(Resource):
+    def post(self):
+        """Cancels all pending or running jobs and pipelines."""
+        from bsimvis.app.routes.jobs import cancel_all_jobs
+
+        return cancel_all_jobs()
+
+
 @ns_jobs.route("/<string:job_id>/cancel")
 class JobCancel(Resource):
     @ns_jobs.doc(

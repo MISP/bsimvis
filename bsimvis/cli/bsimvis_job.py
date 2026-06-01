@@ -235,8 +235,14 @@ def job_status(job_id, watch, logs):
 
 def cancel_job(job_id):
     try:
-        resp = requests.post(f"{API_BASE}/jobs/{job_id}/cancel")
-        resp.raise_for_status()
-        print(f"Job {job_id} cancellation requested.")
+        if job_id == "all":
+            resp = requests.post(f"{API_BASE}/jobs/all/cancel")
+            resp.raise_for_status()
+            data = resp.json()
+            print(f"Cancelled {data.get('cancelled_count', 0)} job(s).")
+        else:
+            resp = requests.post(f"{API_BASE}/jobs/{job_id}/cancel")
+            resp.raise_for_status()
+            print(f"Job {job_id} cancellation requested.")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

@@ -34,6 +34,12 @@ def cancel_job(job_id):
     return {"status": "cancelled", "job_id": job_id}
 
 
+def cancel_all_jobs():
+    """Cancels all pending or running jobs."""
+    cancelled = job_service.cancel_all_jobs()
+    return {"status": "cancelled", "cancelled_count": cancelled}
+
+
 def retry_job(job_id):
     """Retries a failed or cancelled job/pipeline."""
     job = job_service.get_job_status(job_id)

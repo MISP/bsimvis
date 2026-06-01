@@ -217,6 +217,17 @@ class JobService:
 
         return True
 
+    def cancel_all_jobs(self):
+        """Cancels all pending/running jobs and pipelines."""
+        cancelled = 0
+        job_ids = self.r.lrange("jobs:global", 0, -1)
+        for jid in job_ids:
+            status = self.r.hget(f"job:{jid}", "status")
+            if status in [JobStatus.PENDING.value, JobStatus.RUNNING.value]:
+                self.cancel_job(jid)
+                cancelled += 1
+        return cancelled
+
     def add_log(self, job_id, message):
         """Adds a log entry for a job."""
         timestamp = int(time.time() * 1000)

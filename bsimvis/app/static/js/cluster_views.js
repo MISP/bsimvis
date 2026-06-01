@@ -100,6 +100,16 @@ class ClusterHierarchy {
         const collection = params.get('collection');
         const algo = params.get('algo') || 'unweighted_cosine';
 
+        // Sync from URL params so global filters reflect in sliders
+        this.params.min_cluster_size = params.has('min_count') ? (parseInt(params.get('min_count')) || 0) : 0;
+        this.params.max_cluster_size = params.has('max_count') ? (parseInt(params.get('max_count')) || 0) : 0;
+        this.params.cohesion_min = params.has('min_cohesion') ? (parseFloat(params.get('min_cohesion')) || 0) : 0;
+        this.params.cohesion_max = params.has('max_cohesion') ? (parseFloat(params.get('max_cohesion')) || 0) : 0;
+        this.params.min_features = params.has('min_features') ? (parseInt(params.get('min_features')) || 0) : 0;
+        this.params.max_features = params.has('max_features') ? (parseInt(params.get('max_features')) || 0) : 0;
+        this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
+        this.params.show_parents = params.get('show_parents') !== 'false';
+
         // Template for controls
         const hierControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
@@ -282,30 +292,63 @@ class ClusterHierarchy {
             this.params.path_compression = pcCheck.checked;
         };
 
-        document.getElementById('hier-refresh-btn').onclick = () => this.fetch(params);
+        document.getElementById('hier-refresh-btn').onclick = () => {
+            const hash = window.location.hash;
+            const [path, qs] = hash.split('?');
+            const p = new URLSearchParams(qs || '');
+            
+            if (this.params.min_cluster_size > 0) p.set('min_count', this.params.min_cluster_size); else p.delete('min_count');
+            if (this.params.max_cluster_size > 0) p.set('max_count', this.params.max_cluster_size); else p.delete('max_count');
+            if (this.params.cohesion_min > 0) p.set('min_cohesion', this.params.cohesion_min); else p.delete('min_cohesion');
+            if (this.params.cohesion_max > 0) p.set('max_cohesion', this.params.cohesion_max); else p.delete('max_cohesion');
+            if (this.params.min_features > 0) p.set('min_features', this.params.min_features); else p.delete('min_features');
+            if (this.params.max_features > 0) p.set('max_features', this.params.max_features); else p.delete('max_features');
+            if (this.params.stability_threshold > 0) p.set('min_stability', this.params.stability_threshold); else p.delete('min_stability');
+            p.set('show_parents', this.params.show_parents);
+            
+            window.location.hash = `${path}?${p.toString()}`;
+        };
 
         try {
-            const url = `/api/cluster/dendrogram?collection=${collection}&algo=${algo}` +
-                `&min_cluster_size=${this.params.min_cluster_size}` +
-                `&max_cluster_size=${this.params.max_cluster_size}` +
-                `&cohesion_min=${this.params.cohesion_min}` +
-                `&cohesion_max=${this.params.cohesion_max}` +
-                `&min_features=${this.params.min_features}` +
-                `&max_features=${this.params.max_features}` +
-                `&stability_threshold=${this.params.stability_threshold}` +
-                `&show_parents=${this.params.show_parents}`;
+            const queryParams = new URLSearchParams(params.toString());
+            // We want to fetch all matching clusters for the dendrogram view
+            queryParams.set('limit', 10000);
+            
+            if (this.params.min_cluster_size > 0) queryParams.set('min_count', this.params.min_cluster_size);
+            if (this.params.max_cluster_size < 1000 && this.params.max_cluster_size > 0) queryParams.set('max_count', this.params.max_cluster_size);
+            if (this.params.cohesion_min > 0) queryParams.set('min_cohesion', this.params.cohesion_min);
+            if (this.params.cohesion_max < 1 && this.params.cohesion_max > 0) queryParams.set('max_cohesion', this.params.cohesion_max);
+            if (this.params.min_features > 0) queryParams.set('min_features', this.params.min_features);
+            if (this.params.max_features < 1000 && this.params.max_features > 0) queryParams.set('max_features', this.params.max_features);
+            if (this.params.stability_threshold > 0) queryParams.set('min_stability', this.params.stability_threshold);
+            queryParams.set('show_parents', this.params.show_parents !== false);
+
+            const url = `/api/cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
-            if (!res.ok) throw new Error("Dendrogram not found");
+            if (!res.ok) throw new Error("Cluster data not found");
             const data = await res.json();
 
-            if (!data.nodes || data.nodes.length === 0) {
+            const nodes = (data.results || []).map(m => ({
+                id: String(m.cluster_id),
+                parent: m.parent ? String(m.parent) : null,
+                name: m.cluster_name || `Cluster ${m.cluster_id}`,
+                uuid: m.cluster_uuid,
+                size: m.count || 0,
+                stability: m.avg_stability || 0.0,
+                cohesion: m.cohesion_score || 0.0,
+                avg_features: m.avg_features || 0.0,
+                snippet: m.snippet || "",
+                members: m.sample_members || []
+            }));
+
+            if (!nodes || nodes.length === 0) {
                 this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
                 const loader = document.getElementById('hierarchy-loader');
                 if (loader) loader.remove();
                 return;
             }
 
-            this.render(data.nodes);
+            this.render(nodes);
         } catch (e) {
             if (e.name === 'AbortError') return;
             this.container.innerHTML = `<div style="margin:auto; color:#ff5555; text-align:center;">Error loading hierarchy: ${e.message}</div>`;
@@ -881,6 +924,16 @@ class ClusterPacking {
         const collection = params.get('collection');
         const algo = params.get('algo') || 'unweighted_cosine';
 
+        // Sync from URL params so global filters reflect in sliders
+        this.params.min_cluster_size = params.has('min_count') ? (parseInt(params.get('min_count')) || 0) : 0;
+        this.params.max_cluster_size = params.has('max_count') ? (parseInt(params.get('max_count')) || 0) : 0;
+        this.params.cohesion_min = params.has('min_cohesion') ? (parseFloat(params.get('min_cohesion')) || 0) : 0;
+        this.params.cohesion_max = params.has('max_cohesion') ? (parseFloat(params.get('max_cohesion')) || 0) : 0;
+        this.params.min_features = params.has('min_features') ? (parseInt(params.get('min_features')) || 0) : 0;
+        this.params.max_features = params.has('max_features') ? (parseInt(params.get('max_features')) || 0) : 0;
+        this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
+        this.params.show_parents = params.get('show_parents') !== 'false';
+
         const packControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
                 <div style="font-size:0.7rem; color:var(--accent); text-transform:uppercase; letter-spacing:1px; font-weight:bold; margin-bottom:15px;">Packing Filters</div>
@@ -1062,30 +1115,63 @@ class ClusterPacking {
             this.params.path_compression = pcCheck.checked;
         };
 
-        document.getElementById('pack-refresh-btn').onclick = () => this.fetch(params);
+        document.getElementById('pack-refresh-btn').onclick = () => {
+            const hash = window.location.hash;
+            const [path, qs] = hash.split('?');
+            const p = new URLSearchParams(qs || '');
+            
+            if (this.params.min_cluster_size > 0) p.set('min_count', this.params.min_cluster_size); else p.delete('min_count');
+            if (this.params.max_cluster_size > 0) p.set('max_count', this.params.max_cluster_size); else p.delete('max_count');
+            if (this.params.cohesion_min > 0) p.set('min_cohesion', this.params.cohesion_min); else p.delete('min_cohesion');
+            if (this.params.cohesion_max > 0) p.set('max_cohesion', this.params.cohesion_max); else p.delete('max_cohesion');
+            if (this.params.min_features > 0) p.set('min_features', this.params.min_features); else p.delete('min_features');
+            if (this.params.max_features > 0) p.set('max_features', this.params.max_features); else p.delete('max_features');
+            if (this.params.stability_threshold > 0) p.set('min_stability', this.params.stability_threshold); else p.delete('min_stability');
+            p.set('show_parents', this.params.show_parents);
+            
+            window.location.hash = `${path}?${p.toString()}`;
+        };
 
         try {
-            const url = `/api/cluster/dendrogram?collection=${collection}&algo=${algo}` +
-                `&min_cluster_size=${this.params.min_cluster_size}` +
-                `&max_cluster_size=${this.params.max_cluster_size}` +
-                `&cohesion_min=${this.params.cohesion_min}` +
-                `&cohesion_max=${this.params.cohesion_max}` +
-                `&min_features=${this.params.min_features}` +
-                `&max_features=${this.params.max_features}` +
-                `&stability_threshold=${this.params.stability_threshold}` +
-                `&show_parents=${this.params.show_parents}`;
+            const queryParams = new URLSearchParams(params.toString());
+            // We want to fetch all matching clusters for the packing view
+            queryParams.set('limit', 10000);
+            
+            if (this.params.min_cluster_size > 0) queryParams.set('min_count', this.params.min_cluster_size);
+            if (this.params.max_cluster_size < 1000 && this.params.max_cluster_size > 0) queryParams.set('max_count', this.params.max_cluster_size);
+            if (this.params.cohesion_min > 0) queryParams.set('min_cohesion', this.params.cohesion_min);
+            if (this.params.cohesion_max < 1 && this.params.cohesion_max > 0) queryParams.set('max_cohesion', this.params.cohesion_max);
+            if (this.params.min_features > 0) queryParams.set('min_features', this.params.min_features);
+            if (this.params.max_features < 1000 && this.params.max_features > 0) queryParams.set('max_features', this.params.max_features);
+            if (this.params.stability_threshold > 0) queryParams.set('min_stability', this.params.stability_threshold);
+            queryParams.set('show_parents', this.params.show_parents !== false);
+
+            const url = `/api/cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error("Data not found");
             const data = await res.json();
 
-            if (!data.nodes || data.nodes.length === 0) {
+            const nodes = (data.results || []).map(m => ({
+                id: String(m.cluster_id),
+                parent: m.parent ? String(m.parent) : null,
+                name: m.cluster_name || `Cluster ${m.cluster_id}`,
+                uuid: m.cluster_uuid,
+                size: m.count || 0,
+                stability: m.avg_stability || 0.0,
+                cohesion: m.cohesion_score || 0.0,
+                avg_features: m.avg_features || 0.0,
+                snippet: m.snippet || "",
+                members: m.sample_members || []
+            }));
+
+            if (!nodes || nodes.length === 0) {
                 this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
                 const loader = document.getElementById('pack-loader');
                 if (loader) loader.remove();
                 return;
             }
 
-            this.render(data.nodes);
+            this.render(nodes);
         } catch (e) {
             if (e.name === 'AbortError') return;
             this.container.innerHTML = `<div style="margin:auto; color:#ff5555; text-align:center; padding: 20px;">Error loading packing layout: ${e.message}</div>`;

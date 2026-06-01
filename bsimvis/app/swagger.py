@@ -1277,29 +1277,6 @@ class ClusterFunctions(Resource):
         return get_cluster_functions()
 
 
-@ns_cluster.route("/dendrogram")
-class ClusterDendrogram(Resource):
-    @ns_cluster.doc(
-        params={
-            "collection": "Collection name",
-            "algo": "Algorithm",
-            "stability_threshold": "Cut-off stability",
-            "min_cluster_size": "Min size filter",
-            "max_cluster_size": "Max size filter",
-            "cohesion_min": "Min cohesion filter",
-            "cohesion_max": "Max cohesion filter",
-            "min_features": "Min features filter",
-            "max_features": "Max features filter",
-            "show_parents": "Show parent clusters (true/false)",
-        }
-    )
-    def get(self):
-        """Returns a hierarchical tree of clusters (D3-compatible)."""
-        from bsimvis.app.routes.cluster import get_cluster_dendrogram
-
-        return get_cluster_dendrogram()
-
-
 # --- Features Namespace ---
 @ns_features.route("/status")
 class FeaturesStatus(Resource):

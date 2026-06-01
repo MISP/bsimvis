@@ -124,9 +124,14 @@ def list_clusters():
 
     try:
         min_stability = float(request.args.get("min_stability", 0))
+        max_stability = float(request.args.get("max_stability", 0))
         min_count = int(request.args.get("min_count", 0))
+        max_count = int(request.args.get("max_count", 0))
         min_features = float(request.args.get("min_features", 0))
+        max_features = float(request.args.get("max_features", 0))
         min_cohesion = float(request.args.get("min_cohesion", 0))
+        max_cohesion = float(request.args.get("max_cohesion", 0))
+        show_parents = request.args.get("show_parents", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -169,23 +174,38 @@ def list_clusters():
 
     # 2. Fetch all metadata
     results = []
+
+    # Fetch tree links to provide parent information
+    links_key = f"{collection}:cluster:tree_links:{algo}"
+    links_raw = r.get(links_key)
+    child_to_parent = {}
+    if links_raw:
+        import json
+        try:
+            links = json.loads(links_raw)
+            child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
+        except Exception:
+            pass
+
     if all_meta_keys:
         pipe = r.pipeline()
         for k in all_meta_keys:
             pipe.json().get(k, "$")
         raw_metas = pipe.execute()
 
+        meta_map = {}
         for meta in raw_metas:
             if not meta:
                 continue
             m = meta[0] if isinstance(meta, list) else meta
             if isinstance(m, str):
                 import json
-
                 m = json.loads(m)
-
-            # Apply filters
             cid = str(m.get("cluster_id", ""))
+            meta_map[cid] = m
+
+        valid_nodes = set()
+        for cid, m in meta_map.items():
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
 
@@ -206,15 +226,41 @@ def list_clusters():
                 continue
             if cluster_name_q and cluster_name_q not in cname.lower():
                 continue
-            if m.get("avg_stability", 0) < min_stability:
+            if min_stability > 0 and m.get("avg_stability", 0) < min_stability:
                 continue
-            if m.get("member_count", 0) < min_count:
+            if max_stability > 0 and m.get("avg_stability", 0) > max_stability:
                 continue
-            if m.get("avg_features", 0) < min_features:
+            if min_count > 0 and m.get("member_count", 0) < min_count:
                 continue
-            if m.get("cohesion_score", 0) < min_cohesion:
+            if max_count > 0 and m.get("member_count", 0) > max_count:
+                continue
+            if min_features > 0 and m.get("avg_features", 0) < min_features:
+                continue
+            if max_features > 0 and m.get("avg_features", 0) > max_features:
+                continue
+            if min_cohesion > 0 and m.get("cohesion_score", 0) < min_cohesion:
+                continue
+            if max_cohesion > 0 and m.get("cohesion_score", 0) > max_cohesion:
                 continue
 
+            valid_nodes.add(cid)
+
+        # Expand parents if requested
+        if show_parents:
+            expanded_nodes = set(valid_nodes)
+            for node in valid_nodes:
+                curr = node
+                while curr in child_to_parent:
+                    curr = child_to_parent[curr]
+                    expanded_nodes.add(curr)
+            valid_nodes = expanded_nodes
+
+        for cid in valid_nodes:
+            m = meta_map.get(cid)
+            if not m:
+                if not show_parents:
+                    continue
+                m = {"cluster_id": cid}
             results.append(
                 {
                     "cluster_id": m.get("cluster_id"),
@@ -225,6 +271,9 @@ def list_clusters():
                     "cohesion_score": m.get("cohesion_score", 0),
                     "count": m.get("member_count"),
                     "created_at": m.get("created_at"),
+                    "parent": child_to_parent.get(str(m.get("cluster_id"))),
+                    "snippet": m.get("snippet", ""),
+                    "sample_members": m.get("sample_members", []),
                 }
             )
 
@@ -453,114 +502,3 @@ def get_cluster_functions():
     }
 
 
-def get_cluster_dendrogram():
-    """
-    Returns a hierarchical tree of clusters, supporting dynamic 'cutting'
-    via stability or size thresholds.
-    """
-    collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
-
-    try:
-        min_size = int(request.args.get("min_cluster_size", 0))
-        max_size = int(request.args.get("max_cluster_size", 0))
-        cohesion_min = float(request.args.get("cohesion_min", 0.0))
-        cohesion_max = float(request.args.get("cohesion_max", 0.0))
-        features_min = float(request.args.get("min_features", 0.0))
-        features_max = float(request.args.get("max_features", 0.0))
-        stability_threshold = float(request.args.get("stability_threshold", 0.0))
-        show_parents = request.args.get("show_parents", "true").lower() == "true"
-    except ValueError:
-        return {"error": "Invalid numeric parameter"}, 400
-
-    r = get_redis()
-    links_key = f"{collection}:cluster:tree_links:{algo}"
-    links_raw = r.get(links_key)
-    if not links_raw:
-        return {"error": "No dendrogram data found"}, 404
-
-    import json
-
-    links = json.loads(links_raw)
-
-    # 1. Gather all unique cluster IDs in the tree
-    cluster_ids = set()
-    for l in links:
-        cluster_ids.add(l["parent"])
-        cluster_ids.add(l["child"])
-
-    # 2. Fetch metadata for all these clusters
-    pipe = r.pipeline()
-    for cid in cluster_ids:
-        pipe.json().get(f"{collection}:cluster:{algo}:{cid}:meta", "$")
-
-    raw_metas = pipe.execute()
-    meta_map = {}
-    for cid, res in zip(cluster_ids, raw_metas):
-        if res:
-            m = res[0] if isinstance(res, list) else res
-            if isinstance(m, str):
-                m = json.loads(m)
-            meta_map[cid] = m
-
-    # 3. Build tree and apply cut
-    # We only include nodes that satisfy our threshold
-    valid_nodes = set()
-    for cid, m in meta_map.items():
-        sz = m.get("member_count", 0)
-        if sz < min_size:
-            continue
-        if max_size > 0 and sz > max_size:
-            continue
-
-        coh = m.get("cohesion_score", 0)
-        if coh < cohesion_min:
-            continue
-        if cohesion_max > 0 and coh > cohesion_max:
-            continue
-
-        feat = m.get("avg_features", 0)
-        if feat < features_min:
-            continue
-        if features_max > 0 and feat > features_max:
-            continue
-
-        stab = m.get("avg_stability", 0.0)
-        if stab < stability_threshold:
-            continue
-
-        valid_nodes.add(cid)
-
-    # If a node is valid, all its ancestors must be in the response to form a tree
-    # child_to_parent map for traversal
-    child_to_parent = {l["child"]: l["parent"] for l in links}
-
-    expanded_nodes = set(valid_nodes)
-    if show_parents:
-        for node in valid_nodes:
-            curr = node
-            while curr in child_to_parent:
-                curr = child_to_parent[curr]
-                expanded_nodes.add(curr)
-
-    # 4. Construct response nodes
-    nodes = []
-    for cid in expanded_nodes:
-        m = meta_map.get(cid, {"cluster_id": cid})
-
-        nodes.append(
-            {
-                "id": cid,
-                "parent": child_to_parent.get(cid),
-                "name": m.get("cluster_name", f"Cluster {cid}"),
-                "uuid": m.get("cluster_uuid"),
-                "size": m.get("member_count", 0),
-                "stability": m.get("avg_stability", 0.0),
-                "cohesion": m.get("cohesion_score", 0.0),
-                "avg_features": m.get("avg_features", 0.0),
-                "snippet": m.get("snippet", ""),
-                "members": m.get("sample_members", []),
-            }
-        )
-
-    return {"collection": collection, "algo": algo, "nodes": nodes}

@@ -55,10 +55,11 @@ class JobService:
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
 
-        # Add to global list of jobs for tracking
-        self.r.lpush("jobs:global", job_id)
-        # Keep only the last 1000 jobs in the global list
-        self.r.ltrim("jobs:global", 0, 999)
+        # Add to global list of jobs for tracking if not a subtask
+        if not is_subtask:
+            self.r.lpush("jobs:global", job_id)
+            # Keep only the last 1000 jobs in the global list
+            self.r.ltrim("jobs:global", 0, 999)
 
         # If it's not a subtask of a pipeline (or it's the first subtask), enqueue it
         if not is_subtask:
@@ -71,6 +72,8 @@ class JobService:
         if isinstance(task, str):
             # Existing job_id
             self.r.hset(f"job:{task}", "parent_id", parent_id)
+            # Remove from jobs:global since it now has a parent
+            self.r.lrem("jobs:global", 0, task)
             return task
         elif isinstance(task, (list, tuple)) and len(task) >= 2:
             jtype, payload = task[0], task[1]
@@ -344,13 +347,11 @@ class JobService:
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
         )
 
-        # If it's a pipeline, cancel all subtasks
+        # Cancel all subtasks recursively
         if "task_ids" in data:
             tids = json.loads(data["task_ids"])
             for tid in tids:
-                self.r.hset(f"job:{tid}", "status", JobStatus.CANCELLED.value)
-                self.r.lrem("jobs:pending", 0, tid)
-                self.r.lrem("jobs:pending:high", 0, tid)
+                self.cancel_job(tid)
 
         return True
 
@@ -483,7 +484,7 @@ class JobService:
             "active_collections": list(active_collections),
         }
 
-    def list_jobs(self, limit=50, offset=0):
+    def list_jobs(self, limit=100, offset=0):
         """Returns a paged list of jobs and the total count."""
         total = self.r.llen("jobs:global")
         job_ids = self.r.lrange("jobs:global", offset, offset + limit - 1)
@@ -535,4 +536,60 @@ class JobService:
                         "task_ids": task_ids,
                     }
                 )
+
+        # Recursively fetch and append all descendant subtasks to ensure
+        # that nested trees are fully represented in a single response.
+        results_map = {res["id"]: res for res in results}
+        to_process = [res for res in results]
+
+        while to_process:
+            current = to_process.pop(0)
+            if current["type"] in ["pipeline", "group"] and current.get("task_ids"):
+                for tid in current["task_ids"]:
+                    if tid not in results_map:
+                        sub_job = self.r.hgetall(f"job:{tid}")
+                        if sub_job:
+                            # Extract target from payload
+                            target = ""
+                            collection = ""
+                            payload_raw = sub_job.get("payload")
+                            if payload_raw:
+                                try:
+                                    payload = json.loads(payload_raw)
+                                    collection = payload.get("collection", "")
+                                    target = (
+                                        payload.get("md5")
+                                        or payload.get("file_id")
+                                        or payload.get("batch_uuid")
+                                        or ""
+                                    )
+                                    if target and len(target) > 20:
+                                        target = target[:8] + "..." + target[-8:]
+                                except:
+                                    pass
+
+                            # Decode task_ids if they exist
+                            task_ids = []
+                            if "task_ids" in sub_job:
+                                try:
+                                    task_ids = json.loads(sub_job["task_ids"])
+                                except:
+                                    pass
+
+                            sub_job_dict = {
+                                "id": tid,
+                                "type": sub_job.get("type"),
+                                "status": sub_job.get("status"),
+                                "progress": int(sub_job.get("progress", 0)),
+                                "collection": collection,
+                                "target": target,
+                                "created_at": int(sub_job.get("created_at", 0)),
+                                "updated_at": int(sub_job.get("updated_at", 0)),
+                                "parent_id": current["id"],
+                                "task_ids": task_ids,
+                            }
+                            results_map[tid] = sub_job_dict
+                            results.append(sub_job_dict)
+                            to_process.append(sub_job_dict)
+
         return results, total

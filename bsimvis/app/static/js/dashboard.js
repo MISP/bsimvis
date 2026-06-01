@@ -115,7 +115,7 @@ function initColumnResize(th, path, label) {
 // ------------------------------------
 
 let currentOffset = 0;
-const DEFAULT_PAGE_LIMIT = 50;
+const DEFAULT_PAGE_LIMIT = 100;
 const DEFAULT_GRAPH_LIMIT = 500;
 const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
 let isEndOfResults = false;
@@ -345,9 +345,9 @@ async function refreshData(appendArg = false, force = false) {
     const isSilent = (full_hash === lastHashPath && !force && !append);
 
     if (full_hash !== lastHashPath || !append) {
-        currentOffset = 0;
-        isEndOfResults = false;
         if (!isSilent) {
+            currentOffset = 0;
+            isEndOfResults = false;
             document.getElementById('table-body').innerHTML = '';
             document.getElementById('loader').style.display = 'block';
         }
@@ -386,9 +386,14 @@ async function refreshData(appendArg = false, force = false) {
     }
 
     // Standard pagination for all search routes
-    const countLimit = params.get('limit') || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
-    params.set('offset', currentOffset);
-    params.set('limit', countLimit);
+    const countLimit = parseInt(params.get('limit')) || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+    if (isSilent && currentOffset > 0) {
+        params.set('offset', 0);
+        params.set('limit', currentOffset);
+    } else {
+        params.set('offset', currentOffset);
+        params.set('limit', countLimit);
+    }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
     updateUI(hashPath, params, route);
@@ -452,7 +457,11 @@ async function refreshData(appendArg = false, force = false) {
             if (html) tbody.insertAdjacentHTML('beforeend', html);
         }
 
-        currentOffset += (items.length || 0);
+        if (append) {
+            currentOffset += (items.length || 0);
+        } else {
+            currentOffset = (items.length || 0);
+        }
         isEndOfResults = currentOffset >= total;
 
         // Update total display with "Shown / Total" format

@@ -210,7 +210,7 @@ class JobList(Resource):
         params={
             "limit": {
                 "description": "Number of jobs to return",
-                "default": 50,
+                "default": 100,
                 "example": 20,
             },
             "offset": {"description": "Pagination offset", "default": 0, "example": 0},

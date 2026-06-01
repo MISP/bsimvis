@@ -6,7 +6,7 @@ job_service = JobService()
 
 def list_jobs():
     """Lists recent and active jobs with pagination."""
-    limit = request.args.get("limit", 50, type=int)
+    limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
     jobs, total = job_service.list_jobs(limit=limit, offset=offset)
     return {"items": jobs, "total": total}

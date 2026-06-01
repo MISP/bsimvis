@@ -550,6 +550,10 @@ class FunctionSearch(Resource):
             "exclude_file_static_tag": {"description": "Exclude functions with this file-level static tag"},
             "exclude_file_user_tag": {"description": "Exclude functions with this file-level user tag"},
             "min_features": {"description": "Minimum BSim feature count", "example": 5},
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0–1.0). Clusters below this threshold are excluded from the response.",
+                "example": 0.5,
+            },
             "sort_by": {
                 "description": "Sort field: id, function_name, bsim_features_count",
                 "example": "bsim_features_count",
@@ -784,6 +788,10 @@ class SimilaritySearch(Resource):
                 "default": "any",
             },
             "min_features": {"description": "Minimum feature count", "example": 5},
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0-1.0). Clusters below this threshold are excluded.",
+                "example": 0.5,
+            },
             "sort_by": {
                 "description": "Sort field: score or feat_count",
                 "default": "score",

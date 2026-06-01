@@ -46,6 +46,7 @@ def search_functions():
         offset = int(request.args.get("offset", 0))
         limit = int(request.args.get("limit", DEFAULT_LIMIT))
         pool_limit = int(request.args.get("pool_limit", DEFAULT_POOL_LIMIT))
+        min_cohesion = float(request.args.get("min_cohesion", 0.95))
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -261,7 +262,10 @@ def search_functions():
                                 break
 
                 if val:
-                    filter_configs.append((val, target_field, _paths(field)))
+                    paths = _paths_for_source(src_lvl, field)
+                    if paths:
+                        filter_configs.append((val, target_field, paths))
+
 
     # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
     # The existing code had some manual additions for unions, keeping them for now if not redundant.
@@ -504,7 +508,7 @@ def search_functions():
                 fm = json.loads(fm)
             file_meta_map[md5] = fm
 
-    # Phase 3: Fetch Cluster Metadata (DEDUPLICATED)
+    # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
     cluster_meta_map = {}
     algo = "unweighted_cosine"  # Default algo
     if unique_cluster_ids:
@@ -517,7 +521,9 @@ def search_functions():
             cm = (res[0] if isinstance(res, list) and res else res) or {}
             if isinstance(cm, str):
                 cm = json.loads(cm)
-            cluster_meta_map[cid] = cm
+            # Apply cohesion threshold server-side
+            if (cm.get("cohesion_score") or 0) >= min_cohesion:
+                cluster_meta_map[cid] = cm
 
     # Phase 4: Final Assembly
     functions_list = []
@@ -552,23 +558,11 @@ def search_functions():
             if field in meta:
                 meta[field] = parse_timestamp(meta[field])
 
-        # Cluster enrichment
-        clusters = []
-        for cid, score in scores.items():
-            cm = cluster_meta_map.get(cid)
-            if cm:
-                clusters.append(
-                    {
-                        "cluster_id": cm.get("cluster_id"),
-                        "cluster_uuid": cm.get("cluster_uuid"),
-                        "cluster_name": cm.get("cluster_name"),
-                        "cohesion_score": cm.get("cohesion_score", 0),
-                        "member_count": cm.get("member_count", 0),
-                        "cluster_stability": score or cm.get("cluster_stability", 0.0),
-                        "avg_features": cm.get("avg_features", 0),
-                    }
-                )
-        clusters.sort(key=lambda x: x.get("member_count", 0), reverse=True)
+        # Cluster references — plain list of UUIDs (metadata is in top-level map)
+        clusters = [
+            cid for cid in scores
+            if cid in cluster_meta_map
+        ]
         meta["clusters"] = clusters
 
         # Cleanup
@@ -587,11 +581,26 @@ def search_functions():
         f"FUNC SEARCH | {session_id} | Total: {total} | Enrich: {time.perf_counter()-t_enrich_start:.3f}s | Time: {total_time:.3f}s"
     )
 
+    # Build the top-level cluster metadata map (keyed by UUID)
+    clusters_response = {
+        cid: {
+            "cluster_id": cm.get("cluster_id"),
+            "cluster_uuid": cm.get("cluster_uuid"),
+            "cluster_name": cm.get("cluster_name"),
+            "cohesion_score": cm.get("cohesion_score", 0),
+            "member_count": cm.get("member_count", 0),
+            "cluster_stability": cm.get("cluster_stability", 0.0),
+            "avg_features": cm.get("avg_features", 0),
+        }
+        for cid, cm in cluster_meta_map.items()
+    }
+
     response_data = {
         "total": total,
         "offset": offset,
         "limit": limit,
         "pool_truncated": pool_truncated,
+        "clusters": clusters_response,
         "functions": functions_list,
         "collection": col,
         "q": search_q,

@@ -13,6 +13,7 @@ __pycache__
 data/*
 !data/bench/
 !data/.gitkeep
+!data/test/
 
 # Legacy (remove once migrated)
 data/kvrocks/

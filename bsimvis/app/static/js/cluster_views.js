@@ -109,6 +109,7 @@ class ClusterHierarchy {
         this.params.max_features = params.has('max_features') ? (parseInt(params.get('max_features')) || 0) : 0;
         this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
         this.params.show_parents = params.get('show_parents') !== 'false';
+        this.params.show_children = params.get('show_children') !== 'false';
 
         // Template for controls
         const hierControls = `
@@ -179,6 +180,10 @@ class ClusterHierarchy {
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="input-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
                         <label for="input-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="input-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                        <label for="input-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
@@ -287,6 +292,11 @@ class ClusterHierarchy {
             this.params.show_parents = spCheck.checked;
         };
 
+        const scCheck = document.getElementById('input-show-children');
+        scCheck.onchange = () => {
+            this.params.show_children = scCheck.checked;
+        };
+
         const pcCheck = document.getElementById('input-path-compression');
         pcCheck.onchange = () => {
             this.params.path_compression = pcCheck.checked;
@@ -305,6 +315,7 @@ class ClusterHierarchy {
             if (this.params.max_features > 0) p.set('max_features', this.params.max_features); else p.delete('max_features');
             if (this.params.stability_threshold > 0) p.set('min_stability', this.params.stability_threshold); else p.delete('min_stability');
             p.set('show_parents', this.params.show_parents);
+            p.set('show_children', this.params.show_children);
             
             window.location.hash = `${path}?${p.toString()}`;
         };
@@ -322,6 +333,7 @@ class ClusterHierarchy {
             if (this.params.max_features < 1000 && this.params.max_features > 0) queryParams.set('max_features', this.params.max_features);
             if (this.params.stability_threshold > 0) queryParams.set('min_stability', this.params.stability_threshold);
             queryParams.set('show_parents', this.params.show_parents !== false);
+            queryParams.set('show_children', this.params.show_children !== false);
 
             const url = `/api/cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
@@ -933,6 +945,7 @@ class ClusterPacking {
         this.params.max_features = params.has('max_features') ? (parseInt(params.get('max_features')) || 0) : 0;
         this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
         this.params.show_parents = params.get('show_parents') !== 'false';
+        this.params.show_children = params.get('show_children') !== 'false';
 
         const packControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
@@ -1002,6 +1015,10 @@ class ClusterPacking {
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="input-pack-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
                         <label for="input-pack-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="input-pack-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                        <label for="input-pack-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="input-pack-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
@@ -1110,6 +1127,11 @@ class ClusterPacking {
             this.params.show_parents = spCheck.checked;
         };
 
+        const scCheck = document.getElementById('input-pack-show-children');
+        scCheck.onchange = () => {
+            this.params.show_children = scCheck.checked;
+        };
+
         const pcCheck = document.getElementById('input-pack-path-compression');
         pcCheck.onchange = () => {
             this.params.path_compression = pcCheck.checked;
@@ -1128,6 +1150,7 @@ class ClusterPacking {
             if (this.params.max_features > 0) p.set('max_features', this.params.max_features); else p.delete('max_features');
             if (this.params.stability_threshold > 0) p.set('min_stability', this.params.stability_threshold); else p.delete('min_stability');
             p.set('show_parents', this.params.show_parents);
+            p.set('show_children', this.params.show_children);
             
             window.location.hash = `${path}?${p.toString()}`;
         };
@@ -1145,6 +1168,7 @@ class ClusterPacking {
             if (this.params.max_features < 1000 && this.params.max_features > 0) queryParams.set('max_features', this.params.max_features);
             if (this.params.stability_threshold > 0) queryParams.set('min_stability', this.params.stability_threshold);
             queryParams.set('show_parents', this.params.show_parents !== false);
+            queryParams.set('show_children', this.params.show_children !== false);
 
             const url = `/api/cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });

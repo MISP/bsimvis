@@ -132,6 +132,7 @@ def list_clusters():
         min_cohesion = float(request.args.get("min_cohesion", 0))
         max_cohesion = float(request.args.get("max_cohesion", 0))
         show_parents = request.args.get("show_parents", "false").lower() == "true"
+        show_children = request.args.get("show_children", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -179,11 +180,17 @@ def list_clusters():
     links_key = f"{collection}:cluster:tree_links:{algo}"
     links_raw = r.get(links_key)
     child_to_parent = {}
+    parent_to_children = {}
     if links_raw:
         import json
         try:
             links = json.loads(links_raw)
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
+            for l in links:
+                p = str(l["parent"])
+                if p not in parent_to_children:
+                    parent_to_children[p] = []
+                parent_to_children[p].append(str(l["child"]))
         except Exception:
             pass
 
@@ -255,10 +262,23 @@ def list_clusters():
                     expanded_nodes.add(curr)
             valid_nodes = expanded_nodes
 
+        # Expand children if requested
+        if show_children:
+            expanded_nodes = set(valid_nodes)
+            queue = list(valid_nodes)
+            while queue:
+                curr = queue.pop(0)
+                children = parent_to_children.get(curr, [])
+                for child in children:
+                    if child not in expanded_nodes:
+                        expanded_nodes.add(child)
+                        queue.append(child)
+            valid_nodes = expanded_nodes
+
         for cid in valid_nodes:
             m = meta_map.get(cid)
             if not m:
-                if not show_parents:
+                if not show_parents and not show_children:
                     continue
                 m = {"cluster_id": cid}
             results.append(

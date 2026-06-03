@@ -174,15 +174,15 @@ class JobService:
         job = self.r.hgetall(f"job:{job_id}")
         if not job:
             return
-            
+
         jtype = job.get("type")
-        
+
         if job.get("status") == JobStatus.CANCELLED.value:
             return
 
         if jtype in ["pipeline", "group"]:
             self.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
-        
+
         if jtype == "pipeline":
             tids = json.loads(job.get("task_ids", "[]"))
             if tids:
@@ -203,7 +203,7 @@ class JobService:
         """Marks a job as completed and advances its parent if applicable."""
         self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
         self.update_progress(job_id, 100)
-        
+
         parent_id = self.r.hget(f"job:{job_id}", "parent_id")
         if parent_id:
             self.advance_parent(parent_id, job_id)
@@ -213,37 +213,46 @@ class JobService:
         parent = self.r.hgetall(f"job:{parent_id}")
         if not parent or parent.get("status") == JobStatus.CANCELLED.value:
             return
-            
+
         ptype = parent.get("type")
         tids = json.loads(parent.get("task_ids", "[]"))
-        
+
         if ptype == "pipeline":
             try:
                 current_idx = tids.index(finished_job_id)
                 if current_idx + 1 < len(tids):
                     next_tid = tids[current_idx + 1]
-                    self.add_log(parent_id, f"Sub-task {finished_job_id} done. Starting next: {next_tid}")
+                    self.add_log(
+                        parent_id,
+                        f"Sub-task {finished_job_id} done. Starting next: {next_tid}",
+                    )
                     self.start_job(next_tid)
                 else:
                     self.add_log(parent_id, "All tasks in pipeline completed.")
                     self.complete_job(parent_id)
             except ValueError:
                 pass
-                
+
         elif ptype == "group":
             all_done = True
             any_failed = False
             for tid in tids:
                 status = self.r.hget(f"job:{tid}", "status")
-                if status not in [JobStatus.COMPLETED.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value]:
+                if status not in [
+                    JobStatus.COMPLETED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]:
                     all_done = False
                     break
                 if status == JobStatus.FAILED.value:
                     any_failed = True
-                    
+
             if all_done:
                 if any_failed:
-                    self.add_log(parent_id, "All tasks in group finished, but some failed.")
+                    self.add_log(
+                        parent_id, "All tasks in group finished, but some failed."
+                    )
                 else:
                     self.add_log(parent_id, "All tasks in group completed.")
                 self.complete_job(parent_id)
@@ -253,7 +262,7 @@ class JobService:
         self.r.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
         self.r.hset(f"job:{job_id}", "error", error_msg)
         self.add_log(job_id, f"Execution error: {error_msg}")
-        
+
         parent_id = self.r.hget(f"job:{job_id}", "parent_id")
         if parent_id:
             parent_type = self.r.hget(f"job:{parent_id}", "type")
@@ -486,112 +495,145 @@ class JobService:
             "active_collections": list(active_collections),
         }
 
-    def list_jobs(self, limit=100, offset=0):
+    def list_jobs(self, limit=100, offset=0, collection=None, status=None, jtype=None):
         """Returns a paged list of jobs and the total count."""
-        total = self.r.llen("jobs:global")
-        job_ids = self.r.lrange("jobs:global", offset, offset + limit - 1)
-        # Fetch summary info for each job in a pipeline (MGET equivalent for hashes not possible, but we can do a quick loop)
-        results = []
-        for jid in job_ids:
-            job = self.r.hgetall(f"job:{jid}")
-            if job:
-                # Extract target from payload
+        # Fetch all top-level job IDs (at most 1000)
+        all_job_ids = self.r.lrange("jobs:global", 0, -1)
+
+        # Batch fetch all top-level job hashes using pipeline
+        pipe = self.r.pipeline()
+        for jid in all_job_ids:
+            pipe.hgetall(f"job:{jid}")
+        raw_jobs = pipe.execute()
+
+        # Parse payloads and build initial list of top-level job dicts
+        top_level_jobs = []
+        for jid, job in zip(all_job_ids, raw_jobs):
+            if not job:
+                continue
+
+            # Extract target and collection from payload
+            target = ""
+            coll = ""
+            payload_raw = job.get("payload")
+            if payload_raw:
+                try:
+                    payload = json.loads(payload_raw)
+                    coll = payload.get("collection", "")
+                    target = (
+                        payload.get("md5")
+                        or payload.get("file_id")
+                        or payload.get("batch_uuid")
+                        or ""
+                    )
+                    if target and len(target) > 20:
+                        target = target[:8] + "..." + target[-8:]
+                except:
+                    pass
+
+            parent_id = job.get("parent_id", "")
+            task_ids = []
+            if "task_ids" in job:
+                try:
+                    task_ids = json.loads(job["task_ids"])
+                except:
+                    pass
+
+            # Apply filters early to top-level jobs
+            if collection and coll != collection:
+                continue
+            if status and job.get("status") != status:
+                continue
+            if jtype and job.get("type") != jtype:
+                continue
+
+            top_level_jobs.append(
+                {
+                    "id": jid,
+                    "type": job.get("type"),
+                    "status": job.get("status"),
+                    "progress": int(job.get("progress", 0)),
+                    "collection": coll,
+                    "target": target,
+                    "created_at": int(job.get("created_at", 0)),
+                    "updated_at": int(job.get("updated_at", 0)),
+                    "parent_id": parent_id,
+                    "task_ids": task_ids,
+                }
+            )
+
+        # Total is the count of filtered top-level jobs
+        total = len(top_level_jobs)
+
+        # Paginate top-level jobs
+        paginated_top_level = top_level_jobs[offset : offset + limit]
+
+        # Now, recursively fetch all subtask descendants for the paginated top-level jobs.
+        results = list(paginated_top_level)
+        results_map = {res["id"]: res for res in results}
+
+        to_fetch = []
+        for job in paginated_top_level:
+            if job["type"] in ["pipeline", "group"] and job.get("task_ids"):
+                to_fetch.extend(job["task_ids"])
+
+        while to_fetch:
+            ids_to_fetch = list(set(tid for tid in to_fetch if tid not in results_map))
+            to_fetch = []
+
+            if not ids_to_fetch:
+                break
+
+            pipe = self.r.pipeline()
+            for tid in ids_to_fetch:
+                pipe.hgetall(f"job:{tid}")
+            raw_sub_jobs = pipe.execute()
+
+            for tid, sub_job in zip(ids_to_fetch, raw_sub_jobs):
+                if not sub_job:
+                    continue
+
                 target = ""
-                collection = ""
-                payload_raw = job.get("payload")
+                coll = ""
+                payload_raw = sub_job.get("payload")
                 if payload_raw:
                     try:
                         payload = json.loads(payload_raw)
-                        collection = payload.get("collection", "")
+                        coll = payload.get("collection", "")
                         target = (
                             payload.get("md5")
                             or payload.get("file_id")
                             or payload.get("batch_uuid")
                             or ""
                         )
-                        # Truncate long targets
                         if target and len(target) > 20:
                             target = target[:8] + "..." + target[-8:]
                     except:
                         pass
 
-                # Basic summary info
-                parent_id = job.get("parent_id", "")
                 task_ids = []
-                if "task_ids" in job:
+                if "task_ids" in sub_job:
                     try:
-                        task_ids = json.loads(job["task_ids"])
+                        task_ids = json.loads(sub_job["task_ids"])
                     except:
                         pass
 
-                results.append(
-                    {
-                        "id": jid,
-                        "type": job.get("type"),
-                        "status": job.get("status"),
-                        "progress": int(job.get("progress", 0)),
-                        "collection": collection,
-                        "target": target,
-                        "created_at": int(job.get("created_at", 0)),
-                        "updated_at": int(job.get("updated_at", 0)),
-                        "parent_id": parent_id,
-                        "task_ids": task_ids,
-                    }
-                )
+                sub_job_dict = {
+                    "id": tid,
+                    "type": sub_job.get("type"),
+                    "status": sub_job.get("status"),
+                    "progress": int(sub_job.get("progress", 0)),
+                    "collection": coll,
+                    "target": target,
+                    "created_at": int(sub_job.get("created_at", 0)),
+                    "updated_at": int(sub_job.get("updated_at", 0)),
+                    "parent_id": sub_job.get("parent_id", ""),
+                    "task_ids": task_ids,
+                }
+                results_map[tid] = sub_job_dict
+                results.append(sub_job_dict)
 
-        # Recursively fetch and append all descendant subtasks to ensure
-        # that nested trees are fully represented in a single response.
-        results_map = {res["id"]: res for res in results}
-        to_process = [res for res in results]
-
-        while to_process:
-            current = to_process.pop(0)
-            if current["type"] in ["pipeline", "group"] and current.get("task_ids"):
-                for tid in current["task_ids"]:
-                    if tid not in results_map:
-                        sub_job = self.r.hgetall(f"job:{tid}")
-                        if sub_job:
-                            # Extract target from payload
-                            target = ""
-                            collection = ""
-                            payload_raw = sub_job.get("payload")
-                            if payload_raw:
-                                try:
-                                    payload = json.loads(payload_raw)
-                                    collection = payload.get("collection", "")
-                                    target = (
-                                        payload.get("md5")
-                                        or payload.get("file_id")
-                                        or payload.get("batch_uuid")
-                                        or ""
-                                    )
-                                    if target and len(target) > 20:
-                                        target = target[:8] + "..." + target[-8:]
-                                except:
-                                    pass
-
-                            # Decode task_ids if they exist
-                            task_ids = []
-                            if "task_ids" in sub_job:
-                                try:
-                                    task_ids = json.loads(sub_job["task_ids"])
-                                except:
-                                    pass
-
-                            sub_job_dict = {
-                                "id": tid,
-                                "type": sub_job.get("type"),
-                                "status": sub_job.get("status"),
-                                "progress": int(sub_job.get("progress", 0)),
-                                "collection": collection,
-                                "target": target,
-                                "created_at": int(sub_job.get("created_at", 0)),
-                                "updated_at": int(sub_job.get("updated_at", 0)),
-                                "parent_id": current["id"],
-                                "task_ids": task_ids,
-                            }
-                            results_map[tid] = sub_job_dict
-                            results.append(sub_job_dict)
-                            to_process.append(sub_job_dict)
+                if sub_job_dict["type"] in ["pipeline", "group"] and task_ids:
+                    to_fetch.extend(task_ids)
 
         return results, total

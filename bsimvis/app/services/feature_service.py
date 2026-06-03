@@ -101,7 +101,9 @@ class FeatureService:
                 )
 
         if indexed_features:
-            self.r.sadd(f"{collection}:features:pending_enrichment", *list(indexed_features))
+            self.r.sadd(
+                f"{collection}:features:pending_enrichment", *list(indexed_features)
+            )
 
         return True
 
@@ -332,7 +334,9 @@ class FeatureService:
 
         return results
 
-    def index_global_features(self, collection, feature_hashes, job_service=None, job_id=None):
+    def index_global_features(
+        self, collection, feature_hashes, job_service=None, job_id=None
+    ):
         """
         Computes global metadata (most common type/op pair, frequency, tf_score, decompiled context)
         for a list of feature hashes, and saves them to KV / secondary indexes.
@@ -563,9 +567,13 @@ class FeatureService:
         pending_key = f"{collection}:features:pending_enrichment"
         feature_hashes = list(self.r.smembers(pending_key))
         if not feature_hashes:
-            logging.info(f"[*] No pending features to enrich in collection: {collection}")
+            logging.info(
+                f"[*] No pending features to enrich in collection: {collection}"
+            )
             if job_service and job_id:
-                job_service.update_progress(job_id, 100, "No pending features to enrich.")
+                job_service.update_progress(
+                    job_id, 100, "No pending features to enrich."
+                )
             return True
 
         feature_hashes = [
@@ -573,7 +581,9 @@ class FeatureService:
         ]
 
         total = len(feature_hashes)
-        logging.info(f"[*] Enriching {total} global features for collection: {collection}")
+        logging.info(
+            f"[*] Enriching {total} global features for collection: {collection}"
+        )
         self.index_global_features(collection, feature_hashes, job_service, job_id)
         self.r.delete(pending_key)
         return True

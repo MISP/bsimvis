@@ -499,7 +499,10 @@ setInterval(() => {
         if (isModalOpen && currentActiveJobId) {
             refreshJobModal(currentActiveJobId);
         } else {
-            if (window.refreshData) window.refreshData(false, false);
+            if (localStorage.getItem('jobAutoRefresh') !== 'false') {
+                if (window.refreshData) window.refreshData(false, false);
+            }
         }
     }
 }, 5000);
+

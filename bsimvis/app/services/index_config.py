@@ -66,23 +66,23 @@ INDEX_CONFIG = {
         "md5_a": ["bin_sim"],
         "md5_b": ["bin_sim"],
         "algo": ["bin_sim"],
-        "file_name_a": ["bin_sim"],   # denormalized from file meta at build time
+        "file_name_a": ["bin_sim"],  # denormalized from file meta at build time
         "file_name_b": ["bin_sim"],
-        "file_tags_a": ["bin_sim"],   # denormalized tags for binary A
+        "file_tags_a": ["bin_sim"],  # denormalized tags for binary A
         "file_tags_b": ["bin_sim"],
         "file_user_tags_a": ["bin_sim"],
         "file_user_tags_b": ["bin_sim"],
-        "score": ["bin_sim"],                     # numeric
-        "score_sim_weighted": ["bin_sim"],         # numeric
+        "score": ["bin_sim"],  # numeric
+        "score_sim_weighted": ["bin_sim"],  # numeric
         "score_collection_weighted": ["bin_sim"],  # numeric
-        "coverage_a": ["bin_sim"],                 # numeric
-        "coverage_b": ["bin_sim"],                 # numeric
-        "shared_clusters": ["bin_sim"],            # numeric
-        "computed_at": ["bin_sim"],                # numeric (timestamp)
+        "coverage_a": ["bin_sim"],  # numeric
+        "coverage_b": ["bin_sim"],  # numeric
+        "shared_clusters": ["bin_sim"],  # numeric
+        "computed_at": ["bin_sim"],  # numeric (timestamp)
         "architecture_a": ["bin_sim"],
         "architecture_b": ["bin_sim"],
-        "functions_count_a": ["bin_sim"],          # numeric
-        "functions_count_b": ["bin_sim"],          # numeric
+        "functions_count_a": ["bin_sim"],  # numeric
+        "functions_count_b": ["bin_sim"],  # numeric
     },
 }
 

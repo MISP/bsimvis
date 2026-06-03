@@ -5,6 +5,7 @@ from pathlib import Path
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 
+
 class ConfigService:
     _instance = None
     _config = None
@@ -40,5 +41,6 @@ class ConfigService:
             return val
         except (KeyError, TypeError):
             return default
+
 
 config_service = ConfigService()

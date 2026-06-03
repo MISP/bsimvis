@@ -12,15 +12,21 @@ def build_bin_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2))
+    min_cluster_size = data.get(
+        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+    )
 
     payload = {
         "collection": collection,
         "algo": algo,
         "min_cluster_size": min_cluster_size,
-        "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
+        "min_samples": data.get(
+            "min_samples", config_service.get("clustering.min_samples", 1)
+        ),
         "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-        "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
+        "selection_method": data.get(
+            "selection_method", config_service.get("clustering.selection_method", "eom")
+        ),
         "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
     }
 
@@ -33,7 +39,9 @@ def rebuild_bin_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2))
+    min_cluster_size = data.get(
+        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+    )
 
     tasks = [
         (
@@ -49,10 +57,19 @@ def rebuild_bin_cluster():
                 "collection": collection,
                 "algo": algo,
                 "min_cluster_size": min_cluster_size,
-                "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
-                "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-                "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
-                "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
             },
         ),
     ]
@@ -260,9 +277,11 @@ def list_bin_clusters():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
+
         return export_to_csv(results, "bin_clusters")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
+
         return export_to_json(response_data, "bin_clusters")
     else:
         return response_data
@@ -319,7 +338,9 @@ def update_bin_cluster_meta():
     for mid in members:
         mid_str = mid.decode() if isinstance(mid, bytes) else mid
         if old_name:
-            _unindex_tag(pipe, collection, "file", "bin_cluster_name", old_name, mid_str)
+            _unindex_tag(
+                pipe, collection, "file", "bin_cluster_name", old_name, mid_str
+            )
         _index_tag(pipe, collection, "file", "bin_cluster_name", cluster_name, mid_str)
         pipe.json().set(f"{mid_str}:meta", "$.bin_cluster_name", cluster_name)
     pipe.execute()
@@ -389,7 +410,8 @@ def get_bin_cluster_files():
                 uuids = pipe.execute()
                 for k, u_res in zip(keys, uuids):
                     u = u_res[0] if isinstance(u_res, list) and u_res else u_res
-                    if isinstance(u, bytes): u = u.decode()
+                    if isinstance(u, bytes):
+                        u = u.decode()
                     if u == cluster_uuid:
                         k_str = k.decode() if isinstance(k, bytes) else k
                         parts = k_str.split(":")
@@ -400,7 +422,9 @@ def get_bin_cluster_files():
                 break
 
         if matching_cluster_id:
-            cluster_set_key = f"{collection}:bin_cluster:{algo}:{matching_cluster_id}:members"
+            cluster_set_key = (
+                f"{collection}:bin_cluster:{algo}:{matching_cluster_id}:members"
+            )
             fids_raw = r.smembers(cluster_set_key)
 
     if not fids_raw:
@@ -420,16 +444,20 @@ def get_bin_cluster_files():
     files = []
     for fid, meta in zip(page, raw_metas):
         m = meta[0] if isinstance(meta, list) and meta else meta
-        if isinstance(m, str): m = json.loads(m)
-        if not m: m = {}
+        if isinstance(m, str):
+            m = json.loads(m)
+        if not m:
+            m = {}
 
-        files.append({
-            "file_id": m.get("file_id") or fid,
-            "file_name": m.get("file_name", "Unknown"),
-            "file_md5": m.get("file_md5", ""),
-            "language_id": m.get("language_id", ""),
-            "architecture": m.get("architecture", ""),
-        })
+        files.append(
+            {
+                "file_id": m.get("file_id") or fid,
+                "file_name": m.get("file_name", "Unknown"),
+                "file_md5": m.get("file_md5", ""),
+                "language_id": m.get("language_id", ""),
+                "architecture": m.get("architecture", ""),
+            }
+        )
 
     return {
         "files": files,

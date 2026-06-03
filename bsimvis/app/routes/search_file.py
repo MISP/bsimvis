@@ -99,7 +99,13 @@ def query_files_advanced(r, collection, filters):
                 return []
 
     # 1. Apply substring filters for string fields
-    for field in ["file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_uuid"]:
+    for field in [
+        "file_name",
+        "file_md5",
+        "language_id",
+        "batch_uuid",
+        "bin_cluster_uuid",
+    ]:
         val = fields.get(field)
         if val:
             field_matches = get_field_matches(field, val, field_level="file")
@@ -283,7 +289,13 @@ def search_files():
 
     # Build tag/field filters
     fields = {}
-    for field in ["batch_uuid", "language_id", "file_md5", "file_name", "bin_cluster_uuid"]:
+    for field in [
+        "batch_uuid",
+        "language_id",
+        "file_md5",
+        "file_name",
+        "bin_cluster_uuid",
+    ]:
         val = request.args.get(field)
         if val:
             fields[field] = val.strip()
@@ -404,9 +416,12 @@ def search_files():
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 
         data["function_count"] = func_count
-        
+
         # Cluster assignments
-        cluster_ids = [cid.decode() if isinstance(cid, bytes) else str(cid) for cid in (cluster_ids_raw or [])]
+        cluster_ids = [
+            cid.decode() if isinstance(cid, bytes) else str(cid)
+            for cid in (cluster_ids_raw or [])
+        ]
         data["bin_clusters"] = cluster_ids
         unique_cluster_ids.update(cluster_ids)
 

@@ -305,9 +305,7 @@ def main(args):
             jvm_args=args.jvm_args,
         )
     else:
-        logging.info(
-            "[i] Remote analysis selected. Skipping local Ghidra JVM start."
-        )
+        logging.info("[i] Remote analysis selected. Skipping local Ghidra JVM start.")
 
     logging.info(f"[i] Loading config {args.config}")
     config = load_config(args.config)

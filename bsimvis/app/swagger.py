@@ -26,10 +26,14 @@ ns_search = Namespace("search", description="Unified search and metadata utiliti
 ns_similarity = Namespace("similarity", description="Similarity engine and results")
 ns_tags = Namespace("tags", description="Tag management")
 ns_cluster = Namespace("cluster", description="Hierarchical clustering and analysis")
-ns_bin_cluster = Namespace("bin_cluster", description="Binary-level hierarchical clustering")
+ns_bin_cluster = Namespace(
+    "bin_cluster", description="Binary-level hierarchical clustering"
+)
 ns_features = Namespace("features", description="Global feature indexing and status")
 ns_diff = Namespace("diff", description="Function diff and alignment")
-ns_bin_sim = Namespace("bin_sim", description="Binary-level similarity and clustering comparison")
+ns_bin_sim = Namespace(
+    "bin_sim", description="Binary-level similarity and clustering comparison"
+)
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -109,13 +113,18 @@ file_upload_data_model = api.model(
     "FileUploadData",
     {
         "collection": fields.String(default="main", description="Collection name"),
-        "file_md5": fields.String(description="File MD5 (will be calculated if missing)"),
+        "file_md5": fields.String(
+            description="File MD5 (will be calculated if missing)"
+        ),
         "top_k": fields.Integer(description="Top K matches per function"),
         "min_score": fields.Float(description="Minimum similarity score threshold"),
         "min_features": fields.Integer(description="Minimum feature count required"),
-        "algo": fields.String(default="unweighted_cosine", description="Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)"),
+        "algo": fields.String(
+            default="unweighted_cosine",
+            description="Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
+        ),
         "skip_sim": fields.Boolean(default=False, description="Skip similarity build"),
-    }
+    },
 )
 
 # Similarity Models
@@ -570,14 +579,28 @@ class FunctionSearch(Resource):
             "file_static_tag": {"description": "Filter by file-level static tag"},
             "file_user_tag": {"description": "Filter by file-level user tag"},
             "exclude_tag": {"description": "Exclude functions with this tag"},
-            "exclude_static_tag": {"description": "Exclude functions with this static tag"},
+            "exclude_static_tag": {
+                "description": "Exclude functions with this static tag"
+            },
             "exclude_user_tag": {"description": "Exclude functions with this user tag"},
-            "exclude_func_tag": {"description": "Exclude functions with this function-level tag"},
-            "exclude_func_static_tag": {"description": "Exclude functions with this function-level static tag"},
-            "exclude_func_user_tag": {"description": "Exclude functions with this function-level user tag"},
-            "exclude_file_tag": {"description": "Exclude functions with this file-level tag"},
-            "exclude_file_static_tag": {"description": "Exclude functions with this file-level static tag"},
-            "exclude_file_user_tag": {"description": "Exclude functions with this file-level user tag"},
+            "exclude_func_tag": {
+                "description": "Exclude functions with this function-level tag"
+            },
+            "exclude_func_static_tag": {
+                "description": "Exclude functions with this function-level static tag"
+            },
+            "exclude_func_user_tag": {
+                "description": "Exclude functions with this function-level user tag"
+            },
+            "exclude_file_tag": {
+                "description": "Exclude functions with this file-level tag"
+            },
+            "exclude_file_static_tag": {
+                "description": "Exclude functions with this file-level static tag"
+            },
+            "exclude_file_user_tag": {
+                "description": "Exclude functions with this file-level user tag"
+            },
             "min_features": {"description": "Minimum BSim feature count", "example": 5},
             "min_cohesion": {
                 "description": "Minimum cluster cohesion score (0.0–1.0). Clusters below this threshold are excluded from the response.",
@@ -795,19 +818,43 @@ class SimilaritySearch(Resource):
             "exclude_tag": {"description": "Exclude pairs with this tag"},
             "exclude_static_tag": {"description": "Exclude pairs with this static tag"},
             "exclude_user_tag": {"description": "Exclude pairs with this user tag"},
-            "exclude_sim_tag": {"description": "Exclude pairs with this similarity-level tag"},
-            "exclude_sim_static_tag": {"description": "Exclude pairs with this similarity-level static tag"},
-            "exclude_sim_user_tag": {"description": "Exclude pairs with this similarity-level user tag"},
-            "exclude_func_tag": {"description": "Exclude pairs with this function-level tag"},
-            "exclude_func_static_tag": {"description": "Exclude pairs with this function-level static tag"},
-            "exclude_func_user_tag": {"description": "Exclude pairs with this function-level user tag"},
-            "exclude_file_tag": {"description": "Exclude pairs with this file-level tag"},
-            "exclude_file_static_tag": {"description": "Exclude pairs with this file-level static tag"},
-            "exclude_file_user_tag": {"description": "Exclude pairs with this file-level user tag"},
-            "language": {"description": "Filter by language ID", "example": "x86:LE:64:default"},
+            "exclude_sim_tag": {
+                "description": "Exclude pairs with this similarity-level tag"
+            },
+            "exclude_sim_static_tag": {
+                "description": "Exclude pairs with this similarity-level static tag"
+            },
+            "exclude_sim_user_tag": {
+                "description": "Exclude pairs with this similarity-level user tag"
+            },
+            "exclude_func_tag": {
+                "description": "Exclude pairs with this function-level tag"
+            },
+            "exclude_func_static_tag": {
+                "description": "Exclude pairs with this function-level static tag"
+            },
+            "exclude_func_user_tag": {
+                "description": "Exclude pairs with this function-level user tag"
+            },
+            "exclude_file_tag": {
+                "description": "Exclude pairs with this file-level tag"
+            },
+            "exclude_file_static_tag": {
+                "description": "Exclude pairs with this file-level static tag"
+            },
+            "exclude_file_user_tag": {
+                "description": "Exclude pairs with this file-level user tag"
+            },
+            "language": {
+                "description": "Filter by language ID",
+                "example": "x86:LE:64:default",
+            },
             "namespace": {"description": "Filter by namespace", "example": "std"},
             "ret_type": {"description": "Filter by return type", "example": "int"},
-            "address": {"description": "Filter by entrypoint address", "example": "0x401000"},
+            "address": {
+                "description": "Filter by entrypoint address",
+                "example": "0x401000",
+            },
             "cross_binary": {
                 "description": "Only cross-binary pairs: true or false",
                 "example": "true",
@@ -1547,6 +1594,7 @@ class BinSimRebuild(Resource):
 
         return rebuild_bin_sim()
 
+
 @ns_bin_sim.route("/clear")
 class BinSimClear(Resource):
     @ns_bin_sim.expect(bin_sim_clear_model)
@@ -1596,23 +1644,44 @@ class BinSimList(Resource):
 class BinSimSearch(Resource):
     @ns_bin_sim.doc(
         params={
-            "collection": {"description": "Collection name", "required": True, "example": "main"},
-            "algo": {"description": "Algorithm (default: unweighted_cosine)", "default": "unweighted_cosine"},
+            "collection": {
+                "description": "Collection name",
+                "required": True,
+                "example": "main",
+            },
+            "algo": {
+                "description": "Algorithm (default: unweighted_cosine)",
+                "default": "unweighted_cosine",
+            },
             "q": {"description": "Keyword search (MD5, file names)", "example": "libc"},
             "md5": {"description": "Filter pairs involving this MD5 (either side)"},
             "md5_a": {"description": "Filter by exact md5_a"},
             "md5_b": {"description": "Filter by exact md5_b"},
-            "file_name": {"description": "Filter by file name substring (either side)", "example": "libc"},
-            "file_tag": {"description": "Filter by file tag (either side)", "example": "malware"},
-            "min_score": {"description": "Minimum score (collection-weighted)", "example": 0.5},
+            "file_name": {
+                "description": "Filter by file name substring (either side)",
+                "example": "libc",
+            },
+            "file_tag": {
+                "description": "Filter by file tag (either side)",
+                "example": "malware",
+            },
+            "min_score": {
+                "description": "Minimum score (collection-weighted)",
+                "example": 0.5,
+            },
             "max_score": {"description": "Maximum score", "example": 1.0},
-            "min_coverage_a": {"description": "Minimum coverage for binary A", "example": 0.5},
+            "min_coverage_a": {
+                "description": "Minimum coverage for binary A",
+                "example": 0.5,
+            },
             "max_coverage_a": {"description": "Maximum coverage for binary A"},
             "min_coverage_b": {"description": "Minimum coverage for binary B"},
             "max_coverage_b": {"description": "Maximum coverage for binary B"},
             "min_shared": {"description": "Minimum shared clusters", "example": 5},
             "max_shared": {"description": "Maximum shared clusters"},
-            "sort_by": {"description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"},
+            "sort_by": {
+                "description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"
+            },
             "sort_order": {"description": "Sort direction: desc (default) or asc"},
             "offset": {"description": "Pagination offset", "default": 0},
             "limit": {"description": "Results per page", "default": 50},
@@ -1642,10 +1711,15 @@ class BinSimUmap(Resource):
 
 @ns_bin_sim.route("/reindex")
 class BinSimReindex(Resource):
-    @ns_bin_sim.expect(api.model("BinSimReindex", {
-        "collection": fields.String(default="main"),
-        "algo": fields.String(default="unweighted_cosine"),
-    }))
+    @ns_bin_sim.expect(
+        api.model(
+            "BinSimReindex",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+            },
+        )
+    )
     def post(self):
         """Rebuilds secondary indexes for all existing binary similarity pairs (backfill)."""
         from bsimvis.app.routes.bin_sim import reindex_bin_sim

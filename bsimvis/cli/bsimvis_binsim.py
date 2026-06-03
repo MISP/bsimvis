@@ -72,11 +72,17 @@ def run_binsim(host, port, args):
             print(f"{'Binary MD5':<35} | {'Score':<10} | {'Shared Clusters'}")
             print("-" * 75)
             for res in results:
-                other_md5 = res.get("md5_b") if res.get("md5_a") == args.md5 else res.get("md5_a")
-                print(f"{other_md5:<35} | {res.get('score_collection_weighted', 0.0):.4f}     | {res.get('shared_clusters')}")
+                other_md5 = (
+                    res.get("md5_b")
+                    if res.get("md5_a") == args.md5
+                    else res.get("md5_a")
+                )
+                print(
+                    f"{other_md5:<35} | {res.get('score_collection_weighted', 0.0):.4f}     | {res.get('shared_clusters')}"
+                )
         except Exception as e:
             print(f"[!] Error fetching similar binaries: {e}")
-            
+
     elif args.action == "diff":
         params = {
             "collection": coll,

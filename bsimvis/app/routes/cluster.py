@@ -11,17 +11,25 @@ def build_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2))
+    min_cluster_size = data.get(
+        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+    )
 
     payload = {
         "collection": collection,
         "algo": algo,
         "min_cluster_size": min_cluster_size,
-        "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
+        "min_samples": data.get(
+            "min_samples", config_service.get("clustering.min_samples", 1)
+        ),
         "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-        "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
+        "selection_method": data.get(
+            "selection_method", config_service.get("clustering.selection_method", "eom")
+        ),
         "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-        "min_features": data.get("min_features", config_service.get("clustering.min_features", 0)),
+        "min_features": data.get(
+            "min_features", config_service.get("clustering.min_features", 0)
+        ),
     }
 
     job_id = job_service.create_job(JobType.CLUSTER_FUNCTIONS, payload)
@@ -33,7 +41,9 @@ def rebuild_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2))
+    min_cluster_size = data.get(
+        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+    )
 
     tasks = [
         (
@@ -49,11 +59,22 @@ def rebuild_cluster():
                 "collection": collection,
                 "algo": algo,
                 "min_cluster_size": min_cluster_size,
-                "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
-                "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-                "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
-                "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-                "min_features": data.get("min_features", config_service.get("clustering.min_features", 0)),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_features": data.get(
+                    "min_features", config_service.get("clustering.min_features", 0)
+                ),
             },
         ),
     ]
@@ -77,12 +98,26 @@ def rebuild_all_pipeline():
             {
                 "collection": collection,
                 "algo": algo,
-                "min_cluster_size": data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2)),
-                "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
-                "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-                "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
-                "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-                "min_features": data.get("min_features", config_service.get("clustering.min_features", 0)),
+                "min_cluster_size": data.get(
+                    "min_cluster_size",
+                    config_service.get("clustering.min_cluster_size", 2),
+                ),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_features": data.get(
+                    "min_features", config_service.get("clustering.min_features", 0)
+                ),
             },
         ),
         (
@@ -98,11 +133,23 @@ def rebuild_all_pipeline():
             {
                 "collection": collection,
                 "algo": algo,
-                "min_cluster_size": data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2)),
-                "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
-                "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-                "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
-                "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
+                "min_cluster_size": data.get(
+                    "min_cluster_size",
+                    config_service.get("clustering.min_cluster_size", 2),
+                ),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
             },
         ),
     ]
@@ -197,6 +244,7 @@ def list_clusters():
     parent_to_children = {}
     if links_raw:
         import json
+
         try:
             links = json.loads(links_raw)
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
@@ -221,6 +269,7 @@ def list_clusters():
             m = meta[0] if isinstance(meta, list) else meta
             if isinstance(m, str):
                 import json
+
                 m = json.loads(m)
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
@@ -534,5 +583,3 @@ def get_cluster_functions():
         "collection": collection,
         "cluster_uuid": cluster_uuid,
     }
-
-

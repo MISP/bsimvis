@@ -572,7 +572,7 @@ class GhidraService:
             return
 
         logging.info(f"Applying Profile: {profile_name}")
-        
+
         tx_id = program.startTransaction(f"Apply Profile: {profile_name}")
         try:
             options = program.getOptions("Analyzers")
@@ -645,7 +645,10 @@ class GhidraService:
             files = root_folder.getFiles()
             for file in files:
                 from ghidra.util.task import ConsoleTaskMonitor
-                program = file.getDomainObject(project, True, False, ConsoleTaskMonitor())
+
+                program = file.getDomainObject(
+                    project, True, False, ConsoleTaskMonitor()
+                )
                 try:
                     self.run_profile_analysis(
                         program, options.get("profile", "fast"), force_reanalysis=False

@@ -219,7 +219,9 @@ def job_status(job_id, watch, logs):
                     if match:
                         ts = int(match.group(1))
                         msg = match.group(2)
-                        date_str = datetime.datetime.fromtimestamp(ts / 1000.0).strftime('%Y-%m-%d %H:%M:%S')
+                        date_str = datetime.datetime.fromtimestamp(
+                            ts / 1000.0
+                        ).strftime("%Y-%m-%d %H:%M:%S")
                         print(f"  [{date_str}] {msg}")
                     else:
                         print(f"  {log}")

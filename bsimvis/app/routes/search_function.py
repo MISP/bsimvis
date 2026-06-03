@@ -266,7 +266,6 @@ def search_functions():
                     if paths:
                         filter_configs.append((val, target_field, paths))
 
-
     # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
     # The existing code had some manual additions for unions, keeping them for now if not redundant.
     # Actually, the logic below handles tag lists which are distinct from single request.args.get()
@@ -559,10 +558,7 @@ def search_functions():
                 meta[field] = parse_timestamp(meta[field])
 
         # Cluster references — plain list of UUIDs (metadata is in top-level map)
-        clusters = [
-            cid for cid in scores
-            if cid in cluster_meta_map
-        ]
+        clusters = [cid for cid in scores if cid in cluster_meta_map]
         meta["clusters"] = clusters
 
         # Cleanup

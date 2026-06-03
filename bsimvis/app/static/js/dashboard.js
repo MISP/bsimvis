@@ -478,12 +478,19 @@ async function refreshData(appendArg = false, force = false) {
             if (html) tbody.insertAdjacentHTML('beforeend', html);
         }
 
+        let count = items.length;
+        if (hashPath === '#jobs') {
+            const jobIds = new Set(items.map(item => item.id));
+            count = items.filter(item => !item.parent_id || !jobIds.has(item.parent_id)).length;
+        }
+
         if (append) {
-            currentOffset += (items.length || 0);
+            currentOffset += count;
         } else {
-            currentOffset = (items.length || 0);
+            currentOffset = count;
         }
         isEndOfResults = currentOffset >= total;
+
 
         // Update total display with "Shown / Total" format
         if (totalEl) {
@@ -684,67 +691,76 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
 
-    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity') {
-        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : (path === '#binary-similarity' ? 'applyBinSimSearch' : (path === '#bin-clusters' ? 'applyBinClusterSearch' : 'applyClusterSearch')))));
+    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity' || path === '#jobs') {
+        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : (path === '#binary-similarity' ? 'applyBinSimSearch' : (path === '#bin-clusters' ? 'applyBinClusterSearch' : (path === '#clusters' ? 'applyClusterSearch' : 'applyJobSearch'))))));
 
         let settingsHtml = '';
-        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity') {
+        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity' || path === '#jobs') {
             settingsEl.style.display = 'flex';
-            const viewMode = params.get('view') || 'table';
-            const poolLimit = params.get('pool_limit') || '1000000';
-            const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+            
+            if (path === '#jobs') {
+                settingsHtml += `
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="job-auto-refresh" ${localStorage.getItem('jobAutoRefresh') !== 'false' ? 'checked' : ''} onchange="localStorage.setItem('jobAutoRefresh', this.checked)" style="cursor:pointer; vertical-align:middle;">
+                        <label for="job-auto-refresh" style="font-size:0.75rem; color:var(--text); cursor:pointer; font-weight:bold;">Auto-Refresh</label>
+                    </div>`;
+            } else {
+                const viewMode = params.get('view') || 'table';
+                const poolLimit = params.get('pool_limit') || '1000000';
+                const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
 
-            if (path === '#function-similarity') {
-                settingsHtml += `
-                    <div class="view-toggle">
-                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
-                        <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
-                    </div>`;
-            } else if (path === '#binary-similarity') {
-                settingsHtml += `
-                    <div class="view-toggle">
-                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinSimView('table')">Table</button>
-                        <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchBinSimView('graph')">Graph</button>
-                        <button class="view-btn ${viewMode === 'density' ? 'active' : ''}" onclick="switchBinSimView('density')">Density</button>
-                    </div>`;
-            } else if (path === '#clusters') {
-                settingsHtml += `
-                    <div class="view-toggle">
-                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
-                        <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
-                        <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
-                    </div>`;
-            } else if (path === '#bin-clusters') {
-                settingsHtml += `
-                    <div class="view-toggle">
-                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinClusterView('table')">Table</button>
-                        <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchBinClusterView('hierarchy')">Graph</button>
-                        <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchBinClusterView('packing')">Packing</button>
-                    </div>`;
-            }
+                if (path === '#function-similarity') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
+                        </div>`;
+                } else if (path === '#binary-similarity') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinSimView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchBinSimView('graph')">Graph</button>
+                            <button class="view-btn ${viewMode === 'density' ? 'active' : ''}" onclick="switchBinSimView('density')">Density</button>
+                        </div>`;
+                } else if (path === '#clusters') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
+                            <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
+                        </div>`;
+                } else if (path === '#bin-clusters') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinClusterView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchBinClusterView('hierarchy')">Graph</button>
+                            <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchBinClusterView('packing')">Packing</button>
+                        </div>`;
+                }
 
-            if (path === '#function-similarity' || path === '#functions') {
+                if (path === '#function-similarity' || path === '#functions') {
+                    settingsHtml += `
+                        <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
+                        <div style="position:relative; display:inline-flex; align-items:center;">
+                            <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
+                                title="Max candidates to score / filter" 
+                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                                onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
+                            <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
+                        </div>`;
+                }
+
                 settingsHtml += `
-                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
+                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
                     <div style="position:relative; display:inline-flex; align-items:center;">
-                        <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
-                            title="Max candidates to score / filter" 
-                            style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                        <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
+                            title="Max results to display (Output Limit)" 
+                            style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                             onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                        <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
-                    </div>`;
+                        <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
+                    </div>
+                `;
             }
-
-            settingsHtml += `
-                <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
-                <div style="position:relative; display:inline-flex; align-items:center;">
-                    <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
-                        title="Max results to display (Output Limit)" 
-                        style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                        onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                    <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
-                </div>
-            `;
             settingsEl.innerHTML = settingsHtml;
         } else {
             settingsEl.style.display = 'none';
@@ -1006,6 +1022,61 @@ function updateUI(path, params, route) {
         </tr>`;
         thead.innerHTML = headHtml;
     }
+    if (path === '#jobs') {
+        const p = new URLSearchParams(params);
+        if (dataTable) dataTable.style.tableLayout = 'fixed';
+        if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
+
+        const statuses = ['', 'pending', 'running', 'completed', 'failed', 'cancelled'];
+        const statusOptions = statuses.map(s => {
+            const label = s ? s.toUpperCase() : 'All Statuses';
+            return `<option value="${s}" ${p.get('status') === s ? 'selected' : ''}>${label}</option>`;
+        }).join('');
+
+        const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
+        const typeOptions = types.map(t => {
+            const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types';
+            return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`;
+        }).join('');
+
+        headHtml += `<tr class="filter-row">
+            <th></th>
+            <th>
+                <select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                    ${typeOptions}
+                </select>
+            </th>
+            <th>
+                <select id="job-collection-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                    <option value="">All Collections</option>
+                </select>
+            </th>
+            <th></th>
+            <th>
+                <select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                    ${statusOptions}
+                </select>
+            </th>
+            <th></th>
+            <th></th>
+            <th></th>
+        </tr>`;
+        thead.innerHTML = headHtml;
+
+        fetch('/api/collection/search')
+            .then(res => res.json())
+            .then(data => {
+                const collections = data.collections || (Array.isArray(data) ? data : []);
+                const select = document.getElementById('job-collection-filter');
+                if (select) {
+                    const currentVal = p.get('collection') || '';
+                    select.innerHTML = `<option value="">All Collections</option>` + collections.map(c => 
+                        `<option value="${c.name}" ${currentVal === c.name ? 'selected' : ''}>${c.name}</option>`
+                    ).join('');
+                }
+            })
+            .catch(err => console.error('Error fetching collections for jobs filter:', err));
+    }
 
     if (path === '#binary-similarity') {
         const p = new URLSearchParams(params);
@@ -1239,7 +1310,7 @@ function updateUI(path, params, route) {
                 </div>
             </div>
         </div>`;
-    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global' && path !== '#clusters' && path !== '#function-similarity' && path !== '#binary-similarity') {
+    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global' && path !== '#clusters' && path !== '#bin-clusters' && path !== '#function-similarity' && path !== '#binary-similarity') {
         searchArea.innerHTML = '';
     }
 
@@ -1615,6 +1686,26 @@ function applyAdvancedFileSearch() {
     isEndOfResults = false;
     window.location.hash = `${hashPath}?${params.toString()}`;
 }
+
+function applyJobSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+
+    const collectionVal = document.getElementById('job-collection-filter')?.value;
+    const statusVal = document.getElementById('job-status-filter')?.value;
+    const typeVal = document.getElementById('job-type-filter')?.value;
+
+    if (collectionVal) params.set('collection', collectionVal); else params.delete('collection');
+    if (statusVal) params.set('status', statusVal); else params.delete('status');
+    if (typeVal) params.set('type', typeVal); else params.delete('type');
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    window.location.hash = `${hashPath}?${params.toString()}`;
+}
+window.applyJobSearch = applyJobSearch;
+
 
 function triggerTagSearch() {
     if (window.location.hash.startsWith('#function-similarity')) debouncedSearch(applySimSearch);

@@ -25,6 +25,8 @@ class JobType(Enum):
     SYNC_MILVUS = "sync_milvus"
     CLUSTER_FUNCTIONS = "cluster_functions"
     CLEAR_CLUSTER = "clear_cluster"
+    CLUSTER_BINARIES = "cluster_binaries"
+    CLEAR_BIN_CLUSTER = "clear_bin_cluster"
     BUILD_BIN_SIM = "build_bin_sim"
     CLEAR_BIN_SIM = "clear_bin_sim"
     REINDEX_BIN_SIM = "reindex_bin_sim"

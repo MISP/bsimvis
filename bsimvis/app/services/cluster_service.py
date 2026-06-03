@@ -27,18 +27,32 @@ class ClusterService:
         self,
         collection,
         algo="unweighted_cosine",
-        min_cluster_size=2,
-        min_samples=1,
-        cluster_selection_epsilon=0.0,
-        selection_method="eom",
-        min_sim=0.0,
-        min_features=0,
+        min_cluster_size=None,
+        min_samples=None,
+        cluster_selection_epsilon=None,
+        selection_method=None,
+        min_sim=None,
+        min_features=None,
         job_service=None,
         job_id=None,
     ):
         """
         Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
         """
+        from bsimvis.app.services.config_service import config_service
+
+        if min_cluster_size is None:
+            min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
+        if min_samples is None:
+            min_samples = config_service.get("clustering.min_samples", 1)
+        if cluster_selection_epsilon is None:
+            cluster_selection_epsilon = config_service.get("clustering.epsilon", 0.1)
+        if selection_method is None:
+            selection_method = config_service.get("clustering.selection_method", "eom")
+        if min_sim is None:
+            min_sim = config_service.get("clustering.min_sim", 0.0)
+        if min_features is None:
+            min_features = config_service.get("clustering.min_features", 0)
         if hdbscan is None:
             logging.error(
                 "hdbscan library not installed. Please install it to use clustering."
@@ -220,8 +234,58 @@ class ClusterService:
         # Stability and per-point strengths will be calculated after extracting members
         pass
 
+        # Pruning tree based on cluster_selection_epsilon (if > 0)
+        pruned_clusters = set()
+        if cluster_selection_epsilon and cluster_selection_epsilon > 0.0:
+            lambda_threshold = 1.0 / cluster_selection_epsilon
+            for c, b_lambda in birth_lambdas.items():
+                if b_lambda > lambda_threshold:
+                    pruned_clusters.add(c)
+
+        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+
+        def get_nearest_non_pruned_ancestor(node):
+            curr = node
+            while curr in child_to_parent:
+                p = child_to_parent[curr]
+                if p not in pruned_clusters:
+                    return p
+                curr = p
+            return None
+
+        # Build a pruned tree DataFrame
+        if pruned_clusters:
+            pruned_rows = []
+            for _, row in tree_df.iterrows():
+                parent = int(row["parent"])
+                child = int(row["child"])
+                child_size = int(row["child_size"])
+                lambda_val = float(row["lambda_val"])
+
+                if parent in pruned_clusters:
+                    ancestor = get_nearest_non_pruned_ancestor(parent)
+                    if ancestor is not None:
+                        parent = ancestor
+                    else:
+                        continue  # Skip if no ancestor
+
+                if child_size > 1:
+                    if child in pruned_clusters:
+                        continue
+
+                pruned_rows.append(
+                    {
+                        "parent": parent,
+                        "child": child,
+                        "lambda_val": lambda_val,
+                        "child_size": child_size,
+                    }
+                )
+            import pandas as pd
+
+            tree_df = pd.DataFrame(pruned_rows)
+
         # 4. Extract Condensed Tree for UI and Hierarchical Storage
-        tree_df = clusterer.condensed_tree_.to_pandas()
         tree_json = tree_df.to_json(orient="records")
         tree_key = f"{collection}:cluster:tree:{algo}"
         r.set(tree_key, tree_json)

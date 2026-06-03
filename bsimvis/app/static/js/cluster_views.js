@@ -476,7 +476,7 @@ class ClusterHierarchy {
         const nodeWidth = 240;
         const nodeHeight = 35;
 
-        const treeLayout = d3.tree().nodeSize([nodeHeight, nodeWidth]);
+        const treeLayout = d3.cluster().nodeSize([nodeHeight, nodeWidth]);
         treeLayout(this.root);
 
         const nodes = this.root.descendants();
@@ -519,8 +519,7 @@ class ClusterHierarchy {
             .attr("r", 8)
             .attr("stroke", d => getCohesionColor(d.data.cohesion))
             .attr("stroke-width", 2)
-            .style("fill", d => d._children ? getCohesionColor(d.data.cohesion) : "#1a1a1a")
-            .style("filter", d => d.data.stability > 0.8 ? `drop-shadow(0 0 10px ${getCohesionColor(d.data.cohesion)})` : "none");
+            .style("fill", d => getCohesionColor(d.data.cohesion));
 
         nodeEnter.append("text")
             .attr("dy", ".35em")
@@ -534,22 +533,13 @@ class ClusterHierarchy {
             .attr("stroke", "#000")
             .attr("stroke-width", 3);
 
-        nodeEnter.append("text")
-            .attr("dy", "1.5em")
-            .attr("x", d => d.children || d._children ? -15 : 15)
-            .attr("text-anchor", d => d.children || d._children ? "end" : "start")
-            .style("fill", "#75715e")
-            .style("font-size", "10px")
-            .style("pointer-events", "none")
-            .text(d => d.data.snippet ? `« ${d.data.snippet} »` : "");
-
         const nodeUpdate = nodeEnter.merge(node);
 
         nodeUpdate.transition().duration(400)
             .attr("transform", d => `translate(${d.y},${d.x})`);
 
         nodeUpdate.select("circle")
-            .style("fill", d => d._children ? getCohesionColor(d.data.cohesion) : "#1a1a1a")
+            .style("fill", d => getCohesionColor(d.data.cohesion))
             .attr("stroke", d => getCohesionColor(d.data.cohesion));
 
         const nodeExit = node.exit().transition().duration(400)
@@ -570,7 +560,7 @@ class ClusterHierarchy {
             });
 
         link.merge(linkEnter).transition().duration(400)
-            .attr("stroke", d => d.target.data.stability > 0.5 ? "rgba(255,171,46,0.3)" : "#333")
+            .attr("stroke", "#333")
             .attr("d", d => diagonal(d.source, d.target));
 
         link.exit().transition().duration(400)
@@ -581,10 +571,9 @@ class ClusterHierarchy {
             .remove();
 
         function diagonal(s, t) {
-            return `M ${s.y} ${s.x}
-                    C ${(s.y + t.y) / 2} ${s.x},
-                      ${(s.y + t.y) / 2} ${t.x},
-                      ${t.y} ${t.x}`;
+            return d3.linkHorizontal()
+                .x(d => d.y)
+                .y(d => d.x)({ source: s, target: t });
         }
     }
 

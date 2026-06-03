@@ -192,12 +192,13 @@ const routes = {
         title: 'Files',
         api: '/api/file/search',
         headers: [
-            { label: 'Filename', width: '25%' },
+            { label: 'Filename', width: '20%' },
             { label: 'MD5 / Arch', width: '15%' },
-            { label: 'Batch UUID', width: '15%' },
-            { label: 'Funcs', width: '15%', sort: 'function_count' },
-            { label: 'Entry Date', width: '12%', sort: 'entry_date' },
-            { label: 'Tags', width: '18%' }
+            { label: 'Batch UUID', width: '12%' },
+            { label: 'Funcs', width: '12%', sort: 'function_count' },
+            { label: 'Clusters', width: '15%' },
+            { label: 'Entry Date', width: '10%', sort: 'entry_date' },
+            { label: 'Tags', width: '16%' }
         ],
         renderer: renderFiles
     },
@@ -286,6 +287,20 @@ const routes = {
             { label: 'Tags', width: '20%' },
         ],
         renderer: renderBinSimPairs
+    },
+    '#bin-clusters': {
+        title: 'Binary Clusters',
+        api: '/api/bin_cluster/list',
+        headers: [
+            { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
+            { label: 'Name', sort: 'cluster_name', width: '25%' },
+            { label: 'Binaries', sort: 'count', width: '8%' },
+            { label: 'Stability', sort: 'stability', width: '8%' },
+            { label: 'Cohesion', sort: 'cohesion', width: '8%' },
+            { label: 'Created', width: '15%' },
+            { label: 'Actions', width: '18%' }
+        ],
+        renderer: renderBinClusters
     },
     '#file-call-graph': {
         title: 'File Call Graph',
@@ -452,7 +467,13 @@ async function refreshData(appendArg = false, force = false) {
             tbody.innerHTML = '<tr><td colspan="100" style="text-align:center; padding:40px;">No data found</td></tr>';
         } else {
             // Pass clusters map for views that use it
-            const clustersMap = (hashPath === '#functions' || hashPath === '#function-similarity') ? (data.clusters || {}) : undefined;
+            let clustersMap = undefined;
+            if (hashPath === '#functions' || hashPath === '#function-similarity') {
+                clustersMap = data.clusters || {};
+            } else if (hashPath === '#files') {
+                clustersMap = data.bin_clusters || {};
+            }
+
             const html = clustersMap !== undefined ? route.renderer(items, clustersMap) : route.renderer(items);
             if (html) tbody.insertAdjacentHTML('beforeend', html);
         }
@@ -586,6 +607,7 @@ function updateUI(path, params, route) {
         updateNavLink('nav-features-global', '#features-global');
         updateNavLink('nav-function-similarity', '#function-similarity');
         updateNavLink('nav-clusters', '#clusters');
+        updateNavLink('nav-bin-clusters', '#bin-clusters');
         updateNavLink('nav-binary-similarity', '#binary-similarity');
         updateNavLink('nav-chord-map', '#chord-map');
         updateNavLink('nav-jobs', '#jobs');
@@ -662,11 +684,11 @@ function updateUI(path, params, route) {
     document.getElementById('hierarchy-view-container').style.display = 'none';
     if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
 
-    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global' || path === '#binary-similarity') {
-        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : (path === '#binary-similarity' ? 'applyBinSimSearch' : 'applyClusterSearch'))));
+    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity') {
+        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : (path === '#binary-similarity' ? 'applyBinSimSearch' : (path === '#bin-clusters' ? 'applyBinClusterSearch' : 'applyClusterSearch')))));
 
         let settingsHtml = '';
-        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global' || path === '#binary-similarity') {
+        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity') {
             settingsEl.style.display = 'flex';
             const viewMode = params.get('view') || 'table';
             const poolLimit = params.get('pool_limit') || '1000000';
@@ -691,6 +713,13 @@ function updateUI(path, params, route) {
                         <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
                         <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
                         <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
+                    </div>`;
+            } else if (path === '#bin-clusters') {
+                settingsHtml += `
+                    <div class="view-toggle">
+                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinClusterView('table')">Table</button>
+                        <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchBinClusterView('hierarchy')">Graph</button>
+                        <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchBinClusterView('packing')">Packing</button>
                     </div>`;
             }
 
@@ -1062,6 +1091,70 @@ function updateUI(path, params, route) {
             hview.style.display = 'none';
             if (pview) pview.style.display = 'none';
         }
+    }
+    if (path === '#bin-clusters') {
+        const p = new URLSearchParams(params);
+        const viewMode = p.get('view') || 'table';
+        if (dataTable) dataTable.style.tableLayout = 'fixed';
+        if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
+        headHtml += `<tr class="filter-row">
+            <th>
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    <input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                </div>
+            </th>
+            <th>
+                <input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+            </th>
+            <th>
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <input type="number" id="flt-bin-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;">
+                    <input type="number" id="flt-bin-cluster-max-count" value="${p.get('max_count') || ''}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;">
+                </div>
+            </th>
+            <th><input type="number" id="flt-bin-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+            <th>
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <input type="number" id="flt-bin-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;">
+                    <input type="number" id="flt-bin-cluster-max-cohesion" value="${p.get('max_cohesion') || ''}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;">
+                </div>
+            </th>
+            <th></th>
+            <th><button onclick="applyBinClusterSearch()" style="width:100%; padding:2px; font-size:0.65rem; cursor:pointer">Search</button></th>
+        </tr>`;
+        thead.innerHTML = headHtml;
+
+        const tableWrap = document.getElementById('table-wrap');
+        const tableBodyWrap = document.getElementById('table-body-wrap');
+        const hview = document.getElementById('hierarchy-view-container');
+        const pview = document.getElementById('packing-view-container');
+        const pag = document.getElementById('pagination-container');
+
+        if (viewMode === 'hierarchy') {
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = 'none';
+            if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+            pag.style.display = 'none';
+            hview.style.display = 'flex';
+            if (pview) pview.style.display = 'none';
+            loadBinHierarchyView(params);
+        } else if (viewMode === 'packing') {
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = 'none';
+            if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+            pag.style.display = 'none';
+            hview.style.display = 'none';
+            if (pview) pview.style.display = 'flex';
+            loadBinPackingView(params);
+        } else {
+            tableWrap.style.display = 'flex';
+            tableWrap.style.flex = '1';
+            if (tableBodyWrap) tableBodyWrap.style.display = '';
+            pag.style.display = 'block';
+            hview.style.display = 'none';
+            if (pview) pview.style.display = 'none';
+        }
     } else if (path === '#file-call-graph') {
         const tableWrap = document.getElementById('table-wrap');
         const tableBodyWrap = document.getElementById('table-body-wrap');
@@ -1126,6 +1219,14 @@ function updateUI(path, params, route) {
             <div class="search-input-wrapper">
                 <input type="text" id="cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)">
                 <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i>
+            </div>
+        </div>`;
+    } else if (path === '#bin-clusters' && !document.getElementById('bin-cluster-search-input')) {
+        const p = new URLSearchParams(params);
+        searchArea.innerHTML = `<div class="filter-bar">
+            <div class="search-input-wrapper">
+                <input type="text" id="bin-cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)">
+                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinClusterSearch()" title="Search"></i>
             </div>
         </div>`;
     } else if (path === '#binary-similarity') {
@@ -1695,7 +1796,7 @@ function renderBatches(data) {
     `}).join('');
 }
 
-function renderFiles(data) {
+function renderFiles(data, clustersMap = {}) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const col = params.get('collection');
     return data.map(f => {
@@ -1737,7 +1838,11 @@ function renderFiles(data) {
                     </a>
                     <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" title="Call Graph" style="color: var(--accent);">
                         <i class="fa-solid fa-network-wired"></i>
-                    </a>                </div>
+                    </a>
+                </div>
+            </td>
+            <td class="cluster-cards-cell" data-clusters='${JSON.stringify((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean)).replace(/'/g, "&apos;")}'>
+                ${renderClusterCards((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean))}
             </td>
             <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
             <td>
@@ -2571,7 +2676,7 @@ function selectCollection(name) {
 }
 
 function updateNavVisibility(collection) {
-    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-file-call-graph', 'nav-binary-similarity', 'nav-chord-map'];
+    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-bin-clusters', 'nav-file-call-graph', 'nav-binary-similarity', 'nav-chord-map'];
     navItems.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = collection ? 'flex' : 'none';
@@ -2652,6 +2757,103 @@ function applyClusterSearch() {
     window.location.hash = `${hashPath}?${params.toString()}`;
 }
 
+function renderBinClusters(items) {
+    return items.map(c => `
+        <tr data-cluster-id="${c.cluster_id}">
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
+                ${(c.cluster_uuid || '').substring(0, 8)}
+                <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
+            </td>
+            <td>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span id="name-display-bin-${c.cluster_id}">${c.cluster_name}</span>
+                    <button class="btn-panel" style="padding: 2px 5px; font-size: 0.6rem;" onclick="renameBinCluster('${c.cluster_id}', '${c.cluster_name}')">✎</button>
+                </div>
+            </td>
+            <td style="font-weight:bold">${c.count.toLocaleString()}</td>
+            <td>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                        <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
+                    </div>
+                    <span class="dim">${(c.avg_stability).toFixed(2)}</span>
+                </div>
+            </td>
+            <td>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                        <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
+                    </div>
+                    <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
+                </div>
+            </td>
+            <td class="dim">${formatDate(c.created_at)}</td>
+            <td>
+                <div style="display:flex; gap:10px;">
+                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action">View Binaries →</a>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function applyBinClusterSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+
+    const globalQ = document.getElementById('bin-cluster-search-input')?.value;
+    params.set('q', globalQ || '');
+
+    const cid = document.getElementById('flt-bin-cluster-id')?.value;
+    const cuuid = document.getElementById('flt-bin-cluster-uuid')?.value;
+    const cname = document.getElementById('flt-bin-cluster-name')?.value;
+    const cstab = document.getElementById('flt-bin-cluster-min-stability')?.value;
+    const ccount = document.getElementById('flt-bin-cluster-min-count')?.value;
+    const ccountMax = document.getElementById('flt-bin-cluster-max-count')?.value;
+    const ccoh = document.getElementById('flt-bin-cluster-min-cohesion')?.value;
+    const ccohMax = document.getElementById('flt-bin-cluster-max-cohesion')?.value;
+
+    if (cid) params.set('cluster_id', cid); else params.delete('cluster_id');
+    if (cuuid) params.set('cluster_uuid', cuuid); else params.delete('cluster_uuid');
+    if (cname) params.set('cluster_name', cname); else params.delete('cluster_name');
+    if (cstab) params.set('min_stability', cstab); else params.delete('min_stability');
+    if (ccount) params.set('min_count', ccount); else params.delete('min_count');
+    if (ccountMax) params.set('max_count', ccountMax); else params.delete('max_count');
+    if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
+    if (ccohMax) params.set('max_cohesion', ccohMax); else params.delete('max_cohesion');
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    window.location.hash = `${hashPath}?${params.toString()}`;
+}
+
+async function renameBinCluster(clusterId, currentName) {
+    const newName = prompt(`Enter new name for binary cluster ${clusterId}:`, currentName);
+    if (!newName || newName === currentName) return;
+
+    const collection = getCollectionFromHash();
+    const algo = new URLSearchParams(window.location.hash.split('?')[1]).get('algo') || 'unweighted_cosine';
+
+    try {
+        const res = await fetch('/api/bin_cluster/meta', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection, algo, cluster_id: clusterId, cluster_name: newName })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            const el = document.getElementById(`name-display-bin-${clusterId}`);
+            if (el) el.innerText = newName;
+            showNotification(`Binary cluster renamed to ${newName}`, 'success');
+        } else {
+            showNotification(`Rename failed: ${data.error}`, 'error');
+        }
+    } catch (err) {
+        showNotification(`Error renaming binary cluster: ${err}`, 'error');
+    }
+}
+
 async function renameCluster(clusterId, currentName) {
     const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
     if (!newName || newName === currentName) return;
@@ -2685,6 +2887,12 @@ function switchClusterView(mode) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     params.set('view', mode);
     window.location.hash = `#clusters?${params.toString()}`;
+}
+
+function switchBinClusterView(mode) {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    params.set('view', mode);
+    window.location.hash = `#bin-clusters?${params.toString()}`;
 }
 
 function showTokenContextMenu(e) {
@@ -3305,6 +3513,7 @@ const viewMetaData = {
     '#features-global': { name: 'Features', icon: 'fa-fingerprint' },
     '#function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     '#clusters': { name: 'Clusters', icon: 'fa-bullseye' },
+    '#bin-clusters': { name: 'Bin Clusters', icon: 'fa-folder-tree' },
     '#file-call-graph': { name: 'Call Graph', icon: 'fa-sitemap' }
 };
 

@@ -72,7 +72,9 @@ def rebuild_bin_sim():
 
     pipeline_id = job_service.create_pipeline([
         (JobType.CLEAR_BIN_SIM.value, clear_payload),
+        (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo}),
         (JobType.BUILD_BIN_SIM.value, build_payload),
+        (JobType.CLUSTER_BINARIES.value, {"collection": collection, "algo": algo}),
     ])
     return {"status": "success", "pipeline_id": pipeline_id, "message": "Binary similarity rebuild pipeline enqueued"}
 

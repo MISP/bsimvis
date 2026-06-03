@@ -81,6 +81,18 @@ body.sidebar-collapsed nav h2 img {
     width: 44px;
 }
 
+body.sidebar-collapsed nav a {
+    justify-content: center;
+    padding: 12px 0;
+}
+
+body.sidebar-collapsed nav a i {
+    margin: 0;
+}
+
+body.sidebar-collapsed nav a span {
+    display: none;
+}
 
 nav h2 i {
     font-size: 1.3rem;
@@ -121,6 +133,47 @@ nav a.active {
     background: var(--card-bg);
     border-left-color: var(--accent);
     color: var(--accent);
+}
+
+.nav-section-title {
+    padding: 15px 20px 10px 20px;
+    color: var(--subtle);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+    border-top: 1px solid var(--border);
+    margin-top: 5px;
+}
+
+.nav-section-title:first-of-type {
+    border-top: none;
+}
+
+.nav-section-content {
+    display: flex;
+    flex-direction: column;
+}
+
+body.sidebar-collapsed .nav-section-title span {
+    display: none;
+}
+
+body.sidebar-collapsed .nav-section-title {
+    justify-content: center;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+    height: 1px; /* Mini line separator when collapsed */
+    overflow: hidden;
+    margin: 10px 15px; /* Center the line */
+}
+
+body.sidebar-collapsed .nav-section-title:first-of-type {
+    display: none; /* No separator at the very top */
 }
 
 .nav-rebuild-btn {

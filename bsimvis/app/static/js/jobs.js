@@ -328,6 +328,35 @@ async function refreshJobModal(jobId, isInitial = false) {
                 </div>
             `;
         }
+
+        // Build Payload Metadata HTML
+        let payloadHtml = '';
+        if (job.payload && Object.keys(job.payload).length > 0) {
+            payloadHtml = `
+                <div style="margin-top: 20px;">
+                    <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Job Parameters & Metadata</h4>
+                    <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
+            `;
+            
+            for (const [key, value] of Object.entries(job.payload)) {
+                let displayValue = value;
+                if (typeof value === 'object' && value !== null) {
+                    displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${JSON.stringify(value)}</code>`;
+                } else if (typeof value === 'string' && value.length > 30) {
+                    displayValue = `<code title="${value}" style="font-size: 0.75rem;">${value.substring(0, 12)}...${value.substring(value.length - 8)}</code>`;
+                } else {
+                    displayValue = `<code style="font-size: 0.85rem; color: #eee;">${value}</code>`;
+                }
+
+                payloadHtml += `
+                    <div>
+                        <div style="color: var(--dim); font-size: 0.65rem; text-transform: uppercase; margin-bottom: 2px; letter-spacing: 0.5px;">${key.replace(/_/g, ' ')}</div>
+                        <div style="word-break: break-all;">${displayValue}</div>
+                    </div>
+                `;
+            }
+            payloadHtml += '</div></div>';
+        }
         
         const modalBody = document.getElementById('job-modal-body');
         
@@ -347,6 +376,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                 </div>
             </div>
             ${errorHtml}
+            ${payloadHtml}
             ${subtasksHtml}
             ${logsHtml}
         `;

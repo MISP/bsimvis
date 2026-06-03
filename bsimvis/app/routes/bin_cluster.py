@@ -1,3 +1,4 @@
+import json
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
@@ -6,8 +7,8 @@ from bsimvis.app.services.config_service import config_service
 job_service = JobService()
 
 
-def build_cluster():
-    """Enqueues a clustering job."""
+def build_bin_cluster():
+    """Enqueues a binary clustering job."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
@@ -21,15 +22,14 @@ def build_cluster():
         "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
         "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
         "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-        "min_features": data.get("min_features", config_service.get("clustering.min_features", 0)),
     }
 
-    job_id = job_service.create_job(JobType.CLUSTER_FUNCTIONS, payload)
+    job_id = job_service.create_job(JobType.CLUSTER_BINARIES, payload)
     return {"job_id": job_id, "status": "enqueued"}
 
 
-def rebuild_cluster():
-    """Enqueues a clear + cluster pipeline."""
+def rebuild_bin_cluster():
+    """Enqueues a clear + cluster pipeline for binaries."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
@@ -37,14 +37,14 @@ def rebuild_cluster():
 
     tasks = [
         (
-            JobType.CLEAR_CLUSTER,
+            JobType.CLEAR_BIN_CLUSTER,
             {
                 "collection": collection,
                 "algo": algo,
             },
         ),
         (
-            JobType.CLUSTER_FUNCTIONS,
+            JobType.CLUSTER_BINARIES,
             {
                 "collection": collection,
                 "algo": algo,
@@ -53,7 +53,6 @@ def rebuild_cluster():
                 "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
                 "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
                 "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-                "min_features": data.get("min_features", config_service.get("clustering.min_features", 0)),
             },
         ),
     ]
@@ -62,70 +61,21 @@ def rebuild_cluster():
     return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
-def rebuild_all_pipeline():
-    """Enqueues a full re-analysis pipeline: clear clusters -> clear bin_sim -> cluster functions -> build bin_sim."""
-    data = request.json or {}
-    collection = data.get("collection", "main")
-    algo = data.get("algo", "unweighted_cosine")
-
-    tasks = [
-        (JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}),
-        (JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}),
-        (JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo}),
-        (
-            JobType.CLUSTER_FUNCTIONS,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cluster_size": data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2)),
-                "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
-                "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-                "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
-                "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-                "min_features": data.get("min_features", config_service.get("clustering.min_features", 0)),
-            },
-        ),
-        (
-            JobType.BUILD_BIN_SIM,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cohesion": data.get("min_cohesion", 0.5),
-            },
-        ),
-        (
-            JobType.CLUSTER_BINARIES,
-            {
-                "collection": collection,
-                "algo": algo,
-                "min_cluster_size": data.get("min_cluster_size", config_service.get("clustering.min_cluster_size", 2)),
-                "min_samples": data.get("min_samples", config_service.get("clustering.min_samples", 1)),
-                "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
-                "selection_method": data.get("selection_method", config_service.get("clustering.selection_method", "eom")),
-                "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
-            },
-        ),
-    ]
-
-    pipeline_id = job_service.create_pipeline(tasks)
-    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
-
-
-def clear_cluster():
-    """Enqueues a cluster clear job."""
+def clear_bin_cluster():
+    """Enqueues a binary cluster clear job."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
 
     job_id = job_service.create_job(
-        JobType.CLEAR_CLUSTER,
+        JobType.CLEAR_BIN_CLUSTER,
         {"collection": collection, "algo": algo},
     )
     return {"job_id": job_id, "status": "enqueued"}
 
 
-def list_clusters():
-    """Lists discovered clusters with metadata, filtering, and sorting."""
+def list_bin_clusters():
+    """Lists discovered binary clusters with metadata, filtering, and sorting."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
 
@@ -137,38 +87,33 @@ def list_clusters():
     cluster_name_q = request.args.get("cluster_name", "").lower()
 
     try:
-        min_stability = float(request.args.get("min_stability", 0))
-        max_stability = float(request.args.get("max_stability", 0))
-        min_count = int(request.args.get("min_count", 0))
-        max_count = int(request.args.get("max_count", 0))
-        min_features = float(request.args.get("min_features", 0))
-        max_features = float(request.args.get("max_features", 0))
-        min_cohesion = float(request.args.get("min_cohesion", 0))
-        max_cohesion = float(request.args.get("max_cohesion", 0))
+        min_stability = float(request.args.get("min_stability") or 0)
+        max_stability = float(request.args.get("max_stability") or 0)
+        min_count = int(request.args.get("min_count") or 0)
+        max_count = int(request.args.get("max_count") or 0)
+        min_cohesion = float(request.args.get("min_cohesion") or 0)
+        max_cohesion = float(request.args.get("max_cohesion") or 0)
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
-    sort_by = request.args.get(
-        "sort_by", "count"
-    )  # count, stability, features, cohesion
+    sort_by = request.args.get("sort_by", "count")  # count, stability, cohesion
     sort_order = request.args.get("sort_order", "desc").lower()
 
     r = get_redis()
 
-    cluster_list_key = f"{collection}:cluster:list:{algo}"
+    cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
     cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
 
     if cids_raw:
         all_meta_keys = [
-            f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+            f"{collection}:bin_cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
             for cid in cids_raw
         ]
     else:
-        # 1. Fallback to discover all cluster meta keys
-        pattern = f"{collection}:cluster:{algo}:*:meta"
+        pattern = f"{collection}:bin_cluster:{algo}:*:meta"
         cursor = 0
         while True:
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
@@ -178,25 +123,20 @@ def list_clusters():
             if cursor == 0:
                 break
 
-        # Populate the set for future fast lookups
         if all_meta_keys:
             cids_to_add = [
-                k[len(f"{collection}:cluster:{algo}:") : -len(":meta")]
+                k[len(f"{collection}:bin_cluster:{algo}:") : -len(":meta")]
                 for k in all_meta_keys
             ]
             if cids_to_add:
                 r.sadd(cluster_list_key, *cids_to_add)
 
-    # 2. Fetch all metadata
-    results = []
-
-    # Fetch tree links to provide parent information
-    links_key = f"{collection}:cluster:tree_links:{algo}"
+    # Fetch tree links for parent info
+    links_key = f"{collection}:bin_cluster:tree_links:{algo}"
     links_raw = r.get(links_key)
     child_to_parent = {}
     parent_to_children = {}
     if links_raw:
-        import json
         try:
             links = json.loads(links_raw)
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
@@ -208,6 +148,7 @@ def list_clusters():
         except Exception:
             pass
 
+    results = []
     if all_meta_keys:
         pipe = r.pipeline()
         for k in all_meta_keys:
@@ -220,7 +161,6 @@ def list_clusters():
                 continue
             m = meta[0] if isinstance(meta, list) else meta
             if isinstance(m, str):
-                import json
                 m = json.loads(m)
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
@@ -230,7 +170,6 @@ def list_clusters():
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
 
-            # Global keyword search
             if q:
                 keywords = [k for k in q.split() if k]
                 match = True
@@ -255,10 +194,6 @@ def list_clusters():
                 continue
             if max_count > 0 and m.get("member_count", 0) > max_count:
                 continue
-            if min_features > 0 and m.get("avg_features", 0) < min_features:
-                continue
-            if max_features > 0 and m.get("avg_features", 0) > max_features:
-                continue
             if min_cohesion > 0 and m.get("cohesion_score", 0) < min_cohesion:
                 continue
             if max_cohesion > 0 and m.get("cohesion_score", 0) > max_cohesion:
@@ -266,7 +201,6 @@ def list_clusters():
 
             valid_nodes.add(cid)
 
-        # Expand parents if requested
         if show_parents:
             expanded_nodes = set(valid_nodes)
             for node in valid_nodes:
@@ -276,7 +210,6 @@ def list_clusters():
                     expanded_nodes.add(curr)
             valid_nodes = expanded_nodes
 
-        # Expand children if requested
         if show_children:
             expanded_nodes = set(valid_nodes)
             queue = list(valid_nodes)
@@ -292,8 +225,6 @@ def list_clusters():
         for cid in valid_nodes:
             m = meta_map.get(cid)
             if not m:
-                if not show_parents and not show_children:
-                    continue
                 m = {"cluster_id": cid}
             results.append(
                 {
@@ -301,7 +232,6 @@ def list_clusters():
                     "cluster_uuid": m.get("cluster_uuid"),
                     "cluster_name": m.get("cluster_name"),
                     "avg_stability": m.get("avg_stability", 0.0),
-                    "avg_features": m.get("avg_features", 0),
                     "cohesion_score": m.get("cohesion_score", 0),
                     "count": m.get("member_count"),
                     "created_at": m.get("created_at"),
@@ -311,14 +241,12 @@ def list_clusters():
                 }
             )
 
-    # 3. Sorting
+    # Sorting
     reverse = sort_order == "desc"
     if sort_by == "stability":
         results.sort(key=lambda x: x["avg_stability"], reverse=reverse)
     elif sort_by == "count":
         results.sort(key=lambda x: x["count"], reverse=reverse)
-    elif sort_by == "features":
-        results.sort(key=lambda x: x.get("avg_features", 0), reverse=reverse)
     elif sort_by == "cohesion":
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
     else:
@@ -332,35 +260,31 @@ def list_clusters():
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
-
-        return export_to_csv(results, "clusters")
+        return export_to_csv(results, "bin_clusters")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
-
-        return export_to_json(response_data, "clusters")
+        return export_to_json(response_data, "bin_clusters")
     else:
         return response_data
 
 
-def get_cluster_tree():
-    """Returns the condensed tree for the clustering."""
+def get_bin_cluster_tree():
+    """Returns the condensed tree for binary clustering."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
 
     r = get_redis()
-    tree_key = f"{collection}:cluster:tree:{algo}"
+    tree_key = f"{collection}:bin_cluster:tree:{algo}"
     tree_data = r.get(tree_key)
 
     if not tree_data:
         return {"error": "No tree found"}, 404
 
-    import json
-
     return json.loads(tree_data)
 
 
-def update_cluster_meta():
-    """Updates metadata for a cluster (e.g. rename)."""
+def update_bin_cluster_meta():
+    """Updates metadata for a binary cluster (e.g. rename)."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
@@ -371,20 +295,19 @@ def update_cluster_meta():
         return {"error": "cluster_id and cluster_name required"}, 400
 
     r = get_redis()
-    meta_key = f"{collection}:cluster:{algo}:{cluster_id}:meta"
+    meta_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:meta"
 
     if not r.exists(meta_key):
         return {"error": "Cluster meta not found"}, 404
 
     r.json().set(meta_key, "$.cluster_name", cluster_name)
 
-    # Propagate name to all member functions for filtering
+    # Propagate name to all member files for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
-    members_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
+    members_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:members"
     members = r.smembers(members_key)
 
-    # Get old name to unindex
     old_meta = r.json().get(meta_key, "$")
     old_name = (
         old_meta[0].get("cluster_name")
@@ -396,17 +319,16 @@ def update_cluster_meta():
     for mid in members:
         mid_str = mid.decode() if isinstance(mid, bytes) else mid
         if old_name:
-            _unindex_tag(pipe, collection, "func", "cluster_name", old_name, mid_str)
-        _index_tag(pipe, collection, "func", "cluster_name", cluster_name, mid_str)
-        # Also update the function's metadata JSON for consistency
-        pipe.json().set(f"{mid_str}:meta", "$.cluster_name", cluster_name)
+            _unindex_tag(pipe, collection, "file", "bin_cluster_name", old_name, mid_str)
+        _index_tag(pipe, collection, "file", "bin_cluster_name", cluster_name, mid_str)
+        pipe.json().set(f"{mid_str}:meta", "$.bin_cluster_name", cluster_name)
     pipe.execute()
 
     return {"status": "success", "cluster_name": cluster_name}
 
 
-def list_cluster_members():
-    """Lists all function IDs in a specific cluster."""
+def list_bin_cluster_members():
+    """Lists all file IDs in a specific binary cluster."""
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
     cluster_id = request.args.get("cluster_id")
@@ -417,18 +339,15 @@ def list_cluster_members():
         return {"error": "cluster_id required"}, 400
 
     r = get_redis()
-    cluster_set_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
+    cluster_set_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:members"
 
     total = r.scard(cluster_set_key)
-    # Sets don't support offset/limit natively, so we fetch and slice or use SRANDMEMBER
-    # For a deterministic list, we'd need to sort, but let's just grab a chunk
     members_raw = r.smembers(cluster_set_key)
     members = [m.decode() if isinstance(m, bytes) else m for m in members_raw]
     members.sort()
 
     page = members[offset : offset + limit]
 
-    # Enrich with metadata if requested
     results = []
     pipe = r.pipeline()
     for mid in page:
@@ -442,8 +361,8 @@ def list_cluster_members():
     return {"cluster_id": cluster_id, "total": total, "results": results}
 
 
-def get_cluster_functions():
-    """Returns a quick sample of function metadata for a given cluster_uuid."""
+def get_bin_cluster_files():
+    """Returns a quick sample of file metadata for a given binary cluster_uuid."""
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
     algo = request.args.get("algo", "unweighted_cosine")
@@ -454,13 +373,11 @@ def get_cluster_functions():
     offset = request.args.get("offset", 0, type=int)
 
     r = get_redis()
-    # Resolve the cluster_uuid by reading the Redis index set directly
-    bucket_key = f"{collection}:idx:func:cluster_uuid:{cluster_uuid.lower()}"
+    bucket_key = f"{collection}:idx:file:bin_cluster_uuid:{cluster_uuid.lower()}"
     fids_raw = r.smembers(bucket_key)
 
-    # Fallback to scanning metadata if the index is not populated
     if not fids_raw:
-        pattern = f"{collection}:cluster:{algo}:*:meta"
+        pattern = f"{collection}:bin_cluster:{algo}:*:meta"
         cursor = 0
         matching_cluster_id = None
         while True:
@@ -472,8 +389,7 @@ def get_cluster_functions():
                 uuids = pipe.execute()
                 for k, u_res in zip(keys, uuids):
                     u = u_res[0] if isinstance(u_res, list) and u_res else u_res
-                    if isinstance(u, bytes):
-                        u = u.decode()
+                    if isinstance(u, bytes): u = u.decode()
                     if u == cluster_uuid:
                         k_str = k.decode() if isinstance(k, bytes) else k
                         parts = k_str.split(":")
@@ -484,13 +400,11 @@ def get_cluster_functions():
                 break
 
         if matching_cluster_id:
-            cluster_set_key = (
-                f"{collection}:cluster:{algo}:{matching_cluster_id}:members"
-            )
+            cluster_set_key = f"{collection}:bin_cluster:{algo}:{matching_cluster_id}:members"
             fids_raw = r.smembers(cluster_set_key)
 
     if not fids_raw:
-        return {"functions": [], "total": 0}
+        return {"files": [], "total": 0}
 
     fids = [fid.decode() if isinstance(fid, bytes) else fid for fid in fids_raw]
     fids.sort()
@@ -498,41 +412,30 @@ def get_cluster_functions():
     total = len(fids)
     page = fids[offset : offset + limit]
 
-    # Bulk fetch function metadata
     pipe = r.pipeline()
     for fid in page:
         pipe.json().get(f"{fid}:meta", "$")
     raw_metas = pipe.execute()
 
-    import json
-
-    functions = []
+    files = []
     for fid, meta in zip(page, raw_metas):
         m = meta[0] if isinstance(meta, list) and meta else meta
-        if isinstance(m, str):
-            m = json.loads(m)
-        if not m:
-            m = {}
+        if isinstance(m, str): m = json.loads(m)
+        if not m: m = {}
 
-        functions.append(
-            {
-                "function_id": m.get("function_id") or fid,
-                "function_name": m.get("function_name", "Unknown"),
-                "parameters": m.get("parameters", []),
-                "return_type": m.get("return_type", "void"),
-                "namespace": m.get("namespace", ""),
-                "entrypoint_address": m.get("entrypoint_address", "0x0"),
-                "bsim_features_count": m.get("bsim_features_count", 0),
-            }
-        )
+        files.append({
+            "file_id": m.get("file_id") or fid,
+            "file_name": m.get("file_name", "Unknown"),
+            "file_md5": m.get("file_md5", ""),
+            "language_id": m.get("language_id", ""),
+            "architecture": m.get("architecture", ""),
+        })
 
     return {
-        "functions": functions,
+        "files": files,
         "total": total,
         "offset": offset,
         "limit": limit,
         "collection": collection,
         "cluster_uuid": cluster_uuid,
     }
-
-

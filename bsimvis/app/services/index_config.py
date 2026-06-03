@@ -27,6 +27,10 @@ INDEX_CONFIG = {
         "batch_order": ["file", "func", "sim"],  # numeric
         "entry_date": ["file", "func", "sim"],  # numeric
         "file_date": ["file", "func", "sim"],  # numeric
+        "bin_cluster_id": ["file"],
+        "bin_cluster_uuid": ["file"],
+        "bin_cluster_name": ["file"],
+        "bin_cluster_stability": ["file"],
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name

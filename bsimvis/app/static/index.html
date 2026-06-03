@@ -22,6 +22,7 @@
     <script src="/js/metadata.js"></script>
     <script src="/js/similarity_graph.js"></script>
     <script src="/js/cluster_views.js"></script>
+    <script src="/js/bin_cluster_views.js"></script>
     <script src="/js/call_graph.js"></script>
     <script src="/js/binary_similarity.js"></script>
     <script src="/js/chord_graph.js"></script>
@@ -48,33 +49,48 @@
             <span id="current-collection-name">Collections</span>
         </a>
 
-        <a href="#batches" id="nav-batches" title="Batches" style="display:none"><i
-                class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
-        <a href="#files" id="nav-files" title="Files" style="display:none"><i class="fa-solid fa-file-code"></i>
-            <span>Files</span></a>
-        <a href="#functions" id="nav-functions" title="Functions" style="display:none"><i class="fa-solid fa-code"></i>
-            <span>Functions</span></a>
-        <a href="#features-global" id="nav-features-global" title="Features" style="display:none"><i
-                class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
-        <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
-            style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-        <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none">
-            <i class="fa-solid fa-bullseye"></i>
-            <span>Clusters</span>
-            <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
-                <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
-            </button>
-        </a>
-        <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
-                class="fa-solid fa-sitemap"></i>
-            <span>Call Graph</span></a>
-        <a href="#binary-similarity" id="nav-binary-similarity" title="Binary Similarity" style="display:none">
-            <i class="fa-solid fa-not-equal"></i>
-            <span>Binary Sim</span>
-            <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
-                <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
-            </button>
-        </a>
+        <div class="nav-section-title">
+            <span>Files & Binaries</span>
+        </div>
+        <div class="nav-section-content">
+            <a href="#batches" id="nav-batches" title="Batches" style="display:none"><i
+                    class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
+            <a href="#files" id="nav-files" title="Files" style="display:none"><i class="fa-solid fa-file-code"></i>
+                <span>Files</span></a>
+            <a href="#binary-similarity" id="nav-binary-similarity" title="Binary Similarity" style="display:none">
+                <i class="fa-solid fa-not-equal"></i>
+                <span>Binary Sim</span>
+                <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
+                    <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
+                </button>
+            </a>
+            <a href="#bin-clusters" id="nav-bin-clusters" title="Binary Clusters" style="display:none">
+                <i class="fa-solid fa-folder-tree"></i>
+                <span>Bin Clusters</span>
+            </a>
+            <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
+                    class="fa-solid fa-sitemap"></i>
+                <span>Call Graph</span></a>
+        </div>
+
+        <div class="nav-section-title">
+            <span>Functions</span>
+        </div>
+        <div class="nav-section-content">
+            <a href="#functions" id="nav-functions" title="Functions" style="display:none"><i class="fa-solid fa-code"></i>
+                <span>Functions</span></a>
+            <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
+                style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
+            <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none">
+                <i class="fa-solid fa-bullseye"></i>
+                <span>Clusters</span>
+                <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
+                    <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
+                </button>
+            </a>
+            <a href="#features-global" id="nav-features-global" title="Features" style="display:none"><i
+                    class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
+        </div>
 
         <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
             <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"

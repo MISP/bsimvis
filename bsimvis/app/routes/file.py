@@ -40,20 +40,33 @@ def upload_file_data():
         # This is much faster and avoids server-side parsing of large files.
         r_data.set(file_id, raw_bytes)
 
+        from bsimvis.app.services.config_service import config_service
+
+        algo = data.get("algo")
+        if algo is None:
+            algo = config_service.get("similarity.algo", "unweighted_cosine")
+
+        top_k = data.get("top_k")
+        if top_k is None:
+            top_k = config_service.get("similarity.top_k", 1000)
+
+        min_score = data.get("min_score")
+        if min_score is None:
+            min_score = config_service.get("similarity.min_score", 0.3)
+
+        min_features = data.get("min_features")
+        if min_features is None:
+            min_features = config_service.get("similarity.min_features", 0)
+
         build_sim_payload = {
             "collection": collection,
             "file_id": file_id,
             "md5": file_md5,
-            "algo": "unweighted_cosine",
+            "algo": algo,
+            "top_k": top_k,
+            "min_score": min_score,
+            "min_features": min_features,
         }
-        if "top_k" in data:
-            build_sim_payload["top_k"] = data["top_k"]
-        if "min_score" in data:
-            build_sim_payload["min_score"] = data["min_score"]
-        if "min_features" in data:
-            build_sim_payload["min_features"] = data["min_features"]
-        if "algo" in data:
-            build_sim_payload["algo"] = data["algo"]
 
         if (
             build_sim_payload.get("algo") == "milvus_sparse"
@@ -120,7 +133,7 @@ def upload_raw_binary():
         if not raw_bytes:
             logging.warning("[-] No data provided in raw upload request")
             return {"error": "No data provided"}, 400
-        
+
         logging.info(f"[*] Received {len(raw_bytes)} bytes for raw upload")
 
         # Get metadata from headers or query params
@@ -199,30 +212,55 @@ def finalize_batch_upload():
     data = request.json
     if not data:
         return {"error": "Missing JSON payload"}, 400
-        
+
     pipeline_ids = data.get("pipeline_ids", [])
     batch_uuid = data.get("batch_uuid")
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
     skip_sim = data.get("skip_sim", False)
-    
+
     if not pipeline_ids:
         return {"error": "No pipelines provided"}, 400
-        
+
     group_id = job_service.create_group(pipeline_ids, enqueue=False)
-    
+
     master_tasks = [group_id]
-    
+
     # After the group finishes, we do clustering:
-    master_tasks.append((JobType.CLUSTER_FUNCTIONS.value, {"collection": collection, "algo": algo, "batch_uuid": batch_uuid}))
-    
+    master_tasks.append(
+        (
+            JobType.CLUSTER_FUNCTIONS.value,
+            {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
+        )
+    )
+
     # After clustering, we do binary similarity:
     if not skip_sim:
-        master_tasks.append((JobType.BUILD_BIN_SIM.value, {"collection": collection, "algo": algo, "batch_uuid": batch_uuid}))
-        
+        master_tasks.append(
+            (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
+        )
+        master_tasks.append(
+            (
+                JobType.BUILD_BIN_SIM.value,
+                {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
+            )
+        )
+        master_tasks.append(
+            (JobType.CLUSTER_BINARIES.value, {"collection": collection, "algo": algo})
+        )
+
     # Enrich features must be the absolute last job to run:
-    master_tasks.append((JobType.ENRICH_FEATURES.value, {"collection": collection, "batch_uuid": batch_uuid}))
-        
+    master_tasks.append(
+        (
+            JobType.ENRICH_FEATURES.value,
+            {"collection": collection, "batch_uuid": batch_uuid},
+        )
+    )
+
     master_id = job_service.create_pipeline(master_tasks, enqueue=True)
-    
-    return {"status": "success", "master_pipeline_id": master_id, "batch_uuid": batch_uuid}
+
+    return {
+        "status": "success",
+        "master_pipeline_id": master_id,
+        "batch_uuid": batch_uuid,
+    }

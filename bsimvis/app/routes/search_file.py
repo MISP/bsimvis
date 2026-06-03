@@ -99,7 +99,7 @@ def query_files_advanced(r, collection, filters):
                 return []
 
     # 1. Apply substring filters for string fields
-    for field in ["file_name", "file_md5", "language_id", "batch_uuid"]:
+    for field in ["file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_uuid"]:
         val = fields.get(field)
         if val:
             field_matches = get_field_matches(field, val, field_level="file")
@@ -283,7 +283,7 @@ def search_files():
 
     # Build tag/field filters
     fields = {}
-    for field in ["batch_uuid", "language_id", "file_md5", "file_name"]:
+    for field in ["batch_uuid", "language_id", "file_md5", "file_name", "bin_cluster_uuid"]:
         val = request.args.get(field)
         if val:
             fields[field] = val.strip()
@@ -375,19 +375,22 @@ def search_files():
     total = len(all_matched_ids)
     doc_ids = all_matched_ids[offset : offset + limit]
 
-    # Fetch full JSON and function counts for the page
+    # Fetch full JSON, function counts, and cluster assignments for the page
     pipe = r.pipeline()
     for doc_id in doc_ids:
         pipe.json().get(f"{doc_id}:meta", "$")
         parts = doc_id.split(":")
         md5 = parts[-1] if len(parts) >= 3 else ""
         pipe.scard(f"{collection}:idx:file:functions:{md5}")
+        pipe.smembers(f"{doc_id}:bin_clusters")
     raw_results = pipe.execute()
 
     files_list = []
+    unique_cluster_ids = set()
     for i, doc_id in enumerate(doc_ids):
-        raw = raw_results[2 * i]
-        func_count = raw_results[2 * i + 1]
+        raw = raw_results[3 * i]
+        func_count = raw_results[3 * i + 1]
+        cluster_ids_raw = raw_results[3 * i + 2]
         if not raw:
             continue
         data = raw[0] if isinstance(raw, list) and raw else raw
@@ -401,6 +404,11 @@ def search_files():
             data["batch_id"] = f"{col}:batch:{b_uuid}"
 
         data["function_count"] = func_count
+        
+        # Cluster assignments
+        cluster_ids = [cid.decode() if isinstance(cid, bytes) else str(cid) for cid in (cluster_ids_raw or [])]
+        data["bin_clusters"] = cluster_ids
+        unique_cluster_ids.update(cluster_ids)
 
         normalize_tags(data)
 
@@ -410,6 +418,29 @@ def search_files():
                 data[field] = parse_timestamp(data[field])
 
         files_list.append(data)
+
+    # Fetch Cluster Metadata
+    bin_cluster_meta_map = {}
+    algo = "unweighted_cosine"
+    if unique_cluster_ids:
+        c_pipe = r.pipeline()
+        c_list = list(unique_cluster_ids)
+        for cid in c_list:
+            c_pipe.json().get(f"{collection}:bin_cluster:{algo}:{cid}:meta", "$")
+        c_results = c_pipe.execute()
+        for cid, res in zip(c_list, c_results):
+            cm = (res[0] if isinstance(res, list) and res else res) or {}
+            if isinstance(cm, str):
+                cm = json.loads(cm)
+            if cm:
+                bin_cluster_meta_map[cid] = {
+                    "cluster_id": cm.get("cluster_id"),
+                    "cluster_uuid": cm.get("cluster_uuid"),
+                    "cluster_name": cm.get("cluster_name"),
+                    "cohesion_score": cm.get("cohesion_score", 0),
+                    "member_count": cm.get("member_count", 0),
+                    "cluster_stability": cm.get("cluster_stability", 0.0),
+                }
 
     # If total is 0 and no filters were specified, fall back to global total_files
     has_filters = (
@@ -440,6 +471,7 @@ def search_files():
         "offset": offset,
         "limit": limit,
         "files": files_list,
+        "bin_clusters": bin_cluster_meta_map,
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv

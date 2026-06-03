@@ -121,7 +121,9 @@ class Worker:
                     )
                     self.job_service.complete_job(job_id)
                 else:
-                    self.job_service.fail_job(job_id, "Job failed (returned False from dispatcher).")
+                    self.job_service.fail_job(
+                        job_id, "Job failed (returned False from dispatcher)."
+                    )
 
             except Exception as e:
                 logging.error(f"[!] Job {job_id} failed with error: {e}")
@@ -208,7 +210,9 @@ class Worker:
                     self.job_service.add_log(
                         job_id, f"Starting Ghidra analysis for {orig_name}..."
                     )
-                    all_analysis_data = [ghidra_service.analyze_file(temp_path, payload)]
+                    all_analysis_data = [
+                        ghidra_service.analyze_file(temp_path, payload)
+                    ]
 
                 # 4. Store JSON results and chain indexing
                 parent_id = self.r_queue.hget(f"job:{job_id}", "parent_id")
@@ -296,18 +300,31 @@ class Worker:
                                             {"collection": collection},
                                         )
                                     )
-                                next_tasks.append((JobType.BUILD_SIM, build_sim_payload))
+                                next_tasks.append(
+                                    (JobType.BUILD_SIM, build_sim_payload)
+                                )
 
                             # Check if the parent pipeline is part of a group/batch
                             has_grandparent = False
-                            grandparent_id = self.r_queue.hget(f"job:{parent_id}", "parent_id")
+                            grandparent_id = self.r_queue.hget(
+                                f"job:{parent_id}", "parent_id"
+                            )
                             if grandparent_id:
-                                grandparent_id = grandparent_id.decode() if isinstance(grandparent_id, bytes) else grandparent_id
+                                grandparent_id = (
+                                    grandparent_id.decode()
+                                    if isinstance(grandparent_id, bytes)
+                                    else grandparent_id
+                                )
                                 if grandparent_id:
                                     has_grandparent = True
 
                             if not has_grandparent:
-                                next_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
+                                next_tasks.append(
+                                    (
+                                        JobType.ENRICH_FEATURES,
+                                        {"collection": collection},
+                                    )
+                                )
 
                             # Create these jobs and append to task_ids
                             new_tids = []
@@ -394,10 +411,18 @@ class Worker:
             )
 
         elif jtype == JobType.BUILD_SIM.value:
-            algo = payload.get("algo", "unweighted_cosine")
-            top_k = payload.get("top_k", 1000)
-            min_score = payload.get("min_score", 0.3)
-            min_features = payload.get("min_features", 0)
+            from bsimvis.app.services.config_service import config_service
+
+            algo = payload.get(
+                "algo", config_service.get("similarity.algo", "unweighted_cosine")
+            )
+            top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
+            min_score = payload.get(
+                "min_score", config_service.get("similarity.min_score", 0.3)
+            )
+            min_features = payload.get(
+                "min_features", config_service.get("similarity.min_features", 0)
+            )
 
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing
@@ -437,14 +462,28 @@ class Worker:
 
         elif jtype == JobType.CLUSTER_FUNCTIONS.value:
             from bsimvis.app.services.cluster_service import cluster_service
+            from bsimvis.app.services.config_service import config_service
 
             algo = payload.get("algo", "unweighted_cosine")
-            min_cluster_size = payload.get("min_cluster_size", 2)
-            min_samples = payload.get("min_samples", 1)
-            epsilon = payload.get("epsilon", 0.0)
-            selection_method = payload.get("selection_method", "eom")
-            min_sim = payload.get("min_sim", 0.0)
-            min_features = payload.get("min_features", 0)
+            min_cluster_size = payload.get(
+                "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+            )
+            min_samples = payload.get(
+                "min_samples", config_service.get("clustering.min_samples", 1)
+            )
+            epsilon = payload.get(
+                "epsilon", config_service.get("clustering.epsilon", 0.1)
+            )
+            selection_method = payload.get(
+                "selection_method",
+                config_service.get("clustering.selection_method", "eom"),
+            )
+            min_sim = payload.get(
+                "min_sim", config_service.get("clustering.min_sim", 0.0)
+            )
+            min_features = payload.get(
+                "min_features", config_service.get("clustering.min_features", 0)
+            )
 
             return cluster_service.run_clustering(
                 collection,
@@ -464,6 +503,48 @@ class Worker:
 
             algo = payload.get("algo", "unweighted_cosine")
             return cluster_service.clear_clustering(
+                collection, algo=algo, job_service=self.job_service, job_id=job_id
+            )
+
+        elif jtype == JobType.CLUSTER_BINARIES.value:
+            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+            from bsimvis.app.services.config_service import config_service
+
+            algo = payload.get("algo", "unweighted_cosine")
+            min_cluster_size = payload.get(
+                "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+            )
+            min_samples = payload.get(
+                "min_samples", config_service.get("clustering.min_samples", 1)
+            )
+            epsilon = payload.get(
+                "epsilon", config_service.get("clustering.epsilon", 0.1)
+            )
+            selection_method = payload.get(
+                "selection_method",
+                config_service.get("clustering.selection_method", "eom"),
+            )
+            min_sim = payload.get(
+                "min_sim", config_service.get("clustering.min_sim", 0.0)
+            )
+
+            return bin_cluster_service.run_clustering(
+                collection,
+                algo=algo,
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                cluster_selection_epsilon=epsilon,
+                selection_method=selection_method,
+                min_sim=min_sim,
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
+        elif jtype == JobType.CLEAR_BIN_CLUSTER.value:
+            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+
+            algo = payload.get("algo", "unweighted_cosine")
+            return bin_cluster_service.clear_clusters(
                 collection, algo=algo, job_service=self.job_service, job_id=job_id
             )
 
@@ -509,8 +590,6 @@ class Worker:
             )
 
         return False
-
-
 
 
 if __name__ == "__main__":

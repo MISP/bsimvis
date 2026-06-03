@@ -26,6 +26,7 @@ ns_search = Namespace("search", description="Unified search and metadata utiliti
 ns_similarity = Namespace("similarity", description="Similarity engine and results")
 ns_tags = Namespace("tags", description="Tag management")
 ns_cluster = Namespace("cluster", description="Hierarchical clustering and analysis")
+ns_bin_cluster = Namespace("bin_cluster", description="Binary-level hierarchical clustering")
 ns_features = Namespace("features", description="Global feature indexing and status")
 ns_diff = Namespace("diff", description="Function diff and alignment")
 ns_bin_sim = Namespace("bin_sim", description="Binary-level similarity and clustering comparison")
@@ -41,6 +42,7 @@ api.add_namespace(ns_search)
 api.add_namespace(ns_similarity)
 api.add_namespace(ns_tags)
 api.add_namespace(ns_cluster)
+api.add_namespace(ns_bin_cluster)
 api.add_namespace(ns_features)
 api.add_namespace(ns_diff)
 api.add_namespace(ns_bin_sim)
@@ -1168,7 +1170,7 @@ class ClusterBuild(Resource):
                 "algo": fields.String(default="unweighted_cosine"),
                 "min_cluster_size": fields.Integer(default=2),
                 "min_samples": fields.Integer(default=1),
-                "epsilon": fields.Float(default=0.0),
+                "epsilon": fields.Float(default=0.1),
                 "selection_method": fields.String(default="eom"),
                 "min_sim": fields.Float(default=0.0),
                 "min_features": fields.Integer(default=0),
@@ -1310,6 +1312,149 @@ class ClusterFunctions(Resource):
         from bsimvis.app.routes.cluster import get_cluster_functions
 
         return get_cluster_functions()
+
+
+# --- Binary Cluster Namespace ---
+@ns_bin_cluster.route("/build")
+class BinClusterBuild(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterBuild",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+                "min_cluster_size": fields.Integer(default=2),
+                "min_samples": fields.Integer(default=1),
+                "epsilon": fields.Float(default=0.1),
+                "selection_method": fields.String(default="eom"),
+                "min_sim": fields.Float(default=0.0),
+            },
+        )
+    )
+    def post(self):
+        """Enqueues a binary clustering job."""
+        from bsimvis.app.routes.bin_cluster import build_bin_cluster
+
+        return build_bin_cluster()
+
+
+@ns_bin_cluster.route("/rebuild")
+class BinClusterRebuild(Resource):
+    @ns_bin_cluster.expect(api.models["BinClusterBuild"])
+    def post(self):
+        """Enqueues a clear + cluster pipeline for binaries."""
+        from bsimvis.app.routes.bin_cluster import rebuild_bin_cluster
+
+        return rebuild_bin_cluster()
+
+
+@ns_bin_cluster.route("/clear")
+class BinClusterClear(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterClear",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+            },
+        )
+    )
+    def post(self):
+        """Enqueues a binary cluster clear job."""
+        from bsimvis.app.routes.bin_cluster import clear_bin_cluster
+
+        return clear_bin_cluster()
+
+
+@ns_bin_cluster.route("/list")
+class BinClusterList(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "min_stability": "Min cluster stability",
+            "min_count": "Min member count",
+            "min_cohesion": "Min cohesion score",
+            "sort_by": "Sort field (count, stability, cohesion)",
+            "sort_order": "Sort order (asc/desc)",
+            "format": "Output format (json/csv)",
+            "q": "Search query across IDs and names",
+            "cluster_id": "Filter by cluster ID",
+            "cluster_uuid": "Filter by cluster UUID",
+            "cluster_name": "Filter by cluster name",
+        }
+    )
+    def get(self):
+        """Lists discovered binary clusters with metadata and filtering."""
+        from bsimvis.app.routes.bin_cluster import list_bin_clusters
+
+        return list_bin_clusters()
+
+
+@ns_bin_cluster.route("/tree")
+class BinClusterTree(Resource):
+    @ns_bin_cluster.doc(params={"collection": "Collection name", "algo": "Algorithm"})
+    def get(self):
+        """Returns the condensed tree for binary clustering."""
+        from bsimvis.app.routes.bin_cluster import get_bin_cluster_tree
+
+        return get_bin_cluster_tree()
+
+
+@ns_bin_cluster.route("/meta")
+class BinClusterMeta(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterMetaUpdate",
+            {
+                "collection": fields.String(required=True),
+                "algo": fields.String(default="unweighted_cosine"),
+                "cluster_id": fields.String(required=True),
+                "cluster_name": fields.String(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Updates metadata for a binary cluster (e.g. rename)."""
+        from bsimvis.app.routes.bin_cluster import update_bin_cluster_meta
+
+        return update_bin_cluster_meta()
+
+
+@ns_bin_cluster.route("/members")
+class BinClusterMembers(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "cluster_id": "Target cluster ID",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Lists all file IDs in a specific binary cluster."""
+        from bsimvis.app.routes.bin_cluster import list_bin_cluster_members
+
+        return list_bin_cluster_members()
+
+
+@ns_bin_cluster.route("/files")
+class BinClusterFiles(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "cluster_uuid": "Target cluster UUID",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Returns a quick sample of file metadata for a cluster UUID."""
+        from bsimvis.app.routes.bin_cluster import get_bin_cluster_files
+
+        return get_bin_cluster_files()
 
 
 # --- Features Namespace ---

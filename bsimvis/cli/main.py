@@ -130,22 +130,30 @@ def main():
         )
 
         if action in ["build", "rebuild"]:
+            from bsimvis.app.services.config_service import config_service
+
             # Set default for build/rebuild if not provided
-            dp.set_defaults(algo="unweighted_cosine")
+            dp.set_defaults(
+                algo=config_service.get("similarity.algo", "unweighted_cosine")
+            )
             dp.add_argument(
                 "-k",
                 "--top-k",
                 type=int,
-                default=1000,
+                default=config_service.get("similarity.top_k", 1000),
                 help="Top K matches per function",
             )
-            dp.add_argument("--min-score", type=float, default=0)
+            dp.add_argument(
+                "--min-score",
+                type=float,
+                default=config_service.get("similarity.min_score", 0.0),
+            )
             dp.add_argument(
                 "--min-feature",
                 "--min-features",
                 dest="min_features",
                 type=int,
-                default=0,
+                default=config_service.get("similarity.min_features", 0),
                 help="Minimum number of features",
             )
             dp.add_argument("--delay", type=float, default=0.0)
@@ -186,11 +194,19 @@ def main():
         default=5,
         help="Minimum cluster size (default: 5)",
     )
+    from bsimvis.app.services.config_service import config_service
+
     c_build.add_argument(
-        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+        "--min-samples",
+        type=int,
+        help="Min samples for HDBSCAN core points",
+        default=config_service.get("clustering.min_samples", 1),
     )
     c_build.add_argument(
-        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+        "--epsilon",
+        type=float,
+        help="HDBSCAN epsilon threshold",
+        default=config_service.get("clustering.epsilon", 0.1),
     )
     c_build.add_argument(
         "--leaf-method", action="store_true", help="Use 'leaf' selection method"
@@ -219,14 +235,20 @@ def main():
     c_rebuild.add_argument(
         "--min-cluster-size",
         type=int,
-        default=5,
-        help="Minimum cluster size (default: 5)",
+        default=config_service.get("clustering.min_cluster_size", 2),
+        help="Minimum cluster size",
     )
     c_rebuild.add_argument(
-        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+        "--min-samples",
+        type=int,
+        help="Min samples for HDBSCAN core points",
+        default=config_service.get("clustering.min_samples", 1),
     )
     c_rebuild.add_argument(
-        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+        "--epsilon",
+        type=float,
+        help="HDBSCAN epsilon threshold",
+        default=config_service.get("clustering.epsilon", 0.1),
     )
     c_rebuild.add_argument(
         "--leaf-method", action="store_true", help="Use 'leaf' selection method"
@@ -270,22 +292,28 @@ def main():
         "binsim", help="Binary-level similarity management"
     )
     binsim_actions = binsim_parser.add_subparsers(dest="action", required=True)
-    
+
     # binsim build
     bs_build = binsim_actions.add_parser("build", help="Build binary similarities")
     bs_build.add_argument("-c", "--collection", required=True, help="Collection name")
     bs_build.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
     bs_build.add_argument("--md5-a", help="First binary MD5 (optional)")
     bs_build.add_argument("--md5-b", help="Second binary MD5 (optional)")
-    bs_build.add_argument("--min-cohesion", type=float, default=0.0, help="Min cohesion")
+    bs_build.add_argument(
+        "--min-cohesion", type=float, default=0.0, help="Min cohesion"
+    )
 
     # binsim rebuild
-    bs_rebuild = binsim_actions.add_parser("rebuild", help="Clear and build binary similarities")
+    bs_rebuild = binsim_actions.add_parser(
+        "rebuild", help="Clear and build binary similarities"
+    )
     bs_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
     bs_rebuild.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
     bs_rebuild.add_argument("--md5-a", help="First binary MD5 (optional)")
     bs_rebuild.add_argument("--md5-b", help="Second binary MD5 (optional)")
-    bs_rebuild.add_argument("--min-cohesion", type=float, default=0.0, help="Min cohesion")
+    bs_rebuild.add_argument(
+        "--min-cohesion", type=float, default=0.0, help="Min cohesion"
+    )
 
     # binsim clear
     bs_clear = binsim_actions.add_parser("clear", help="Clear binary similarities")

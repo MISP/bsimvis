@@ -398,10 +398,21 @@ class BinClusterService:
             chunk = all_member_file_ids[i : i + 1000]
             m_pipe = r.pipeline()
             for file_id in chunk:
-                m_pipe.json().get(f"{file_id}:meta", "$")
-            for file_id, res in zip(chunk, m_pipe.execute()):
-                if res and isinstance(res, list) and res[0]:
-                    all_member_meta[file_id] = res[0]
+                m_pipe.json().get(f"{file_id}:meta", "$.file_name")
+            results = m_pipe.execute()
+            for idx, file_id in enumerate(chunk):
+                name_res = results[idx]
+                name = name_res[0] if isinstance(name_res, list) and name_res else None
+                all_member_meta[file_id] = {
+                    "file_name": name
+                }
+
+        # Build sparse adjacency dictionary of similarities for fast cohesion calculation
+        adj_sim = {i: {} for i in range(num_nodes)}
+        for u, v, d in edges:
+            sim = 1.0 - d
+            adj_sim[u][v] = sim
+            adj_sim[v][u] = sim
 
         total_clusters = len(cluster_members)
         if job_service and job_id:
@@ -429,16 +440,27 @@ class BinClusterService:
                 else f"Binary Cluster {label}"
             )
 
-            # Exact Average Internal Similarity (Cohesion)
+            # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
             if len(members) > 1:
                 member_indices = [id_to_idx[file_id] for file_id in members]
-                sub_matrix = dist_matrix[np.ix_(member_indices, member_indices)]
-
                 n_members = len(members)
-                total_dist = np.sum(sub_matrix)
-                avg_dist = float(total_dist) / (n_members * (n_members - 1))
 
-                cohesion_score = max(0.0, min(1.0, 1.0 - avg_dist))
+                total_sim = 0.0
+                if n_members < 50:
+                    for i in range(n_members):
+                        u = member_indices[i]
+                        for j in range(i + 1, n_members):
+                            v = member_indices[j]
+                            total_sim += adj_sim[u].get(v, 0.0)
+                else:
+                    member_set = set(member_indices)
+                    for u in member_indices:
+                        for v, sim in adj_sim[u].items():
+                            if v in member_set:
+                                total_sim += sim
+                    total_sim /= 2.0
+
+                cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
 

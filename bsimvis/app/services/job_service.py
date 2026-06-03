@@ -53,6 +53,8 @@ class JobService:
             "parent_id": parent_id or "",
             "error": "",
         }
+        if isinstance(payload, dict) and "collection" in payload:
+            job_data["collection"] = payload["collection"]
 
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
@@ -108,6 +110,30 @@ class JobService:
             "error": "",
         }
 
+        # Determine collection from tasks if possible
+        collection = None
+        for task in tasks:
+            if isinstance(task, (list, tuple)) and len(task) >= 2:
+                payload = task[1]
+                if isinstance(payload, dict) and "collection" in payload:
+                    collection = payload["collection"]
+                    break
+            elif isinstance(task, str):
+                st = self.r.hgetall(f"job:{task}")
+                if st:
+                    collection = st.get("collection")
+                    if not collection and "payload" in st:
+                        try:
+                            pl = json.loads(st["payload"])
+                            collection = pl.get("collection")
+                        except:
+                            pass
+                    if collection:
+                        break
+
+        if collection:
+            pipeline_data["collection"] = collection
+
         self.r.hset(f"job:{pipeline_id}", mapping=pipeline_data)
         self.r.lpush("jobs:global", pipeline_id)
         self.r.ltrim("jobs:global", 0, 999)
@@ -141,6 +167,30 @@ class JobService:
             "parent_id": parent_id or "",
             "error": "",
         }
+
+        # Determine collection from tasks if possible
+        collection = None
+        for task in tasks:
+            if isinstance(task, (list, tuple)) and len(task) >= 2:
+                payload = task[1]
+                if isinstance(payload, dict) and "collection" in payload:
+                    collection = payload["collection"]
+                    break
+            elif isinstance(task, str):
+                st = self.r.hgetall(f"job:{task}")
+                if st:
+                    collection = st.get("collection")
+                    if not collection and "payload" in st:
+                        try:
+                            pl = json.loads(st["payload"])
+                            collection = pl.get("collection")
+                        except:
+                            pass
+                    if collection:
+                        break
+
+        if collection:
+            group_data["collection"] = collection
 
         self.r.hset(f"job:{group_id}", mapping=group_data)
         self.r.lpush("jobs:global", group_id)
@@ -475,15 +525,19 @@ class JobService:
             ]:
                 continue
 
-            payload_raw = job.get("payload")
-            if payload_raw:
-                try:
-                    payload = json.loads(payload_raw)
-                    coll = payload.get("collection")
-                    if coll:
-                        active_collections.add(coll)
-                except:
-                    pass
+            coll = job.get("collection")
+            if coll:
+                active_collections.add(coll)
+            else:
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        coll = payload.get("collection")
+                        if coll:
+                            active_collections.add(coll)
+                    except:
+                        pass
 
         return {
             "active_workers": active_jobs_count,
@@ -514,22 +568,38 @@ class JobService:
 
             # Extract target and collection from payload
             target = ""
-            coll = ""
-            payload_raw = job.get("payload")
-            if payload_raw:
-                try:
-                    payload = json.loads(payload_raw)
-                    coll = payload.get("collection", "")
-                    target = (
-                        payload.get("md5")
-                        or payload.get("file_id")
-                        or payload.get("batch_uuid")
-                        or ""
-                    )
-                    if target and len(target) > 20:
-                        target = target[:8] + "..." + target[-8:]
-                except:
-                    pass
+            coll = job.get("collection", "")
+            if not coll:
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        coll = payload.get("collection", "")
+                        target = (
+                            payload.get("md5")
+                            or payload.get("file_id")
+                            or payload.get("batch_uuid")
+                            or ""
+                        )
+                        if target and len(target) > 20:
+                            target = target[:8] + "..." + target[-8:]
+                    except:
+                        pass
+            else:
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        target = (
+                            payload.get("md5")
+                            or payload.get("file_id")
+                            or payload.get("batch_uuid")
+                            or ""
+                        )
+                        if target and len(target) > 20:
+                            target = target[:8] + "..." + target[-8:]
+                    except:
+                        pass
 
             parent_id = job.get("parent_id", "")
             task_ids = []
@@ -594,22 +664,38 @@ class JobService:
                     continue
 
                 target = ""
-                coll = ""
-                payload_raw = sub_job.get("payload")
-                if payload_raw:
-                    try:
-                        payload = json.loads(payload_raw)
-                        coll = payload.get("collection", "")
-                        target = (
-                            payload.get("md5")
-                            or payload.get("file_id")
-                            or payload.get("batch_uuid")
-                            or ""
-                        )
-                        if target and len(target) > 20:
-                            target = target[:8] + "..." + target[-8:]
-                    except:
-                        pass
+                coll = sub_job.get("collection", "")
+                if not coll:
+                    payload_raw = sub_job.get("payload")
+                    if payload_raw:
+                        try:
+                            payload = json.loads(payload_raw)
+                            coll = payload.get("collection", "")
+                            target = (
+                                payload.get("md5")
+                                or payload.get("file_id")
+                                or payload.get("batch_uuid")
+                                or ""
+                            )
+                            if target and len(target) > 20:
+                                target = target[:8] + "..." + target[-8:]
+                        except:
+                            pass
+                else:
+                    payload_raw = sub_job.get("payload")
+                    if payload_raw:
+                        try:
+                            payload = json.loads(payload_raw)
+                            target = (
+                                payload.get("md5")
+                                or payload.get("file_id")
+                                or payload.get("batch_uuid")
+                                or ""
+                            )
+                            if target and len(target) > 20:
+                                target = target[:8] + "..." + target[-8:]
+                        except:
+                            pass
 
                 task_ids = []
                 if "task_ids" in sub_job:

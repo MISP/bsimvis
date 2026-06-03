@@ -475,10 +475,25 @@ class ClusterService:
             chunk = all_member_fids[i : i + 1000]
             m_pipe = r.pipeline()
             for fid in chunk:
-                m_pipe.json().get(f"{fid}:meta", "$")
-            for fid, res in zip(chunk, m_pipe.execute()):
-                if res and isinstance(res, list) and res[0]:
-                    all_member_meta[fid] = res[0]
+                m_pipe.json().get(f"{fid}:meta", "$.function_name")
+                m_pipe.json().get(f"{fid}:meta", "$.bsim_features_count")
+            results = m_pipe.execute()
+            for idx, fid in enumerate(chunk):
+                name_res = results[idx * 2]
+                feat_res = results[idx * 2 + 1]
+                name = name_res[0] if isinstance(name_res, list) and name_res else None
+                feat_count = feat_res[0] if isinstance(feat_res, list) and feat_res else 0
+                all_member_meta[fid] = {
+                    "function_name": name,
+                    "bsim_features_count": feat_count
+                }
+
+        # Build sparse adjacency dictionary of similarities for fast cohesion calculation
+        adj_sim = {i: {} for i in range(num_nodes)}
+        for u, v, d in edges:
+            sim = 1.0 - d
+            adj_sim[u][v] = sim
+            adj_sim[v][u] = sim
 
         total_clusters = len(cluster_members)
         if job_service and job_id:
@@ -503,17 +518,27 @@ class ClusterService:
             )
             avg_features = np.mean(feature_counts) if feature_counts else 0
 
-            # Exact Average Internal Similarity (Cohesion)
+            # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
             if len(members) > 1:
                 member_indices = [id_to_idx[fid] for fid in members]
-                sub_matrix = dist_matrix[np.ix_(member_indices, member_indices)]
-
                 n_members = len(members)
-                total_dist = np.sum(sub_matrix)
-                # Exclude the diagonal (distance to self is 0)
-                avg_dist = float(total_dist) / (n_members * (n_members - 1))
 
-                cohesion_score = max(0.0, min(1.0, 1.0 - avg_dist))
+                total_sim = 0.0
+                if n_members < 50:
+                    for i in range(n_members):
+                        u = member_indices[i]
+                        for j in range(i + 1, n_members):
+                            v = member_indices[j]
+                            total_sim += adj_sim[u].get(v, 0.0)
+                else:
+                    member_set = set(member_indices)
+                    for u in member_indices:
+                        for v, sim in adj_sim[u].items():
+                            if v in member_set:
+                                total_sim += sim
+                    total_sim /= 2.0
+
+                cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
 

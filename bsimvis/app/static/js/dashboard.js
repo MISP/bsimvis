@@ -372,10 +372,20 @@ async function refreshData(appendArg = false, force = false) {
     const params = new URLSearchParams(queryString);
     const collection = params.get('collection') || 'main';
 
+    if (hashPath === '#clusters' || hashPath === '#bin-clusters') {
+        const viewMode = params.get('view') || 'table';
+        if (viewMode !== 'hierarchy' && viewMode !== 'packing') {
+            params.delete('show_parents');
+            params.delete('show_children');
+            params.delete('show_members');
+            params.delete('path_compression');
+        }
+    }
+
     // Save search filters state (only if not collections view)
     if (hashPath !== '#collections') {
-        localStorage.setItem(`savedFilters:${collection}:${hashPath}`, queryString || `collection=${collection}`);
-        addToHistory(hashPath, queryString);
+        localStorage.setItem(`savedFilters:${collection}:${hashPath}`, params.toString() || `collection=${collection}`);
+        addToHistory(hashPath, params.toString());
     }
 
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
@@ -2998,12 +3008,24 @@ async function renameCluster(clusterId, currentName) {
 function switchClusterView(mode) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     params.set('view', mode);
+    if (mode !== 'hierarchy' && mode !== 'packing') {
+        params.delete('show_parents');
+        params.delete('show_children');
+        params.delete('show_members');
+        params.delete('path_compression');
+    }
     window.location.hash = `#clusters?${params.toString()}`;
 }
 
 function switchBinClusterView(mode) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     params.set('view', mode);
+    if (mode !== 'hierarchy' && mode !== 'packing') {
+        params.delete('show_parents');
+        params.delete('show_children');
+        params.delete('show_members');
+        params.delete('path_compression');
+    }
     window.location.hash = `#bin-clusters?${params.toString()}`;
 }
 

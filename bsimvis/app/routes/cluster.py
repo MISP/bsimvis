@@ -317,27 +317,24 @@ def list_clusters():
             valid_nodes.add(cid)
 
         # Expand parents if requested
+        original_nodes = set(valid_nodes)
         if show_parents:
-            expanded_nodes = set(valid_nodes)
-            for node in valid_nodes:
+            for node in original_nodes:
                 curr = node
                 while curr in child_to_parent:
                     curr = child_to_parent[curr]
-                    expanded_nodes.add(curr)
-            valid_nodes = expanded_nodes
+                    valid_nodes.add(curr)
 
         # Expand children if requested
         if show_children:
-            expanded_nodes = set(valid_nodes)
-            queue = list(valid_nodes)
+            queue = list(original_nodes)
             while queue:
                 curr = queue.pop(0)
                 children = parent_to_children.get(curr, [])
                 for child in children:
-                    if child not in expanded_nodes:
-                        expanded_nodes.add(child)
+                    if child not in valid_nodes:
+                        valid_nodes.add(child)
                         queue.append(child)
-            valid_nodes = expanded_nodes
 
         # Fetch direct members if requested
         direct_members_map = {}

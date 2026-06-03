@@ -33,6 +33,7 @@
     <script src="/js/jobs.js"></script>
     <script src="/js/table_selection.js"></script>
 </head>
+
 <body>
 
     <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
@@ -50,23 +51,25 @@
         </a>
 
         <div class="nav-section-title">
-            <span>Files & Binaries</span>
+            <span>Binaries</span>
         </div>
         <div class="nav-section-content">
             <a href="#batches" id="nav-batches" title="Batches" style="display:none"><i
                     class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
             <a href="#files" id="nav-files" title="Files" style="display:none"><i class="fa-solid fa-file-code"></i>
                 <span>Files</span></a>
-            <a href="#binary-similarity" id="nav-binary-similarity" title="Binary Similarity" style="display:none">
-                <i class="fa-solid fa-not-equal"></i>
-                <span>Binary Sim</span>
-                <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
+            <a href="#binary-similarity" id="nav-binary-similarity" title="Similarities" style="display:none">
+                <i class="fa-solid fa-code-compare"></i>
+                <span>Similarities</span>
+                <button class="nav-rebuild-btn"
+                    onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();"
+                    title="Rebuild Analysis">
                     <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
                 </button>
             </a>
-            <a href="#bin-clusters" id="nav-bin-clusters" title="Binary Clusters" style="display:none">
-                <i class="fa-solid fa-folder-tree"></i>
-                <span>Bin Clusters</span>
+            <a href="#bin-clusters" id="nav-bin-clusters" title="Clusters" style="display:none">
+                <i class="fa-solid fa-bullseye"></i>
+                <span>Clusters</span>
             </a>
             <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
                     class="fa-solid fa-sitemap"></i>
@@ -77,14 +80,17 @@
             <span>Functions</span>
         </div>
         <div class="nav-section-content">
-            <a href="#functions" id="nav-functions" title="Functions" style="display:none"><i class="fa-solid fa-code"></i>
+            <a href="#functions" id="nav-functions" title="Functions" style="display:none"><i
+                    class="fa-solid fa-code"></i>
                 <span>Functions</span></a>
             <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
                 style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
             <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none">
                 <i class="fa-solid fa-bullseye"></i>
                 <span>Clusters</span>
-                <button class="nav-rebuild-btn" onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();" title="Rebuild Analysis">
+                <button class="nav-rebuild-btn"
+                    onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();"
+                    title="Rebuild Analysis">
                     <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
                 </button>
             </a>
@@ -132,7 +138,8 @@
                     <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
                     <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
 
-                    <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn" title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
+                    <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
+                        title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
                         <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
                     </button>
 
@@ -376,11 +383,14 @@
                         <label style="margin-bottom: 5px;">Isolated</label>
                         <div class="view-toggle" id="isolated-toggle"
                             style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
-                            <button class="view-btn" data-mode="all" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('all')"
+                            <button class="view-btn" data-mode="all"
+                                onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('all')"
                                 title="Show all nodes colored normally">All</button>
-                            <button class="view-btn active" data-mode="gray" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('gray')"
+                            <button class="view-btn active" data-mode="gray"
+                                onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('gray')"
                                 title="Show isolated nodes in gray">Gray</button>
-                            <button class="view-btn" data-mode="hide" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('hide')"
+                            <button class="view-btn" data-mode="hide"
+                                onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setIsolatedMode('hide')"
                                 title="Hide isolated nodes">Hide</button>
                         </div>
                     </div>
@@ -389,9 +399,11 @@
                         <label style="margin-bottom: 5px;">Link Color</label>
                         <div class="view-toggle" id="link-color-toggle"
                             style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
-                            <button class="view-btn active" data-scheme="gradient" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setLinkColorScheme('gradient')"
+                            <button class="view-btn active" data-scheme="gradient"
+                                onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setLinkColorScheme('gradient')"
                                 title="Color links by MD5 gradient">Grad</button>
-                            <button class="view-btn" data-scheme="score" onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setLinkColorScheme('score')"
+                            <button class="view-btn" data-scheme="score"
+                                onclick="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setLinkColorScheme('score')"
                                 title="Color links by similarity score">Score</button>
                         </div>
                     </div>
@@ -406,17 +418,20 @@
                         <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
                             <input type="checkbox" id="density-local-gravity"
                                 onchange="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.toggleGravity(this.checked)">
-                            <label style="margin-bottom:0; cursor:pointer;" for="density-local-gravity">Local Gravity</label>
+                            <label style="margin-bottom:0; cursor:pointer;" for="density-local-gravity">Local
+                                Gravity</label>
                         </div>
                         <div class="graph-setting-item">
                             <label style="font-size:0.7rem; margin-bottom:5px; display:block;">Tension</label>
                             <input type="range" id="density-tension" min="0" max="1" step="0.01" value="0.95"
-                                style="width:100%" oninput="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setTension(this.value)">
+                                style="width:100%"
+                                oninput="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setTension(this.value)">
                         </div>
                         <div class="graph-setting-item">
                             <label style="font-size:0.7rem; margin-bottom:5px; display:block;">Granularity</label>
                             <input type="range" id="density-granularity" min="0.01" max="0.99" step="0.01" value="0.5"
-                                style="width:100%" oninput="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setClusterGranularity(this.value)">
+                                style="width:100%"
+                                oninput="if(window.binaryDensityMapInstance) window.binaryDensityMapInstance.setClusterGranularity(this.value)">
                         </div>
                     </div>
                 </div>

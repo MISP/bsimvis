@@ -876,6 +876,17 @@ function updateUI(path, params, route) {
                     </th>
                     <th>
                         <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="text" id="flt-file-cluster-name" placeholder="Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <div style="display:flex; align-items:center; gap:2px;">
+                                <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || ''}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <span class="dim" style="font-size:0.6rem">-</span>
+                                <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            </div>
+                        </div>
+                    </th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
                             <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${p.get('min_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${p.get('max_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                         </div>
@@ -977,7 +988,8 @@ function updateUI(path, params, route) {
                     'file_name': 'flt-file-name',
                     'file_md5': 'flt-file-md5',
                     'language_id': 'flt-file-language',
-                    'batch_uuid': 'flt-file-batch'
+                    'batch_uuid': 'flt-file-batch',
+                    'bin_cluster_name': 'flt-file-cluster-name'
                 });
             } else {
                 loadFieldCardinalities(col, 'func', {
@@ -1651,6 +1663,10 @@ function applyAdvancedFileSearch() {
     const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
     const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
     const maxFuncsFlt = document.getElementById('flt-file-max-funcs')?.value;
+    const clusterFlt = document.getElementById('flt-file-cluster')?.value;
+    const clusterNameFlt = document.getElementById('flt-file-cluster-name')?.value;
+    const minCohesionFlt = document.getElementById('flt-file-min-cohesion')?.value;
+    const maxCohesionFlt = document.getElementById('flt-file-max-cohesion')?.value;
 
     if (nameFlt) params.set('file_name', nameFlt); else params.delete('file_name');
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
@@ -1660,6 +1676,10 @@ function applyAdvancedFileSearch() {
     if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
     if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
+    if (clusterFlt) params.set('bin_cluster_uuid', clusterFlt); else params.delete('bin_cluster_uuid');
+    if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
+    if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
+    if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -1932,8 +1952,8 @@ function renderFiles(data, clustersMap = {}) {
                     </a>
                 </div>
             </td>
-            <td class="cluster-cards-cell" data-clusters='${JSON.stringify((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean)).replace(/'/g, "&apos;")}'>
-                ${renderClusterCards((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean))}
+            <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${JSON.stringify((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean)).replace(/'/g, "&apos;")}'>
+                ${renderClusterCards((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean), true)}
             </td>
             <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
             <td>
@@ -2449,8 +2469,9 @@ function refreshClusterCards() {
     document.querySelectorAll('.cluster-cards-cell').forEach(cell => {
         try {
             const clusters = JSON.parse(cell.dataset.clusters || '[]');
+            const isBinary = cell.dataset.isBinary === 'true';
             if (typeof renderClusterCards === 'function') {
-                cell.innerHTML = renderClusterCards(clusters);
+                cell.innerHTML = renderClusterCards(clusters, isBinary);
             }
         } catch (e) {
             console.error("Failed to re-render cluster cards", e);
@@ -3625,6 +3646,11 @@ function getFilterSummary(path, params) {
         if (language_id) summary.push(`Lang: ${language_id}`);
         if (min_function_count || max_function_count) {
             summary.push(`Funcs: ${min_function_count || 0}-${max_function_count || '∞'}`);
+        }
+        const min_cohesion = params.get('min_cohesion');
+        const max_cohesion = params.get('max_cohesion');
+        if (min_cohesion || max_cohesion) {
+            summary.push(`Cohesion: ${min_cohesion || 0}-${max_cohesion || 1}`);
         }
     } else if (path === '#functions') {
         const function_name = params.get('function_name');

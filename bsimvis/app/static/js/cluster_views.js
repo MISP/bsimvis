@@ -110,6 +110,7 @@ class ClusterHierarchy {
         this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
         this.params.show_parents = params.get('show_parents') !== 'false';
         this.params.show_children = params.get('show_children') !== 'false';
+        this.params.show_members = params.get('show_members') === 'true';
 
         // Template for controls
         const hierControls = `
@@ -188,6 +189,10 @@ class ClusterHierarchy {
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
                         <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="input-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                        <label for="input-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
                     </div>
                 </div>
 
@@ -302,6 +307,13 @@ class ClusterHierarchy {
             this.params.path_compression = pcCheck.checked;
         };
 
+        const smCheck = document.getElementById('input-show-members');
+        if (smCheck) {
+            smCheck.onchange = () => {
+                this.params.show_members = smCheck.checked;
+            };
+        }
+
         document.getElementById('hier-refresh-btn').onclick = () => {
             const hash = window.location.hash;
             const [path, qs] = hash.split('?');
@@ -316,6 +328,7 @@ class ClusterHierarchy {
             if (this.params.stability_threshold > 0) p.set('min_stability', this.params.stability_threshold); else p.delete('min_stability');
             p.set('show_parents', this.params.show_parents);
             p.set('show_children', this.params.show_children);
+            p.set('show_members', this.params.show_members ? 'true' : 'false');
             
             window.location.hash = `${path}?${p.toString()}`;
         };
@@ -334,13 +347,14 @@ class ClusterHierarchy {
             if (this.params.stability_threshold > 0) queryParams.set('min_stability', this.params.stability_threshold);
             queryParams.set('show_parents', this.params.show_parents !== false);
             queryParams.set('show_children', this.params.show_children !== false);
+            queryParams.set('show_members', this.params.show_members === true);
 
             const url = `/api/cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error("Cluster data not found");
             const data = await res.json();
 
-            const nodes = (data.results || []).map(m => ({
+            let nodes = (data.results || []).map(m => ({
                 id: String(m.cluster_id),
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
@@ -350,8 +364,30 @@ class ClusterHierarchy {
                 cohesion: m.cohesion_score || 0.0,
                 avg_features: m.avg_features || 0.0,
                 snippet: m.snippet || "",
-                members: m.sample_members || []
+                members: m.sample_members || [],
+                direct_members: m.direct_members || []
             }));
+
+            if (this.params.show_members) {
+                const memberNodes = [];
+                nodes.forEach(c => {
+                    if (c.direct_members && c.direct_members.length > 0) {
+                        c.direct_members.forEach(m => {
+                            memberNodes.push({
+                                id: m.id,
+                                parent: String(c.id),
+                                name: m.name,
+                                is_member: true,
+                                size: 1,
+                                stability: 0,
+                                cohesion: 0,
+                                members: []
+                            });
+                        });
+                    }
+                });
+                nodes = nodes.concat(memberNodes);
+            }
 
             if (!nodes || nodes.length === 0) {
                 this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
@@ -491,14 +527,28 @@ class ClusterHierarchy {
             .style("cursor", "pointer")
             .on("click", (event, d) => {
                 const col = getCurrentCollection();
+                if (d.data.is_member) {
+                    if (window.showFunctionCodeById) {
+                        window.showFunctionCodeById(d.data.id, d.data.name, '', event);
+                    } else if (typeof showFunctionCodeById === 'function') {
+                        showFunctionCodeById(d.data.id, d.data.name, '', event);
+                    } else {
+                        window.location.hash = `#functions?collection=${col}&q=${encodeURIComponent(d.data.name)}`;
+                    }
+                    return;
+                }
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
                     window.location.hash = '#functions?collection=' + col + '&cluster_uuid=' + uuid;
                 }
             })
             .on("mouseover", (e, d) => {
-                d3.select(e.currentTarget).select("circle").attr("r", 14);
+                self._hoveredNodeEl = e.currentTarget;
+                d3.select(e.currentTarget).select("circle").attr("r", d.data.is_member ? 7 : 14);
                 self.showTooltip(e, d);
+            })
+            .on("mousemove", (e, d) => {
+                if (window.moveCodePreview) window.moveCodePreview(e);
             })
             .on("mouseout", (e, d) => {
                 const relatedTarget = e.relatedTarget;
@@ -506,8 +556,9 @@ class ClusterHierarchy {
                 if (tooltip && (tooltip === relatedTarget || tooltip.contains(relatedTarget))) {
                     return;
                 }
-                d3.select(e.currentTarget).select("circle").attr("r", 8);
+                d3.select(e.currentTarget).select("circle").attr("r", d.data.is_member ? 4 : 8);
                 self.hideTooltip();
+                self._hoveredNodeEl = null;
             });
 
         const getCohesionColor = (cohesion) => {
@@ -516,17 +567,18 @@ class ClusterHierarchy {
         };
 
         nodeEnter.append("circle")
-            .attr("r", 8)
-            .attr("stroke", d => getCohesionColor(d.data.cohesion))
-            .attr("stroke-width", 2)
-            .style("fill", d => getCohesionColor(d.data.cohesion));
+            .attr("r", d => d.data.is_member ? 4 : 8)
+            .attr("stroke", d => d.data.is_member ? "var(--accent)" : getCohesionColor(d.data.cohesion))
+            .attr("stroke-width", d => d.data.is_member ? 1.5 : 2)
+            .style("fill", d => d.data.is_member ? "#0d0f14" : getCohesionColor(d.data.cohesion));
 
         nodeEnter.append("text")
             .attr("dy", ".35em")
             .attr("x", d => d.children || d._children ? -15 : 15)
             .attr("text-anchor", d => d.children || d._children ? "end" : "start")
-            .style("fill", "#fff")
-            .style("font-size", "12px")
+            .style("fill", d => d.data.is_member ? "#aaa" : "#fff")
+            .style("font-size", d => d.data.is_member ? "10px" : "12px")
+            .style("font-style", d => d.data.is_member ? "italic" : "normal")
             .style("pointer-events", "none")
             .text(d => d.data.name)
             .clone(true).lower()
@@ -539,8 +591,9 @@ class ClusterHierarchy {
             .attr("transform", d => `translate(${d.y},${d.x})`);
 
         nodeUpdate.select("circle")
-            .style("fill", d => getCohesionColor(d.data.cohesion))
-            .attr("stroke", d => getCohesionColor(d.data.cohesion));
+            .style("fill", d => d.data.is_member ? "#0d0f14" : getCohesionColor(d.data.cohesion))
+            .attr("stroke", d => d.data.is_member ? "var(--accent)" : getCohesionColor(d.data.cohesion))
+            .attr("r", d => d.data.is_member ? 4 : 8);
 
         const nodeExit = node.exit().transition().duration(400)
             .attr("transform", d => `translate(${source.y},${source.x})`)
@@ -662,6 +715,14 @@ class ClusterHierarchy {
     async showTooltip(event, d) {
         this._activeD = d;
         this._hoveredNodeEl = event.currentTarget;
+        if (d.data.is_member) {
+            const el = getHierarchyTooltip();
+            if (el) el.style.display = 'none';
+            if (window.showCodePreview) {
+                window.showCodePreview(d.data.id, d.data.name, d.data.addr, d.data.bin, d.data.v_size, event);
+            }
+            return;
+        }
         const tooltip = getHierarchyTooltip();
         tooltip.style.display = 'block';
         let x = event.clientX + 20;
@@ -894,6 +955,9 @@ class ClusterHierarchy {
         this._renderedNodeUuid = null;
         const el = getHierarchyTooltip();
         if (el) el.style.display = 'none';
+        if (window.hideCodePreview) {
+            window.hideCodePreview();
+        }
     }
 }
 
@@ -1327,6 +1391,9 @@ class ClusterPacking {
                     .style("filter", `drop-shadow(0 0 8px ${getCohesionStroke(d)})`);
                 self.showTooltip(event, d);
             })
+            .on("mousemove", function (event, d) {
+                if (window.moveCodePreview) window.moveCodePreview(event);
+            })
             .on("mouseout", function (event, d) {
                 event.stopPropagation();
                 if (d.data.id === "VIRTUAL_ROOT") return;
@@ -1343,6 +1410,15 @@ class ClusterPacking {
                 self.hideTooltip();
             })
             .on("click", (event, d) => {
+                if (d.data.is_member) {
+                    if (window.showFunctionCodeById) {
+                        window.showFunctionCodeById(d.data.id, d.data.name, '', event);
+                    } else if (typeof showFunctionCodeById === 'function') {
+                        showFunctionCodeById(d.data.id, d.data.name, '', event);
+                    }
+                    event.stopPropagation();
+                    return;
+                }
                 if (focus !== d) {
                     zoom(event, d);
                     event.stopPropagation();
@@ -1505,6 +1581,19 @@ class ClusterPacking {
 
     async showTooltip(event, d) {
         this._activeD = d;
+
+        if (d.data.is_member) {
+            if (this._tooltipTimeout) clearTimeout(this._tooltipTimeout);
+            this._tooltipTimeout = setTimeout(() => {
+                if (this._activeD !== d) return;
+                const el = getHierarchyTooltip();
+                if (el) el.style.display = 'none';
+                if (window.showCodePreview) {
+                    window.showCodePreview(d.data.id, d.data.name, d.data.addr, d.data.bin, d.data.v_size, event);
+                }
+            }, 150);
+            return;
+        }
 
         if (this._tooltipTimeout) clearTimeout(this._tooltipTimeout);
         this._tooltipTimeout = setTimeout(async () => {
@@ -1752,6 +1841,9 @@ class ClusterPacking {
         }
         const el = getHierarchyTooltip();
         if (el) el.style.display = 'none';
+        if (window.hideCodePreview) {
+            window.hideCodePreview();
+        }
     }
 }
 

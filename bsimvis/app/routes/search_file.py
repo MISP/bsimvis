@@ -105,6 +105,7 @@ def query_files_advanced(r, collection, filters):
         "language_id",
         "batch_uuid",
         "bin_cluster_uuid",
+        "bin_cluster_name",
     ]:
         val = fields.get(field)
         if val:
@@ -295,6 +296,7 @@ def search_files():
         "file_md5",
         "file_name",
         "bin_cluster_uuid",
+        "bin_cluster_name",
     ]:
         val = request.args.get(field)
         if val:
@@ -360,6 +362,18 @@ def search_files():
     min_funcs = parse_int_filter(request.args.get("min_function_count"))
     max_funcs = parse_int_filter(request.args.get("max_function_count"))
 
+    def parse_float_filter(val):
+        if val is None or val.strip() == "":
+            return None
+        try:
+            return float(val)
+        except ValueError:
+            return None
+
+    min_cohesion = parse_float_filter(request.args.get("min_cohesion"))
+    max_cohesion = parse_float_filter(request.args.get("max_cohesion"))
+    algo = request.args.get("algo", "unweighted_cosine")
+
     sort_by = request.args.get("sort_by")
     sort_order = request.args.get("sort_order", "desc")
 
@@ -380,6 +394,9 @@ def search_files():
         "max_funcs": max_funcs,
         "sort_by": sort_by,
         "sort_order": sort_order,
+        "min_cohesion": min_cohesion,
+        "max_cohesion": max_cohesion,
+        "algo": algo,
     }
 
     # Execute advanced search
@@ -436,7 +453,6 @@ def search_files():
 
     # Fetch Cluster Metadata
     bin_cluster_meta_map = {}
-    algo = "unweighted_cosine"
     if unique_cluster_ids:
         c_pipe = r.pipeline()
         c_list = list(unique_cluster_ids)
@@ -448,14 +464,25 @@ def search_files():
             if isinstance(cm, str):
                 cm = json.loads(cm)
             if cm:
+                coh = cm.get("cohesion_score", 0.0)
+                if min_cohesion is not None and coh < min_cohesion:
+                    continue
+                if max_cohesion is not None and coh > max_cohesion:
+                    continue
                 bin_cluster_meta_map[cid] = {
                     "cluster_id": cm.get("cluster_id"),
                     "cluster_uuid": cm.get("cluster_uuid"),
                     "cluster_name": cm.get("cluster_name"),
-                    "cohesion_score": cm.get("cohesion_score", 0),
+                    "cohesion_score": coh,
                     "member_count": cm.get("member_count", 0),
                     "cluster_stability": cm.get("cluster_stability", 0.0),
                 }
+
+    # Filter each file's bin_clusters to only include matching clusters
+    for data in files_list:
+        data["bin_clusters"] = [
+            cid for cid in data.get("bin_clusters", []) if cid in bin_cluster_meta_map
+        ]
 
     # If total is 0 and no filters were specified, fall back to global total_files
     has_filters = (

@@ -300,6 +300,24 @@ class BinClusterService:
                 pipe.execute()
         pipe.execute()
 
+        # Extract and save direct members (where child_size == 1)
+        direct_members = {}
+        for _, row in tree_df.iterrows():
+            if int(row["child_size"]) == 1:
+                p = int(row["parent"])
+                leaf = int(row["child"])
+                if leaf in idx_to_id:
+                    fid = idx_to_id[leaf]
+                    if p not in direct_members:
+                        direct_members[p] = []
+                    direct_members[p].append(fid)
+
+        for c, d_members in direct_members.items():
+            pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:direct_members", *d_members)
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
+
         file_tag_fields = [
             f
             for f in self.get_native_fields("file", False)
@@ -534,6 +552,7 @@ class BinClusterService:
                 pipe.execute()
 
             r.delete(f"{collection}:bin_cluster:{algo}:{cid}:members")
+            r.delete(f"{collection}:bin_cluster:{algo}:{cid}:direct_members")
             r.delete(f"{collection}:bin_cluster:{algo}:{cid}:meta")
 
             if job_service and job_id and i % 10 == 0:

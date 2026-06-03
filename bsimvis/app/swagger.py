@@ -386,6 +386,14 @@ class FileSearch(Resource):
                 "description": "Filter by batch UUID",
                 "example": "uuid-1234-abcd",
             },
+            "bin_cluster_uuid": {
+                "description": "Filter by binary cluster UUID",
+                "example": "a1b2c3d4e5f6",
+            },
+            "bin_cluster_name": {
+                "description": "Filter by binary cluster name substring",
+                "example": "libc",
+            },
             "tag": {
                 "description": "Filter by tag (static or user)",
                 "example": "malware",
@@ -444,6 +452,18 @@ class FileSearch(Resource):
             },
             "max_file_date": {
                 "description": "Latest file date (ISO or timestamp)",
+            },
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0–1.0)",
+                "example": 0.5,
+            },
+            "max_cohesion": {
+                "description": "Maximum cluster cohesion score (0.0–1.0)",
+                "example": 1.0,
+            },
+            "algo": {
+                "description": "Similarity algorithm",
+                "default": "unweighted_cosine",
             },
             "sort_by": {
                 "description": "Sort field: entry_date, file_date, function_count",
@@ -1286,6 +1306,7 @@ class ClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
     def get(self):
@@ -1429,6 +1450,7 @@ class BinClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
     def get(self):

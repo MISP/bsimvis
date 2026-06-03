@@ -194,6 +194,7 @@ def list_clusters():
         max_cohesion = float(request.args.get("max_cohesion", 0))
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
+        show_members = request.args.get("show_members", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -338,27 +339,84 @@ def list_clusters():
                         queue.append(child)
             valid_nodes = expanded_nodes
 
+        # Fetch direct members if requested
+        direct_members_map = {}
+        if show_members and valid_nodes:
+            import json
+
+            pipe = r.pipeline()
+            valid_nodes_list = list(valid_nodes)
+            for cid in valid_nodes_list:
+                pipe.smembers(f"{collection}:cluster:{algo}:{cid}:direct_members")
+            direct_members_ids_list = pipe.execute()
+
+            all_member_ids = set()
+            cluster_to_member_ids = {}
+            for cid, ids_raw in zip(valid_nodes_list, direct_members_ids_list):
+                if ids_raw:
+                    ids = [x.decode() if isinstance(x, bytes) else x for x in ids_raw]
+                    cluster_to_member_ids[cid] = ids
+                    all_member_ids.update(ids)
+
+            member_meta_map = {}
+            if all_member_ids:
+                all_member_ids_list = list(all_member_ids)
+                m_pipe = r.pipeline()
+                for mid in all_member_ids_list:
+                    m_pipe.json().get(f"{mid}:meta", "$")
+                raw_metas = m_pipe.execute()
+                for mid, meta in zip(all_member_ids_list, raw_metas):
+                    m = meta[0] if isinstance(meta, list) and meta else {}
+                    if isinstance(m, str):
+                        try:
+                            m = json.loads(m)
+                        except Exception:
+                            m = {}
+                    member_meta_map[mid] = m
+
+            for cid in valid_nodes_list:
+                mids = cluster_to_member_ids.get(cid, [])
+                direct_members_map[cid] = [
+                    {
+                        "id": mid,
+                        "name": member_meta_map.get(mid, {}).get(
+                            "function_name", "Unknown"
+                        ),
+                        "addr": member_meta_map.get(mid, {}).get(
+                            "entrypoint_address"
+                        ),
+                        "bin": member_meta_map.get(mid, {}).get(
+                            "file_name"
+                        ),
+                        "v_size": member_meta_map.get(mid, {}).get(
+                            "bsim_features_count"
+                        ),
+                    }
+                    for mid in mids
+                ]
+
         for cid in valid_nodes:
             m = meta_map.get(cid)
             if not m:
                 if not show_parents and not show_children:
                     continue
                 m = {"cluster_id": cid}
-            results.append(
-                {
-                    "cluster_id": m.get("cluster_id"),
-                    "cluster_uuid": m.get("cluster_uuid"),
-                    "cluster_name": m.get("cluster_name"),
-                    "avg_stability": m.get("avg_stability", 0.0),
-                    "avg_features": m.get("avg_features", 0),
-                    "cohesion_score": m.get("cohesion_score", 0),
-                    "count": m.get("member_count"),
-                    "created_at": m.get("created_at"),
-                    "parent": child_to_parent.get(str(m.get("cluster_id"))),
-                    "snippet": m.get("snippet", ""),
-                    "sample_members": m.get("sample_members", []),
-                }
-            )
+            cluster_result = {
+                "cluster_id": m.get("cluster_id"),
+                "cluster_uuid": m.get("cluster_uuid"),
+                "cluster_name": m.get("cluster_name"),
+                "avg_stability": m.get("avg_stability", 0.0),
+                "avg_features": m.get("avg_features", 0),
+                "cohesion_score": m.get("cohesion_score", 0),
+                "count": m.get("member_count"),
+                "created_at": m.get("created_at"),
+                "parent": child_to_parent.get(str(m.get("cluster_id"))),
+                "snippet": m.get("snippet", ""),
+                "sample_members": m.get("sample_members", []),
+            }
+            if show_members:
+                cluster_result["direct_members"] = direct_members_map.get(cid, [])
+            results.append(cluster_result)
 
     # 3. Sorting
     reverse = sort_order == "desc"

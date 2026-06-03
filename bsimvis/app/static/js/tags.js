@@ -369,9 +369,36 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
         </div>
     `;
 };
-window.applyClusterFilter = (uuid) => {
+window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     const hash = targetWindow.location.hash || '#collections';
+    
+    if (isBinary) {
+        const targetHashPath = '#files';
+        const inputId = 'flt-file-cluster';
+        
+        let input = targetWindow.document.getElementById(inputId);
+        if (!input) {
+            const currentHash = targetWindow.location.hash || `#files`;
+            const [path, query] = currentHash.split('?');
+            const params = new URLSearchParams(query || '');
+            params.set('bin_cluster_uuid', uuid);
+            
+            const currentParams = new URLSearchParams(targetWindow.location.hash.split('?')[1] || '');
+            if (currentParams.has('collection')) {
+                params.set('collection', currentParams.get('collection'));
+            }
+            
+            targetWindow.location.hash = `${targetHashPath}?${params.toString()}`;
+        } else {
+            input.value = uuid;
+            if (targetWindow.applyAdvancedFileSearch) {
+                targetWindow.applyAdvancedFileSearch();
+            }
+        }
+        return;
+    }
+
     const isSim = hash.startsWith('#function-similarity');
     
     const targetHashPath = isSim ? '#function-similarity' : '#functions';
@@ -474,7 +501,7 @@ window.moveClusterCardTooltip = function(e) {
     }
 };
 
-window.renderClusterCards = (clusters) => {
+window.renderClusterCards = (clusters, isBinary = false) => {
     if (!clusters || clusters.length === 0) return '';
     
     const threshold = typeof UIParams !== 'undefined' ? UIParams.cohesionThreshold : 0.5;
@@ -496,7 +523,7 @@ window.renderClusterCards = (clusters) => {
               onmouseenter="showClusterCardTooltip(event, '${uuid}', '${name.replace(/'/g, "\\'")}', ${c.member_count || 0}, ${c.cluster_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
-              onclick="applyClusterFilter('${uuid}')"
+              onclick="applyClusterFilter('${uuid}', ${isBinary})"
               style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
                  stroke-linecap="round" stroke-linejoin="round">

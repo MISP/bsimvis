@@ -109,6 +109,7 @@ class BinClusterHierarchy {
         this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
         this.params.show_parents = params.get('show_parents') === 'true';
         this.params.show_children = params.get('show_children') === 'true';
+        this.params.show_members = params.get('show_members') === 'true';
         this.params.q = params.get('q') || '';
 
         const hierControls = `
@@ -181,6 +182,10 @@ class BinClusterHierarchy {
                         <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
                         <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
                     </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="input-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                        <label for="input-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                    </div>
                 </div>
 
                 <button id="hier-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
@@ -250,6 +255,11 @@ class BinClusterHierarchy {
         scCheck.onchange = () => { this.params.show_children = scCheck.checked; };
         const pcCheck = document.getElementById('input-path-compression');
         pcCheck.onchange = () => { this.params.path_compression = pcCheck.checked; };
+        
+        const smCheck = document.getElementById('input-show-members');
+        if (smCheck) {
+            smCheck.onchange = () => { this.params.show_members = smCheck.checked; };
+        }
 
         document.getElementById('hier-refresh-btn').onclick = () => {
             const hash = window.location.hash;
@@ -265,6 +275,7 @@ class BinClusterHierarchy {
             if (searchVal) p.set('q', searchVal); else p.delete('q');
             p.set('show_parents', this.params.show_parents);
             p.set('show_children', this.params.show_children);
+            p.set('show_members', this.params.show_members ? 'true' : 'false');
             
             window.location.hash = `${path}?${p.toString()}`;
         };
@@ -280,13 +291,14 @@ class BinClusterHierarchy {
             if (this.params.q) queryParams.set('q', this.params.q);
             queryParams.set('show_parents', this.params.show_parents !== false);
             queryParams.set('show_children', this.params.show_children !== false);
+            queryParams.set('show_members', this.params.show_members === true);
 
             const url = `/api/bin_cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error("Cluster data not found");
             const data = await res.json();
 
-            const nodes = (data.results || []).map(m => ({
+            let nodes = (data.results || []).map(m => ({
                 id: String(m.cluster_id),
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
@@ -295,8 +307,35 @@ class BinClusterHierarchy {
                 stability: m.avg_stability || 0.0,
                 cohesion: m.cohesion_score || 0.0,
                 snippet: m.snippet || "",
-                members: m.sample_members || []
+                members: m.sample_members || [],
+                direct_members: m.direct_members || []
             }));
+
+            if (this.params.show_members) {
+                const memberNodes = [];
+                nodes.forEach(c => {
+                    if (c.direct_members && c.direct_members.length > 0) {
+                        c.direct_members.forEach(m => {
+                            memberNodes.push({
+                                id: m.id,
+                                parent: String(c.id),
+                                name: m.name,
+                                file_md5: m.file_md5,
+                                language_id: m.language_id,
+                                function_count: m.function_count,
+                                tags: m.tags,
+                                user_tags: m.user_tags,
+                                is_member: true,
+                                size: 1,
+                                stability: 0,
+                                cohesion: 0,
+                                members: []
+                            });
+                        });
+                    }
+                });
+                nodes = nodes.concat(memberNodes);
+            }
 
             if (!nodes || nodes.length === 0) {
                 this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No binary clusters match these criteria.</div>`;
@@ -386,20 +425,54 @@ class BinClusterHierarchy {
 
         const node = this.g.selectAll("g.node").data(dNodes, d => d.data.id);
         const nodeEnter = node.enter().append("g").attr("class", "node").attr("transform", d => `translate(${d.y},${d.x})`).style("cursor", "pointer")
-            .on("click", (e, d) => { if (d.data.uuid && d.data.uuid !== 'root') window.location.hash = `#files?collection=${getCurrentCollection()}&bin_cluster_uuid=${d.data.uuid}`; })
-            .on("mouseenter", (e, d) => { d3.select(e.currentTarget).select("circle").attr("r", 14); this.showTooltip(e, d); })
+            .on("click", (e, d) => {
+                const col = getCurrentCollection();
+                if (d.data.is_member) {
+                    if (d.data.file_md5) {
+                        window.location.hash = `#files/sim?collection=${col}&md5=${d.data.file_md5}`;
+                    } else {
+                        window.location.hash = `#files?collection=${col}&q=${encodeURIComponent(d.data.name)}`;
+                    }
+                    return;
+                }
+                if (d.data.uuid && d.data.uuid !== 'root') {
+                    window.location.hash = `#files?collection=${col}&bin_cluster_uuid=${d.data.uuid}`;
+                }
+            })
+            .on("mouseenter", (e, d) => {
+                this._hoveredNodeEl = e.currentTarget;
+                d3.select(e.currentTarget).select("circle").attr("r", d.data.is_member ? 7 : 14);
+                this.showTooltip(e, d);
+            })
+            .on("mousemove", (e) => {
+                if (window.moveCodePreview) window.moveCodePreview(e);
+            })
             .on("mouseleave", (e, d) => {
                 const rt = e.relatedTarget;
                 const tt = getBinHierarchyTooltip();
                 if (tt && (tt === rt || tt.contains(rt))) return;
-                d3.select(e.currentTarget).select("circle").attr("r", 8); this.hideTooltip();
+                d3.select(e.currentTarget).select("circle").attr("r", d.data.is_member ? 4 : 8);
+                this.hideTooltip();
+                this._hoveredNodeEl = null;
             });
 
-        nodeEnter.append("circle").attr("r", 8).attr("stroke", d => getCohesionColor(d.data.cohesion)).attr("stroke-width", 2).style("fill", d => getCohesionColor(d.data.cohesion));
-        nodeEnter.append("text").attr("dy", ".35em").attr("x", d => d.children ? -15 : 15).attr("text-anchor", d => d.children ? "end" : "start").style("fill", "#fff").style("font-size", "12px").style("pointer-events", "none")
+        nodeEnter.append("circle").attr("r", d => d.data.is_member ? 4 : 8)
+            .attr("stroke", d => d.data.is_member ? "var(--accent)" : getCohesionColor(d.data.cohesion))
+            .attr("stroke-width", d => d.data.is_member ? 1.5 : 2)
+            .style("fill", d => d.data.is_member ? "#0d0f14" : getCohesionColor(d.data.cohesion));
+        nodeEnter.append("text").attr("dy", ".35em").attr("x", d => d.children ? -15 : 15).attr("text-anchor", d => d.children ? "end" : "start")
+            .style("fill", d => d.data.is_member ? "#aaa" : "#fff")
+            .style("font-size", d => d.data.is_member ? "10px" : "12px")
+            .style("font-style", d => d.data.is_member ? "italic" : "normal")
+            .style("pointer-events", "none")
             .text(d => d.data.name).clone(true).lower().attr("stroke", "#000").attr("stroke-width", 3);
 
-        node.merge(nodeEnter).attr("transform", d => `translate(${d.y},${d.x})`);
+        const nodeUpdate = node.merge(nodeEnter);
+        nodeUpdate.attr("transform", d => `translate(${d.y},${d.x})`);
+        nodeUpdate.select("circle")
+            .style("fill", d => d.data.is_member ? "#0d0f14" : getCohesionColor(d.data.cohesion))
+            .attr("stroke", d => d.data.is_member ? "var(--accent)" : getCohesionColor(d.data.cohesion))
+            .attr("r", d => d.data.is_member ? 4 : 8);
         
         const initialTransform = d3.zoomIdentity.translate(80, height / 2).scale(0.6);
         this.svg.call(this.zoom.transform, initialTransform);
@@ -408,6 +481,25 @@ class BinClusterHierarchy {
     async showTooltip(event, d) {
         this._activeD = d;
         this._hoveredNodeEl = event.currentTarget;
+
+        if (d.data.is_member) {
+            const el = getBinHierarchyTooltip();
+            if (el) el.style.display = 'none';
+            if (window.showBinaryPreview) {
+                window.showBinaryPreview(
+                    d.data.file_md5,
+                    d.data.name,
+                    d.data.function_count,
+                    d.data.language_id,
+                    d.data.tags,
+                    event,
+                    d.data.tags,
+                    d.data.user_tags
+                );
+            }
+            return;
+        }
+
         const tooltip = getBinHierarchyTooltip();
         tooltip.style.display = 'block';
         let x = event.clientX + 20;
@@ -488,7 +580,14 @@ class BinClusterHierarchy {
         `;
     }
 
-    hideTooltip() { this._activeD = null; const el = getBinHierarchyTooltip(); if (el) el.style.display = 'none'; }
+    hideTooltip() {
+        this._activeD = null;
+        const el = getBinHierarchyTooltip();
+        if (el) el.style.display = 'none';
+        if (window.hideBinaryPreview) {
+            window.hideBinaryPreview();
+        }
+    }
 }
 
 class BinClusterPacking {

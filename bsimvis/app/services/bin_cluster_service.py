@@ -45,7 +45,7 @@ class BinClusterService:
         if min_samples is None:
             min_samples = config_service.get("clustering.min_samples", 1)
         if cluster_selection_epsilon is None:
-            cluster_selection_epsilon = config_service.get("clustering.epsilon", 0.1)
+            cluster_selection_epsilon = config_service.get("clustering.epsilon", 0.001)
         if selection_method is None:
             selection_method = config_service.get("clustering.selection_method", "eom")
         if min_sim is None:

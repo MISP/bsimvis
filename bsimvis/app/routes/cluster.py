@@ -214,6 +214,9 @@ def list_clusters():
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
 
+    limit = request.args.get("limit", 100, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
     # Column-specific function member filters
     func_name_q = request.args.get("func_name", "").strip()
     func_addr_q = request.args.get("func_addr", "").strip()
@@ -517,11 +520,16 @@ def list_clusters():
     else:
         results.sort(key=lambda x: str(x["cluster_id"]), reverse=reverse)
 
+    total = len(results)
+    page = results[offset : offset + limit]
+
     response_data = {
         "collection": collection,
         "algo": algo,
-        "total": len(results),
-        "results": results,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "results": page,
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
@@ -632,7 +640,7 @@ def list_cluster_members():
         m = meta[0] if isinstance(meta, list) and meta else {}
         results.append({"id": page[i], "meta": m})
 
-    return {"cluster_id": cluster_id, "total": total, "results": results}
+    return {"cluster_id": cluster_id, "total": total, "offset": offset, "limit": limit, "results": results}
 
 
 def get_cluster_functions():

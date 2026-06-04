@@ -176,3 +176,21 @@ function getMd5Color(md5) {
     return `rgb(${r}, ${g}, ${b})`;
 }
 window.getMd5Color = getMd5Color;
+
+function getCollectionFromHash() {
+    const [hashPath, queryString] = (window.location.hash || '').split('?');
+    const params = new URLSearchParams(queryString);
+    const col = params.get('collection');
+    if (col) return col;
+    
+    // Fallback: check window.parent if in iframe
+    if (window.parent && window.parent !== window && window.parent.location.hash) {
+        const [pHashPath, pQueryString] = (window.parent.location.hash || '').split('?');
+        const pParams = new URLSearchParams(pQueryString);
+        const pCol = pParams.get('collection');
+        if (pCol) return pCol;
+    }
+    
+    return 'main';
+}
+window.getCollectionFromHash = getCollectionFromHash;

@@ -556,6 +556,18 @@ class ClusterService:
             rep_meta = all_member_meta.get(rep_fid, {}) if rep_fid else {}
             snippet = rep_meta.get("function_name", "unknown")
 
+            samples = []
+            for fid in members[:5]:
+                m = all_member_meta.get(fid, {})
+                samples.append({
+                    "function_id": fid,
+                    "function_name": m.get("function_name", "Unknown"),
+                    "entrypoint_address": m.get("entrypoint_address"),
+                    "file_md5": m.get("file_md5"),
+                    "collection": collection,
+                    "bsim_features_count": m.get("bsim_features_count", 0)
+                })
+
             meta = {
                 "cluster_id": int(label),
                 "snippet": snippet,
@@ -567,7 +579,7 @@ class ClusterService:
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
                 "unique_files_count": len(unique_md5s),
-                "sample_members": names[:5],  # Include a few actual function names
+                "sample_members": samples,
                 "created_at": int(time.time() * 1000),
             }
 

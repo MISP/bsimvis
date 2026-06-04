@@ -27,6 +27,9 @@ INDEX_CONFIG = {
         "batch_order": ["file", "func", "sim"],  # numeric
         "entry_date": ["file", "func", "sim"],  # numeric
         "file_date": ["file", "func", "sim"],  # numeric
+        "function_count": ["file"],  # numeric
+        "bsim_features_count": ["file"],  # numeric
+        "cohesion_score": ["file"],  # numeric
         "bin_cluster_id": ["file"],
         "bin_cluster_uuid": ["file"],
         "bin_cluster_name": ["file"],
@@ -123,8 +126,10 @@ NUM_FIELDS = {
     "batch_order",
     "entry_date",
     "file_date",
+    "function_count",
     "instruction_count",
     "bsim_features_count",
+    "cohesion_score",
     "cluster_stability",
     "frequency",
     "tf_score",
@@ -135,6 +140,8 @@ NUM_FIELDS = {
     "coverage_a",
     "coverage_b",
     "shared_clusters",
+    "functions_count_a",
+    "functions_count_b",
     "computed_at",
 }
 

@@ -1,25 +1,36 @@
 let tagMetadata = {};
 window.tagMetadata = tagMetadata;
+let isFetchingTagMetadata = false;
+let tagFetchPromise = null;
 
 async function fetchTagMetadata(collection) {
     if (!collection) return;
-    try {
-        const res = await fetch(`/api/tags/metadata?collection=${collection}`);
-        if (res.ok) {
-            tagMetadata = await res.json();
+    if (isFetchingTagMetadata && tagFetchPromise) return tagFetchPromise;
+
+    isFetchingTagMetadata = true;
+    tagFetchPromise = (async () => {
+        try {
+            const res = await fetch(`/api/tags/metadata?collection=${collection}`);
+            if (res.ok) {
+                tagMetadata = await res.json();
+                window.tagMetadata = tagMetadata;
+            }
+            // Ensure bookmark and ignore have a default look if not set on server
+            if (!tagMetadata['bookmark']) {
+                tagMetadata['bookmark'] = { color: '#66d9ef', priority: 1000, count: 0 };
+            }
+            if (!tagMetadata['ignore']) {
+                tagMetadata['ignore'] = { color: '#f92672', priority: 900, count: 0 };
+            }
             window.tagMetadata = tagMetadata;
+        } catch (err) {
+            console.error("Failed to fetch tag metadata", err);
+        } finally {
+            isFetchingTagMetadata = false;
+            tagFetchPromise = null;
         }
-        // Ensure bookmark and ignore have a default look if not set on server
-        if (!tagMetadata['bookmark']) {
-            tagMetadata['bookmark'] = { color: '#66d9ef', priority: 1000, count: 0 };
-        }
-        if (!tagMetadata['ignore']) {
-            tagMetadata['ignore'] = { color: '#f92672', priority: 900, count: 0 };
-        }
-        window.tagMetadata = tagMetadata;
-    } catch (err) {
-        console.error("Failed to fetch tag metadata", err);
-    }
+    })();
+    return tagFetchPromise;
 }
 
 function getRawTagColor(analysisTags, userTags = []) {
@@ -1180,6 +1191,14 @@ window.addEventListener('message', (event) => {
 
     const { action, tag, targets } = msg;
     if (!tag || !targets || !targets.length) return;
+
+    // If we encounter a new tag, refresh metadata to get its color/priority
+    if (action === 'add' && !tagMetadata[tag]) {
+        if (typeof fetchTagMetadata === 'function') {
+            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            fetchTagMetadata(col);
+        }
+    }
 
     targets.forEach(({ etype, eid }) => {
         const editors = Array.from(document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`));

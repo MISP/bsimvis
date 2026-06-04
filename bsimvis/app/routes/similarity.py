@@ -3,6 +3,7 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.similarity_service import SimilarityService
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_service import normalize_tags
 
 job_service = JobService()
 similarity_service = SimilarityService()
@@ -52,6 +53,7 @@ def list_similarities():
                 d = doc[0] if isinstance(doc, list) else doc
                 sid_key = sim_keys[i]
                 d["sid"] = sid_key.decode() if isinstance(sid_key, bytes) else sid_key
+                normalize_tags(d)
                 results.append(d)
 
     return {"total": total, "offset": offset, "limit": limit, "results": results}

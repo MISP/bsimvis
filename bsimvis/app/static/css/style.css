@@ -230,12 +230,24 @@ body {
     background: rgba(255,255,255,0.02);
 }
 
-.meta-col-body {
-    transition: all 0.3s ease;
+.meta-col-body-wrapper {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 0.3s ease, opacity 0.3s ease;
+    opacity: 1;
 }
 
-.meta-col-body.collapsed {
-    display: none !important;
+.meta-col-body-wrapper > div {
+    overflow: hidden;
+}
+
+.meta-col-body-wrapper.collapsed {
+    grid-template-rows: 0fr;
+    opacity: 0;
+}
+
+.meta-col-body {
+    transition: all 0.3s ease;
 }
 
 .relation-header {

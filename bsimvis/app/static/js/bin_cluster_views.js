@@ -93,6 +93,36 @@ class BinClusterHierarchy {
         if (this.abortController) this.abortController.abort();
     }
 
+    applyTagUpdate(action, etype, eid, tag) {
+        if (!this.root) return;
+        const mutate = (arr, t, add) => {
+            if (add) { if (!arr.includes(t)) arr.push(t); }
+            else { const i = arr.indexOf(t); if (i !== -1) arr.splice(i, 1); }
+        };
+        const add = (action === 'add');
+        let updated = false;
+
+        this.root.each(d => {
+            if (d.data && etype === 'file' && d.data.runtime_files) {
+                d.data.runtime_files.forEach(m => {
+                    if (m.id === eid || m.md5 === eid || (m.id && m.id.endsWith(eid))) {
+                        m.file_user_tags = m.file_user_tags || [];
+                        mutate(m.file_user_tags, tag, add);
+                        updated = true;
+                    }
+                });
+            }
+        });
+
+        if (updated && this._activeD) {
+            const tooltip = getBinHierarchyTooltip();
+            if (tooltip && tooltip.style.display === 'block' && this._renderedNodeUuid === this._activeD.data.uuid) {
+                this._renderedNodeUuid = null;
+                this.renderTooltip(tooltip, this._activeD);
+            }
+        }
+    }
+
     async fetch(params) {
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
@@ -708,6 +738,36 @@ class BinClusterPacking {
     }
 
     stop() { if (this.abortController) this.abortController.abort(); }
+
+    applyTagUpdate(action, etype, eid, tag) {
+        if (!this.root) return;
+        const mutate = (arr, t, add) => {
+            if (add) { if (!arr.includes(t)) arr.push(t); }
+            else { const i = arr.indexOf(t); if (i !== -1) arr.splice(i, 1); }
+        };
+        const add = (action === 'add');
+        let updated = false;
+
+        this.root.each(d => {
+            if (d.data && etype === 'file' && d.data.runtime_files) {
+                d.data.runtime_files.forEach(m => {
+                    if (m.id === eid || m.md5 === eid || (m.id && m.id.endsWith(eid))) {
+                        m.file_user_tags = m.file_user_tags || [];
+                        mutate(m.file_user_tags, tag, add);
+                        updated = true;
+                    }
+                });
+            }
+        });
+
+        if (updated && this._activeD) {
+            const tooltip = getBinHierarchyTooltip();
+            if (tooltip && tooltip.style.display === 'block' && this._renderedNodeUuid === this._activeD.data.uuid) {
+                this._renderedNodeUuid = null;
+                this.renderTooltip(tooltip, this._activeD);
+            }
+        }
+    }
 
     async fetch(params) {
         if (this.abortController) this.abortController.abort();

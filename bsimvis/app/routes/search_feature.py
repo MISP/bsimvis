@@ -387,141 +387,149 @@ def query_features_advanced(r, collection, filters):
 
 
 def search_features():
-    r = get_redis()
-    collection = request.args.get("collection")
-    if not collection:
-        return {"error": "No collection specified"}, 400
-
     try:
-        offset = int(request.args.get("offset", 0))
-        limit = int(request.args.get("limit", 20))
-    except ValueError:
-        return {"error": "offset and limit must be integers"}, 400
+        r = get_redis()
+        collection = request.args.get("collection")
+        if not collection:
+            return {"error": "No collection specified"}, 400
 
-    format_arg = request.args.get("format")
-    if format_arg in ("csv", "json"):
-        offset = 0
-        limit = 100000
+        try:
+            offset = int(request.args.get("offset", 0))
+            limit = int(request.args.get("limit", 20))
+        except ValueError:
+            return {"error": "offset and limit must be integers"}, 400
 
-    # Build filters dictionary
-    # toggleSort writes sort_by/sort_order; also support legacy sort/order
-    filters = {
-        "q": request.args.get("q", ""),
-        "hash": request.args.get("hash", ""),
-        "type": request.args.get("type", ""),
-        "op": request.args.get("op", ""),
-        "sort_by": request.args.get("sort_by") or request.args.get("sort", "tf_score"),
-        "sort_order": request.args.get("sort_order")
-        or request.args.get("order", "desc"),
-        "offset": offset,
-        "limit": limit,
-    }
+        format_arg = request.args.get("format")
+        if format_arg in ("csv", "json"):
+            offset = 0
+            limit = 100000
 
-    # Range filters
-    for num_f in ["min_frequency", "max_frequency", "min_tf_score", "max_tf_score"]:
-        val = request.args.get(num_f)
-        if val is not None and val != "":
-            filters[num_f] = val
+        # Build filters dictionary
+        # toggleSort writes sort_by/sort_order; also support legacy sort/order
+        filters = {
+            "q": request.args.get("q", ""),
+            "hash": request.args.get("hash", ""),
+            "type": request.args.get("type", ""),
+            "op": request.args.get("op", ""),
+            "sort_by": request.args.get("sort_by") or request.args.get("sort", "tf_score"),
+            "sort_order": request.args.get("sort_order")
+            or request.args.get("order", "desc"),
+            "offset": offset,
+            "limit": limit,
+        }
 
-    feature_list, total_found = query_features_advanced(r, collection, filters)
+        # Range filters
+        for num_f in ["min_frequency", "max_frequency", "min_tf_score", "max_tf_score"]:
+            val = request.args.get(num_f)
+            if val is not None and val != "":
+                filters[num_f] = val
 
-    response_data = {
-        "total": total_found,
-        "offset": offset,
-        "limit": limit,
-        "features": feature_list,
-    }
-    if format_arg == "csv":
-        from bsimvis.app.services.export_service import export_to_csv
+        feature_list, total_found = query_features_advanced(r, collection, filters)
 
-        return export_to_csv(feature_list, "features")
-    elif format_arg == "json":
-        from bsimvis.app.services.export_service import export_to_json
+        response_data = {
+            "total": total_found,
+            "offset": offset,
+            "limit": limit,
+            "features": feature_list,
+        }
+        if format_arg == "csv":
+            from bsimvis.app.services.export_service import export_to_csv
 
-        return export_to_json(response_data, "features")
-    else:
-        return response_data
+            return export_to_csv(feature_list, "features")
+        elif format_arg == "json":
+            from bsimvis.app.services.export_service import export_to_json
+
+            return export_to_json(response_data, "features")
+        else:
+            return response_data
+    except Exception as e:
+        logging.error(f"Error in search_features: {e}", exc_info=True)
+        return {"error": str(e)}, 500
 
 
 def get_feature_details(f_hash):
-    r = get_redis()
-    collection = request.args.get("collection")
-    if not collection:
-        return {"error": "No collection specified"}, 400
-
     try:
-        offset = int(request.args.get("offset", 0))
-        limit = int(request.args.get("limit", 1000))
-    except ValueError:
-        return {"error": "offset and limit must be integers"}, 400
+        r = get_redis()
+        collection = request.args.get("collection")
+        if not collection:
+            return {"error": "No collection specified"}, 400
 
-    func_ids = r.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
-    raw_meta_vals = r.hvals(f"{collection}:feature:{f_hash}:meta")
-    meta_data = []
-    if raw_meta_vals:
-        for v in raw_meta_vals:
-            m = json.loads(v)
-            if "entry_date" in m:
-                m["entry_date"] = parse_timestamp(m["entry_date"])
-            meta_data.append(m)
-
-    total_occurrences = len(meta_data)
-    paginated_meta = meta_data[offset : offset + limit]
-
-    # Augment missing fields
-    pipe = r.pipeline()
-    augment_indices = []
-    for i, occ in enumerate(paginated_meta):
-        if (
-            "pcode_op_full" not in occ
-            or "tf" not in occ
-            or "pcode_block" not in occ
-            or "seq" not in occ
-        ):
-            func_id = occ.get("function_id")
-            if func_id:
-                pipe.json().get(f"{func_id}:vec:meta", "$")
-                pipe.zscore(f"{func_id}:vec:tf", f_hash)
-                augment_indices.append(i)
-
-    if augment_indices:
         try:
-            extra_results = pipe.execute()
-            for i, idx in enumerate(augment_indices):
-                occ = paginated_meta[idx]
-                vec_meta = extra_results[i * 2]
-                if isinstance(vec_meta, list) and vec_meta and len(vec_meta) == 1:
-                    vec_meta = vec_meta[0]
-                tf_score = extra_results[i * 2 + 1]
-                if vec_meta:
-                    for feat in vec_meta:
-                        if feat.get("hash") == f_hash:
-                            occ["pcode_op_full"] = feat.get("pcode_op_full", "N/A")
-                            occ["pcode_block"] = feat.get("pcode_block", {})
-                            occ["seq"] = feat.get("seq")
-                            break
-                occ["tf"] = int(tf_score) if tf_score is not None else 0
-        except Exception:
-            pass
+            offset = int(request.args.get("offset", 0))
+            limit = int(request.args.get("limit", 1000))
+        except ValueError:
+            return {"error": "offset and limit must be integers"}, 400
 
-    for occ in paginated_meta:
-        col = occ.get("collection", collection)
-        md5 = occ.get("file_md5")
-        addr = occ.get("entrypoint_address")
-        b_uuid = occ.get("batch_uuid")
-        if "function_id" not in occ and col and md5 and addr:
-            occ["function_id"] = f"{col}:func:{md5}:{addr}"
-        if "file_id" not in occ and col and md5:
-            occ["file_id"] = f"{col}:file:{md5}"
-        if "batch_id" not in occ and col and b_uuid:
-            occ["batch_id"] = f"{col}:batch:{b_uuid}"
+        func_ids = r.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1)
+        raw_meta_vals = r.hvals(f"{collection}:feature:{f_hash}:meta")
+        meta_data = []
+        if raw_meta_vals:
+            for v in raw_meta_vals:
+                m = json.loads(v)
+                if "entry_date" in m:
+                    m["entry_date"] = parse_timestamp(m["entry_date"])
+                meta_data.append(m)
 
-    return {
-        "hash": f_hash,
-        "occurrence_count": len(func_ids),
-        "total_occurrences": total_occurrences,
-        "offset": offset,
-        "limit": limit,
-        "associated_functions": list(func_ids),
-        "occurrences": paginated_meta,
-    }
+        total_occurrences = len(meta_data)
+        paginated_meta = meta_data[offset : offset + limit]
+
+        # Augment missing fields
+        pipe = r.pipeline()
+        augment_indices = []
+        for i, occ in enumerate(paginated_meta):
+            if (
+                "pcode_op_full" not in occ
+                or "tf" not in occ
+                or "pcode_block" not in occ
+                or "seq" not in occ
+            ):
+                func_id = occ.get("function_id")
+                if func_id:
+                    pipe.json().get(f"{func_id}:vec:meta", "$")
+                    pipe.zscore(f"{func_id}:vec:tf", f_hash)
+                    augment_indices.append(i)
+
+        if augment_indices:
+            try:
+                extra_results = pipe.execute()
+                for i, idx in enumerate(augment_indices):
+                    occ = paginated_meta[idx]
+                    vec_meta = extra_results[i * 2]
+                    if isinstance(vec_meta, list) and vec_meta and len(vec_meta) == 1:
+                        vec_meta = vec_meta[0]
+                    tf_score = extra_results[i * 2 + 1]
+                    if vec_meta:
+                        for feat in vec_meta:
+                            if feat.get("hash") == f_hash:
+                                occ["pcode_op_full"] = feat.get("pcode_op_full", "N/A")
+                                occ["pcode_block"] = feat.get("pcode_block", {})
+                                occ["seq"] = feat.get("seq")
+                                break
+                    occ["tf"] = int(tf_score) if tf_score is not None else 0
+            except Exception:
+                pass
+
+        for occ in paginated_meta:
+            col = occ.get("collection", collection)
+            md5 = occ.get("file_md5")
+            addr = occ.get("entrypoint_address")
+            b_uuid = occ.get("batch_uuid")
+            if "function_id" not in occ and col and md5 and addr:
+                occ["function_id"] = f"{col}:func:{md5}:{addr}"
+            if "file_id" not in occ and col and md5:
+                occ["file_id"] = f"{col}:file:{md5}"
+            if "batch_id" not in occ and col and b_uuid:
+                occ["batch_id"] = f"{col}:batch:{b_uuid}"
+
+        return {
+            "hash": f_hash,
+            "occurrence_count": len(func_ids),
+            "total_occurrences": total_occurrences,
+            "offset": offset,
+            "limit": limit,
+            "associated_functions": list(func_ids),
+            "occurrences": paginated_meta,
+        }
+    except Exception as e:
+        logging.error(f"Error in get_feature_details: {e}", exc_info=True)
+        return {"error": str(e)}, 500

@@ -59,36 +59,21 @@ function renderBinarySimilarityView(params) {
     
     // Set up layout: Header (Selection/Summary) + Body (Sankey / Tables)
     let html = `
-        <div style="padding: 20px; border-bottom: 1px solid var(--border);">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-                <div>
-                    <h2 style="margin:0 0 10px 0; color:var(--accent);">Binary Similarity</h2>
-                    <div style="display:flex; gap: 15px; align-items:center;">
-                        <div>
-                            <label class="dim" style="font-size:0.8rem; display:block; margin-bottom:5px;">Binary A</label>
-                            <select id="bin-sim-md5-a" class="form-input" style="width:250px; font-family:monospace; padding:8px;">
-                                <option value="${md5a || ''}">${md5a || '-- Select Binary --'}</option>
-                            </select>
-                        </div>
-                        <div style="font-size:1.5rem; color:var(--dim); padding-top:20px;">↔</div>
-                        <div>
-                            <label class="dim" style="font-size:0.8rem; display:block; margin-bottom:5px;">Binary B</label>
-                            <select id="bin-sim-md5-b" class="form-input" style="width:250px; font-family:monospace; padding:8px;">
-                                <option value="${md5b || ''}">${md5b || '-- Select Binary --'}</option>
-                            </select>
-                        </div>
-                        <div style="padding-top:20px;">
-                            <button class="btn-primary" onclick="triggerBinarySimilarityDiff('${collection}')">Compare</button>
-                        </div>
-                    </div>
-                </div>
-                <div id="bin-sim-summary" style="display:none; text-align:right; background:rgba(166,226,46,0.1); border:1px solid var(--success); padding:10px 15px; border-radius:8px;">
-                    <!-- Filled dynamically -->
+        <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
+            <!-- File Metadata Cards -->
+            <div id="bin-sim-meta-cards" style="display: flex; gap: 20px; margin-bottom: 5px;">
+                <div id="bin-sim-meta-a" style="flex: 1; min-width: 0;"></div>
+                <div id="bin-sim-meta-b" style="flex: 1; min-width: 0;"></div>
+            </div>
+
+            <!-- Similarity Bar (exactly like function diff) -->
+            <div id="bin-sim-bar" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 15px; margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 20px; font-family: 'Inter', sans-serif; font-size: 0.9rem;">
+                <div class="sim-info" style="display: flex; align-items: center; gap: 10px;">
+                    <span class="sim-label" style="color: var(--subtle); text-transform: uppercase; font-size: 0.75rem; font-weight: bold; letter-spacing: 0.05em;">Binary Similarity</span>
+                    <span id="bin-sim-score-val" class="sim-score" style="color: var(--accent); font-family: 'Consolas', monospace; font-weight: bold; font-size: 1.1rem; min-width: 60px; text-align: center;">--%</span>
                 </div>
             </div>
-        </div>
-        
-        <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
+            
             <!-- Sankey Graph Placeholder -->
             <div class="resizable-card" id="bin-sim-sankey-card" style="position:relative; width:100%; height:400px; min-height:200px; margin-bottom:20px; border:1px solid var(--border); background:#121212; border-radius:8px; flex-shrink:0; display:flex; flex-direction:column; overflow:hidden;">
                 <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
@@ -107,7 +92,6 @@ function renderBinarySimilarityView(params) {
                     <button class="view-btn ${sankeySplit === 20 ? 'active' : ''}" onclick="setSankeySplit(20)" title="20% granularity (5 bins)">20%</button>
                     <button class="view-btn ${sankeySplit === 25 ? 'active' : ''}" onclick="setSankeySplit(25)" title="25% granularity (4 bins)">25%</button>
                 </div>
-                <button id="bin-sim-sankey-reset-zoom" class="clickable" style="position:absolute; top:15px; right:15px; padding:6px 12px; font-size:0.75rem; background:rgba(0,0,0,0.8); border:1px solid var(--border); color:#fff; border-radius:4px; z-index:10; display:none; transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(0,0,0,0.8)'" onclick="resetSankeyZoom()">Reset View</button>
                 <div id="bin-sim-sankey" style="flex:1; width:100%; min-height:0; overflow-y:auto; position:relative;"></div>
                 <div class="drag-handle-v" style="height:8px; background:rgba(255,255,255,0.02); border-top:1px solid var(--border); cursor:ns-resize; display:flex; align-items:center; justify-content:center; transition:background 0.2s;">
                     <div style="width:30px; height:2px; border-radius:1px; background:rgba(255,255,255,0.15); transition:background 0.2s;"></div>
@@ -219,34 +203,13 @@ function initResizableCards() {
             
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
-        });
-    });
-}
+            });
+            });
+            }
 
-function triggerBinarySimilarityDiff(collection) {
-    const md5a = document.getElementById('bin-sim-md5-a').value.trim();
-    const md5b = document.getElementById('bin-sim-md5-b').value.trim();
-    
-    if (!md5a || !md5b) {
-        alert("Please provide both MD5 hashes.");
-        return;
-    }
-    
-    const [hashPath] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams();
-    params.set('collection', collection);
-    params.set('md5_a', md5a);
-    params.set('md5_b', md5b);
-    
-    window.location.hash = `${hashPath}?${params.toString()}`;
-}
+            async function fetchAndRenderBinaryDiff(collection, md5a, md5b) {
 
-async function fetchAndRenderBinaryDiff(collection, md5a, md5b) {
-    const summaryEl = document.getElementById('bin-sim-summary');
     const resultsEl = document.getElementById('bin-sim-results');
-    
-    summaryEl.style.display = 'block';
-    summaryEl.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Computing Diff...`;
     
     try {
         const res = await fetch(`/api/bin_sim/diff?collection=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`);
@@ -254,86 +217,39 @@ async function fetchAndRenderBinaryDiff(collection, md5a, md5b) {
         const data = await res.json();
         
         // Render Summary
-        summaryEl.innerHTML = `
-            <div style="font-size:0.8rem; color:var(--success); text-transform:uppercase; font-weight:bold; letter-spacing:1px; margin-bottom:5px;">Similarity Score</div>
-            <div style="font-size:2rem; color:var(--success); font-weight:bold; line-height:1;">${(data.score * 100).toFixed(1)}%</div>
-            <div style="font-size:0.75rem; color:var(--dim); margin-top:5px;">
-                Weighted Sim: ${(data.score_sim_weighted * 100).toFixed(1)}% | Weighted Col: ${(data.score_collection_weighted * 100).toFixed(1)}%
-            </div>
-        `;
+        const scoreVal = document.getElementById('bin-sim-score-val');
+        if (scoreVal) scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
         
         resultsEl.style.display = 'flex';
         
+        // Render File Metadata Cards
+        if (typeof renderFileMetadata === 'function') {
+            const col = collection;
+            if (data.file_metadata_a) {
+                renderFileMetadata('bin-sim-meta-a', data.file_metadata_a, `${col}:file:${md5a}`, { side: 'l' });
+            }
+            if (data.file_metadata_b) {
+                renderFileMetadata('bin-sim-meta-b', data.file_metadata_b, `${col}:file:${md5b}`, { side: 'r' });
+            }
+        }
+        
         // Save comparison data to cache
         binSimDataCache = data;
-        
-        // Fetch files to populate dropdowns
-        fetch(`/api/file/search?collection=${encodeURIComponent(collection)}&limit=1000`)
-            .then(res => res.json())
-            .then(fileData => {
-                const files = fileData.files || [];
-                const selA = document.getElementById('bin-sim-md5-a');
-                const selB = document.getElementById('bin-sim-md5-b');
-                
-                let optionsHtml = '<option value="">-- Select Binary --</option>';
-                files.forEach(f => {
-                    optionsHtml += `<option value="${f.file_md5}">${f.file_name} (${f.file_md5.substring(0,8)})</option>`;
-                });
-                
-                if(selA) selA.innerHTML = optionsHtml;
-                if(selB) selB.innerHTML = optionsHtml;
-                
-                // Also add files from the queue if they aren't in the fetched list
-                const queue = JSON.parse(localStorage.getItem('bsim_file_diff_queue') || '[]');
-                queue.forEach(q => {
-                    const md5 = q.id.split(':').pop();
-                    if (selA && !selA.querySelector(`option[value="${md5}"]`)) {
-                        selA.innerHTML += `<option value="${md5}">${q.name} (${md5.substring(0,8)})</option>`;
-                    }
-                    if (selB && !selB.querySelector(`option[value="${md5}"]`)) {
-                        selB.innerHTML += `<option value="${md5}">${q.name} (${md5.substring(0,8)})</option>`;
-                    }
-                });
-
-                if (md5a && selA) {
-                    if (!selA.querySelector(`option[value="${md5a}"]`)) {
-                        selA.innerHTML += `<option value="${md5a}">${md5a}</option>`;
-                    }
-                    selA.value = md5a;
-                }
-                if (md5b && selB) {
-                    if (!selB.querySelector(`option[value="${md5b}"]`)) {
-                        selB.innerHTML += `<option value="${md5b}">${md5b}</option>`;
-                    }
-                    selB.value = md5b;
-                }
-            });
 
         // Render Tables
         renderBinSimTables();
         
     } catch(err) {
         console.error(err);
-        summaryEl.innerHTML = `<span style="color:var(--danger)">Error: ${err.message}</span>`;
+        const scoreVal = document.getElementById('bin-sim-score-val');
+        if (scoreVal) scoreVal.innerHTML = `<span style="color:var(--danger); font-size:0.8rem;">ERR</span>`;
     }
 }
 
-window.resetSankeyZoom = () => {
-    const svg = d3.select('#bin-sim-sankey svg');
-    if (!svg.empty() && window.sankeyZoomBehavior) {
-        svg.transition().duration(500).call(
-            window.sankeyZoomBehavior.transform,
-            d3.zoomIdentity
-        );
-    }
-};
 
 function renderBinaryDiffSankey(data) {
     const container = document.getElementById('bin-sim-sankey');
     container.innerHTML = '';
-    
-    const resetBtn = document.getElementById('bin-sim-sankey-reset-zoom');
-    if (resetBtn) resetBtn.style.display = 'none';
     
     if (!data.diff) {
         container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No diff data available</div>';
@@ -348,8 +264,6 @@ function renderBinaryDiffSankey(data) {
         detailedBtn.style.opacity = 1.0;
         detailedBtn.style.cursor = 'pointer';
     }
-    
-    if (resetBtn) resetBtn.style.display = 'block';
     
     const width = container.clientWidth;
     
@@ -373,8 +287,7 @@ function renderBinaryDiffSankey(data) {
     
     const svg = d3.select('#bin-sim-sankey').append('svg')
         .attr('width', width)
-        .attr('height', height)
-        .style('cursor', 'grab');
+        .attr('height', height);
         
     const zoomG = svg.append('g');
         
@@ -961,16 +874,6 @@ function renderBinaryDiffSankey(data) {
                 .attr("font-family", "sans-serif");
         }
     });
-
-    // Initialize D3 Zoom Behavior
-    const zoom = d3.zoom()
-        .scaleExtent([0.3, 5])
-        .on("zoom", (event) => {
-            zoomG.attr("transform", event.transform);
-        });
-        
-    svg.call(zoom);
-    window.sankeyZoomBehavior = zoom;
 }
 
 function setBinSimSort(table, col) {
@@ -1066,10 +969,20 @@ function renderBinSimTables(isFilterChange = false) {
         
         const cleanName = name.replace(/'/g, "\\'");
         
+        const fData = {
+            function_id: fid,
+            function_name: name,
+            file_md5: md5,
+            entrypoint_address: entry,
+            collection: col
+        };
+        
         return `<span class="badge clickable" title="${titleStr}" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); margin:2px;" 
+            data-entity-data='${JSON.stringify(fData).replace(/'/g, "&apos;")}'
             onmouseenter="showCodePreview('${fid}', '${cleanName}', '${cleanName}', '${md5}', 0, event)" 
             onmouseleave="hideCodePreview(event)" 
             onmousemove="moveCodePreview(event)"
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)"
             onclick="showFunctionCodeById('${fid}', '${cleanName}', '', event)">${name}</span>`;
     };
 
@@ -1136,7 +1049,13 @@ function renderBinSimTables(isFilterChange = false) {
                 const cohesion = m.cohesion || 0;
                 const avgFeat = m.avg_features || 0;
                 return `
-                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
+                    data-entity-data='${JSON.stringify({
+                        cluster_id: m.cluster_id,
+                        cluster_uuid: m.cluster_uuid,
+                        cluster_name: m.cluster_name
+                    }).replace(/'/g, "&apos;")}'
+                    oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                     <td style="padding:10px;">
                         <div class="clickable" style="font-weight:bold; color:var(--accent);"
                              onmouseenter="if(window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) { window.parent.showClusterTableTooltipFromIframe(window.name, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}, event); } else if(window.showClusterTableTooltip) { window.showClusterTableTooltip(event, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}); }"
@@ -1403,8 +1322,8 @@ function renderBinSimPairs(items) {
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="min-height:24px; display:flex; align-items:center;"><span class="mono dim" style="font-size:0.7rem;"># ${item.md5_a}</span></div>
-                        <div style="min-height:24px; display:flex; align-items:center;"><span class="mono dim" style="font-size:0.7rem;"># ${item.md5_b}</span></div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderMd5(item.md5_a)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderMd5(item.md5_b)}</div>
                     </div>
                 </td>
                 <td class="sim-cell">
@@ -1430,8 +1349,8 @@ function renderBinSimPairs(items) {
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${collection}:file:${item.md5_a}`, tagsA, userTagsA)}</div>
-                        <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${collection}:file:${item.md5_b}`, tagsB, userTagsB)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collection}:file:${item.md5_a}`, tagsA, userTagsA)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collection}:file:${item.md5_b}`, tagsB, userTagsB)}</div>
                     </div>
                 </td>
             </tr>
@@ -1465,4 +1384,5 @@ if (typeof window.showFunctionCodeById === 'undefined') {
         }
     };
 }
+
 

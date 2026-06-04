@@ -443,7 +443,7 @@ tr:nth-child(even) {
 }
 
 .context-menu {
-    z-index: 5000;
+    z-index: 20004;
 }
 
 .preview-header {

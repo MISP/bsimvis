@@ -92,6 +92,37 @@ class ClusterHierarchy {
         if (this.abortController) this.abortController.abort();
     }
 
+    applyTagUpdate(action, etype, eid, tag) {
+        if (!this.root) return;
+        const mutate = (arr, t, add) => {
+            if (add) { if (!arr.includes(t)) arr.push(t); }
+            else { const i = arr.indexOf(t); if (i !== -1) arr.splice(i, 1); }
+        };
+        const add = (action === 'add');
+        let updated = false;
+
+        this.root.each(d => {
+            if (d.data && etype === 'function' && d.data.runtime_members) {
+                d.data.runtime_members.forEach(m => {
+                    const altEid = eid.includes(':func:') ? eid.replace(':func:', ':function:') : eid.replace(':function:', ':func:');
+                    if (m.function_id === eid || m.function_id === altEid) {
+                        m.user_tags = m.user_tags || [];
+                        mutate(m.user_tags, tag, add);
+                        updated = true;
+                    }
+                });
+            }
+        });
+
+        if (updated && this._activeD) {
+            const tooltip = getHierarchyTooltip();
+            if (tooltip && tooltip.style.display === 'block' && this._renderedNodeUuid === this._activeD.data.uuid) {
+                this._renderedNodeUuid = null;
+                this.renderTooltip(tooltip, this._activeD);
+            }
+        }
+    }
+
     async fetch(params) {
         if (this.abortController) this.abortController.abort();
         this.abortController = new AbortController();
@@ -1023,17 +1054,9 @@ class ClusterHierarchy {
 
     formatFunctionInline(f) {
         if (typeof f === 'string') return `<div style="margin-bottom:2px; color:#aaa;">• ${f}</div>`;
-        const sig = formatSigComponent(f.namespace || '', f.return_type || 'void', f.function_name || 'Unknown', f.parameters || []);
-        const featCount = f.bsim_features_count || 0;
-
         return `
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:2px; padding: 2px 0;">
-                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">
-                    ${sig.ret ? `<span style="color:#ae81ff; font-size:0.7rem;">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white; font-size:0.7rem;">${sig.ns}::</span>` : ''}<span style="color:var(--accent); font-weight:bold; font-size:0.75rem;">${f.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff; font-size:0.7rem;">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                </span>
-                <span style="color:var(--accent); font-size:0.65rem; opacity:0.8; white-space:nowrap; flex-shrink:0; font-family:monospace; background:rgba(0,0,0,0.2); padding:1px 4px; border-radius:3px;">
-                    ${featCount} <span style="font-size:0.55rem; color:#666; text-transform:uppercase;">feat.</span>
-                </span>
+            <div style="margin-bottom:2px; padding: 2px 0;">
+                ${EntityRenderer.renderFunction(f, { showActions: false })}
             </div>
         `;
     }
@@ -1199,7 +1222,9 @@ class ClusterHierarchy {
                                     ${members.map((m, i) => {
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
-                                            <div class="hier-function-item" data-index="${i}">
+                                            <div class="hier-function-item" data-index="${i}"
+                                                 data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                                                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
                                                     ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
@@ -1230,7 +1255,9 @@ class ClusterHierarchy {
                 listScroll.innerHTML = members.map((m, i) => {
                     const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                     return `
-                        <div class="hier-function-item" data-index="${i}">
+                        <div class="hier-function-item" data-index="${i}"
+                             data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
                                 ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
@@ -1370,6 +1397,37 @@ class ClusterPacking {
 
     stop() {
         if (this.abortController) this.abortController.abort();
+    }
+
+    applyTagUpdate(action, etype, eid, tag) {
+        if (!this.root) return;
+        const mutate = (arr, t, add) => {
+            if (add) { if (!arr.includes(t)) arr.push(t); }
+            else { const i = arr.indexOf(t); if (i !== -1) arr.splice(i, 1); }
+        };
+        const add = (action === 'add');
+        let updated = false;
+
+        this.root.each(d => {
+            if (d.data && etype === 'function' && d.data.runtime_members) {
+                d.data.runtime_members.forEach(m => {
+                    const altEid = eid.includes(':func:') ? eid.replace(':func:', ':function:') : eid.replace(':function:', ':func:');
+                    if (m.function_id === eid || m.function_id === altEid) {
+                        m.user_tags = m.user_tags || [];
+                        mutate(m.user_tags, tag, add);
+                        updated = true;
+                    }
+                });
+            }
+        });
+
+        if (updated && this._activeD) {
+            const tooltip = getHierarchyTooltip();
+            if (tooltip && tooltip.style.display === 'block' && this._renderedNodeUuid === this._activeD.data.uuid) {
+                this._renderedNodeUuid = null;
+                this.renderTooltip(tooltip, this._activeD);
+            }
+        }
     }
 
     async fetch(params) {
@@ -2002,17 +2060,9 @@ class ClusterPacking {
 
     formatFunctionInline(f) {
         if (typeof f === 'string') return `<div style="margin-bottom:2px; color:#aaa;">• ${f}</div>`;
-        const sig = formatSigComponent(f.namespace || '', f.return_type || 'void', f.function_name || 'Unknown', f.parameters || []);
-        const featCount = f.bsim_features_count || 0;
-
         return `
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:2px; padding: 2px 0;">
-                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">
-                    ${sig.ret ? `<span style="color:#ae81ff; font-size:0.7rem;">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white; font-size:0.7rem;">${sig.ns}::</span>` : ''}<span style="color:var(--accent); font-weight:bold; font-size:0.75rem;">${f.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff; font-size:0.7rem;">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                </span>
-                <span style="color:var(--accent); font-size:0.65rem; opacity:0.8; white-space:nowrap; flex-shrink:0; font-family:monospace; background:rgba(0,0,0,0.2); padding:1px 4px; border-radius:3px;">
-                    ${featCount} <span style="font-size:0.55rem; color:#666; text-transform:uppercase;">feat.</span>
-                </span>
+            <div style="margin-bottom:2px; padding: 2px 0;">
+                ${EntityRenderer.renderFunction(f, { showActions: false })}
             </div>
         `;
     }
@@ -2194,7 +2244,9 @@ class ClusterPacking {
                                     ${members.map((m, i) => {
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
-                                            <div class="hier-function-item" data-index="${i}">
+                                            <div class="hier-function-item" data-index="${i}"
+                                                 data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                                                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
                                                     ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
@@ -2225,7 +2277,9 @@ class ClusterPacking {
                 listScroll.innerHTML = members.map((m, i) => {
                     const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                     return `
-                        <div class="hier-function-item" data-index="${i}">
+                        <div class="hier-function-item" data-index="${i}"
+                             data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
                                 ${sig.ret ? `<span style="color:#ae81ff">${sig.ret}</span> ` : ''}${sig.ns ? `<span style="color:white">${sig.ns}::</span>` : ''}<span class="func-name-span" style="font-weight:bold;">${m.function_name}</span><span style="color:white">(</span>${sig.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
@@ -2354,6 +2408,8 @@ class ClusterPacking {
 const clusterTooltipMockCache = new Map();
 
 function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null) {
+    const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+    if (isMenuOpen) return;
     if (window.setTrigger) window.setTrigger(event);
     if (!window.hierarchyInstance) {
         window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');

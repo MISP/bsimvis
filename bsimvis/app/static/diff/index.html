@@ -9,10 +9,12 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
     <script src="/js/utils.js"></script>
+    <script src="/js/entity_renderer.js"></script>
     <script src="/js/code_renderer.js"></script>
     <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/diff_queue.js"></script>
+    <script src="/js/context_menu.js"></script>
     <script src="/js/previews.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="/js/cluster_views.js"></script>
@@ -969,7 +971,7 @@
             if (window.currentSimId1 && window.currentSimId2) {
                 const simId = `${window.currentSimId1}|${window.currentSimId2}|${algo}`;
                 const tagsData = window.currentSimTags || { tags: [], user_tags: [] };
-                document.getElementById('similarity-tags-container').innerHTML = renderTagEditor('similarity', simId, tagsData.tags, tagsData.user_tags);
+                document.getElementById('similarity-tags-container').innerHTML = EntityRenderer.renderTag('similarity', simId, tagsData.tags, tagsData.user_tags);
             }
 
             if (score === null || score === undefined) {

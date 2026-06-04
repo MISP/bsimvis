@@ -340,16 +340,16 @@ function moveDiffPreview(e) {
     }
 }
 
-function hideDiffPreview(e) {
+function hideDiffPreview(e, skipContextMenu = false) {
     if (window.parent && window.parent !== window && typeof window.parent.hideDiffPreview === 'function') {
-        window.parent.hideDiffPreview(getParentEvent(e));
+        window.parent.hideDiffPreview(getParentEvent(e), skipContextMenu);
         return;
     }
     if (window.hideAllTooltips) {
         // We only want to hide if we aren't moving into the tooltip itself
         const tooltip = document.getElementById('diff-preview-tooltip');
         if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
-        window.hideAllTooltips();
+        window.hideAllTooltips(skipContextMenu);
     } else {
         const tooltip = document.getElementById('diff-preview-tooltip');
         if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;

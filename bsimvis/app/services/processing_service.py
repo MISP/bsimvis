@@ -47,6 +47,13 @@ class ProcessingService:
         coll_file_meta["collection"] = collection
         coll_file_meta["type"] = "file"
         coll_file_meta["file_id"] = file_base_id
+        coll_file_meta["function_count"] = num_functions
+        
+        # Calculate total bsim features
+        total_features = 0
+        for f in data.get("functions", []):
+            total_features += f.get("function_metadata", {}).get("bsim_features_count", 0)
+        coll_file_meta["bsim_features_count"] = total_features
 
         pipe = self.r.pipeline()
 

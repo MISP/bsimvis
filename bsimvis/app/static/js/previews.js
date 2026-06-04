@@ -10,42 +10,60 @@
     let previewTimer = null;
     let activePreviewId = null;
     let lastTriggerElement = null;
+    let isHidingTooltips = false;
 
     window.previewTips = window.previewTips || {};
     window.previewCollection = window.previewCollection || '';
 
     // --- Global Tooltip Management ---
-    window.hideAllTooltips = function() {
-        if (previewTimer) clearTimeout(previewTimer);
-        
-        const tooltipIds = [
-            'code-preview-tooltip',
-            'token-tooltip',
-            'diff-preview-tooltip',
-            'hierarchy-tooltip',
-            'binary-preview-tooltip',
-            'tag-tooltip',
-            'graph-context-menu'
-        ];
+    window.hideAllTooltips = function(skipContextMenu = false) {
+        if (isHidingTooltips) return;
+        isHidingTooltips = true;
 
-        tooltipIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.style.display = 'none';
-                el.classList.remove('showing');
+        try {
+            // If a context menu is open, don't let hover events hide it or other things
+            // unless we are specifically opening a NEW context menu (skipContextMenu = true)
+            const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+            if (isMenuOpen && !skipContextMenu) return;
+
+            if (previewTimer) clearTimeout(previewTimer);
+
+            const tooltipIds = [
+                'code-preview-tooltip',
+                'token-tooltip',
+                'diff-preview-tooltip',
+                'hierarchy-tooltip',
+                'binary-preview-tooltip',
+                'tag-tooltip',
+                'graph-context-menu'
+            ];
+
+            tooltipIds.forEach(id => {
+                if (skipContextMenu && id === 'graph-context-menu') return;
+                const el = document.getElementById(id);
+                if (el) {
+                    el.style.display = 'none';
+                    el.classList.remove('showing');
+                }
+            });
+
+            if (window.hierarchyInstance && typeof window.hierarchyInstance.hideTooltip === 'function') {
+                window.hierarchyInstance.hideTooltip();
             }
-        });
 
-        if (window.hierarchyInstance && typeof window.hierarchyInstance.hideTooltip === 'function') {
-            window.hierarchyInstance.hideTooltip();
-        }
-        
-        if (typeof window.closeGraphContextMenu === 'function') {
-            window.closeGraphContextMenu();
-        }
+            if (window.packingInstance && typeof window.packingInstance.hideTooltip === 'function') {
+                window.packingInstance.hideTooltip();
+            }
 
-        activePreviewId = null;
-        lastTriggerElement = null;
+            if (!skipContextMenu && typeof window.closeGraphContextMenu === 'function') {
+                window.closeGraphContextMenu();
+            }
+
+            activePreviewId = null;
+            lastTriggerElement = null;
+        } finally {
+            isHidingTooltips = false;
+        }
     };
 
     function setTrigger(e) {
@@ -168,17 +186,24 @@
         });
     };
 
-    window.hideCodePreview = function (e) {
+    window.hideCodePreview = function (e, skipContextMenu = false) {
         if (previewTimer) clearTimeout(previewTimer);
         const tooltip = getCodeTooltip();
         if (e && e.relatedTarget && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+
+        if (window.hideAllTooltips) {
+            window.hideAllTooltips(skipContextMenu);
+        }
+
         activePreviewId = null;
         lastTriggerElement = null;
     };
 
     window.showCodePreview = async function (id, name, addr, bin, v_size, e, extra = 0, file_name = '') {
+        const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+        if (isMenuOpen) return;
         if (!id) return;
         setTrigger(e);
         const tooltip = getCodeTooltip();
@@ -488,6 +513,8 @@
     });
 
     window.showBinaryPreview = function (md5, fileName, count, language, tags, e, fileTags = [], fileUserTags = []) {
+        const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+        if (isMenuOpen) return;
         setTrigger(e);
         const tooltip = getBinaryTooltip();
         
@@ -548,10 +575,15 @@
         window.moveCodePreview(e);
     };
 
-    window.hideBinaryPreview = function () {
+    window.hideBinaryPreview = function (skipContextMenu = false) {
         const tooltip = getBinaryTooltip();
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+
+        if (window.hideAllTooltips) {
+            window.hideAllTooltips(skipContextMenu);
+        }
+
         lastTriggerElement = null;
     };
 

@@ -431,59 +431,6 @@ def list_clusters():
                         valid_nodes.add(child)
                         queue.append(child)
 
-        # Fetch direct members if requested
-        direct_members_map = {}
-        if show_members and valid_nodes:
-            import json
-
-            pipe = r.pipeline()
-            valid_nodes_list = list(valid_nodes)
-            for cid in valid_nodes_list:
-                pipe.smembers(f"{collection}:cluster:{algo}:{cid}:direct_members")
-            direct_members_ids_list = pipe.execute()
-
-            all_member_ids = set()
-            cluster_to_member_ids = {}
-            for cid, ids_raw in zip(valid_nodes_list, direct_members_ids_list):
-                if ids_raw:
-                    ids = [x.decode() if isinstance(x, bytes) else x for x in ids_raw]
-                    cluster_to_member_ids[cid] = ids
-                    all_member_ids.update(ids)
-
-            member_meta_map = {}
-            if all_member_ids:
-                all_member_ids_list = list(all_member_ids)
-                m_pipe = r.pipeline()
-                for mid in all_member_ids_list:
-                    m_pipe.json().get(f"{mid}:meta", "$")
-                raw_metas = m_pipe.execute()
-                for mid, meta in zip(all_member_ids_list, raw_metas):
-                    m = meta[0] if isinstance(meta, list) and meta else {}
-                    if isinstance(m, str):
-                        try:
-                            m = json.loads(m)
-                        except Exception:
-                            m = {}
-                    member_meta_map[mid] = m
-
-            for cid in valid_nodes_list:
-                mids = cluster_to_member_ids.get(cid, [])
-                direct_members_map[cid] = [
-                    {
-                        "id": mid,
-                        "name": member_meta_map.get(mid, {}).get(
-                            "function_name", "Unknown"
-                        ),
-                        "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
-                        "bin": member_meta_map.get(mid, {}).get("file_name"),
-                        "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
-                        "v_size": member_meta_map.get(mid, {}).get(
-                            "bsim_features_count"
-                        ),
-                    }
-                    for mid in mids
-                ]
-
         for cid in valid_nodes:
             m = meta_map.get(cid)
             if not m:
@@ -503,8 +450,6 @@ def list_clusters():
                 "snippet": m.get("snippet", ""),
                 "sample_members": m.get("sample_members", []),
             }
-            if show_members:
-                cluster_result["direct_members"] = direct_members_map.get(cid, [])
             results.append(cluster_result)
 
     # 3. Sorting
@@ -523,6 +468,59 @@ def list_clusters():
     total = len(results)
     page = results[offset : offset + limit]
 
+    # 4. Fetch direct members for ONLY the clusters in the current page
+    if show_members and page:
+        import json
+
+        p_pipe = r.pipeline()
+        page_cids = [str(c["cluster_id"]) for c in page]
+        for cid in page_cids:
+            p_pipe.smembers(f"{collection}:cluster:{algo}:{cid}:direct_members")
+        direct_members_ids_list = p_pipe.execute()
+
+        all_member_ids = set()
+        cluster_to_member_ids = {}
+        for cid, ids_raw in zip(page_cids, direct_members_ids_list):
+            if ids_raw:
+                ids = [x.decode() if isinstance(x, bytes) else x for x in ids_raw]
+                cluster_to_member_ids[cid] = ids
+                all_member_ids.update(ids)
+
+        member_meta_map = {}
+        if all_member_ids:
+            all_member_ids_list = list(all_member_ids)
+            m_pipe = r.pipeline()
+            for mid in all_member_ids_list:
+                m_pipe.json().get(f"{mid}:meta", "$")
+            raw_metas = m_pipe.execute()
+            for mid, meta in zip(all_member_ids_list, raw_metas):
+                m = meta[0] if isinstance(meta, list) and meta else {}
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except Exception:
+                        m = {}
+                member_meta_map[mid] = m
+
+        for cluster_res in page:
+            cid = str(cluster_res["cluster_id"])
+            mids = cluster_to_member_ids.get(cid, [])
+            cluster_res["direct_members"] = [
+                {
+                    "id": mid,
+                    "name": member_meta_map.get(mid, {}).get(
+                        "function_name", "Unknown"
+                    ),
+                    "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
+                    "bin": member_meta_map.get(mid, {}).get("file_name"),
+                    "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
+                    "v_size": member_meta_map.get(mid, {}).get(
+                        "bsim_features_count"
+                    ),
+                }
+                for mid in mids
+            ]
+
     response_data = {
         "collection": collection,
         "algo": algo,
@@ -534,7 +532,7 @@ def list_clusters():
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
 
-        return export_to_csv(results, "clusters")
+        return export_to_csv(page, "clusters")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
 

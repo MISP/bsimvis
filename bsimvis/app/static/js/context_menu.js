@@ -46,6 +46,18 @@
     window.showGraphContextMenu = function (e, type, data, isRefresh = false) {
         if (window.setTrigger) window.setTrigger(e);
 
+        if (!isRefresh) {
+            // Trigger a background refresh of tag metadata if it's a new menu opening
+            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            if (typeof fetchTagMetadata === 'function') {
+                fetchTagMetadata(col).then(() => {
+                    if (window.graphContextMenuOpen) {
+                        window.refreshContextMenuUI();
+                    }
+                });
+            }
+        }
+
         let menu = document.getElementById('graph-context-menu');
         if (!menu) {
             menu = document.createElement('div');
@@ -54,10 +66,13 @@
             document.body.appendChild(menu);
         }
 
-        // Hide previews/tooltips to avoid overlap
-        if (window.hideDiffPreview) window.hideDiffPreview();
-        if (window.hideCodePreview) window.hideCodePreview();
-        if (window.hideBinaryPreview) window.hideBinaryPreview();
+        window.currentContextMenu = { e, type, data };
+        window.graphContextMenuOpen = true;
+
+        // Hide previews/tooltips to avoid overlap, but DON'T close ourselves
+        if (window.hideDiffPreview) window.hideDiffPreview(null, true);
+        if (window.hideCodePreview) window.hideCodePreview(null, true);
+        if (window.hideBinaryPreview) window.hideBinaryPreview(null, true);
 
         const tooltipIds = [
             'code-preview-tooltip',
@@ -86,9 +101,6 @@
         if (window.binPackingInstance && typeof window.binPackingInstance.hideTooltip === 'function') {
             window.binPackingInstance.hideTooltip();
         }
-
-        window.currentContextMenu = { e, type, data };
-        window.graphContextMenuOpen = true;
 
         // 1. Resolve and normalize type & metadata fields
         let resolvedType = type;
@@ -180,7 +192,8 @@
             </div>`;
 
             // -- Tags Dropdown Submenu --
-            const allKnownTags = Object.keys(window.tagMetadata || {}).filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
+            const tagMeta = window.tagMetadata || (window.parent && window.parent.tagMetadata) || {};
+            const allKnownTags = Object.keys(tagMeta).filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
             let tagsSubmenuHtml = '';
             allKnownTags.forEach(tag => {
                 const isActive = userTags.includes(tag);
@@ -188,7 +201,7 @@
                 const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
 
                 tagsSubmenuHtml += `
-                <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')">
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">
                     <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
                     <span>${tag}</span>
                 </div>`;
@@ -282,7 +295,7 @@
         const col = getCollectionFromHash();
         if (resolvedType === 'function') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${norm.id}', '${norm.name.replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
                 <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add to Diff</span>
             </div>
@@ -294,7 +307,7 @@
                 <i class="fa-solid fa-fingerprint" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Features</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFunctionCodeById('${norm.id}', '${norm.name.replace(/'/g, "\\'")}', '', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFunctionCodeById('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', '', event)">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Code</span>
             </div>`;
@@ -310,14 +323,14 @@
             </div>`;
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${norm.id1}', '${norm.name1.replace(/'/g, "\\'")}', '${norm.id2}', '${norm.name2.replace(/'/g, "\\'")}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${norm.id1}', '${String(norm.name1 || '').replace(/'/g, "\\'")}', '${norm.id2}', '${String(norm.name2 || '').replace(/'/g, "\\'")}', event)">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Diff</span>
             </div>`;
         } else if (resolvedType === 'bin_similarity') {
             const diffUrl = `/static/bin_sim/index.html?collection=${col}&md5_a=${norm.md5_a}&md5_b=${norm.md5_b}`;
-            const safeNameA = norm.name_a.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-            const safeNameB = norm.name_b.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+            const safeNameA = String(norm.name_a || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+            const safeNameB = String(norm.name_b || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); if (event.ctrlKey || event.metaKey) { window.open('${diffUrl}', '_blank'); } else if (typeof windowManager !== 'undefined') { windowManager.createWindow('Bin Diff: ${safeNameA} vs ${safeNameB}', '${diffUrl}', { type: 'diff' }); } else { window.open('${diffUrl}', '_blank'); }">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
@@ -325,7 +338,7 @@
             </div>`;
         } else if (resolvedType === 'cluster') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster('${norm.id}', '${norm.name.replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -335,7 +348,7 @@
             </div>`;
         } else if (resolvedType === 'bin_cluster') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster('${norm.id}', '${norm.name.replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -404,6 +417,7 @@
         }
 
         const closeGlobal = (me) => {
+            if (me.button === 2) return; // Ignore right-click
             const currentMenu = document.getElementById('graph-context-menu');
             if (currentMenu && !currentMenu.contains(me.target)) {
                 window.closeGraphContextMenu();
@@ -447,37 +461,82 @@
     };
 
     // Helper functions for tags
-    function getEntityUserTags(etype, eid) {
-        const graph = window.graphInstance;
-        if (!graph) return [];
-
-        if (etype === 'function') {
-            const latest = graph.nodes_map.get(eid);
-            return latest ? (latest.user_tags || []) : [];
-        } else if (etype === 'file') {
-            const md5 = eid.split(':').pop();
-            for (const node of graph.nodes_map.values()) {
-                if (node.md5 === md5) {
-                    return node.file_user_tags || [];
-                }
-            }
-        } else if (etype === 'similarity') {
-            let latest = graph.all_pairs.find(p => p.sid === eid);
-            if (!latest) {
-                const parts = eid.split('|');
-                if (parts.length >= 2) {
-                    latest = graph.all_pairs.find(p =>
-                        (p.id1 === parts[0] && p.id2 === parts[1]) ||
-                        (p.id1 === parts[1] && p.id2 === parts[0])
-                    );
-                }
-            }
-            return latest ? (latest.user_tags || []) : [];
+    function getEntityUserTags(etype, eid, data = null) {
+        if (!data && window.currentContextMenu) {
+            data = window.currentContextMenu.data;
         }
+
+        // 1. Try DOM elements first (most accurate for tables and forms)
+        const domEditors = document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`);
+        if (domEditors && domEditors.length > 0) {
+            const editor = domEditors[0];
+            const analystCards = editor.querySelectorAll('.sim-tag-card');
+            let userTags = Array.from(analystCards).map(c => c.textContent.replace('×', '').trim());
+
+            const bookmarkBtn = editor.querySelector('.bookmark-btn');
+            if (bookmarkBtn && bookmarkBtn.classList.contains('active')) {
+                if (!userTags.includes('bookmark')) userTags.push('bookmark');
+            }
+            const ignoreBtn = editor.querySelector('.ignore-btn');
+            if (ignoreBtn && ignoreBtn.classList.contains('active')) {
+                if (!userTags.includes('ignore')) userTags.push('ignore');
+            }
+            return userTags;
+        }
+
+        // 2. Try graph instance
+        const graph = window.graphInstance;
+        if (graph) {
+            if (etype === 'function') {
+                const latest = graph.nodes_map.get(eid);
+                if (latest && latest.user_tags) return latest.user_tags;
+            } else if (etype === 'file') {
+                const md5 = eid.split(':').pop();
+                for (const node of graph.nodes_map.values()) {
+                    if (node.md5 === md5) {
+                        if (node.file_user_tags) return node.file_user_tags;
+                    }
+                }
+            } else if (etype === 'similarity') {
+                let latest = graph.all_pairs.find(p => p.sid === eid);
+                if (!latest) {
+                    const parts = eid.split('|');
+                    if (parts.length >= 2) {
+                        latest = graph.all_pairs.find(p =>
+                            (p.id1 === parts[0] && p.id2 === parts[1]) ||
+                            (p.id1 === parts[1] && p.id2 === parts[0])
+                        );
+                    }
+                }
+                if (latest && latest.user_tags) return latest.user_tags;
+            }
+        }
+
+        // 3. Fallback to data object
+        if (data) {
+            return data.user_tags || data.file_user_tags || [];
+        }
+
         return [];
     }
 
-    function getEntityStaticTags(etype, eid, data) {
+    function getEntityStaticTags(etype, eid, data = null) {
+        if (!data && window.currentContextMenu) {
+            data = window.currentContextMenu.data;
+        }
+
+        // 1. Try DOM elements first for static tags
+        const domEditors = document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`);
+        if (domEditors && domEditors.length > 0) {
+            const editor = domEditors[0];
+            const analysisCards = editor.querySelectorAll('.analysis-tag-badge');
+            let analysisTags = Array.from(analysisCards).map(c => c.textContent.trim());
+            if (analysisTags.length > 0) {
+                return analysisTags;
+            }
+        }
+
+        // 2. Try graph
         const graph = window.graphInstance;
         if (graph) {
             if (etype === 'function') {
@@ -502,13 +561,20 @@
                 if (latest && latest.tags) return latest.tags;
             }
         }
-        return data.tags || data.file_tags || [];
+
+        // 3. Fallback to data
+        if (data) {
+            return data.tags || data.file_tags || [];
+        }
+
+        return [];
     }
 
     function renderCopyItem(label, text, icon = 'fa-copy') {
-        if (!text) return '';
-        const safeText = text.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const safeLabel = label.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+        if (text === null || text === undefined || text === '') return '';
+        const strText = String(text);
+        const safeText = strText.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+        const safeLabel = String(label).replace(/'/g, "\\'").replace(/"/g, "&quot;");
         return `
         <div class="context-menu-item" onclick="event.stopPropagation(); copyMetadata('${safeText}', '${safeLabel}')">
             <i class="fa-solid ${icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
@@ -808,17 +874,18 @@
         const updateModalUI = () => {
             const activeTags = getEntityUserTags(etype, eid).filter(t => t !== 'bookmark' && t !== 'ignore');
             const activeList = document.getElementById('tag-modal-active-list');
+            const tagMeta = window.tagMetadata || (window.parent && window.parent.tagMetadata) || {};
             
             if (activeList) {
                 if (activeTags.length === 0) {
                     activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, #888);">No custom tags applied.</span>`;
                 } else {
                     activeList.innerHTML = activeTags.map(tag => {
-                        const meta = window.tagMetadata[tag] || { color: '#66d9ef' };
+                        const meta = tagMeta[tag] || { color: '#66d9ef' };
                         return `
                             <span class="tag-modal-tag-pill" style="background: ${meta.color}">
                                 ${tag}
-                                <span class="remove-btn" onclick="window.handleModalRemoveTag('${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')">&times;</span>
+                                <span class="remove-btn" onclick="window.handleModalRemoveTag('${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">&times;</span>
                             </span>
                         `;
                     }).join('');
@@ -829,13 +896,13 @@
             const suggestionsList = document.getElementById('tag-modal-suggestions-list');
             
             if (suggestionsList) {
-                const allAvailable = Object.keys(window.tagMetadata || {}).filter(t => t !== 'bookmark' && t !== 'ignore');
+                const allAvailable = Object.keys(tagMeta).filter(t => t !== 'bookmark' && t !== 'ignore');
                 const filtered = allAvailable.filter(t => t.toLowerCase().includes(query));
 
                 if (filtered.length === 0) {
                     if (query) {
                         suggestionsList.innerHTML = `
-                            <div class="tag-modal-suggestion-item" onclick="window.handleModalAddTag('${etype}', '${eid}', '${query.replace(/'/g, "\\'")}')">
+                            <div class="tag-modal-suggestion-item" onclick="window.handleModalAddTag('${etype}', '${eid}', '${String(query).replace(/'/g, "\\'")}')">
                                 <i class="fa-solid fa-plus" style="color: var(--accent, #a6e22e);"></i>
                                 <span>Create new tag: <strong>${query}</strong></span>
                             </div>
@@ -846,8 +913,8 @@
                 } else {
                     suggestionsList.innerHTML = filtered.map(tag => {
                         const isApplied = activeTags.includes(tag);
-                        const meta = window.tagMetadata[tag] || { color: '#66d9ef' };
-                        const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag('${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')"`;
+                        const meta = tagMeta[tag] || { color: '#66d9ef' };
+                        const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag('${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')"`;
                         const activeClass = isApplied ? 'active-tag' : '';
                         return `
                             <div class="tag-modal-suggestion-item ${activeClass}" ${clickAction}>
@@ -897,8 +964,34 @@
     window.addEventListener('message', (event) => {
         const msg = event.data;
         if (msg && msg.type === 'bsimvis_tag_update') {
+            if (window.currentContextMenu && window.currentContextMenu.data) {
+                const { action, tag, targets } = msg;
+                if (tag && targets) {
+                    targets.forEach(t => {
+                        const cm = window.currentContextMenu;
+                        if (cm.type === 'function' && t.etype === 'function' && 
+                            (cm.data.function_id === t.eid || cm.data.id === t.eid)) {
+                            cm.data.user_tags = cm.data.user_tags || [];
+                            if (action === 'add' && !cm.data.user_tags.includes(tag)) cm.data.user_tags.push(tag);
+                            if (action === 'remove') cm.data.user_tags = cm.data.user_tags.filter(x => x !== tag);
+                        } else if (cm.type === 'file' && t.etype === 'file' && 
+                            (cm.data.md5 === t.eid || cm.data.id === t.eid || (cm.data.id && cm.data.id.endsWith(t.eid)))) {
+                            cm.data.file_user_tags = cm.data.file_user_tags || [];
+                            if (action === 'add' && !cm.data.file_user_tags.includes(tag)) cm.data.file_user_tags.push(tag);
+                            if (action === 'remove') cm.data.file_user_tags = cm.data.file_user_tags.filter(x => x !== tag);
+                        } else if ((cm.type === 'similarity' || cm.type === 'link') && t.etype === 'similarity') {
+                            cm.data.user_tags = cm.data.user_tags || [];
+                            if (action === 'add' && !cm.data.user_tags.includes(tag)) cm.data.user_tags.push(tag);
+                            if (action === 'remove') cm.data.user_tags = cm.data.user_tags.filter(x => x !== tag);
+                        }
+                    });
+                }
+            }
             if (typeof window.refreshTagModalUI === 'function') {
                 window.refreshTagModalUI();
+            }
+            if (typeof window.refreshContextMenuUI === 'function' && window.graphContextMenuOpen) {
+                window.refreshContextMenuUI();
             }
         }
     });

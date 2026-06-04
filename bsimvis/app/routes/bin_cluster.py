@@ -321,66 +321,6 @@ def list_bin_clusters():
                         valid_nodes.add(child)
                         queue.append(child)
 
-        # Fetch direct members if requested
-        direct_members_map = {}
-        if show_members and valid_nodes:
-            pipe = r.pipeline()
-            valid_nodes_list = list(valid_nodes)
-            for cid in valid_nodes_list:
-                pipe.smembers(f"{collection}:bin_cluster:{algo}:{cid}:direct_members")
-            direct_members_ids_list = pipe.execute()
-
-            all_member_ids = set()
-            cluster_to_member_ids = {}
-            for cid, ids_raw in zip(valid_nodes_list, direct_members_ids_list):
-                if ids_raw:
-                    ids = [x.decode() if isinstance(x, bytes) else x for x in ids_raw]
-                    cluster_to_member_ids[cid] = ids
-                    all_member_ids.update(ids)
-
-            member_meta_map = {}
-            if all_member_ids:
-                all_member_ids_list = list(all_member_ids)
-                m_pipe = r.pipeline()
-                for mid in all_member_ids_list:
-                    m_pipe.json().get(f"{mid}:meta", "$")
-                    parts = mid.split(":")
-                    md5 = parts[-1] if len(parts) >= 3 else ""
-                    m_pipe.scard(f"{collection}:idx:file:functions:{md5}")
-                raw_results = m_pipe.execute()
-                for idx, mid in enumerate(all_member_ids_list):
-                    meta = raw_results[2 * idx]
-                    func_count = raw_results[2 * idx + 1]
-                    m = meta[0] if isinstance(meta, list) and meta else {}
-                    if isinstance(m, str):
-                        try:
-                            m = json.loads(m)
-                        except Exception:
-                            m = {}
-                    m["function_count"] = func_count
-                    member_meta_map[mid] = m
-
-            for cid in valid_nodes_list:
-                mids = cluster_to_member_ids.get(cid, [])
-                direct_members_map[cid] = [
-                    {
-                        "id": mid,
-                        "name": member_meta_map.get(mid, {}).get(
-                            "file_name", "Unknown"
-                        ),
-                        "file_md5": member_meta_map.get(mid, {}).get("file_md5", ""),
-                        "language_id": member_meta_map.get(mid, {}).get(
-                            "language_id", "Unknown"
-                        ),
-                        "function_count": member_meta_map.get(mid, {}).get(
-                            "function_count", 0
-                        ),
-                        "tags": member_meta_map.get(mid, {}).get("tags", []),
-                        "user_tags": member_meta_map.get(mid, {}).get("user_tags", []),
-                    }
-                    for mid in mids
-                ]
-
         for cid in valid_nodes:
             m = meta_map.get(cid)
             if not m:
@@ -397,8 +337,6 @@ def list_bin_clusters():
                 "snippet": m.get("snippet", ""),
                 "sample_members": m.get("sample_members", []),
             }
-            if show_members:
-                cluster_result["direct_members"] = direct_members_map.get(cid, [])
             results.append(cluster_result)
 
     # Sorting
@@ -415,6 +353,66 @@ def list_bin_clusters():
     total = len(results)
     page = results[offset : offset + limit]
 
+    # Fetch direct members for ONLY the clusters in the current page
+    if show_members and page:
+        p_pipe = r.pipeline()
+        page_cids = [str(c["cluster_id"]) for c in page]
+        for cid in page_cids:
+            p_pipe.smembers(f"{collection}:bin_cluster:{algo}:{cid}:direct_members")
+        direct_members_ids_list = p_pipe.execute()
+
+        all_member_ids = set()
+        cluster_to_member_ids = {}
+        for cid, ids_raw in zip(page_cids, direct_members_ids_list):
+            if ids_raw:
+                ids = [x.decode() if isinstance(x, bytes) else x for x in ids_raw]
+                cluster_to_member_ids[cid] = ids
+                all_member_ids.update(ids)
+
+        member_meta_map = {}
+        if all_member_ids:
+            all_member_ids_list = list(all_member_ids)
+            m_pipe = r.pipeline()
+            for mid in all_member_ids_list:
+                m_pipe.json().get(f"{mid}:meta", "$")
+                parts = mid.split(":")
+                md5 = parts[-1] if len(parts) >= 3 else ""
+                m_pipe.scard(f"{collection}:idx:file:functions:{md5}")
+            raw_results = m_pipe.execute()
+            for idx, mid in enumerate(all_member_ids_list):
+                meta = raw_results[2 * idx]
+                func_count = raw_results[2 * idx + 1]
+                m = meta[0] if isinstance(meta, list) and meta else {}
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except Exception:
+                        m = {}
+                m["function_count"] = func_count
+                member_meta_map[mid] = m
+
+        for cluster_res in page:
+            cid = str(cluster_res["cluster_id"])
+            mids = cluster_to_member_ids.get(cid, [])
+            cluster_res["direct_members"] = [
+                {
+                    "id": mid,
+                    "name": member_meta_map.get(mid, {}).get(
+                        "file_name", "Unknown"
+                    ),
+                    "file_md5": member_meta_map.get(mid, {}).get("file_md5", ""),
+                    "language_id": member_meta_map.get(mid, {}).get(
+                        "language_id", "Unknown"
+                    ),
+                    "function_count": member_meta_map.get(mid, {}).get(
+                        "function_count", 0
+                    ),
+                    "tags": member_meta_map.get(mid, {}).get("tags", []),
+                    "user_tags": member_meta_map.get(mid, {}).get("user_tags", []),
+                }
+                for mid in mids
+            ]
+
     response_data = {
         "collection": collection,
         "algo": algo,
@@ -426,7 +424,7 @@ def list_bin_clusters():
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
 
-        return export_to_csv(results, "bin_clusters")
+        return export_to_csv(page, "bin_clusters")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
 

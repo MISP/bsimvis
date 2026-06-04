@@ -4,7 +4,7 @@ Secondary index service for BSimVis.
 Key naming conventions:
   {coll}:idx:{level}:{field}:{value}  -> SET  of doc IDs  (TAG / exact match)
   {coll}:idx:{level}:{field}          -> ZSET of doc IDs  (NUMERIC)
-  {coll}:file_funcs:{md5}             -> SET  of func IDs (file->function relationship)
+  {coll}:idx:file:functions:{md5}     -> SET  of func IDs (file->function relationship)
 
 Field lists (FILE_TAG_FIELDS etc.) are derived from index_config.INDEX_FIELDS.
 To change which fields are indexed and at which levels, edit index_config.py.
@@ -12,6 +12,26 @@ To change which fields are indexed and at which levels, edit index_config.py.
 
 import json
 import datetime
+
+
+def normalize_tags(data, tag_fields=None):
+    """
+    Ensures that specified tag fields in a dictionary are normalized to lists of strings.
+    Handles legacy comma-separated strings and missing fields.
+    """
+    if tag_fields is None:
+        tag_fields = ["tags", "user_tags"]
+
+    for field in tag_fields:
+        val = data.get(field)
+        if isinstance(val, str):
+            data[field] = [t.strip() for t in val.split(",")] if val else []
+        elif val is None:
+            data[field] = []
+        elif not isinstance(val, list):
+            data[field] = []
+
+    return data
 
 
 def parse_timestamp(val):

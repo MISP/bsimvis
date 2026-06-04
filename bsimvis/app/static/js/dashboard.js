@@ -169,12 +169,6 @@ function toggleFilters() {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
 }
 
-function getCollectionFromHash() {
-    const [hashPath, queryString] = (window.location.hash || '').split('?');
-    const params = new URLSearchParams(queryString);
-    return params.get('collection') || 'main';
-}
-
 const routes = {
     '#collections': {
         title: 'Collections',
@@ -432,6 +426,11 @@ async function refreshData(appendArg = false, force = false) {
 
     try {
         const response = await fetch(apiUrl);
+        if (!response.ok) {
+            const text = await response.text();
+            console.error(`API Error for ${apiUrl}: ${response.status} ${response.statusText}\n${text.substring(0, 500)}`);
+            throw new Error(`API Error ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
 
         // Extract the list of items based on the API response structure
@@ -1940,18 +1939,24 @@ function renderFiles(data, clustersMap = {}) {
         const batchUuid = f['batch_uuid'] || '---';
         const funcCount = f['function_count'] !== undefined ? f['function_count'] : 0;
 
+        const clusters = (f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean);
+
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${fileId}">
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${fileId}"
+            data-entity-data='${JSON.stringify({
+                md5: f['file_md5'],
+                file_name: f['file_name'],
+                id: fileId,
+                collection: col
+            }).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
             <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <b style="color:var(--accent)">${f['file_name']}</b>
-                    <button class="btn-copy" title="Copy File ID: ${fileId}" onclick="copyToClipboard('${fileId}', this)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
+                    <b style="color:var(--accent); cursor:pointer;">${f['file_name']}</b>
                 </div>
             </td>
             <td class="sim-cell">
-                <div class="mono" style="font-size:0.7rem"># ${f['file_md5']}</div>
+                ${EntityRenderer.renderMd5(f['file_md5'], { full: true })}
                 <div class="dim" style="font-size:0.65rem">${f['language_id']}</div>
             </td>
             <td class="sim-cell mono dim" style="font-size:0.7rem" title="${batchUuid}">
@@ -1974,12 +1979,12 @@ function renderFiles(data, clustersMap = {}) {
                     </a>
                 </div>
             </td>
-            <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${JSON.stringify((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean)).replace(/'/g, "&apos;")}'>
-                ${renderClusterCards((f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean), true)}
+            <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${JSON.stringify(clusters).replace(/'/g, "&apos;")}'>
+                ${EntityRenderer.renderClusterCard(clusters, true)}
             </td>
             <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
             <td>
-                ${renderTagEditor('file', fileId, tags, user_tags)}
+                ${EntityRenderer.renderTag('file', fileId, tags, user_tags)}
             </td>
         </tr>
     `;
@@ -1988,10 +1993,6 @@ function renderFiles(data, clustersMap = {}) {
 
 function renderFunctions(data, clustersMap = {}) {
     return data.map(f => {
-        const name = f['function_name'] || 'Unknown';
-        const namespace = f['namespace'] || '';
-        const parameters = f['parameters'] || [];
-        const returnType = f['return_type'] || 'void';
         const entry = f['entrypoint_address'] || '';
         const tags = f['tags'] || [];
         const user_tags = f['user_tags'] || [];
@@ -2000,46 +2001,28 @@ function renderFunctions(data, clustersMap = {}) {
         const language = f['language_id'] || '---';
         const featCount = f['bsim_features_count'] || 0;
         const funcId = f['function_id'] || `${f.collection}:func:${file_md5}:${entry}`;
-
-        const safeName = (name || '').replace(/'/g, "\\'");
-        const fInfo = formatSigComponent(namespace, returnType, name, parameters);
         const rowStyle = getRowTagColor(tags, user_tags);
+        const clusters = (f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean);
 
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${funcId}">
-            <td class="sim-cell">
-                <div style="display:flex; align-items:center; gap:8px; overflow:hidden;" title="${fInfo.fullSig}">
-                    <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                       onmouseenter="showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
-                       onmousemove="moveCodePreview(event)"
-                       onmouseleave="hideCodePreview(event)"
-                       onclick="showFunctionCodeById('${funcId}', '${safeName}', '', event)">
-                        ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                    </b>
-                    <div style="display:inline-flex; gap:4px; margin-left: 8px;">
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(funcId)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(funcId)}" 
-                                onmouseenter="onHoverDiffButton(event, '${funcId}', '${safeName}')"
-                                onmousemove="moveCodePreview(event)"
-                                onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px;"><span>±</span></button>
-                        <a class="btn-sim-action" href="#function-similarity?collection=${f.collection || 'main'}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
-                    </div>
-                </div>
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${funcId}"
+            data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
+            <td class="sim-cell" style="min-width: 300px;">
+                ${EntityRenderer.renderFunction(f)}
             </td>
             <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
-            <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
-            <td class="cluster-cards-cell" data-clusters='${JSON.stringify((f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean)).replace(/'/g, "&apos;")}'>${renderClusterCards((f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean))}</td>
+            <td>${EntityRenderer.renderTag('function', funcId, tags, user_tags)}</td>
+            <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters)}</td>
             <td class="sim-cell" style="text-align:center;">
-
                 <div style="display:inline-flex; align-items:center; gap:6px;">
                     <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
                     <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                 </div>
             </td>
             <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${file_md5}"># ${file_md5}</span></td>
-            <td>${renderTagEditor('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
+            <td class="sim-cell">${EntityRenderer.renderMd5(file_md5)}</td>
+            <td>${EntityRenderer.renderTag('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
             <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
             <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
             <td class="sim-cell"></td>
@@ -2070,7 +2053,18 @@ function renderGlobalFeatures(items) {
             const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';
 
             const displayLine = (ctx.line_idxs && ctx.line_idxs.length > 0) ? ctx.line_idxs[0] + 1 : 1;
+            
+            const fData = {
+                function_id: funcId,
+                function_name: funcName,
+                file_md5: ctx.md5,
+                entrypoint_address: ctx.addr,
+                collection: col
+            };
+
             cCodeHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
+                     data-entity-data='${JSON.stringify(fData).replace(/'/g, "&apos;")}'
+                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)"
                      onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event)">
                 <div class="code-card-line">
                     <div class="code-card-ln">${displayLine}</div>
@@ -2147,56 +2141,50 @@ function renderTopCorrelations(items, clustersMap = {}) {
         const rowStyle = getRowTagColor(tags, user_tags);
         const pairId = p.sid || `${p.id1}|${p.id2}|${p.algo}`;
 
+        const func1Data = {
+            ...p.meta1,
+            function_name: p.name1 || p.meta1?.function_name,
+            function_id: p.id1,
+            entrypoint_address: addr1,
+            collection: col
+        };
+        const func2Data = {
+            ...p.meta2,
+            function_name: p.name2 || p.meta2?.function_name,
+            function_id: p.id2,
+            entrypoint_address: addr2,
+            collection: col
+        };
+
+        const clusters1 = (p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+        const clusters2 = (p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
+            data-entity-data='${JSON.stringify(p).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
                     <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
+                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)" 
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}', event)" 
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)" 
                         title="Run Aligned Diff" 
                         style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
                         <span>±</span>
                     </button>
                 </div>
-                ${renderTagEditor('similarity', pairId, tags, user_tags)}
+                ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
             </td>
-            <td>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f1.fullSig}">
-                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                           onmouseenter="showCodePreview('${p.id1}', '${name1}', '${addr1}', '${m1}', ${p.meta1?.bsim_features_count || 0}, event, 0, '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}')" 
-                           onmousemove="moveCodePreview(event)"
-                           onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id1}', '${name1}', '', event)">
-                            ${f1.ret ? `<span style="color:#ae81ff">${f1.ret}</span> ` : ''}${f1.ns ? `<span style="color:white; opacity:0.8">${f1.ns}::</span>` : ''}${p.name1 || '---'}<span style="color:white">(</span>${f1.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                        </b>
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id1)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(p.id1)}" 
-                                onmouseenter="onHoverDiffButton(event, '${p.id1}', '${name1}', '${p.id2}', ${p.score})"
-                                onmousemove="moveCodePreview(event)"
-                                onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${p.id1}', '${name1}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
-                        <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m1}&address=${addr1}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
+            <td style="min-width: 300px;">
+                <div style="display:flex; flex-direction:column; gap:8px; width: 100%;">
+                    <div style="min-height:24px; display:flex; align-items:center; width: 100%;">
+                        ${EntityRenderer.renderFunction(func1Data)}
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f2.fullSig}">
-                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                           onmouseenter="showCodePreview('${p.id2}', '${name2}', '${addr2}', '${m2}', ${p.meta2?.bsim_features_count || 0}, event, 0, '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}')" 
-                           onmousemove="moveCodePreview(event)"
-                           onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id2}', '${name2}', '', event)">
-                            ${f2.ret ? `<span style="color:#ae81ff">${f2.ret}</span> ` : ''}${f2.ns ? `<span style="color:white; opacity:0.8">${f2.ns}::</span>` : ''}${p.name2 || '---'}<span style="color:white">(</span>${f2.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                        </b>
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id2)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(p.id2)}" 
-                                onmouseenter="onHoverDiffButton(event, '${p.id2}', '${name2}', '${p.id1}', ${p.score})"
-                                onmousemove="moveCodePreview(event)"
-                                onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${p.id2}', '${name2}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
-                        <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m2}&address=${addr2}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
+                    <div style="min-height:24px; display:flex; align-items:center; width: 100%;">
+                        ${EntityRenderer.renderFunction(func2Data)}
                     </div>
                 </div>
             </td>
@@ -2208,14 +2196,14 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
                 </div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify((p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean)).replace(/'/g, "&apos;")}'>${renderClusterCards((p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean))}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify((p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean)).replace(/'/g, "&apos;")}'>${renderClusterCards((p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean))}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters1).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters1)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters2).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters2)}</div>
                 </div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
@@ -2238,14 +2226,14 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m1}"># ${m1}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m2}"># ${m2}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderMd5(m1)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderMd5(m2)}</div>
                 </div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2492,9 +2480,7 @@ function refreshClusterCards() {
         try {
             const clusters = JSON.parse(cell.dataset.clusters || '[]');
             const isBinary = cell.dataset.isBinary === 'true';
-            if (typeof renderClusterCards === 'function') {
-                cell.innerHTML = renderClusterCards(clusters, isBinary);
-            }
+            cell.innerHTML = EntityRenderer.renderClusterCard(clusters, isBinary);
         } catch (e) {
             console.error("Failed to re-render cluster cards", e);
         }
@@ -2821,19 +2807,33 @@ function renderClusters(items) {
     return items.map(c => {
         const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
         const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
-        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(name => `
-            <div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${name}">${name}</div>
-        `).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
+        
+        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(m => {
+            if (typeof m === 'string') {
+                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m}">${m}</div>`;
+            }
+            return `
+                <div style="margin-bottom:2px; width: 100%;">
+                    ${EntityRenderer.renderFunction(m, { showActions: false })}
+                </div>
+            `;
+        }).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
 
         return `
-        <tr data-cluster-id="${c.cluster_id}">
+        <tr data-cluster-id="${c.cluster_id}"
+            data-entity-data='${JSON.stringify({
+                cluster_id: c.cluster_id,
+                cluster_uuid: c.cluster_uuid,
+                cluster_name: c.cluster_name
+            }).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
                 ${(c.cluster_uuid || '').substring(0, 8)}
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <span id="name-display-${c.cluster_id}">${c.cluster_name}</span>
+                    <span id="name-display-${c.cluster_id}" style="cursor:pointer;">${c.cluster_name}</span>
                     <button class="btn-action" title="Rename" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
@@ -2866,8 +2866,8 @@ function renderClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
-            <td>
-                <div style="display:flex; flex-direction:column; gap:2px; max-width:180px; overflow:hidden;">
+            <td style="min-width: 350px;">
+                <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
                 </div>
             </td>
@@ -2918,19 +2918,30 @@ function renderBinClusters(items) {
     return items.map(c => {
         const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
         const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
-        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(name => `
-            <div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${name}">${name}</div>
-        `).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
+        
+        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(m => {
+            if (typeof m === 'string') {
+                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m}">${m}</div>`;
+            }
+            // For binaries, we don't have a standardized renderer yet, but we can wrap them
+            return `<div class="mono" style="font-size:0.7rem; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m.name}">${m.name}</div>`;
+        }).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
 
         return `
-        <tr data-cluster-id="${c.cluster_id}">
+        <tr data-cluster-id="${c.cluster_id}"
+            data-entity-data='${JSON.stringify({
+                cluster_id: c.cluster_id,
+                cluster_uuid: c.cluster_uuid,
+                cluster_name: c.cluster_name
+            }).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
                 ${(c.cluster_uuid || '').substring(0, 8)}
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <span id="name-display-bin-${c.cluster_id}">${c.cluster_name}</span>
+                    <span id="name-display-bin-${c.cluster_id}" style="cursor:pointer;">${c.cluster_name}</span>
                     <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
@@ -2959,8 +2970,8 @@ function renderBinClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
-            <td>
-                <div style="display:flex; flex-direction:column; gap:2px; max-width:180px; overflow:hidden;">
+            <td style="min-width: 250px;">
+                <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
                 </div>
             </td>
@@ -3282,6 +3293,13 @@ window.addEventListener('message', (event) => {
     const { action, tag, targets } = msg;
     if (!tag || !targets || !targets.length) return;
 
+    // If we encounter a new tag, refresh metadata to get its color/priority
+    if (action === 'add' && (!window.tagMetadata || !window.tagMetadata[tag])) {
+        if (typeof fetchTagMetadata === 'function') {
+            fetchTagMetadata(getCollectionFromHash());
+        }
+    }
+
     // 1. Update dashboard DOM (tables, tag editors)
     targets.forEach(({ etype, eid }) => {
         let editors = Array.from(document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`));
@@ -3310,11 +3328,14 @@ window.addEventListener('message', (event) => {
 
     // 2. Refresh row colors and update sim graph with patched in-memory tag data
     if (typeof refreshAllRowColors === 'function') refreshAllRowColors();
-    if (window.graphInstance && typeof window.graphInstance.applyTagUpdate === 'function') {
-        targets.forEach(({ etype, eid }) => {
-            window.graphInstance.applyTagUpdate(action, etype, eid, tag);
-        });
-    }
+    [window.graphInstance, window.hierarchyInstance, window.packingInstance, window.binHierarchyInstance, window.binPackingInstance].forEach(inst => {
+        if (inst && typeof inst.applyTagUpdate === 'function') {
+            targets.forEach(({ etype, eid }) => {
+                inst.applyTagUpdate(action, etype, eid, tag);
+            });
+        }
+    });
+
     if (typeof window.refreshContextMenuUI === 'function') {
         window.refreshContextMenuUI();
     }

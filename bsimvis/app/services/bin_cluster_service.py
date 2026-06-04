@@ -76,6 +76,13 @@ class BinClusterService:
                 pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
             if cursor == 0:
                 break
+            if len(pairs) % 5000 == 0:
+                logging.info(f"[*] Fetched {len(pairs)} binary similarity pairs...")
+
+        msg = f"Fetched {len(pairs)} binary similarity pairs."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         if not pairs:
             logging.warning(f"No binary similarity pairs found for {collection}:{algo}")
@@ -134,16 +141,31 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
+        matrix_mem_mb = (num_nodes * num_nodes * 4) / (1024 * 1024)
+        msg = f"Allocating {num_nodes}x{num_nodes} distance matrix (~{matrix_mem_mb:.2f} MB)..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        try:
+            dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
+        except MemoryError:
+            msg = f"FAILED to allocate distance matrix of size {num_nodes}x{num_nodes} (OOM)."
+            logging.error(f"[!] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+            return False
+
         np.fill_diagonal(dist_matrix, 0)
 
         for i, j, d in edges:
             dist_matrix[i, j] = d
             dist_matrix[j, i] = d
 
-        logging.info(f"[*] Running HDBSCAN (min_cluster_size={min_cluster_size})...")
+        msg = f"Running HDBSCAN (min_cluster_size={min_cluster_size}, min_samples={min_samples}, epsilon={cluster_selection_epsilon})..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(job_id, "Running HDBSCAN algorithm...")
+            job_service.add_log(job_id, msg)
 
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
@@ -153,8 +175,21 @@ class BinClusterService:
             metric="precomputed",
             gen_min_span_tree=True,
         )
+        
+        start_fit = time.time()
         clusterer.fit(dist_matrix.astype(np.float64))
+        fit_time = time.time() - start_fit
+        
+        msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
         tree_df = clusterer.condensed_tree_.to_pandas()
+        msg = f"Condensed tree has {len(tree_df)} rows."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         # 1. Birth lambdas for all clusters
         root_id = tree_df["parent"].min()
@@ -389,10 +424,10 @@ class BinClusterService:
         all_member_file_ids = list(id_to_idx.keys())
         all_member_meta = {}
         total_members = len(all_member_file_ids)
+        msg = f"Pre-fetching metadata for {total_members} files..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id, f"Pre-fetching metadata for {total_members} files..."
-            )
+            job_service.add_log(job_id, msg)
 
         for i in range(0, total_members, 1000):
             chunk = all_member_file_ids[i : i + 1000]
@@ -404,8 +439,16 @@ class BinClusterService:
                 name_res = results[idx]
                 name = name_res[0] if isinstance(name_res, list) and name_res else None
                 all_member_meta[file_id] = {"file_name": name}
+            
+            if i % 1000 == 0:
+                logging.info(f"[*] Fetched meta for {i}/{total_members} files...")
 
         # Build sparse adjacency dictionary of similarities for fast cohesion calculation
+        msg = "Building sparse adjacency map for cohesion calculation..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+            
         adj_sim = {i: {} for i in range(num_nodes)}
         for u, v, d in edges:
             sim = 1.0 - d

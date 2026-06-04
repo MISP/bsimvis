@@ -78,6 +78,13 @@ class ClusterService:
                 pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
             if cursor == 0:
                 break
+            if len(pairs) % 10000 == 0:
+                logging.info(f"[*] Fetched {len(pairs)} similarity pairs...")
+
+        msg = f"Fetched {len(pairs)} similarity pairs."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         if not pairs:
             logging.warning(f"No similarity pairs found for {collection}:{algo}")
@@ -190,16 +197,31 @@ class ClusterService:
         # If the dataset is huge, we might need a different approach.
         # For now, let's use a dense matrix with a large default distance (1.0)
 
-        dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
+        matrix_mem_mb = (num_nodes * num_nodes * 4) / (1024 * 1024)
+        msg = f"Allocating {num_nodes}x{num_nodes} distance matrix (~{matrix_mem_mb:.2f} MB)..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        try:
+            dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
+        except MemoryError:
+            msg = f"FAILED to allocate distance matrix of size {num_nodes}x{num_nodes} (OOM)."
+            logging.error(f"[!] {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+            return False
+
         np.fill_diagonal(dist_matrix, 0)
 
         for i, j, d in edges:
             dist_matrix[i, j] = d
             dist_matrix[j, i] = d
 
-        logging.info(f"[*] Running HDBSCAN (min_cluster_size={min_cluster_size})...")
+        msg = f"Running HDBSCAN (min_cluster_size={min_cluster_size}, min_samples={min_samples}, epsilon={cluster_selection_epsilon})..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(job_id, "Running HDBSCAN algorithm...")
+            job_service.add_log(job_id, msg)
 
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
@@ -209,11 +231,24 @@ class ClusterService:
             metric="precomputed",
             gen_min_span_tree=True,
         )
+        
+        start_fit = time.time()
         # Only fit to get the condensed tree (no flat clustering)
         clusterer.fit(dist_matrix.astype(np.float64))
+        fit_time = time.time() - start_fit
+        
+        msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
         # Calculate HDBSCAN stabilities and per-function membership strengths
         # We use the condensed tree to calculate persistence for all nodes
         tree_df = clusterer.condensed_tree_.to_pandas()
+        msg = f"Condensed tree has {len(tree_df)} rows."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         # 1. Birth lambdas for all clusters
         # Root birth is 0
@@ -466,10 +501,10 @@ class ClusterService:
         all_member_fids = list(id_to_idx.keys())
         all_member_meta = {}
         total_members = len(all_member_fids)
+        msg = f"Pre-fetching metadata for {total_members} functions..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id, f"Pre-fetching metadata for {total_members} functions..."
-            )
+            job_service.add_log(job_id, msg)
 
         for i in range(0, total_members, 1000):
             chunk = all_member_fids[i : i + 1000]
@@ -489,8 +524,16 @@ class ClusterService:
                     "function_name": name,
                     "bsim_features_count": feat_count,
                 }
+            
+            if i % 5000 == 0:
+                logging.info(f"[*] Fetched meta for {i}/{total_members} functions...")
 
         # Build sparse adjacency dictionary of similarities for fast cohesion calculation
+        msg = f"Building sparse adjacency map for cohesion calculation..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+            
         adj_sim = {i: {} for i in range(num_nodes)}
         for u, v, d in edges:
             sim = 1.0 - d
@@ -498,11 +541,10 @@ class ClusterService:
             adj_sim[v][u] = sim
 
         total_clusters = len(cluster_members)
+        msg = f"Enriching metadata for {total_clusters} hierarchical clusters..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Enriching metadata for {total_clusters} hierarchical clusters...",
-            )
+            job_service.add_log(job_id, msg)
 
         for idx, (label, members) in enumerate(cluster_members.items()):
             names = []
@@ -963,9 +1005,12 @@ class ClusterService:
                 f"Propagating cluster indexes to {total_candidates} candidate similarities "
                 f"(out of {total_sims} total sims)...",
             )
+            logging.info(f"[*] Starting similarity index propagation for {total_candidates} candidates...")
 
         candidate_list = list(candidate_sids)
         update_pipe = r.pipeline()
+        
+        start_prop = time.time()
 
         # Batch aggregators to compress Redis pipeline commands by over 99%
         tag_buckets = {}  # bucket_key -> set of sids
@@ -1055,11 +1100,12 @@ class ClusterService:
                     )
 
         flush_batch()
-
+        
+        prop_time = time.time() - start_prop
+        msg = f"Indexed {indexed} similarities with cluster info in {prop_time:.2f}s."
+        logging.info(f"[+] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id, f"Indexed {indexed} similarities with cluster info."
-            )
+            job_service.add_log(job_id, msg)
 
         return True
 

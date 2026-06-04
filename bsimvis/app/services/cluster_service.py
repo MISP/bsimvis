@@ -482,10 +482,12 @@ class ClusterService:
                 name_res = results[idx * 2]
                 feat_res = results[idx * 2 + 1]
                 name = name_res[0] if isinstance(name_res, list) and name_res else None
-                feat_count = feat_res[0] if isinstance(feat_res, list) and feat_res else 0
+                feat_count = (
+                    feat_res[0] if isinstance(feat_res, list) and feat_res else 0
+                )
                 all_member_meta[fid] = {
                     "function_name": name,
-                    "bsim_features_count": feat_count
+                    "bsim_features_count": feat_count,
                 }
 
         # Build sparse adjacency dictionary of similarities for fast cohesion calculation

@@ -85,14 +85,6 @@ def main():
     )
     feat_clear.add_argument("--md5", help="Clear functions for a specific file")
 
-    # features reindex
-    feat_reindex = features_actions.add_parser(
-        "reindex", help="Rebuild secondary indexes from JSON meta"
-    )
-    feat_reindex.add_argument(
-        "-c", "--collection", required=True, help="Collection name"
-    )
-
     # --- INDEX (Stats & Health) ---
     index_parser = subparsers.add_parser("index", help="Index health and statistics")
     index_actions = index_parser.add_subparsers(dest="action", required=True)
@@ -577,6 +569,7 @@ def main():
                 bsimvis_index.run_index_status(g_host, int(g_port), args)
             elif args.action == "reg":
                 bsimvis_index.run_index_reg(g_host, int(g_port), args)
+
         elif args.subcommand == "sim":
             bsimvis_sim.run_sim(g_host, int(g_port), args)
         elif args.subcommand == "upload":

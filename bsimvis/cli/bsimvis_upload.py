@@ -54,7 +54,7 @@ def upload_bsim_data(data, args, config):
     """
     if not data or not data.get("functions"):
         logging.warning("[!] No data to upload.")
-        return
+        return []
 
     file_meta = data.get("file_metadata", {})
     file_md5 = file_meta.get("file_md5", "unknown_md5")
@@ -91,10 +91,16 @@ def upload_bsim_data(data, args, config):
         except Exception as e:
             logging.error(f"[!] Failed to save JSON to {target_file}: {e}")
 
+    pipeline_details = []
     # We trigger the API for each collection
     for collection in collections:
         # Prepare the payload for the API
-        payload = {"collection": collection, "file_md5": file_md5, **data}
+        payload = {
+            "collection": collection,
+            "file_md5": file_md5,
+            "enqueue": False,
+            **data,
+        }
 
         if getattr(args, "top_k", None) is not None:
             payload["top_k"] = args.top_k
@@ -124,11 +130,22 @@ def upload_bsim_data(data, args, config):
                 resp.raise_for_status()
 
                 result = resp.json()
+                pipeline_id = result.get("pipeline_id")
                 logging.info(
-                    f"[+] Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {pipeline_id}"
                 )
+                if pipeline_id:
+                    pipeline_details.append(
+                        {
+                            "host": api_host,
+                            "collection": collection,
+                            "pipeline_id": pipeline_id,
+                        }
+                    )
             except Exception as e:
                 logging.error(f"[!] API Submission failed for {api_url}: {e}")
+
+    return pipeline_details
 
 
 def upload_raw_binary(target_path, args):
@@ -138,7 +155,7 @@ def upload_raw_binary(target_path, args):
     target_path = Path(target_path).resolve()
     if not target_path.exists():
         logging.error(f"[!] Target path does not exist: {target_path}")
-        return 0
+        return 0, []
 
     is_gpr = target_path.suffix == ".gpr"
 
@@ -148,21 +165,20 @@ def upload_raw_binary(target_path, args):
         )
         archive_path = archive_ghidra_project(target_path)
         if not archive_path:
-            return 0
+            return 0, []
         try:
             with open(archive_path, "rb") as f:
                 raw_bytes = f.read()
             # Override file_name for the API
             file_name = target_path.name + ".zip"
-            result = _perform_raw_upload(raw_bytes, file_name, args)
-            return result
+            return _perform_raw_upload(raw_bytes, file_name, args)
         finally:
             if os.path.exists(archive_path):
                 os.remove(archive_path)
 
     if not target_path.is_file():
         logging.error(f"[!] Target path is not a file: {target_path}")
-        return 0
+        return 0, []
 
     try:
         with open(target_path, "rb") as f:
@@ -170,12 +186,12 @@ def upload_raw_binary(target_path, args):
 
         if not raw_bytes:
             logging.warning(f"[!] File {target_path.name} is empty. Skipping upload.")
-            return 0
+            return 0, []
 
         return _perform_raw_upload(raw_bytes, target_path.name, args)
     except Exception as e:
         logging.error(f"[!] Failed to read {target_path}: {e}")
-        return 0
+        return 0, []
 
 
 def _perform_raw_upload(raw_bytes, file_name, args):
@@ -186,6 +202,7 @@ def _perform_raw_upload(raw_bytes, file_name, args):
     collections = args.collections if args.collections else ["main"]
 
     success = True
+    pipeline_details = []
     for collection in collections:
         for api_host in hosts:
             params = {
@@ -195,6 +212,7 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 "batch_name": args.batch_name,
                 "profile": args.profile,
                 "min_func_len": args.min_func_len,
+                "enqueue": "false",
             }
             # Ghidra Import options
             if getattr(args, "processor", None) is not None:
@@ -226,17 +244,26 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 )
                 resp.raise_for_status()
                 result = resp.json()
+                pipeline_id = result.get("pipeline_id")
                 logging.info(
-                    f"[+] Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {pipeline_id}"
                 )
+                if pipeline_id:
+                    pipeline_details.append(
+                        {
+                            "host": api_host,
+                            "collection": collection,
+                            "pipeline_id": pipeline_id,
+                        }
+                    )
             except Exception as e:
                 logging.error(f"[!] Upload failed for {api_url}: {e}")
                 success = False
 
-    return 1 if success else 0
+    return (1 if success else 0), pipeline_details
 
 
-def process_target(target, args, config, batch_order) -> int:
+def process_target(target, args, config, batch_order) -> tuple[int, list]:
     target_path = Path(target).resolve()
 
     # CASE 1: Local Analysis forced
@@ -246,25 +273,28 @@ def process_target(target, args, config, batch_order) -> int:
             options = vars(args).copy()
             options["batch_order"] = batch_order
 
+            pipeline_details = []
             if target_path.suffix == ".gpr":
                 all_data = ghidra_service.analyze_project(target_path, options)
                 for data in all_data:
-                    upload_bsim_data(data, args, config)
+                    details = upload_bsim_data(data, args, config)
+                    pipeline_details.extend(details)
             else:
                 data = ghidra_service.analyze_file(target_path, options)
-                upload_bsim_data(data, args, config)
+                details = upload_bsim_data(data, args, config)
+                pipeline_details.extend(details)
 
             t_total = time.time() - t0
             logging.info(
                 f"[+] Local processing finished for {target_path.name} in {t_total:.3f}s"
             )
-            return 1
+            return 1, pipeline_details
         except Exception as e:
             logging.error(f"[!] Local processing failed for {target_path.name}: {e}")
             import traceback
 
             logging.error(traceback.format_exc())
-            return 0
+            return 0, []
 
     # CASE 2: Raw Binary - Remote Analysis
     else:
@@ -333,6 +363,7 @@ def main(args):
 
         success_count = 0
         total = len(args.targets)
+        pipeline_details = []
 
         # Progress bar setup
         # unit="bin" makes it say "10bin/s"
@@ -342,9 +373,10 @@ def main(args):
             for future in concurrent.futures.as_completed(future_to_target):
                 target_name = future_to_target[future]
                 try:
-                    result = future.result()
+                    result, p_details = future.result()
                     if result == 1:
                         success_count += 1
+                        pipeline_details.extend(p_details)
                 except Exception as e:
                     # tqdm.write ensures the progress bar stays at the bottom
                     # while the error message is printed above it
@@ -354,6 +386,42 @@ def main(args):
 
         rate = (success_count / total * 100) if total > 0 else 0
         print(f"[i] Success rate : {rate:.2f}% ({success_count}/{total})")
+
+        if pipeline_details:
+            # Group pipeline IDs by (host, collection)
+            groups = {}
+            for detail in pipeline_details:
+                key = (detail["host"], detail["collection"])
+                if key not in groups:
+                    groups[key] = []
+                groups[key].append(detail["pipeline_id"])
+
+            print(
+                f"[i] Grouping and finalizing batch uploads for {len(groups)} host/collection pairs..."
+            )
+
+            for (host, collection), pipeline_ids in groups.items():
+                api_url = f"http://{host}/api/file/upload/batch_finalize"
+                payload = {
+                    "pipeline_ids": pipeline_ids,
+                    "batch_uuid": args.batch_uuid,
+                    "collection": collection,
+                    "algo": getattr(args, "algo", "unweighted_cosine")
+                    or "unweighted_cosine",
+                    "skip_sim": getattr(args, "skip_sim", False),
+                }
+                try:
+                    logging.info(
+                        f"[*] Calling batch finalize on {host} (collection: {collection})..."
+                    )
+                    resp = requests.post(api_url, json=payload, timeout=300)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    print(
+                        f"[+] Batch finalize success on {host}! Master Pipeline ID: {result.get('master_pipeline_id')}"
+                    )
+                except Exception as e:
+                    logging.error(f"[!] Batch finalize failed for {api_url}: {e}")
 
 
 def load_config(path=DEFAULT_CONFIG_NAME):

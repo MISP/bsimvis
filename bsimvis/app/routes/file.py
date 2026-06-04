@@ -78,6 +78,14 @@ def upload_file_data():
 
         skip_sim = data.get("skip_sim", False)
 
+        enqueue_val = request.args.get("enqueue")
+        if enqueue_val is not None:
+            enqueue = enqueue_val.lower() == "true"
+        else:
+            enqueue = data.get("enqueue", True)
+            if isinstance(enqueue, str):
+                enqueue = enqueue.lower() == "true"
+
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake
         pipeline_tasks = [
@@ -103,15 +111,20 @@ def upload_file_data():
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
             pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
 
-        pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
+        if enqueue:
+            pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
 
-        pipeline_id = job_service.create_pipeline(pipeline_tasks)
+        pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
         return {
-            "status": "processing",
+            "status": "processing" if enqueue else "queued",
             "file_id": file_id,
             "pipeline_id": pipeline_id,
-            "message": "Data stored. Processing pipeline started.",
+            "message": (
+                "Data stored. Processing pipeline started."
+                if enqueue
+                else "Data stored. Pipeline queued."
+            ),
         }
 
     except Exception as e:

@@ -175,6 +175,21 @@ def get_native_fields(source_level: str, is_num: bool) -> list[str]:
     ]
 
 
+def get_fields_targeting_level(level: str, is_num: bool) -> list[str]:
+    """Returns all fields (from any source level) that target 'level'.
+    Used to ensure that all fields targeting 'level' (both native and propagated)
+    are indexed when saving/processing objects at that level.
+    """
+    fields = set()
+    for src_level, cfg in INDEX_CONFIG.items():
+        if src_level == "bin_sim":
+            continue
+        for field, targets in cfg.items():
+            if level in targets and (field in NUM_FIELDS) == is_num:
+                fields.add(resolve_target_field(src_level, level, field))
+    return list(fields)
+
+
 # ---------------------------------------------------------------------------
 # Accessors for similarity_service.py (Propagation during build)
 # ---------------------------------------------------------------------------

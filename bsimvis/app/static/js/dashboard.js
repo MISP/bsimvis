@@ -258,12 +258,12 @@ const routes = {
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
             { label: 'Name', sort: 'cluster_name', width: '25%' },
-            { label: 'Functions', sort: 'count', width: '8%' },
+            { label: 'Functions', sort: 'count', width: '12%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Avg Feat', sort: 'features', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
-            { label: 'Created', width: '15%' },
-            { label: 'Actions', width: '18%' }
+            { label: 'Created', width: '11%' },
+            { label: 'Sample Functions', width: '18%' }
         ],
         renderer: renderClusters
     },
@@ -294,11 +294,11 @@ const routes = {
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
             { label: 'Name', sort: 'cluster_name', width: '25%' },
-            { label: 'Binaries', sort: 'count', width: '8%' },
+            { label: 'Binaries', sort: 'count', width: '12%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
-            { label: 'Created', width: '15%' },
-            { label: 'Actions', width: '18%' }
+            { label: 'Created', width: '11%' },
+            { label: 'Sample Binaries', width: '18%' }
         ],
         renderer: renderBinClusters
     },
@@ -1041,7 +1041,13 @@ function updateUI(path, params, route) {
             <th><input type="number" id="flt-cluster-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
             <th><input type="number" id="flt-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
             <th></th>
-            <th><button onclick="applyClusterSearch()" style="width:100%; padding:2px; font-size:0.65rem; cursor:pointer">Search</button></th>
+            <th>
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${p.get('func_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                    <input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${p.get('func_addr') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                    <input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                </div>
+            </th>
         </tr>`;
         thead.innerHTML = headHtml;
     }
@@ -1215,7 +1221,12 @@ function updateUI(path, params, route) {
                 </div>
             </th>
             <th></th>
-            <th><button onclick="applyBinClusterSearch()" style="width:100%; padding:2px; font-size:0.65rem; cursor:pointer">Search</button></th>
+            <th>
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                    <input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                </div>
+            </th>
         </tr>`;
         thead.innerHTML = headHtml;
 
@@ -2807,7 +2818,14 @@ function updateNavVisibility(collection) {
 }
 
 function renderClusters(items) {
-    return items.map(c => `
+    return items.map(c => {
+        const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
+        const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
+        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(name => `
+            <div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${name}">${name}</div>
+        `).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
+
+        return `
         <tr data-cluster-id="${c.cluster_id}">
             <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
                 ${(c.cluster_uuid || '').substring(0, 8)}
@@ -2819,7 +2837,17 @@ function renderClusters(items) {
                     <button class="btn-action" title="Rename" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
-            <td style="font-weight:bold">${c.count.toLocaleString()}</td>
+            <td>
+                <div style="display:inline-flex; align-items:center; gap:8px;">
+                    <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
+                    <a href="#functions?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
+                        <i class="fa-solid fa-code"></i>
+                    </a>
+                    <a href="#function-similarity?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" title="Similarities" style="color:var(--info)">
+                        <i class="fa-solid fa-code-compare"></i>
+                    </a>
+                </div>
+            </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
@@ -2839,13 +2867,13 @@ function renderClusters(items) {
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
             <td>
-                <div style="display:flex; gap:10px;">
-                    <a href="#functions?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">Functions</a>
-                    <a href="#function-similarity?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">Similarities</a>
+                <div style="display:flex; flex-direction:column; gap:2px; max-width:180px; overflow:hidden;">
+                    ${sampleMembersHtml}
                 </div>
             </td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function applyClusterSearch() {
@@ -2863,6 +2891,9 @@ function applyClusterSearch() {
     const ccount = document.getElementById('flt-cluster-min-count')?.value;
     const cfeat = document.getElementById('flt-cluster-min-features')?.value;
     const ccoh = document.getElementById('flt-cluster-min-cohesion')?.value;
+    const fFuncName = document.getElementById('flt-cluster-func-name')?.value;
+    const fFuncAddr = document.getElementById('flt-cluster-func-addr')?.value;
+    const fFileName = document.getElementById('flt-cluster-file-name')?.value;
 
     if (cid) params.set('cluster_id', cid); else params.delete('cluster_id');
     if (cuuid) params.set('cluster_uuid', cuuid); else params.delete('cluster_uuid');
@@ -2871,6 +2902,9 @@ function applyClusterSearch() {
     if (ccount) params.set('min_count', ccount); else params.delete('min_count');
     if (cfeat) params.set('min_features', cfeat); else params.delete('min_features');
     if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
+    if (fFuncName) params.set('func_name', fFuncName); else params.delete('func_name');
+    if (fFuncAddr) params.set('func_addr', fFuncAddr); else params.delete('func_addr');
+    if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -2881,7 +2915,14 @@ function applyClusterSearch() {
 }
 
 function renderBinClusters(items) {
-    return items.map(c => `
+    return items.map(c => {
+        const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
+        const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
+        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(name => `
+            <div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${name}">${name}</div>
+        `).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
+
+        return `
         <tr data-cluster-id="${c.cluster_id}">
             <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
                 ${(c.cluster_uuid || '').substring(0, 8)}
@@ -2893,7 +2934,14 @@ function renderBinClusters(items) {
                     <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
-            <td style="font-weight:bold">${c.count.toLocaleString()}</td>
+            <td>
+                <div style="display:inline-flex; align-items:center; gap:8px;">
+                    <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
+                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action" title="Binaries">
+                        <i class="fa-solid fa-file-code"></i>
+                    </a>
+                </div>
+            </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
@@ -2912,12 +2960,13 @@ function renderBinClusters(items) {
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
             <td>
-                <div style="display:flex; gap:10px;">
-                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action">Binaries</a>
+                <div style="display:flex; flex-direction:column; gap:2px; max-width:180px; overflow:hidden;">
+                    ${sampleMembersHtml}
                 </div>
             </td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function applyBinClusterSearch() {
@@ -2936,6 +2985,8 @@ function applyBinClusterSearch() {
     const ccountMax = document.getElementById('flt-bin-cluster-max-count')?.value;
     const ccoh = document.getElementById('flt-bin-cluster-min-cohesion')?.value;
     const ccohMax = document.getElementById('flt-bin-cluster-max-cohesion')?.value;
+    const fFileName = document.getElementById('flt-bin-cluster-file-name')?.value;
+    const fFileMd5 = document.getElementById('flt-bin-cluster-file-md5')?.value;
 
     if (cid) params.set('cluster_id', cid); else params.delete('cluster_id');
     if (cuuid) params.set('cluster_uuid', cuuid); else params.delete('cluster_uuid');
@@ -2945,6 +2996,8 @@ function applyBinClusterSearch() {
     if (ccountMax) params.set('max_count', ccountMax); else params.delete('max_count');
     if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
     if (ccohMax) params.set('max_cohesion', ccohMax); else params.delete('max_cohesion');
+    if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
+    if (fFileMd5) params.set('file_md5', fFileMd5); else params.delete('file_md5');
 
     currentOffset = 0;
     isEndOfResults = false;

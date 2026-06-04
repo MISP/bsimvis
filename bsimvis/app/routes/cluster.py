@@ -171,6 +171,37 @@ def clear_cluster():
     return {"job_id": job_id, "status": "enqueued"}
 
 
+def _get_matching_ids(r, collection, level, field, val):
+    reg_key = f"{collection}:reg:{level}:{field}"
+    matching_ids = set()
+    val_lower = val.lower().strip()
+    if not val_lower:
+        return matching_ids
+
+    matching_buckets = []
+    try:
+        for bucket in r.sscan_iter(reg_key, match=f"*{val_lower}*"):
+            bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
+            if val_lower in bucket_str.lower():
+                matching_buckets.append(bucket_str)
+    except Exception as e:
+        import logging
+
+        logging.warning(f"SSCAN failed for registry {reg_key}: {e}")
+
+    if matching_buckets:
+        pipe = r.pipeline()
+        for bucket in matching_buckets:
+            pipe.smembers(bucket)
+        results = pipe.execute()
+        for res in results:
+            if res:
+                matching_ids.update(
+                    m.decode() if isinstance(m, bytes) else str(m) for m in res
+                )
+    return matching_ids
+
+
 def list_clusters():
     """Lists discovered clusters with metadata, filtering, and sorting."""
     collection = request.args.get("collection", "main")
@@ -182,6 +213,11 @@ def list_clusters():
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
+
+    # Column-specific function member filters
+    func_name_q = request.args.get("func_name", "").strip()
+    func_addr_q = request.args.get("func_addr", "").strip()
+    file_name_q = request.args.get("file_name", "").strip()
 
     try:
         min_stability = float(request.args.get("min_stability", 0))
@@ -316,6 +352,62 @@ def list_clusters():
 
             valid_nodes.add(cid)
 
+        # Filter valid_nodes by function member criteria if specified
+        has_member_filters = bool(func_name_q or func_addr_q or file_name_q)
+        if has_member_filters and valid_nodes:
+            matched_fids = None
+            first_filter = True
+
+            if func_name_q:
+                fids = _get_matching_ids(
+                    r, collection, "func", "function_name", func_name_q
+                )
+                if first_filter:
+                    matched_fids = fids
+                    first_filter = False
+                else:
+                    matched_fids.intersection_update(fids)
+
+            if func_addr_q:
+                fids = _get_matching_ids(
+                    r, collection, "func", "entrypoint_address", func_addr_q
+                )
+                if first_filter:
+                    matched_fids = fids
+                    first_filter = False
+                else:
+                    matched_fids.intersection_update(fids)
+
+            if file_name_q:
+                fids = _get_matching_ids(
+                    r, collection, "func", "file_name", file_name_q
+                )
+                if first_filter:
+                    matched_fids = fids
+                    first_filter = False
+                else:
+                    matched_fids.intersection_update(fids)
+
+            if not matched_fids:
+                valid_nodes = set()
+            else:
+                filtered_valid_nodes = set()
+                pipe = r.pipeline()
+                valid_nodes_list = list(valid_nodes)
+                for cid in valid_nodes_list:
+                    pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
+                all_cluster_members = pipe.execute()
+
+                for cid, members_raw in zip(valid_nodes_list, all_cluster_members):
+                    if members_raw:
+                        members = {
+                            m.decode() if isinstance(m, bytes) else str(m)
+                            for m in members_raw
+                        }
+                        if members.intersection(matched_fids):
+                            filtered_valid_nodes.add(cid)
+                valid_nodes = filtered_valid_nodes
+
         # Expand parents if requested
         original_nodes = set(valid_nodes)
         if show_parents:
@@ -379,15 +471,9 @@ def list_clusters():
                         "name": member_meta_map.get(mid, {}).get(
                             "function_name", "Unknown"
                         ),
-                        "addr": member_meta_map.get(mid, {}).get(
-                            "entrypoint_address"
-                        ),
-                        "bin": member_meta_map.get(mid, {}).get(
-                            "file_name"
-                        ),
-                        "file_md5": member_meta_map.get(mid, {}).get(
-                            "file_md5"
-                        ),
+                        "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
+                        "bin": member_meta_map.get(mid, {}).get("file_name"),
+                        "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
                         "v_size": member_meta_map.get(mid, {}).get(
                             "bsim_features_count"
                         ),

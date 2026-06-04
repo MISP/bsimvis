@@ -403,9 +403,7 @@ class BinClusterService:
             for idx, file_id in enumerate(chunk):
                 name_res = results[idx]
                 name = name_res[0] if isinstance(name_res, list) and name_res else None
-                all_member_meta[file_id] = {
-                    "file_name": name
-                }
+                all_member_meta[file_id] = {"file_name": name}
 
         # Build sparse adjacency dictionary of similarities for fast cohesion calculation
         adj_sim = {i: {} for i in range(num_nodes)}

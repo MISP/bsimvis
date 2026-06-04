@@ -49,12 +49,16 @@ def parse_timestamp(val):
 # ---------------------------------------------------------------------------
 # Field lists — derived from IndexConfig (edit index_config.py to change)
 # ---------------------------------------------------------------------------
-from bsimvis.app.services.index_config import get_native_fields, get_propagated_fields
+from bsimvis.app.services.index_config import (
+    get_native_fields,
+    get_propagated_fields,
+    get_fields_targeting_level,
+)
 
-FILE_TAG_FIELDS = get_native_fields("file", is_num=False)
-FUNC_TAG_FIELDS = get_native_fields("func", is_num=False)
-FILE_NUM_FIELDS = get_native_fields("file", is_num=True)
-FUNC_NUM_FIELDS = get_native_fields("func", is_num=True)
+FILE_TAG_FIELDS = get_fields_targeting_level("file", is_num=False)
+FUNC_TAG_FIELDS = get_fields_targeting_level("func", is_num=False)
+FILE_NUM_FIELDS = get_fields_targeting_level("file", is_num=True)
+FUNC_NUM_FIELDS = get_fields_targeting_level("func", is_num=True)
 FEATURE_TAG_FIELDS = get_native_fields("feature", is_num=False)
 FEATURE_NUM_FIELDS = get_native_fields("feature", is_num=True)
 

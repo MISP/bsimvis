@@ -111,88 +111,113 @@ class ClusterHierarchy {
         this.params.show_parents = params.get('show_parents') !== 'false';
         this.params.show_children = params.get('show_children') !== 'false';
         this.params.show_members = params.get('show_members') === 'true';
+        this.params.color_by_md5 = params.get('color_by_md5') === 'true';
+        this.params.show_binary_sankey = params.get('show_binary_sankey') === 'true';
+        if (this.params.show_binary_sankey) {
+            this.params.show_members = true;
+        }
 
         // Template for controls
         const hierControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
-                <div style="font-size:0.7rem; color:var(--accent); text-transform:uppercase; letter-spacing:1px; font-weight:bold; margin-bottom:15px;">Tree Filters</div>
+                <div style="font-size:0.85rem; color:#fff; font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Tree Filters</div>
                 
-                <!-- Size Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
-                        <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
-                            <span id="val-min-size">${this.params.min_cluster_size}</span>-<span id="val-max-size">${this.params.max_cluster_size || '∞'}</span>
-                        </span>
+                <div class="filter-category-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed');">
+                    <span>Range Filters</span>
+                    <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                </div>
+                <div class="filter-category-content">
+                    <!-- Size Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                            <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
+                                <span id="val-min-size">${this.params.min_cluster_size}</span>-<span id="val-max-size">${this.params.max_cluster_size || '∞'}</span>
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="size-track" class="slider-track"></div>
+                            <input type="range" id="input-min-size" min="2" max="100" value="${this.params.min_cluster_size}">
+                            <input type="range" id="input-max-size" min="2" max="100" value="${this.params.max_cluster_size || 100}">
+                        </div>
                     </div>
-                    <div class="range-slider-container">
-                        <div id="size-track" class="slider-track"></div>
-                        <input type="range" id="input-min-size" min="2" max="100" value="${this.params.min_cluster_size}">
-                        <input type="range" id="input-max-size" min="2" max="100" value="${this.params.max_cluster_size || 100}">
+
+                    <!-- Cohesion Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                            <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
+                                <span id="val-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="coh-track" class="slider-track"></div>
+                            <input type="range" id="input-coh-min" min="0" max="1" step="0.01" value="${this.params.cohesion_min || 0}">
+                            <input type="range" id="input-coh-max" min="0" max="1" step="0.01" value="${this.params.cohesion_max || 1}">
+                        </div>
+                    </div>
+
+                    <!-- Feature Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
+                            <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
+                                <span id="val-feat-min">${this.params.min_features || 0}</span>-<span id="val-feat-max">${this.params.max_features || '∞'}</span>
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="feat-track" class="slider-track"></div>
+                            <input type="range" id="input-feat-min" min="0" max="1000" step="10" value="${this.params.min_features || 0}">
+                            <input type="range" id="input-feat-max" min="0" max="1000" step="10" value="${this.params.max_features || 1000}">
+                        </div>
+                    </div>
+
+                    <!-- Stability Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Stability</label>
+                            <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
+                                <span id="val-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="stab-track" class="slider-track" style="width:100%; left:0%;"></div>
+                            <input type="range" id="input-stab-min" min="0" max="100" step="1" value="${this.params.stability_threshold || 0}" style="z-index: 3;">
+                        </div>
                     </div>
                 </div>
 
-                <!-- Cohesion Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
-                        <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
-                            <span id="val-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
-                        </span>
-                    </div>
-                    <div class="range-slider-container">
-                        <div id="coh-track" class="slider-track"></div>
-                        <input type="range" id="input-coh-min" min="0" max="1" step="0.01" value="${this.params.cohesion_min || 0}">
-                        <input type="range" id="input-coh-max" min="0" max="1" step="0.01" value="${this.params.cohesion_max || 1}">
-                    </div>
+                <div class="filter-category-header collapsed" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed');">
+                    <span>Display Settings</span>
+                    <i class="fa-solid fa-chevron-down toggle-icon"></i>
                 </div>
-
-                <!-- Feature Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
-                        <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
-                            <span id="val-feat-min">${this.params.min_features || 0}</span>-<span id="val-feat-max">${this.params.max_features || '∞'}</span>
-                        </span>
-                    </div>
-                    <div class="range-slider-container">
-                        <div id="feat-track" class="slider-track"></div>
-                        <input type="range" id="input-feat-min" min="0" max="1000" step="10" value="${this.params.min_features || 0}">
-                        <input type="range" id="input-feat-max" min="0" max="1000" step="10" value="${this.params.max_features || 1000}">
-                    </div>
-                </div>
-
-                <!-- Stability Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Stability</label>
-                        <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
-                            <span id="val-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
-                        </span>
-                    </div>
-                    <div class="range-slider-container">
-                        <div id="stab-track" class="slider-track" style="width:100%; left:0%;"></div>
-                        <input type="range" id="input-stab-min" min="0" max="100" step="1" value="${this.params.stability_threshold || 0}" style="z-index: 3;">
-                    </div>
-                </div>
-
-                <!-- Checkboxes -->
-                <div style="margin-bottom:20px; display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                <div class="filter-category-content collapsed">
+                    <!-- Checkboxes -->
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-color-by-md5" ${this.params.color_by_md5 ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-color-by-md5" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Color by MD5</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-show-binary-sankey" ${this.params.show_binary_sankey ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-show-binary-sankey" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Binary flow (Sankey)</label>
+                        </div>
                     </div>
                 </div>
 
@@ -206,7 +231,7 @@ class ClusterHierarchy {
                 </div>
                 <div id="hier-stats" style="font-size:0.85rem; color:#ccc;"></div>
                 <div style="margin-top:15px; display:flex; gap:10px;">
-                    <button id="hier-view-btn" class="btn-action" style="flex:1">View Functions →</button>
+                    <button id="hier-view-btn" class="btn-action" style="flex:1">Functions</button>
                 </div>
             </div>
 
@@ -311,6 +336,28 @@ class ClusterHierarchy {
         if (smCheck) {
             smCheck.onchange = () => {
                 this.params.show_members = smCheck.checked;
+                if (!smCheck.checked) {
+                    this.params.show_binary_sankey = false;
+                    const sankeyCheck = document.getElementById('input-show-binary-sankey');
+                    if (sankeyCheck) sankeyCheck.checked = false;
+                }
+            };
+        }
+        const md5Check = document.getElementById('input-color-by-md5');
+        if (md5Check) {
+            md5Check.onchange = () => {
+                this.params.color_by_md5 = md5Check.checked;
+            };
+        }
+        const sankeyCheck = document.getElementById('input-show-binary-sankey');
+        if (sankeyCheck) {
+            sankeyCheck.onchange = () => {
+                this.params.show_binary_sankey = sankeyCheck.checked;
+                if (sankeyCheck.checked) {
+                    this.params.show_members = true;
+                    const smCheck = document.getElementById('input-show-members');
+                    if (smCheck) smCheck.checked = true;
+                }
             };
         }
 
@@ -329,6 +376,8 @@ class ClusterHierarchy {
             p.set('show_parents', this.params.show_parents);
             p.set('show_children', this.params.show_children);
             p.set('show_members', this.params.show_members ? 'true' : 'false');
+            p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
+            p.set('show_binary_sankey', this.params.show_binary_sankey ? 'true' : 'false');
             
             window.location.hash = `${path}?${p.toString()}`;
         };
@@ -377,6 +426,8 @@ class ClusterHierarchy {
                                 id: m.id,
                                 parent: String(c.id),
                                 name: m.name,
+                                md5: m.file_md5,
+                                bin: m.bin,
                                 is_member: true,
                                 size: 1,
                                 stability: 0,
@@ -404,6 +455,7 @@ class ClusterHierarchy {
     }
 
     render(nodes) {
+        this.rawNodes = nodes;
         const self = this;
         const loader = document.getElementById('hierarchy-loader');
         if (loader) loader.remove();
@@ -503,7 +555,25 @@ class ClusterHierarchy {
 
         this.update(this.root);
 
-        const initialTransform = d3.zoomIdentity.translate(80, height / 2).scale(0.6);
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        this.root.descendants().forEach(d => {
+            if (d.x < minX) minX = d.x;
+            if (d.x > maxX) maxX = d.x;
+            if (d.y < minY) minY = d.y;
+            if (d.y > maxY) maxY = d.y;
+        });
+        let actualMaxY = maxY;
+        if (this.params.show_binary_sankey) {
+            actualMaxY = maxY + 400;
+        }
+        const dx = actualMaxY - minY;
+        const dy = maxX - minX;
+        const paddingX = 300; 
+        const paddingY = 100;
+        const s = Math.min(0.8, width / (dx + paddingX || 1), height / (dy + paddingY || 1));
+        const cx = (minY + actualMaxY) / 2;
+        const cy = (minX + maxX) / 2;
+        const initialTransform = d3.zoomIdentity.translate(width / 2 - cx * s, height / 2 - cy * s).scale(s);
         this.svg.call(this.zoom.transform, initialTransform);
     }
 
@@ -559,6 +629,14 @@ class ClusterHierarchy {
                 d3.select(e.currentTarget).select("circle").attr("r", d.data.is_member ? 4 : 8);
                 self.hideTooltip();
                 self._hoveredNodeEl = null;
+            })
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    const type = d.data.is_member ? 'node' : 'cluster';
+                    window.showGraphContextMenu(event, type, d.data);
+                }
             });
 
         const getCohesionColor = (cohesion) => {
@@ -568,9 +646,25 @@ class ClusterHierarchy {
 
         nodeEnter.append("circle")
             .attr("r", d => d.data.is_member ? 4 : 8)
-            .attr("stroke", d => d.data.is_member ? "var(--accent)" : getCohesionColor(d.data.cohesion))
+            .attr("stroke", d => {
+                if (d.data.is_member) {
+                    if ((this.params.color_by_md5 || this.params.show_binary_sankey) && d.data.md5) {
+                        return window.getMd5Color(d.data.md5);
+                    }
+                    return "var(--accent)";
+                }
+                return getCohesionColor(d.data.cohesion);
+            })
             .attr("stroke-width", d => d.data.is_member ? 1.5 : 2)
-            .style("fill", d => d.data.is_member ? "#0d0f14" : getCohesionColor(d.data.cohesion));
+            .style("fill", d => {
+                if (d.data.is_member) {
+                    if ((this.params.color_by_md5 || this.params.show_binary_sankey) && d.data.md5) {
+                        return window.getMd5Color(d.data.md5);
+                    }
+                    return "#0d0f14";
+                }
+                return getCohesionColor(d.data.cohesion);
+            });
 
         nodeEnter.append("text")
             .attr("dy", ".35em")
@@ -585,14 +679,55 @@ class ClusterHierarchy {
             .attr("stroke", "#000")
             .attr("stroke-width", 3);
 
+        const dragDendro = d3.drag()
+            .on("drag", function(event, d) {
+                const dx = event.dx;
+                const dy = event.dy;
+                const descendants = d.descendants();
+                descendants.forEach(desc => {
+                    desc.y += dx;
+                    desc.x += dy;
+                });
+                self.g.selectAll("g.node").filter(n => descendants.includes(n))
+                    .attr("transform", n => `translate(${n.y},${n.x})`);
+                self.g.selectAll("path.link").filter(l => descendants.includes(l.source) || descendants.includes(l.target))
+                    .attr("d", l => diagonal(l.source, l.target));
+                if (self.params.show_binary_sankey) {
+                    self.g.selectAll("path.sankey-flow-path").filter(l => descendants.includes(l.leaf))
+                        .attr("d", l => {
+                            l.y0 = l.leaf.y;
+                            l.x0 = l.leaf.x;
+                            return self.drawSankeyLink(l.y0, l.x0, l.h0, l.y1, l.x1, l.h1);
+                        });
+                }
+            });
+
+        nodeEnter.call(dragDendro);
+
         const nodeUpdate = nodeEnter.merge(node);
 
         nodeUpdate.transition().duration(400)
             .attr("transform", d => `translate(${d.y},${d.x})`);
 
         nodeUpdate.select("circle")
-            .style("fill", d => d.data.is_member ? "#0d0f14" : getCohesionColor(d.data.cohesion))
-            .attr("stroke", d => d.data.is_member ? "var(--accent)" : getCohesionColor(d.data.cohesion))
+            .style("fill", d => {
+                if (d.data.is_member) {
+                    if ((this.params.color_by_md5 || this.params.show_binary_sankey) && d.data.md5) {
+                        return window.getMd5Color(d.data.md5);
+                    }
+                    return "#0d0f14";
+                }
+                return getCohesionColor(d.data.cohesion);
+            })
+            .attr("stroke", d => {
+                if (d.data.is_member) {
+                    if ((this.params.color_by_md5 || this.params.show_binary_sankey) && d.data.md5) {
+                        return window.getMd5Color(d.data.md5);
+                    }
+                    return "var(--accent)";
+                }
+                return getCohesionColor(d.data.cohesion);
+            })
             .attr("r", d => d.data.is_member ? 4 : 8);
 
         const nodeExit = node.exit().transition().duration(400)
@@ -628,6 +763,262 @@ class ClusterHierarchy {
                 .x(d => d.y)
                 .y(d => d.x)({ source: s, target: t });
         }
+
+        // Cleanup existing Sankey elements
+        this.g.selectAll("g.sankey-group").remove();
+
+        if (this.params.show_binary_sankey) {
+            const sankeyGroup = this.g.append("g").attr("class", "sankey-group");
+            
+            // 1. Find all leaves
+            const leaves = this.root.leaves().filter(d => d.data.bin || d.data.md5);
+            if (leaves.length > 0) {
+                // 2. Map binaries
+                const binariesMap = new Map();
+                leaves.forEach(d => {
+                    const name = d.data.bin || "Unknown Binary";
+                    const md5 = d.data.md5 || "unknown";
+                    if (!binariesMap.has(md5)) {
+                        binariesMap.set(md5, {
+                            md5: md5,
+                            name: name,
+                            leaves: [],
+                            totalWeight: 0
+                        });
+                    }
+                    const binObj = binariesMap.get(md5);
+                    binObj.leaves.push(d);
+                    binObj.totalWeight += 1;
+                });
+                
+                const binaries = Array.from(binariesMap.values());
+                binaries.forEach(b => {
+                    b.averageLeafX = d3.mean(b.leaves, d => d.x);
+                });
+                binaries.sort((a, b) => a.averageLeafX - b.averageLeafX);
+                
+                // Calculate geometry
+                const maxY = d3.max(this.root.descendants(), d => d.y);
+                const binaryY = maxY + 240;
+                
+                const leafXCoords = leaves.map(d => d.x);
+                const minLeafX = d3.min(leafXCoords) || 0;
+                const maxLeafX = d3.max(leafXCoords) || 0;
+                const leafHeight = maxLeafX - minLeafX;
+                const H = Math.max(400, leafHeight);
+                
+                const totalWeight = d3.sum(binaries, b => b.totalWeight);
+                
+                const gap = 15;
+                const minNodeHeight = 12;
+                let scale = (H - (binaries.length - 1) * gap) / (totalWeight || 1);
+                if (scale * 1 < minNodeHeight) {
+                    scale = minNodeHeight;
+                }
+                
+                let currentX = minLeafX;
+                binaries.forEach(b => {
+                    b.height = Math.max(minNodeHeight, b.totalWeight * scale);
+                    b.x = currentX;
+                    b.y = binaryY;
+                    currentX += b.height + gap;
+                });
+                
+                const totalBinariesHeight = currentX - gap - minLeafX;
+                if (totalBinariesHeight < leafHeight) {
+                    const offset = (leafHeight - totalBinariesHeight) / 2;
+                    binaries.forEach(b => {
+                        b.x += offset;
+                    });
+                }
+                
+                binaries.forEach(b => {
+                    b.leaves.sort((a, b) => a.x - b.x);
+                });
+                
+                // Draw links
+                const linksData = [];
+                binaries.forEach(b => {
+                    const linkHeight = b.height / b.leaves.length;
+                    b.leaves.forEach((leaf, idx) => {
+                        const linkDestX = b.x + (idx + 0.5) * linkHeight;
+                        linksData.push({
+                            id: `link-${leaf.data.id}-${b.md5}`,
+                            leaf: leaf,
+                            binary: b,
+                            y0: leaf.y,
+                            x0: leaf.x,
+                            h0: 3, // Start height at leaf
+                            y1: b.y,
+                            x1: linkDestX,
+                            h1: linkHeight,
+                            color: window.getMd5Color ? window.getMd5Color(b.md5) : "var(--accent)"
+                        });
+                    });
+                });
+                
+                const tooltipEl = document.getElementById('token-tooltip');
+                
+                const showSankeyTooltip = (e, funcName, binName) => {
+                    if (!tooltipEl) return;
+                    tooltipEl.innerHTML = `
+                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Sankey Flow</div>
+                        <div style="font-size:0.75rem; margin-bottom:4px;"><span style="color:#aaa;">Function:</span> <b style="color:#fff;">${funcName}</b></div>
+                        <div style="font-size:0.75rem;"><span style="color:#aaa;">Binary:</span> <b style="color:var(--accent);">${binName}</b></div>
+                    `;
+                    tooltipEl.style.display = 'block';
+                    positionTooltip(e);
+                };
+                
+                const showSankeyBinaryTooltip = (e, binName, funcCount) => {
+                    if (!tooltipEl) return;
+                    tooltipEl.innerHTML = `
+                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Binary Destination</div>
+                        <div style="font-size:0.75rem; margin-bottom:4px;"><span style="color:#aaa;">Binary:</span> <b style="color:#fff;">${binName}</b></div>
+                        <div style="font-size:0.75rem;"><span style="color:#aaa;">Flows from:</span> <b style="color:var(--success);">${funcCount} functions</b></div>
+                    `;
+                    tooltipEl.style.display = 'block';
+                    positionTooltip(e);
+                };
+                
+                const hideSankeyTooltip = () => {
+                    if (tooltipEl) tooltipEl.style.display = 'none';
+                };
+                
+                const positionTooltip = (e) => {
+                    if (!tooltipEl) return;
+                    tooltipEl.style.left = (e.clientX + 15) + 'px';
+                    tooltipEl.style.top = (e.clientY + 15) + 'px';
+                    const rect = tooltipEl.getBoundingClientRect();
+                    if (rect.right > window.innerWidth) tooltipEl.style.left = (e.clientX - rect.width - 15) + 'px';
+                    if (rect.bottom > window.innerHeight) tooltipEl.style.top = (e.clientY - rect.height - 15) + 'px';
+                };
+                
+                // Append flows
+                const flows = sankeyGroup.append("g")
+                    .attr("class", "sankey-flows")
+                    .selectAll("path.sankey-flow-path")
+                    .data(linksData, d => d.id);
+                
+                const flowsEnter = flows.enter().append("path")
+                    .attr("class", "sankey-flow-path")
+                    .attr("d", d => {
+                        const startY = source.y0 || source.y;
+                        const startX = source.x0 || source.x;
+                        return this.drawSankeyLink(startY, startX, d.h0, d.y1, d.x1, d.h1);
+                    })
+                    .attr("fill", d => d.color)
+                    .attr("opacity", 0)
+                    .attr("stroke", "none");
+                
+                const flowsMerge = flows.merge(flowsEnter);
+                
+                flowsMerge.transition().duration(400)
+                    .attr("d", d => this.drawSankeyLink(d.y0, d.x0, d.h0, d.y1, d.x1, d.h1))
+                    .attr("opacity", 0.15);
+                
+                flowsMerge
+                    .on("mouseover", function(event, d) {
+                        d3.select(this).transition().duration(100).attr("opacity", 0.7);
+                        d3.selectAll("g.node").filter(n => n === d.leaf)
+                            .select("circle").transition().duration(100).attr("r", 14);
+                        showSankeyTooltip(event, d.leaf.data.name, d.binary.name);
+                    })
+                    .on("mouseout", function(event, d) {
+                        d3.select(this).transition().duration(100).attr("opacity", 0.15);
+                        d3.selectAll("g.node").filter(n => n === d.leaf)
+                            .select("circle").transition().duration(100).attr("r", d.leaf.data.is_member ? 4 : 8);
+                        hideSankeyTooltip();
+                    });
+
+                flows.exit().transition().duration(400)
+                    .attr("d", d => {
+                        const endY = source.y;
+                        const endX = source.x;
+                        return this.drawSankeyLink(endY, endX, d.h0, d.y1, d.x1, d.h1);
+                    })
+                    .attr("opacity", 0)
+                    .remove();
+                    
+                // Append binary nodes
+                const binNodes = sankeyGroup.append("g")
+                    .attr("class", "sankey-binary-nodes")
+                    .selectAll("g.sankey-binary-node")
+                    .data(binaries, d => d.md5);
+                
+                const binNodesEnter = binNodes.enter().append("g")
+                    .attr("class", "sankey-binary-node")
+                    .attr("transform", d => `translate(${d.y},${d.x})`)
+                    .style("cursor", "pointer")
+                    .style("opacity", 0);
+                    
+                binNodesEnter.append("rect")
+                    .attr("width", 10)
+                    .attr("height", d => d.height)
+                    .attr("fill", d => window.getMd5Color ? window.getMd5Color(d.md5) : "var(--accent)")
+                    .attr("rx", 3);
+                    
+                binNodesEnter.append("text")
+                    .attr("x", 18)
+                    .attr("y", d => d.height / 2)
+                    .attr("dy", ".35em")
+                    .attr("text-anchor", "start")
+                    .style("fill", "#fff")
+                    .style("font-size", "11px")
+                    .style("font-weight", "bold")
+                    .style("pointer-events", "none")
+                    .text(d => d.name)
+                    .clone(true).lower()
+                    .attr("stroke", "#000")
+                    .attr("stroke-width", 3);
+                
+                const binNodesMerge = binNodes.merge(binNodesEnter);
+                
+                binNodesMerge.transition().duration(400)
+                    .attr("transform", d => `translate(${d.y},${d.x})`)
+                    .style("opacity", 1);
+                
+                binNodesMerge
+                    .on("click", (event, d) => {
+                        const col = getCurrentCollection();
+                        window.location.hash = `#files?collection=${col}&q=${encodeURIComponent(d.name)}`;
+                    })
+                    .on("mouseover", function(event, d) {
+                        binNodesMerge.filter(n => n.md5 === d.md5).select("rect").transition().duration(100).attr("width", 14);
+                        flowsMerge.filter(link => link.binary.md5 === d.md5).transition().duration(100).attr("opacity", 0.7);
+                        d.leaves.forEach(leaf => {
+                            d3.selectAll("g.node").filter(n => n === leaf)
+                                .select("circle").transition().duration(100).attr("r", 14);
+                        });
+                        showSankeyBinaryTooltip(event, d.name, d.totalWeight);
+                    })
+                    .on("mouseout", function(event, d) {
+                        binNodesMerge.filter(n => n.md5 === d.md5).select("rect").transition().duration(100).attr("width", 10);
+                        flowsMerge.filter(link => link.binary.md5 === d.md5).transition().duration(100).attr("opacity", 0.15);
+                        d.leaves.forEach(leaf => {
+                            d3.selectAll("g.node").filter(n => n === leaf)
+                                .select("circle").transition().duration(100).attr("r", leaf.data.is_member ? 4 : 8);
+                        });
+                        hideSankeyTooltip();
+                    });
+                    
+                binNodes.exit().transition().duration(400)
+                    .style("opacity", 0)
+                    .remove();
+            }
+        }
+    }
+
+    drawSankeyLink(y0, x0, h0, y1, x1, h1) {
+        const cp1y = y0 + (y1 - y0) / 2;
+        const cp2y = y1 - (y1 - y0) / 2;
+        return `
+            M ${y0} ${x0 - h0/2}
+            C ${cp1y} ${x0 - h0/2}, ${cp2y} ${x1 - h1/2}, ${y1} ${x1 - h1/2}
+            L ${y1} ${x1 + h1/2}
+            C ${cp2y} ${x1 + h1/2}, ${cp1y} ${x0 + h0/2}, ${y0} ${x0 + h0/2}
+            Z
+        `;
     }
 
     formatFunctionInline(f) {
@@ -999,83 +1390,105 @@ class ClusterPacking {
         this.params.stability_threshold = params.has('min_stability') ? (parseFloat(params.get('min_stability')) || 0) : 0;
         this.params.show_parents = params.get('show_parents') !== 'false';
         this.params.show_children = params.get('show_children') !== 'false';
+        this.params.show_members = params.get('show_members') === 'true';
+        this.params.color_by_md5 = params.get('color_by_md5') === 'true';
 
         const packControls = `
             <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
-                <div style="font-size:0.7rem; color:var(--accent); text-transform:uppercase; letter-spacing:1px; font-weight:bold; margin-bottom:15px;">Packing Filters</div>
+                <div style="font-size:0.85rem; color:#fff; font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Packing Filters</div>
                 
-                <!-- Size Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
-                        <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
-                            <span id="val-pack-min-size">${this.params.min_cluster_size}</span>-<span id="val-pack-max-size">${this.params.max_cluster_size || '∞'}</span>
-                        </span>
+                <div class="filter-category-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed');">
+                    <span>Range Filters</span>
+                    <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                </div>
+                <div class="filter-category-content">
+                    <!-- Size Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                            <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
+                                <span id="val-pack-min-size">${this.params.min_cluster_size}</span>-<span id="val-pack-max-size">${this.params.max_cluster_size || '∞'}</span>
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="pack-size-track" class="slider-track"></div>
+                            <input type="range" id="input-pack-min-size" min="2" max="100" value="${this.params.min_cluster_size}">
+                            <input type="range" id="input-pack-max-size" min="2" max="100" value="${this.params.max_cluster_size || 100}">
+                        </div>
                     </div>
-                    <div class="range-slider-container">
-                        <div id="pack-size-track" class="slider-track"></div>
-                        <input type="range" id="input-pack-min-size" min="2" max="100" value="${this.params.min_cluster_size}">
-                        <input type="range" id="input-pack-max-size" min="2" max="100" value="${this.params.max_cluster_size || 100}">
+
+                    <!-- Cohesion Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                            <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
+                                <span id="val-pack-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-pack-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="pack-coh-track" class="slider-track"></div>
+                            <input type="range" id="input-pack-coh-min" min="0" max="1" step="0.01" value="${this.params.cohesion_min || 0}">
+                            <input type="range" id="input-pack-coh-max" min="0" max="1" step="0.01" value="${this.params.cohesion_max || 1}">
+                        </div>
+                    </div>
+
+                    <!-- Feature Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
+                            <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
+                                <span id="val-pack-feat-min">${this.params.min_features || 0}</span>-<span id="val-pack-feat-max">${this.params.max_features || '∞'}</span>
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="pack-feat-track" class="slider-track"></div>
+                            <input type="range" id="input-pack-feat-min" min="0" max="1000" step="10" value="${this.params.min_features || 0}">
+                            <input type="range" id="input-pack-feat-max" min="0" max="1000" step="10" value="${this.params.max_features || 1000}">
+                        </div>
+                    </div>
+
+                    <!-- Stability Range -->
+                    <div style="margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                            <label style="font-size:0.75rem; color:#aaa;">Stability</label>
+                            <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
+                                <span id="val-pack-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
+                            </span>
+                        </div>
+                        <div class="range-slider-container">
+                            <div id="pack-stab-track" class="slider-track" style="width:100%; left:0%;"></div>
+                            <input type="range" id="input-pack-stab-min" min="0" max="100" step="1" value="${this.params.stability_threshold || 0}" style="z-index: 3;">
+                        </div>
                     </div>
                 </div>
 
-                <!-- Cohesion Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
-                        <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
-                            <span id="val-pack-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-pack-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
-                        </span>
-                    </div>
-                    <div class="range-slider-container">
-                        <div id="pack-coh-track" class="slider-track"></div>
-                        <input type="range" id="input-pack-coh-min" min="0" max="1" step="0.01" value="${this.params.cohesion_min || 0}">
-                        <input type="range" id="input-pack-coh-max" min="0" max="1" step="0.01" value="${this.params.cohesion_max || 1}">
-                    </div>
+                <div class="filter-category-header collapsed" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed');">
+                    <span>Display Settings</span>
+                    <i class="fa-solid fa-chevron-down toggle-icon"></i>
                 </div>
-
-                <!-- Feature Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Avg Features</label>
-                        <span style="font-size:0.75rem; color:#ae81ff; font-family:monospace; font-weight:bold;">
-                            <span id="val-pack-feat-min">${this.params.min_features || 0}</span>-<span id="val-pack-feat-max">${this.params.max_features || '∞'}</span>
-                        </span>
-                    </div>
-                    <div class="range-slider-container">
-                        <div id="pack-feat-track" class="slider-track"></div>
-                        <input type="range" id="input-pack-feat-min" min="0" max="1000" step="10" value="${this.params.min_features || 0}">
-                        <input type="range" id="input-pack-feat-max" min="0" max="1000" step="10" value="${this.params.max_features || 1000}">
-                    </div>
-                </div>
-
-                <!-- Stability Range -->
-                <div style="margin-bottom:20px;">
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <label style="font-size:0.75rem; color:#aaa;">Stability</label>
-                        <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
-                            <span id="val-pack-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
-                        </span>
-                    </div>
-                    <div class="range-slider-container">
-                        <div id="pack-stab-track" class="slider-track" style="width:100%; left:0%;"></div>
-                        <input type="range" id="input-pack-stab-min" min="0" max="100" step="1" value="${this.params.stability_threshold || 0}" style="z-index: 3;">
-                    </div>
-                </div>
-
-                <!-- Checkboxes -->
-                <div style="margin-bottom:20px; display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-pack-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-pack-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-pack-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-pack-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
-                    </div>
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" id="input-pack-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                        <label for="input-pack-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                <div class="filter-category-content collapsed">
+                    <!-- Checkboxes -->
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-pack-show-parents" ${this.params.show_parents !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-pack-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-pack-show-children" ${this.params.show_children !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-pack-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-pack-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-pack-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-pack-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-pack-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="input-pack-color-by-md5" ${this.params.color_by_md5 ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
+                            <label for="input-pack-color-by-md5" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Color by MD5</label>
+                        </div>
                     </div>
                 </div>
 
@@ -1089,7 +1502,7 @@ class ClusterPacking {
                 </div>
                 <div id="pack-stats" style="font-size:0.85rem; color:#ccc;"></div>
                 <div style="margin-top:15px; display:flex; gap:10px;">
-                    <button id="pack-view-btn" class="btn-action" style="flex:1">View Functions →</button>
+                    <button id="pack-view-btn" class="btn-action" style="flex:1">Functions</button>
                 </div>
             </div>
 
@@ -1190,6 +1603,15 @@ class ClusterPacking {
             this.params.path_compression = pcCheck.checked;
         };
 
+        const smCheck = document.getElementById('input-pack-show-members');
+        if (smCheck) {
+            smCheck.onchange = () => { this.params.show_members = smCheck.checked; };
+        }
+        const md5Check = document.getElementById('input-pack-color-by-md5');
+        if (md5Check) {
+            md5Check.onchange = () => { this.params.color_by_md5 = md5Check.checked; };
+        }
+
         document.getElementById('pack-refresh-btn').onclick = () => {
             const hash = window.location.hash;
             const [path, qs] = hash.split('?');
@@ -1204,6 +1626,8 @@ class ClusterPacking {
             if (this.params.stability_threshold > 0) p.set('min_stability', this.params.stability_threshold); else p.delete('min_stability');
             p.set('show_parents', this.params.show_parents);
             p.set('show_children', this.params.show_children);
+            p.set('show_members', this.params.show_members ? 'true' : 'false');
+            p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             
             window.location.hash = `${path}?${p.toString()}`;
         };
@@ -1222,13 +1646,14 @@ class ClusterPacking {
             if (this.params.stability_threshold > 0) queryParams.set('min_stability', this.params.stability_threshold);
             queryParams.set('show_parents', this.params.show_parents !== false);
             queryParams.set('show_children', this.params.show_children !== false);
+            queryParams.set('show_members', this.params.show_members === true);
 
             const url = `/api/cluster/list?` + queryParams.toString();
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error("Data not found");
             const data = await res.json();
 
-            const nodes = (data.results || []).map(m => ({
+            let nodes = (data.results || []).map(m => ({
                 id: String(m.cluster_id),
                 parent: m.parent ? String(m.parent) : null,
                 name: m.cluster_name || `Cluster ${m.cluster_id}`,
@@ -1238,8 +1663,35 @@ class ClusterPacking {
                 cohesion: m.cohesion_score || 0.0,
                 avg_features: m.avg_features || 0.0,
                 snippet: m.snippet || "",
-                members: m.sample_members || []
+                members: m.sample_members || [],
+                direct_members: m.direct_members || []
             }));
+
+            if (this.params.show_members) {
+                const memberNodes = [];
+                nodes.forEach(c => {
+                    if (c.direct_members && c.direct_members.length > 0) {
+                        c.direct_members.forEach(m => {
+                            memberNodes.push({
+                                id: m.id,
+                                parent: String(c.id),
+                                name: m.name,
+                                md5: m.file_md5,
+                                is_member: true,
+                                addr: m.addr,
+                                bin: m.bin,
+                                v_size: m.v_size,
+                                size: 1,
+                                stability: 0,
+                                cohesion: 0,
+                                avg_features: 0,
+                                members: []
+                            });
+                        });
+                    }
+                });
+                nodes = nodes.concat(memberNodes);
+            }
 
             if (!nodes || nodes.length === 0) {
                 this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No clusters match these criteria.<br><span style="font-size:0.8rem; color:#666;">Try lowering the stability cut or minimum size.</span></div>`;
@@ -1256,6 +1708,7 @@ class ClusterPacking {
     }
 
     render(nodes) {
+        this.rawNodes = nodes;
         const self = this;
         const loader = document.getElementById('pack-loader');
         if (loader) loader.remove();
@@ -1361,6 +1814,18 @@ class ClusterPacking {
 
         const getCohesionFill = (d) => {
             if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.01)";
+            if (d.data.is_member) {
+                if (this.params.color_by_md5 && d.data.md5) {
+                    const baseColor = window.getMd5Color(d.data.md5);
+                    // Extract RGB from rgb(...) and add opacity
+                    const rgb = baseColor.match(/\d+/g);
+                    if (rgb && rgb.length === 3) {
+                        return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.15)`;
+                    }
+                    return baseColor;
+                }
+                return "rgba(102,217,239,0.15)";
+            }
             const cohesion = d.data.cohesion || 0;
             const hue = Math.max(0, Math.min(120, cohesion * 120));
             const opacity = d.children ? 0.03 : 0.15;
@@ -1369,6 +1834,12 @@ class ClusterPacking {
 
         const getCohesionStroke = (d) => {
             if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.15)";
+            if (d.data.is_member) {
+                if (this.params.color_by_md5 && d.data.md5) {
+                    return window.getMd5Color(d.data.md5);
+                }
+                return "var(--accent, #66d9ef)";
+            }
             const cohesion = d.data.cohesion || 0;
             const hue = Math.max(0, Math.min(120, cohesion * 120));
             return `hsl(${hue}, 85%, 60%)`;
@@ -1379,10 +1850,10 @@ class ClusterPacking {
             .join("circle")
             .attr("cx", d => d.x)
             .attr("cy", d => d.y)
-            .attr("r", d => d.r)
+            .attr("r", d => d.data.is_member ? Math.max(1, d.r * 0.5) : d.r)
             .attr("fill", d => getCohesionFill(d))
             .attr("stroke", d => getCohesionStroke(d))
-            .attr("stroke-width", d => d.children ? 1 : 1.5)
+            .attr("stroke-width", d => d.data.is_member ? 1 : (d.children ? 1 : 1.5))
             .on("mouseover", function (event, d) {
                 event.stopPropagation();
                 if (d.data.id === "VIRTUAL_ROOT") return;
@@ -1423,6 +1894,15 @@ class ClusterPacking {
                     zoom(event, d);
                     event.stopPropagation();
                 }
+            })
+            .on("contextmenu", (event, d) => {
+                if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    const type = d.data.is_member ? 'node' : 'cluster';
+                    window.showGraphContextMenu(event, type, d.data);
+                }
             });
 
         const label = g.selectAll("text")
@@ -1436,6 +1916,30 @@ class ClusterPacking {
             .attr("x", d => d.x)
             .attr("y", d => d.y)
             .text(d => d.data.id === "VIRTUAL_ROOT" ? "" : d.data.name);
+
+        const dragPack = d3.drag()
+            .on("start", function(event, d) {
+                self.isDragging = true; self.hideTooltip();
+                if (event.sourceEvent) event.sourceEvent.stopPropagation();
+            })
+            .on("drag", function(event, d) {
+                const dx = event.dx;
+                const dy = event.dy;
+                const descendants = d.descendants();
+                descendants.forEach(desc => {
+                    desc.x += dx;
+                    desc.y += dy;
+                });
+                g.selectAll("circle").filter(n => descendants.includes(n))
+                    .attr("cx", n => n.x)
+                    .attr("cy", n => n.y);
+                g.selectAll("text").filter(n => descendants.includes(n))
+                    .attr("x", n => n.x)
+                    .attr("y", n => n.y);
+            })
+            .on("end", function() { self.isDragging = false; });
+
+        node.call(dragPack);
 
         const zoomBehavior = d3.zoom()
             .scaleExtent([0.1, 100])

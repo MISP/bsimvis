@@ -15,7 +15,7 @@ function handleFilterKey(e, searchFn) {
     if (e.key === 'Enter') {
         e.preventDefault();
         if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-        
+
         // Capture focus and selection before searching
         currentFocusId = e.target.id;
         try {
@@ -28,7 +28,7 @@ function handleFilterKey(e, searchFn) {
             preservedSelection.start = 0;
             preservedSelection.end = 0;
         }
-        
+
         searchFn();
     }
 }
@@ -38,7 +38,7 @@ function getSavedColumnWidth(path, label) {
     try {
         const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
         return saved[path] ? saved[path][label] : null;
-    } catch(e) { return null; }
+    } catch (e) { return null; }
 }
 
 function saveColumnWidth(path, label, width) {
@@ -47,7 +47,7 @@ function saveColumnWidth(path, label, width) {
         if (!saved[path]) saved[path] = {};
         saved[path][label] = width;
         localStorage.setItem('columnWidths', JSON.stringify(saved));
-    } catch(e) {}
+    } catch (e) { }
 }
 
 function resetColumnWidths() {
@@ -56,7 +56,7 @@ function resetColumnWidths() {
         const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
         delete saved[hashPath];
         localStorage.setItem('columnWidths', JSON.stringify(saved));
-    } catch(e) {}
+    } catch (e) { }
     refreshData(false, true);
 }
 
@@ -76,12 +76,12 @@ function initColumnResize(th, path, label) {
     resizer.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         startX = e.clientX;
         startWidth = th.getBoundingClientRect().width;
-        
+
         document.body.classList.add('resizing');
-        
+
         // Disable pointer events on iframes during resize
         document.querySelectorAll('iframe').forEach(ifrm => {
             ifrm.style.pointerEvents = 'none';
@@ -379,6 +379,7 @@ async function refreshData(appendArg = false, force = false) {
             params.delete('show_children');
             params.delete('show_members');
             params.delete('path_compression');
+            params.delete('show_binary_sankey');
         }
     }
 
@@ -629,7 +630,7 @@ function updateUI(path, params, route) {
         updateNavLink('nav-chord-map', '#chord-map');
         updateNavLink('nav-jobs', '#jobs');
         updateNavLink('nav-upload', '#upload');
-        
+
         const fileMd5 = params.get('file_md5');
         const cgNav = document.getElementById('nav-file-call-graph');
         if (cgNav) {
@@ -655,7 +656,7 @@ function updateUI(path, params, route) {
     const dataTable = document.getElementById('data-table');
     const dataTableHeader = document.getElementById('data-table-header');
     let headHtml = '<tr>';
-    
+
     const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[path];
     const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
     const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
@@ -707,7 +708,7 @@ function updateUI(path, params, route) {
         let settingsHtml = '';
         if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#bin-clusters' || path === '#features-global' || path === '#binary-similarity' || path === '#jobs') {
             settingsEl.style.display = 'flex';
-            
+
             if (path === '#jobs') {
                 settingsHtml += `
                     <div style="display:flex; align-items:center; gap:8px;">
@@ -789,7 +790,7 @@ function updateUI(path, params, route) {
                 tableWrap.style.flex = 'none';
                 if (tableBodyWrap) tableBodyWrap.style.display = 'none';
                 pag.style.display = 'none';
-                
+
                 if (path === '#function-similarity') {
                     gview.style.display = 'flex';
                     loadGraphView(params);
@@ -1092,7 +1093,7 @@ function updateUI(path, params, route) {
                 const select = document.getElementById('job-collection-filter');
                 if (select) {
                     const currentVal = p.get('collection') || '';
-                    select.innerHTML = `<option value="">All Collections</option>` + collections.map(c => 
+                    select.innerHTML = `<option value="">All Collections</option>` + collections.map(c =>
                         `<option value="${c.name}" ${currentVal === c.name ? 'selected' : ''}>${c.name}</option>`
                     ).join('');
                 }
@@ -1276,7 +1277,7 @@ function updateUI(path, params, route) {
         const p = new URLSearchParams(params);
         const fileMd5 = p.get('file_md5');
         const callGraphBtn = fileMd5 ? `<a class="btn-action" href="#file-call-graph?collection=${p.get('collection')}&file_md5=${fileMd5}" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem;">View File Call Graph 🕸️</a>` : '';
-        
+
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="search-input-wrapper">
@@ -1879,15 +1880,15 @@ function renderCollections(data) {
             <td>
                 <div style="display: flex; gap: 15px;">
                     <a class="btn-action" href="#upload?collection=${col.name}" style="color:var(--accent)">
-                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
                     </a>
                     <span style="color:var(--border)">|</span>
                     <a class="btn-action" href="#batches?collection=${col.name}">
-                        Browse Batches
+                        Batches
                     </a>
                     <span style="color:var(--border)">|</span>
                     <a class="btn-action" href="#files?collection=${col.name}" style="color:var(--success)">
-                        View All Files →
+                        Files
                     </a>
                 </div>
             </td>
@@ -1912,7 +1913,7 @@ function renderBatches(data) {
             <td class="mono">${b['total_files']}</td>
             <td class="mono">${b['total_functions']}</td>
             <td class="dim">${formatDate(b['last_updated'] || b['created_at'])}</td>
-            <td><a class="btn-action" href="#files?collection=${col}&batch_uuid=${b['batch_uuid']}">View Files</a></td>
+            <td><a class="btn-action" href="#files?collection=${col}&batch_uuid=${b['batch_uuid']}">Files</a></td>
         </tr>
     `}).join('');
 }
@@ -2101,7 +2102,7 @@ function renderGlobalFeatures(items) {
             <td class="mono">${f.frequency}</td>
             <td>
                 <button class="btn-action" style="background:none; border:none; padding:0; font-size:0.8rem; text-align:left; color:var(--accent);"
-                    onclick="showGlobalFeaturePanel('${f.hash}', '${col}', event)">Analyze →</button>
+                    onclick="showGlobalFeaturePanel('${f.hash}', '${col}', event)">Analyze</button>
             </td>
 
         </tr>
@@ -2310,14 +2311,14 @@ function showFunctionCodeById(id, name, lineHash = '', e) {
 function seeSimilarFromCode() {
     const win = windowManager.activeWindow;
     if (!win || !win.iframe || !win.iframe.src) return;
-    
+
     let url;
     try {
         url = new URL(win.iframe.contentWindow.location.href);
-    } catch(e) {
+    } catch (e) {
         url = new URL(win.iframe.src, window.location.origin);
     }
-    
+
     const id = url.searchParams.get('id');
     if (!id) return;
 
@@ -2353,10 +2354,10 @@ function showGlobalFeaturePanel(hash, collection, e) {
 }
 
 // Old panel toggle functions removed as closing is handled by WindowManager
-function hideDiffPanel() {}
-function hideCodePanel() {}
-function hideFeaturePanel() {}
-function hideGlobalFeaturePanel() {}
+function hideDiffPanel() { }
+function hideCodePanel() { }
+function hideFeaturePanel() { }
+function hideGlobalFeaturePanel() { }
 
 function launchExternal(type) {
     const win = windowManager.activeWindow;
@@ -2406,7 +2407,7 @@ window.addEventListener('hashchange', (e) => {
         const [hashPathPart, queryStringPart] = (window.location.hash || '').split('?');
         if (applySimViewDefaults(hashPathPart, queryStringPart)) return;
     }
-    
+
     // Update rebuild buttons state for the new collection/view immediately
     if (window.updateJobStatusIcon) window.updateJobStatusIcon();
 
@@ -2439,7 +2440,7 @@ function updateUIParams() {
     localStorage.setItem('cohesionThreshold', UIParams.cohesionThreshold);
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
-    
+
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
 
@@ -2689,10 +2690,10 @@ window.addEventListener('load', () => {
             // Update rebuild buttons
             const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
             const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
-            
+
             const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
             const currentCollection = params.get('collection');
-            
+
             // Rebuild animation should only show if a job FOR THIS COLLECTION is active
             const activeCollections = stats.active_collections || [];
             const isCollectionActive = currentCollection && activeCollections.includes(currentCollection);
@@ -2702,7 +2703,7 @@ window.addEventListener('load', () => {
                 btn.disabled = showAnimation;
                 btn.title = showAnimation ? "A job for this collection is already running" : "Rebuild Clusters & Binary Sim";
             });
-            
+
             icons.forEach(icon => {
                 if (showAnimation) icon.classList.add('fa-spin');
                 else icon.classList.remove('fa-spin');
@@ -2714,7 +2715,7 @@ window.addEventListener('load', () => {
                 const isCollapsed = document.body.classList.contains('sidebar-collapsed');
                 const [path] = (window.location.hash || '').split('?');
                 const isRelevantView = (path === '#clusters' || path === '#binary-similarity');
-                
+
                 if (isCollapsed && isRelevantView) {
                     headerRebuildBtn.style.display = 'inline-flex';
                 } else {
@@ -2735,7 +2736,7 @@ async function populateCollectionDropdown() {
         if (!res.ok) return;
         const data = await res.json();
         const collections = data.collections || (Array.isArray(data) ? data : []);
-        
+
         const list = document.getElementById('collection-flyout-list');
         const trigger = document.getElementById('nav-collections');
         const flyout = document.getElementById('collection-flyout');
@@ -2780,7 +2781,7 @@ async function populateCollectionDropdown() {
             trigger.addEventListener('mouseleave', hide);
             flyout.addEventListener('mouseenter', () => { if (hideTimeout) clearTimeout(hideTimeout); });
             flyout.addEventListener('mouseleave', hide);
-            
+
             trigger.dataset.hasListener = "true";
         }
     } catch (e) {
@@ -2815,7 +2816,7 @@ function renderClusters(items) {
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span id="name-display-${c.cluster_id}">${c.cluster_name}</span>
-                    <button class="btn-panel" style="padding: 2px 5px; font-size: 0.6rem;" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')">✎</button>
+                    <button class="btn-action" title="Rename" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
             <td style="font-weight:bold">${c.count.toLocaleString()}</td>
@@ -2839,8 +2840,8 @@ function renderClusters(items) {
             <td class="dim">${formatDate(c.created_at)}</td>
             <td>
                 <div style="display:flex; gap:10px;">
-                    <a href="#functions?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">View Functions →</a>
-                    <a href="#function-similarity?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">View similarities →</a>
+                    <a href="#functions?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">Functions</a>
+                    <a href="#function-similarity?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">Similarities</a>
                 </div>
             </td>
         </tr>
@@ -2889,7 +2890,7 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span id="name-display-bin-${c.cluster_id}">${c.cluster_name}</span>
-                    <button class="btn-panel" style="padding: 2px 5px; font-size: 0.6rem;" onclick="renameBinCluster('${c.cluster_id}', '${c.cluster_name}')">✎</button>
+                    <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
             <td style="font-weight:bold">${c.count.toLocaleString()}</td>
@@ -2912,7 +2913,7 @@ function renderBinClusters(items) {
             <td class="dim">${formatDate(c.created_at)}</td>
             <td>
                 <div style="display:flex; gap:10px;">
-                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action">View Binaries →</a>
+                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action">Binaries</a>
                 </div>
             </td>
         </tr>
@@ -2950,6 +2951,19 @@ function applyBinClusterSearch() {
     window.location.hash = `${hashPath}?${params.toString()}`;
 }
 
+function updateD3ClusterName(cid, newName) {
+    [window.hierarchyInstance, window.packingInstance, window.binHierarchyInstance, window.binPackingInstance].forEach(instance => {
+        if (instance && instance.rawNodes) {
+            const match = instance.rawNodes.find(n => n.id === cid || n.cluster_id === cid || n.cluster_uuid === cid || n.uuid === cid);
+            if (match) {
+                if (match.cluster_name !== undefined) match.cluster_name = newName;
+                if (match.name !== undefined) match.name = newName;
+                instance.render(instance.rawNodes);
+            }
+        }
+    });
+}
+
 async function renameBinCluster(clusterId, currentName) {
     const newName = prompt(`Enter new name for binary cluster ${clusterId}:`, currentName);
     if (!newName || newName === currentName) return;
@@ -2967,12 +2981,19 @@ async function renameBinCluster(clusterId, currentName) {
         if (data.status === 'success') {
             const el = document.getElementById(`name-display-bin-${clusterId}`);
             if (el) el.innerText = newName;
-            showNotification(`Binary cluster renamed to ${newName}`, 'success');
+            updateD3ClusterName(clusterId, newName);
+            if (typeof showToast === 'function') {
+                showToast(`Binary cluster renamed to ${newName}`, 'success');
+            }
         } else {
-            showNotification(`Rename failed: ${data.error}`, 'error');
+            if (typeof showToast === 'function') {
+                showToast(`Rename failed: ${data.error}`, 'error');
+            }
         }
     } catch (err) {
-        showNotification(`Error renaming binary cluster: ${err}`, 'error');
+        if (typeof showToast === 'function') {
+            showToast(`Error renaming binary cluster: ${err}`, 'error');
+        }
     }
 }
 
@@ -2995,13 +3016,22 @@ async function renameCluster(clusterId, currentName) {
             })
         });
         if (res.ok) {
-            document.getElementById(`name-display-${clusterId}`).innerText = newName;
+            const el = document.getElementById(`name-display-${clusterId}`);
+            if (el) el.innerText = newName;
+            updateD3ClusterName(clusterId, newName);
+            if (typeof showToast === 'function') {
+                showToast(`Cluster renamed to ${newName}`, 'success');
+            }
         } else {
-            alert("Failed to rename cluster");
+            if (typeof showToast === 'function') {
+                showToast("Failed to rename cluster", "error");
+            }
         }
     } catch (e) {
         console.error(e);
-        alert("Error renaming cluster");
+        if (typeof showToast === 'function') {
+            showToast("Error renaming cluster", "error");
+        }
     }
 }
 
@@ -3013,6 +3043,7 @@ function switchClusterView(mode) {
         params.delete('show_children');
         params.delete('show_members');
         params.delete('path_compression');
+        params.delete('show_binary_sankey');
     }
     window.location.hash = `#clusters?${params.toString()}`;
 }
@@ -3110,396 +3141,6 @@ function showTokenContextMenu(e) {
         menu.addEventListener('click', onMenuClick);
         document.addEventListener('mousedown', closeGlobal);
     }, 10);
-}
-
-window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
-    if (window.setTrigger) window.setTrigger(e);
-    const graph = window.graphInstance;
-    if (!graph) return;
-
-    let menu = document.getElementById('graph-context-menu');
-    if (!menu) {
-        menu = document.createElement('div');
-        menu.id = 'graph-context-menu';
-        menu.className = 'context-menu';
-        document.body.appendChild(menu);
-    }
-
-    if (window.hideDiffPreview) window.hideDiffPreview();
-    if (window.hideCodePreview) window.hideCodePreview();
-    if (window.hideBinaryPreview) window.hideBinaryPreview();
-
-    // Save current context menu state for refreshing and set open state AFTER hide functions to avoid them immediately resetting graphContextMenuOpen
-    window.currentContextMenu = { e, type, data };
-    window.graphContextMenuOpen = true;
-
-    // Generate HTML content based on type
-    let html = '';
-    
-    if (type === 'node') {
-        const nodeId = data.id;
-        const nodeName = data.name;
-        // Fetch latest node details from graph nodes_map
-        const latestNode = graph.nodes_map.get(nodeId) || data;
-        const userTags = latestNode.user_tags || [];
-        const tags = latestNode.tags || [];
-
-        html += `<div class="context-menu-header">Function: ${nodeName}</div>`;
-        
-        // Bookmark/Ignore/Tag actions
-        html += renderBookmarkIgnoreTagItems('function', nodeId, tags, userTags);
-
-        // Add to Diff, See Similar, Show Features
-        html += `
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${nodeId}', '${nodeName.replace(/'/g, "\\'")}')">
-            <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Add to Diff</span>
-        </div>
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar('${nodeId}')">
-            <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>See Similar</span>
-        </div>
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel('${nodeId}', event)">
-            <i class="fa-solid fa-fingerprint" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Show Features</span>
-        </div>`;
-
-        // Check if there is a selected similarity (previewed via hover/scroll)
-        let selectedSim = null;
-        if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0) {
-            const currentPair = window.diffPreviewPairs[window.diffPreviewIndex || 0];
-            if (currentPair && (currentPair.id1 === nodeId || currentPair.id2 === nodeId)) {
-                selectedSim = currentPair;
-            }
-        }
-
-        if (selectedSim) {
-            const simId = selectedSim.sid || `${selectedSim.id1}|${selectedSim.id2}|${selectedSim.algo}`;
-            // Fetch latest pair from graph all_pairs to get latest tags
-            const latestPair = graph.all_pairs.find(p => 
-                (p.id1 === selectedSim.id1 && p.id2 === selectedSim.id2) || 
-                (p.id1 === selectedSim.id2 && p.id2 === selectedSim.id1)
-            ) || selectedSim;
-            
-            const simUserTags = latestPair.user_tags || [];
-            const simTags = latestPair.tags || [];
-            const percentScore = (parseFloat(selectedSim.score) * 100).toFixed(1);
-
-            html += `<div class="context-menu-header" style="margin-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 6px;">Similarity: ${percentScore}% Match</div>`;
-            
-            html += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${selectedSim.id1}', '${selectedSim.n1.replace(/'/g, "\\'")}', '${selectedSim.id2}', '${selectedSim.n2.replace(/'/g, "\\'")}', event)">
-                <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-                <span>Show Diff</span>
-            </div>`;
-
-            html += renderBookmarkIgnoreTagItems('similarity', simId, simTags, simUserTags);
-        }
-    } else if (type === 'link') {
-        const id1 = data.id1;
-        const id2 = data.id2;
-        const name1 = data.name1;
-        const name2 = data.name2;
-        const simId = data.sid || `${id1}|${id2}|${data.algo}`;
-        
-        // Fetch latest pair from graph
-        const latestPair = graph.all_pairs.find(p => 
-            (p.id1 === id1 && p.id2 === id2) || (p.id1 === id2 && p.id2 === id1)
-        ) || data;
-
-        const simUserTags = latestPair.user_tags || [];
-        const simTags = latestPair.tags || [];
-        const percentScore = (parseFloat(data.score) * 100).toFixed(1);
-
-        html += `<div class="context-menu-header">Similarity: ${percentScore}% Match</div>`;
-        
-        html += `
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${id1}', '${name1.replace(/'/g, "\\'")}', '${id2}', '${name2.replace(/'/g, "\\'")}', event)">
-            <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Show Diff</span>
-        </div>`;
-
-        html += renderBookmarkIgnoreTagItems('similarity', simId, simTags, simUserTags);
-    } else if (type === 'file') {
-        const md5 = data.md5;
-        const fileName = data.file_name;
-        const fileId = data.fileId || `${data.collection}:file:${md5}`;
-
-        // Find file tags from nodes map
-        let fileUserTags = [];
-        let fileTags = [];
-        for (const node of graph.nodes_map.values()) {
-            if (node.md5 === md5) {
-                fileUserTags = node.file_user_tags || [];
-                fileTags = node.file_tags || [];
-                break;
-            }
-        }
-
-        html += `<div class="context-menu-header">File: ${fileName}</div>`;
-        html += renderBookmarkIgnoreTagItems('file', fileId, fileTags, fileUserTags);
-    }
-
-    menu.innerHTML = html;
-    menu.style.display = 'block';
-
-    // Disable SVG pointer events so underlying graph elements can't fire hover events through the menu
-    const graphSvg = document.querySelector('#bk-similarity-plot svg');
-    if (graphSvg) graphSvg.style.pointerEvents = 'none';
-
-    if (!isRefresh) {
-        // Position the menu
-        let x = e.clientX, y = e.clientY;
-        menu.style.left = x + 'px';
-        menu.style.top = y + 'px';
-
-        // Check boundary collisions
-        const rect = menu.getBoundingClientRect();
-        if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 10;
-        if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 10;
-
-        menu.style.left = Math.max(5, x) + 'px';
-        menu.style.top = Math.max(5, y) + 'px';
-    }
-
-    // Attach click outside listener to close the menu (using capture phase to intercept stopPropagation)
-    if (!isRefresh) {
-        const closeGlobal = (me) => {
-            if (!menu.contains(me.target)) {
-                window.closeGraphContextMenu();
-            }
-        };
-        // Delay attaching listener slightly to avoid catching the current click
-        setTimeout(() => {
-            document.addEventListener('mousedown', closeGlobal, { capture: true });
-            window._contextMenuCloseFn = closeGlobal;
-        }, 10);
-    }
-};
-
-window.closeGraphContextMenu = function() {
-    let menu = document.getElementById('graph-context-menu');
-    if (menu) {
-        menu.style.display = 'none';
-    }
-    window.graphContextMenuOpen = false;
-    window.currentContextMenu = null;
-    // Re-enable SVG pointer events
-    const graphSvg = document.querySelector('#bk-similarity-plot svg');
-    if (graphSvg) graphSvg.style.pointerEvents = '';
-    if (window._contextMenuCloseFn) {
-        document.removeEventListener('mousedown', window._contextMenuCloseFn, { capture: true });
-        window._contextMenuCloseFn = null;
-    }
-};
-
-window.toggleContextMenuBookmark = async function(event, etype, eid) {
-    const userTags = getEntityUserTags(etype, eid);
-    const isBookmarked = userTags.includes('bookmark');
-    
-    if (isBookmarked) {
-        await removeTag(null, etype, eid, 'bookmark');
-    } else {
-        await confirmAddTag(etype, eid, 'bookmark');
-    }
-};
-
-window.toggleContextMenuIgnore = async function(event, etype, eid) {
-    const userTags = getEntityUserTags(etype, eid);
-    const isIgnored = userTags.includes('ignore');
-    
-    if (isIgnored) {
-        await removeTag(null, etype, eid, 'ignore');
-    } else {
-        await confirmAddTag(etype, eid, 'ignore');
-    }
-};
-
-window.toggleContextMenuTag = async function(event, etype, eid, tag) {
-    const userTags = getEntityUserTags(etype, eid);
-    const hasTag = userTags.includes(tag);
-    if (hasTag) {
-        await removeTag(null, etype, eid, tag);
-    } else {
-        await confirmAddTag(etype, eid, tag);
-    }
-};
-
-window.showInlineTagInput = function(event, etype, eid) {
-    const item = event.currentTarget;
-    const parent = item.parentElement;
-    
-    // Create an input wrapper
-    const wrapper = document.createElement('div');
-    wrapper.style.padding = '6px 12px';
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.gap = '4px';
-    wrapper.style.position = 'relative';
-    
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Search or create...';
-    input.style.width = '100%';
-    input.style.background = '#222';
-    input.style.border = '1px solid rgba(255,255,255,0.2)';
-    input.style.color = '#fff';
-    input.style.padding = '4px 8px';
-    input.style.borderRadius = '4px';
-    input.style.fontSize = '0.75rem';
-    
-    wrapper.appendChild(input);
-    parent.replaceChild(wrapper, item);
-    input.focus();
-    
-    // Clicking inside the input block shouldn't close the parent context menu
-    wrapper.onmousedown = (e) => e.stopPropagation();
-    
-    input.onkeydown = async (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const tag = input.value.trim();
-            if (tag) {
-                await confirmAddTag(etype, eid, tag);
-            }
-        } else if (e.key === 'Escape') {
-            window.refreshContextMenuUI();
-        }
-    };
-    
-    if (window.attachTagAutocomplete) {
-        window.attachTagAutocomplete(input, async (tag) => {
-            if (tag && tag.trim()) {
-                await confirmAddTag(etype, eid, tag.trim());
-            }
-        });
-    }
-};
-
-window.removeContextMenuTag = async function(event, etype, eid, tag) {
-    await removeTag(null, etype, eid, tag);
-};
-
-window.refreshContextMenuUI = function() {
-    if (!window.currentContextMenu) return;
-    const { e, type, data } = window.currentContextMenu;
-    window.showGraphContextMenu(e, type, data, true);
-};
-
-function getEntityUserTags(etype, eid) {
-    const graph = window.graphInstance;
-    if (!graph) return [];
-    
-    if (etype === 'function') {
-        const latest = graph.nodes_map.get(eid);
-        return latest ? (latest.user_tags || []) : [];
-    } else if (etype === 'file') {
-        const md5 = eid.split(':').pop();
-        for (const node of graph.nodes_map.values()) {
-            if (node.md5 === md5) {
-                return node.file_user_tags || [];
-            }
-        }
-    } else if (etype === 'similarity') {
-        let latest = graph.all_pairs.find(p => p.sid === eid);
-        if (!latest) {
-            const parts = eid.split('|');
-            if (parts.length >= 2) {
-                latest = graph.all_pairs.find(p => 
-                    (p.id1 === parts[0] && p.id2 === parts[1]) || 
-                    (p.id1 === parts[1] && p.id2 === parts[0])
-                );
-            }
-        }
-        return latest ? (latest.user_tags || []) : [];
-    }
-    return [];
-}
-
-function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
-    const isBookmarked = userTagsList.includes('bookmark');
-    const isIgnored = userTagsList.includes('ignore');
-
-    let html = '';
-    
-    // Bookmark and Ignore side-by-side buttons
-    html += `
-    <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-        <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'rgba(102, 217, 239, 0.1)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-            Bookmark
-        </button>
-        <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'rgba(249, 38, 114, 0.1)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
-            Ignore
-        </button>
-    </div>`;
-
-    // Generate Tags nested submenu dropdown items
-    const allKnownTags = Object.keys(window.tagMetadata || {}).filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
-    
-    let submenuHtml = '';
-    allKnownTags.forEach(tag => {
-        const isActive = userTagsList.includes(tag);
-        const color = window.getTagMetadata ? window.getTagMetadata(tag).color : '#66d9ef';
-        const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
-        
-        submenuHtml += `
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')">
-            <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
-            <span>${tag}</span>
-        </div>`;
-    });
-
-    if (submenuHtml) {
-        submenuHtml += `<div style="border-top: 1px solid rgba(255,255,255,0.05); margin: 4px 0;"></div>`;
-    }
-
-    submenuHtml += `
-    <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.showInlineTagInput(event, '${etype}', '${eid}')">
-        <i class="fa-solid fa-plus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-        <span>Add custom tag...</span>
-    </div>`;
-
-    // Tags submenu category row
-    html += `
-    <div class="context-menu-item tag-submenu-trigger" style="position: relative;">
-        <i class="fa-solid fa-tags" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-        <span>Tags</span>
-        <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
-        
-        <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
-            ${submenuHtml}
-        </div>
-    </div>`;
-
-    // Applied tags list preview
-    html += renderContextMenuTagsList(etype, eid, tagsList, userTagsList);
-
-    return html;
-}
-
-function renderContextMenuTagsList(etype, eid, tagsList, userTagsList) {
-    const allTags = [...(userTagsList || [])].filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
-    if (allTags.length === 0) return '';
-    
-    const tagsHtml = allTags.map(tag => {
-        let color = '#66d9ef';
-        if (window.getTagMetadata) {
-            color = window.getTagMetadata(tag).color;
-        }
-        const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, '${etype}', '${eid}', '${tag}')`;
-        return `
-        <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
-            ${tag}
-            <span onclick="${removeClick}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
-        </span>`;
-    }).join('');
-
-    return `
-    <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-        ${tagsHtml}
-    </div>`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -3662,7 +3303,7 @@ function getFilterSummary(path, params) {
         const language_id = params.get('language_id');
         const min_function_count = params.get('min_function_count');
         const max_function_count = params.get('max_function_count');
-        
+
         if (file_name) summary.push(`Name: "${file_name}"`);
         if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
         if (language_id) summary.push(`Lang: ${language_id}`);
@@ -3681,7 +3322,7 @@ function getFilterSummary(path, params) {
         const min_features = params.get('min_features');
         const cluster_name = params.get('cluster_name');
         const entrypoint_address = params.get('entrypoint_address');
-        
+
         if (function_name) summary.push(`Func: "${function_name}"`);
         if (file_name) summary.push(`File: "${file_name}"`);
         if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
@@ -3697,7 +3338,7 @@ function getFilterSummary(path, params) {
         const algo = params.get('algo');
         const cross_binary = params.get('cross_binary');
         const match_mode = params.get('match_mode');
-        
+
         if (name) summary.push(`Func: "${name}"`);
         if (md5) summary.push(`MD5: ${md5.substring(0, 6)}`);
         if (address) summary.push(`Addr: ${address}`);
@@ -3713,7 +3354,7 @@ function getFilterSummary(path, params) {
         const cluster_name = params.get('cluster_name');
         const min_count = params.get('min_count');
         const min_cohesion = params.get('min_cohesion');
-        
+
         if (cluster_uuid) summary.push(`UUID: ${cluster_uuid.substring(0, 6)}`);
         if (cluster_name) summary.push(`Name: "${cluster_name}"`);
         if (min_count && min_count !== '0') summary.push(`Min Funcs: ${min_count}`);
@@ -3789,7 +3430,7 @@ function addToHistory(path, queryString) {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     const now = Date.now();
     const cleanParamsObj = {};
@@ -3834,7 +3475,7 @@ function addToHistory(path, queryString) {
         const last = history[0];
         const isSameView = last.path === path && last.collection === col && last.view === view;
         const timeDiff = now - last.timestamp;
-        
+
         // Typing merge (debounce within 7 seconds)
         if (isSameView && timeDiff < 7000) {
             history[0] = newItem;
@@ -3873,7 +3514,7 @@ function loadHistoryItemByTimestamp(timestamp) {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     const item = history.find(h => h.timestamp === timestamp);
     if (!item) return;
@@ -3887,7 +3528,7 @@ function renderHistoryDropdowns() {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     const globalDropdown = document.getElementById('history-dropdown');
     const viewDropdown = document.getElementById('view-history-dropdown');
@@ -3898,10 +3539,10 @@ function renderHistoryDropdowns() {
     const esc = (str) => {
         if (!str) return '';
         return str.replace(/&/g, '&amp;')
-                  .replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;')
-                  .replace(/"/g, '&quot;')
-                  .replace(/'/g, '&#039;');
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     };
 
     // 1. Render Global Dropdown
@@ -4003,7 +3644,7 @@ function clearSearchHistory(event) {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     // Keep items from other collections
     const filtered = history.filter(item => item.collection !== currentCol);
@@ -4023,7 +3664,7 @@ function clearViewHistory(event, path) {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     // Keep items that are not in this view or not in this collection
     const filtered = history.filter(item => !(item.path === path && item.collection === currentCol));
@@ -4039,7 +3680,7 @@ function toggleHistoryDropdown(event) {
     const dropdown = document.getElementById('history-dropdown');
     if (!dropdown) return;
     const isVisible = dropdown.style.display === 'block';
-    
+
     closeAllHistoryDropdowns();
 
     if (!isVisible) {
@@ -4058,7 +3699,7 @@ function toggleViewHistoryDropdown(event) {
     const dropdown = document.getElementById('view-history-dropdown');
     if (!dropdown) return;
     const isVisible = dropdown.style.display === 'block';
-    
+
     closeAllHistoryDropdowns();
 
     if (!isVisible) {
@@ -4121,7 +3762,7 @@ function restoreGraphSettings() {
         if (settings.colorSim !== undefined) setVal('graph-color-sim', settings.colorSim);
         if (settings.bundleTension !== undefined) setVal('graph-bundle-tension', settings.bundleTension);
         if (settings.linkWidth !== undefined) setVal('graph-link-width', settings.linkWidth);
-        
+
         const chk = document.getElementById('graph-scale-width');
         if (chk && settings.scaleWidth !== undefined) chk.checked = settings.scaleWidth;
 
@@ -4138,7 +3779,7 @@ function restoreGraphSettings() {
                 window.graphInstance.applyProfile(settings.activeProfile);
             }
         }
-    } catch(e) {
+    } catch (e) {
         console.error("Failed to restore graph settings", e);
     }
 }
@@ -4151,14 +3792,14 @@ function downloadSearchResults(format) {
         alert("Downloads are not available for this view.");
         return;
     }
-    
+
     const params = new URLSearchParams(queryString);
     params.set('format', format);
     // For downloads, we want to fetch all matches, so we set limit to a large number
     params.set('limit', '100000');
-    
+
     const downloadUrl = route.api + '?' + params.toString();
-    
+
     // Create a temporary anchor element to trigger the browser download
     const link = document.createElement('a');
     link.href = downloadUrl;

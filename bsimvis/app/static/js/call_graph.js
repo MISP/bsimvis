@@ -319,6 +319,13 @@ class FileCallGraph {
             if (window.showFunctionCodeById) {
                 window.showFunctionCodeById(d.id, d.name, '', event);
             }
+        }).on("contextmenu", (event, d) => {
+            if (d.is_external) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (window.showGraphContextMenu) {
+                window.showGraphContextMenu(event, 'node', d);
+            }
         });
 
         simulation.on("tick", () => {

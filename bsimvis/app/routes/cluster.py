@@ -385,6 +385,9 @@ def list_clusters():
                         "bin": member_meta_map.get(mid, {}).get(
                             "file_name"
                         ),
+                        "file_md5": member_meta_map.get(mid, {}).get(
+                            "file_md5"
+                        ),
                         "v_size": member_meta_map.get(mid, {}).get(
                             "bsim_features_count"
                         ),

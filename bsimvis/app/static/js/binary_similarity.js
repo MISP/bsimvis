@@ -942,9 +942,9 @@ function renderBinaryDiffSankey(data) {
                 .attr("height", height)
                 .attr("width", width)
                 .attr("fill", d.color)
-                .attr("stroke", (d.id.startsWith('cluster_') || d.id.startsWith('simplified_')) ? "#fff" : "rgba(0,0,0,0.5)")
-                .attr("stroke-width", (d.id.startsWith('cluster_') || d.id.startsWith('simplified_')) ? "1.5px" : "0.5px")
-                .attr("opacity", (d.id.startsWith('cluster_') || d.id.startsWith('simplified_')) ? 1.0 : 0.6)
+                .attr("stroke", "rgba(0,0,0,0.5)")
+                .attr("stroke-width", "0.5px")
+                .attr("opacity", 0.6)
                 .append("title")
                 .text(`${d.name}${d.cohesion !== undefined ? `\nCohesion: ${d.cohesion.toFixed(2)}` : ''}\n${sankeyScale === 'features' ? 'Features' : 'Functions'}: ${d.value}`);
                 
@@ -955,9 +955,9 @@ function renderBinaryDiffSankey(data) {
                 .attr("text-anchor", d.id.startsWith('func_b_') || d.id.startsWith('funcgroup_b_') || d.id.startsWith('simplified_b_') ? "end" : "start")
                 .text(d.name)
                 .attr("fill", "#fff")
-                .attr("font-size", (d.id.startsWith('cluster_') || d.id.startsWith('simplified_')) ? "10px" : "8px")
-                .attr("font-weight", (d.id.startsWith('cluster_') || d.id.startsWith('simplified_')) ? "bold" : "normal")
-                .attr("opacity", (d.id.startsWith('cluster_') || d.id.startsWith('simplified_')) ? 1.0 : 0.7)
+                .attr("font-size", "8px")
+                .attr("font-weight", "normal")
+                .attr("opacity", 0.7)
                 .attr("font-family", "sans-serif");
         }
     });

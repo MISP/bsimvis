@@ -897,7 +897,7 @@ body {
     background-color: rgba(255, 255, 255, 0.05);
     color: var(--text);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 2px 5px;
+    padding: 2px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
     cursor: pointer;
@@ -905,10 +905,18 @@ body {
     align-items: center;
     justify-content: center;
     height: 24px;
-    width: 24px;
+    min-width: 24px;
+    width: auto;
+    white-space: nowrap;
     transition: all 0.2s;
     text-decoration: none;
     box-sizing: border-box;
+}
+
+.btn-action:has(> i:only-child),
+.btn-action:has(> svg:only-child) {
+    width: 24px;
+    padding: 0;
 }
 
 .btn-action:hover {
@@ -1145,7 +1153,8 @@ body {
     font-size: 1.1rem;
     opacity: 0.8;
 }
-.tag-submenu-trigger:hover .submenu {
+.tag-submenu-trigger:hover .submenu,
+.submenu-trigger:hover > .submenu {
     display: block !important;
 }
 .context-menu.submenu {
@@ -1833,4 +1842,51 @@ table td.focused-cell {
 table td {
     position: relative;
     user-select: text !important;
+}
+
+/* Collapsible Filter Categories */
+.filter-category-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    padding: 8px 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.75rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.filter-category-header:hover {
+    color: #fff;
+}
+
+.filter-category-header .toggle-icon {
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+    opacity: 0.7;
+}
+
+.filter-category-header.collapsed .toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.filter-category-content {
+    transition: max-height 0.25s ease-out, opacity 0.2s ease-out, margin 0.2s ease-out;
+    max-height: 500px;
+    opacity: 1;
+    overflow: hidden;
+    margin-bottom: 15px;
+}
+
+.filter-category-content.collapsed {
+    max-height: 0 !important;
+    opacity: 0 !important;
+    margin-bottom: 0 !important;
+    pointer-events: none;
 }

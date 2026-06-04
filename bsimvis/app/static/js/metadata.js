@@ -326,7 +326,7 @@ function navigateToFeatures(id, e) {
     }
 }
 
-function seeSimilar(fullId) {
+function seeSimilar(fullId, e) {
     // If no ID passed, try to find it from the card context or global
     const id = fullId || window.currentFuncId;
     if (!id) return;
@@ -337,6 +337,11 @@ function seeSimilar(fullId) {
     const md5 = parts[2];
     const addr = parts[3];
     const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open('/' + hash, '_blank');
+        return;
+    }
 
     if (window.parent && window.parent !== window && typeof window.parent.location !== 'undefined') {
         window.parent.location.hash = hash;

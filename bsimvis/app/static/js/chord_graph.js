@@ -168,6 +168,13 @@ class ChordGraph {
             .on("mouseout", () => {
                 this.highlightChords(null, false);
                 this.hideTooltip();
+            })
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    window.showGraphContextMenu(event, 'file', nodes[d.index]);
+                }
             });
 
         // 5. Draw Labels
@@ -233,6 +240,17 @@ class ChordGraph {
             .on("mouseout", () => {
                 d3.selectAll(".chord").style("opacity", 1);
                 this.hideTooltip();
+            })
+            .on("contextmenu", (event, d) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.showGraphContextMenu) {
+                    window.showGraphContextMenu(event, 'bin_similarity', {
+                        file1: nodes[d.source.index],
+                        file2: nodes[d.target.index],
+                        value: d.source.value
+                    });
+                }
             })
             .on("click", (event, d) => {
                 const n1 = nodes[d.source.index];

@@ -243,25 +243,56 @@ class ClusterService:
             sub_id_to_global = {i: global_idx for i, global_idx in enumerate(comp_nodes)}
             global_to_sub_id = {global_idx: i for i, global_idx in enumerate(comp_nodes)}
             
-            sub_dist = np.ones((size, size), dtype=np.float32)
-            np.fill_diagonal(sub_dist, 0)
-            
-            if comp_id in comp_to_edges:
-                for u, v, d in comp_to_edges[comp_id]:
-                    ui = global_to_sub_id[u]
-                    vi = global_to_sub_id[v]
-                    sub_dist[ui, vi] = d
-                    sub_dist[vi, ui] = d
-                    
-            clusterer = hdbscan.HDBSCAN(
-                min_cluster_size=min(min_cluster_size, size),
-                min_samples=min(min_samples, size),
-                cluster_selection_epsilon=cluster_selection_epsilon,
-                cluster_selection_method=selection_method,
-                metric="precomputed",
-                gen_min_span_tree=True,
-            )
-            clusterer.fit(sub_dist.astype(np.float64))
+            if size >= 5000:
+                from scipy.sparse.linalg import svds
+                
+                rows_sp, cols_sp, data_sp = [], [], []
+                if comp_id in comp_to_edges:
+                    for u, v, d in comp_to_edges[comp_id]:
+                        ui = global_to_sub_id[u]
+                        vi = global_to_sub_id[v]
+                        sim = 1.0 - d
+                        rows_sp.extend([ui, vi])
+                        cols_sp.extend([vi, ui])
+                        data_sp.extend([sim, sim])
+                
+                comp_matrix = sp.csr_matrix((data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32)
+                comp_matrix.setdiag(1.0)
+                
+                k = min(50, size - 1)
+                u, s, vt = svds(comp_matrix, k=k)
+                embeddings = u @ np.diag(np.sqrt(s))
+                del comp_matrix, rows_sp, cols_sp, data_sp
+                
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min(min_cluster_size, size),
+                    min_samples=min(min_samples, size),
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    cluster_selection_method=selection_method,
+                    metric="euclidean",
+                    gen_min_span_tree=True,
+                )
+                clusterer.fit(embeddings)
+            else:
+                sub_dist = np.ones((size, size), dtype=np.float32)
+                np.fill_diagonal(sub_dist, 0)
+                
+                if comp_id in comp_to_edges:
+                    for u, v, d in comp_to_edges[comp_id]:
+                        ui = global_to_sub_id[u]
+                        vi = global_to_sub_id[v]
+                        sub_dist[ui, vi] = d
+                        sub_dist[vi, ui] = d
+                        
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min(min_cluster_size, size),
+                    min_samples=min(min_samples, size),
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    cluster_selection_method=selection_method,
+                    metric="precomputed",
+                    gen_min_span_tree=True,
+                )
+                clusterer.fit(sub_dist.astype(np.float64))
             
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:

@@ -228,6 +228,14 @@ class Worker:
                     if not real_md5:
                         continue
 
+                    if payload.get("file_metadata_extra"):
+                        extra = payload["file_metadata_extra"]
+                        if isinstance(extra, str):
+                            extra = json.loads(extra)
+                        analysis_data.setdefault("file_metadata", {}).update(extra)
+                        if "file_name" in extra:
+                            analysis_data["file_metadata"]["file_name"] = extra["file_name"]
+
                     file_id = f"{collection}:file:{real_md5}:data"
                     self.r_data.set(file_id, json.dumps(analysis_data))
 

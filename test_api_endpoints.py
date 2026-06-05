@@ -261,6 +261,44 @@ def wait_for_pipeline():
 
 
 # ---------------------------------------------------------------------------
+# Step 2b – Test duplicate upload (should fail)
+# ---------------------------------------------------------------------------
+def test_duplicate_upload():
+    if not file_md5:
+        return
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 2b – Test duplicate upload (should fail)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not os.path.isfile(TEST_BINARY):
+        return
+
+    with open(TEST_BINARY, "rb") as fh:
+        raw = fh.read()
+
+    file_name = os.path.basename(TEST_BINARY)
+    params = {
+        "collection": COLLECTION,
+        "file_name": file_name,
+        "batch_name": "API Test Batch",
+        "profile": "fast",
+        "min_func_len": 10,
+        "skip_sim": "false",
+    }
+
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params=params,
+        raw_body=raw,
+        headers={"Content-Type": "application/octet-stream"},
+        expected_ok=False,
+        label=f"POST /api/file/upload [Duplicate] (Expected 400)",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Step 3 – Resolve IDs needed by downstream tests
 # ---------------------------------------------------------------------------
 def resolve_ids():
@@ -687,6 +725,7 @@ if __name__ == "__main__":
     uploaded = upload_and_start()
     if uploaded:
         wait_for_pipeline()
+        test_duplicate_upload()
 
     resolve_ids()
     run_all_tests()

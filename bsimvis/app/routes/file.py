@@ -29,11 +29,22 @@ def upload_file_data():
         file_md5 = data.get("file_md5")
 
         if not file_md5:
+            file_meta = data.get("file_metadata", {})
+            file_md5 = file_meta.get("file_md5")
+
+        if not file_md5:
             # Efficient MD5 from raw bytes instead of re-serializing the dict
             file_md5 = hashlib.md5(raw_bytes).hexdigest()
 
         # 1. Store in Kvrocks (JSON.SET)
         r_data = get_redis()
+
+        # Check if file is already in the collection
+        if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+            return {
+                "error": f"File with MD5 {file_md5} already exists in collection '{collection}'"
+            }, 400
+
         file_id = f"{collection}:file:{file_md5}:data"
 
         # Store as a standard string (SET) instead of a JSON object.
@@ -161,8 +172,14 @@ def upload_raw_binary():
         # Compute MD5
         file_md5 = hashlib.md5(raw_bytes).hexdigest()
 
-        # Store raw binary in Kvrocks
+        # Check if file is already in the collection
         r_data = get_redis()
+        if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+            return {
+                "error": f"File with MD5 {file_md5} already exists in collection '{collection}'"
+            }, 400
+
+        # Store raw binary in Kvrocks
         raw_file_id = f"{collection}:file:{file_md5}:raw"
         r_data.set(raw_file_id, raw_bytes)
 
@@ -195,6 +212,9 @@ def upload_raw_binary():
             analysis_payload["skip_sim"] = (
                 val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
             )
+
+        if "file_metadata_extra" in request.args:
+            analysis_payload["file_metadata_extra"] = json.loads(request.args.get("file_metadata_extra"))
 
         # Trigger Pipeline: Analysis -> Indexing -> Similarity
         pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]

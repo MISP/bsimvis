@@ -453,6 +453,12 @@ def main():
         metavar="FILE",
         help="Config file",
     )
+    
+    upload_parser.add_argument(
+        "--metadata",
+        metavar="FILE",
+        help="Path to a metadata CSV file to enrich uploaded binaries",
+    )
 
     decomp_args = upload_parser.add_argument_group("Decompilation options")
     decomp_args.add_argument(

@@ -485,7 +485,23 @@ class FileSearch(Resource):
         return search_files()
 
 
+
+@ns_file.route("/details/<string:file_md5>")
+class FileDetails(Resource):
+    @ns_file.doc(description="Get full metadata for a file including its clusters")
+    @ns_file.expect(
+        api.parser()
+        .add_argument("collection", type=str, default="main", location="args")
+        .add_argument("algo", type=str, default="unweighted_cosine", location="args")
+    )
+    def get(self, file_md5):
+        from flask import request
+        collection = request.args.get("collection", "main")
+        from bsimvis.app.routes.search_file import get_file_details
+        return get_file_details(collection, file_md5)
+
 @ns_file.route("/upload_file_data")
+
 class FileUpload(Resource):
     @ns_file.expect(file_upload_data_model)
     def post(self):

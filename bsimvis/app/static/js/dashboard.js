@@ -186,12 +186,13 @@ const routes = {
         title: 'Files',
         api: '/api/file/search',
         headers: [
-            { label: 'Filename', width: '20%' },
-            { label: 'MD5 / Arch', width: '15%' },
-            { label: 'Batch UUID', width: '12%' },
-            { label: 'Funcs', width: '12%', sort: 'function_count' },
-            { label: 'Clusters', width: '15%' },
-            { label: 'Entry Date', width: '10%', sort: 'entry_date' },
+            { label: 'Filename', width: '18%' },
+            { label: 'MD5 / Arch', width: '12%' },
+            { label: 'Metadata', width: '15%' },
+            { label: 'Batch UUID', width: '10%' },
+            { label: 'Funcs', width: '8%', sort: 'function_count' },
+            { label: 'Clusters', width: '13%' },
+            { label: 'Entry Date', width: '8%', sort: 'entry_date' },
             { label: 'Tags', width: '16%' }
         ],
         renderer: renderFiles
@@ -329,6 +330,9 @@ function clearFilters() {
     preserved.forEach(k => {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
+
+    // Set default cohesion threshold
+    newParams.set('min_cohesion', '0.95');
 
     currentOffset = 0;
     isEndOfResults = false;
@@ -481,7 +485,7 @@ async function refreshData(appendArg = false, force = false) {
             if (hashPath === '#functions' || hashPath === '#function-similarity') {
                 clustersMap = data.clusters || {};
             } else if (hashPath === '#files') {
-                clustersMap = data.bin_clusters || {};
+                clustersMap = data.bin_cluster_map || {};
             }
 
             const html = clustersMap !== undefined ? route.renderer(items, clustersMap) : route.renderer(items);
@@ -875,6 +879,13 @@ function updateUI(path, params, route) {
                         </div>
                     </th>
                     <th>
+                        <div style="display:flex; flex-direction:column; gap:4px;">
+                            <input type="text" id="flt-file-yara" placeholder="Yara..." value="${p.get('yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${p.get('avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${p.get('cc_ip') || ''}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                        </div>
+                    </th>
+                    <th>
                         <input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${p.get('batch_uuid') || ''}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                     </th>
                     <th>
@@ -1194,6 +1205,7 @@ function updateUI(path, params, route) {
     if (path === '#bin-clusters') {
         const p = new URLSearchParams(params);
         const viewMode = p.get('view') || 'table';
+        const nameType = p.get('cluster_name_type') || 'file';
         if (dataTable) dataTable.style.tableLayout = 'fixed';
         if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
         headHtml += `<tr class="filter-row">
@@ -1204,7 +1216,13 @@ function updateUI(path, params, route) {
                 </div>
             </th>
             <th>
-                <input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                <div style="display:flex; flex-direction:column; gap:2px;">
+                    <input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                    <select id="bin-cluster-name-type" style="background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)">
+                        <option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option>
+                        <option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option>
+                    </select>
+                </div>
             </th>
             <th>
                 <div style="display:flex; flex-direction:column; gap:2px;">
@@ -1688,6 +1706,9 @@ function applyAdvancedFileSearch() {
     const clusterNameFlt = document.getElementById('flt-file-cluster-name')?.value;
     const minCohesionFlt = document.getElementById('flt-file-min-cohesion')?.value;
     const maxCohesionFlt = document.getElementById('flt-file-max-cohesion')?.value;
+    const yaraFlt = document.getElementById('flt-file-yara')?.value;
+    const avtypeFlt = document.getElementById('flt-file-avtype')?.value;
+    const ccipFlt = document.getElementById('flt-file-ccip')?.value;
 
     if (nameFlt) params.set('file_name', nameFlt); else params.delete('file_name');
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
@@ -1701,6 +1722,9 @@ function applyAdvancedFileSearch() {
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
     if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
+    if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
+    if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
+    if (ccipFlt) params.set('cc_ip', ccipFlt); else params.delete('cc_ip');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -1939,7 +1963,7 @@ function renderFiles(data, clustersMap = {}) {
         const batchUuid = f['batch_uuid'] || '---';
         const funcCount = f['function_count'] !== undefined ? f['function_count'] : 0;
 
-        const clusters = (f['bin_clusters'] || []).map(cid => clustersMap[cid]).filter(Boolean);
+        const clusters = (Array.isArray(f['bin_clusters']) ? f['bin_clusters'] : []).map(cid => clustersMap[cid]).filter(Boolean);
 
         return `
         <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${fileId}"
@@ -1952,12 +1976,21 @@ function renderFiles(data, clustersMap = {}) {
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
             <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <b style="color:var(--accent); cursor:pointer;">${f['file_name']}</b>
+                    <b style="color:var(--accent); cursor:pointer;" onclick="showFileDetailsPanel('${col}', '${f['file_md5']}', '${(f['file_name'] || '').replace(/'/g, '\\\'')}', event)">${f['file_name']}</b>
                 </div>
             </td>
             <td class="sim-cell">
                 ${EntityRenderer.renderMd5(f['file_md5'], { full: true })}
                 <div class="dim" style="font-size:0.65rem">${f['language_id']}</div>
+            </td>
+            <td class="sim-cell">
+                <div style="display:flex; flex-direction:column; gap:2px; font-size:0.65rem;">
+                    ${f['yara'] && f['yara'].length ? `<div class="dim">Yara: <span style="color:var(--accent)">${f['yara'].join(', ')}</span></div>` : ''}
+                    ${f['avtype'] && f['avtype'].length ? `<div class="dim">AV: <span style="color:var(--accent)">${f['avtype'].join(', ')}</span></div>` : ''}
+                    ${f['filetype'] && f['filetype'].length ? `<div class="dim">Type: <span style="color:var(--accent)">${f['filetype'].join(', ')}</span></div>` : ''}
+                    ${f['cc_ip'] && f['cc_ip'].length ? `<div class="dim">IP: <span style="color:var(--accent)">${f['cc_ip'].join(', ')}</span></div>` : ''}
+                    ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${f['first_seen'].join(', ')}</span></div>` : ''}
+                </div>
             </td>
             <td class="sim-cell mono dim" style="font-size:0.7rem" title="${batchUuid}">
                 ${batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid}
@@ -2331,6 +2364,16 @@ function seeSimilarFromCode() {
     windowManager.closeWindow(win);
 }
 
+
+function showFileDetailsPanel(col, md5, name, e) {
+    if (e && (e.ctrlKey || e.metaKey)) {
+        window.open(`/file/index.html?collection=${encodeURIComponent(col)}&md5=${encodeURIComponent(md5)}`, '_blank');
+        return;
+    }
+    const url = `/file/index.html?collection=${encodeURIComponent(col)}&md5=${encodeURIComponent(md5)}`;
+    windowManager.createWindow(`File: ${name}`, url, { type: 'file' });
+}
+
 function showFeaturePanel(id, e) {
     const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
     if (e && (e.ctrlKey || e.metaKey)) {
@@ -2415,7 +2458,7 @@ window.addEventListener('hashchange', (e) => {
 
 // UI Settings
 const UIParams = {
-    cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
+    cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true'
 };
@@ -2427,16 +2470,11 @@ function toggleUISettings() {
 }
 
 function updateUIParams() {
-    const prevThreshold = UIParams.cohesionThreshold;
     const prevColorByTag = UIParams.colorByTag;
 
-    UIParams.cohesionThreshold = parseFloat(document.getElementById('param-cohesion').value);
     UIParams.colorByTag = document.getElementById('param-color-tags').checked;
     UIParams.includeHeaders = document.getElementById('param-include-headers').checked;
 
-    document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
-
-    localStorage.setItem('cohesionThreshold', UIParams.cohesionThreshold);
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
 
@@ -2450,15 +2488,6 @@ function updateUIParams() {
         }
         if (window.graphInstance && typeof window.graphInstance.refreshColors === 'function') {
             window.graphInstance.refreshColors();
-        }
-    }
-
-    if (UIParams.cohesionThreshold !== prevThreshold) {
-        const [hashPath] = (window.location.hash || '#collections').split('?');
-        if (hashPath === '#clusters') {
-            filterClusterRowsByCohesion(UIParams.cohesionThreshold);
-        } else {
-            refreshClusterCards();
         }
     }
 }
@@ -2488,13 +2517,8 @@ function refreshClusterCards() {
 }
 
 function loadUIParams() {
-    const elCohesion = document.getElementById('param-cohesion');
     const elColorTags = document.getElementById('param-color-tags');
     const elIncludeHeaders = document.getElementById('param-include-headers');
-    if (elCohesion) {
-        elCohesion.value = UIParams.cohesionThreshold;
-        document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
-    }
     if (elColorTags) elColorTags.checked = UIParams.colorByTag;
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
 }
@@ -2915,7 +2939,15 @@ function applyClusterSearch() {
 }
 
 function renderBinClusters(items) {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const nameType = params.get('cluster_name_type') || 'file';
+
     return items.map(c => {
+        let displayName = c.cluster_name;
+        if (nameType === 'yara' && c.yara_distribution && c.yara_distribution.length > 0) {
+            displayName = c.yara_distribution[0].value;
+        }
+
         const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
         const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
         
@@ -2932,7 +2964,7 @@ function renderBinClusters(items) {
             data-entity-data='${JSON.stringify({
                 cluster_id: c.cluster_id,
                 cluster_uuid: c.cluster_uuid,
-                cluster_name: c.cluster_name
+                cluster_name: displayName
             }).replace(/'/g, "&apos;")}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
@@ -2940,15 +2972,21 @@ function renderBinClusters(items) {
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <span id="name-display-bin-${c.cluster_id}" style="cursor:pointer;">${c.cluster_name}</span>
-                    <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span id="name-display-bin-${c.cluster_id}" style="cursor:pointer; font-weight:bold;">${displayName}</span>
+                        <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${(c.cluster_name || '').replace(/'/g, "\\'")}')"><i class="fa-solid fa-pen"></i></button>
+                    </div>
+                    <div class="dim" style="font-size:0.65rem; display:flex; flex-direction:column; gap:2px;">
+                        ${c.yara_distribution && c.yara_distribution.length ? `<div>Yara: <span style="color:var(--accent)">${c.yara_distribution[0].value} (${c.yara_distribution[0].percent}%)</span></div>` : ''}
+                        ${c.avtype_distribution && c.avtype_distribution.length ? `<div>AV: <span style="color:var(--accent)">${c.avtype_distribution[0].value} (${c.avtype_distribution[0].percent}%)</span></div>` : ''}
+                    </div>
                 </div>
             </td>
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action" title="Binaries">
+                    <a href="#files?collection=${getCollectionFromHash()}&bin_cluster_uuid=${c.cluster_uuid}" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
                         <i class="fa-solid fa-file-code"></i>
                     </a>
                 </div>
@@ -3122,6 +3160,13 @@ function switchBinClusterView(mode) {
         params.delete('path_compression');
     }
     window.location.hash = `#bin-clusters?${params.toString()}`;
+}
+
+function changeBinClusterNameType(value) {
+    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
+    const params = new URLSearchParams(queryString);
+    params.set('cluster_name_type', value);
+    window.location.hash = `${hashPath}?${params.toString()}`;
 }
 
 function showTokenContextMenu(e) {

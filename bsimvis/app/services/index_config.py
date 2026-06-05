@@ -34,6 +34,13 @@ INDEX_CONFIG = {
         "bin_cluster_uuid": ["file"],
         "bin_cluster_name": ["file"],
         "bin_cluster_stability": ["file"],
+        "first_seen": ["file", "func", "sim"],
+        "last_seen": ["file", "func", "sim"],
+        "filetype": ["file", "func", "sim"],
+        "avtype": ["file", "func", "sim"],
+        "yara": ["file", "func", "sim"],
+        "cc_ip": ["file", "func", "sim"],
+        "file_names": ["file", "func", "sim"],
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name

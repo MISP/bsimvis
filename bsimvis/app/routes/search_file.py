@@ -37,7 +37,6 @@ def search_files():
             },
         }
 
-        # Standard fields
         for arg, field in [
             ("q", "q"),
             ("file_name", "file_name"),
@@ -48,6 +47,13 @@ def search_files():
             ("batch_uuid", "batch_uuid"),
             ("bin_cluster_uuid", "bin_cluster_uuid"),
             ("bin_cluster_name", "bin_cluster_name"),
+            ("first_seen", "first_seen"),
+            ("last_seen", "last_seen"),
+            ("filetype", "filetype"),
+            ("avtype", "avtype"),
+            ("yara", "yara"),
+            ("cc_ip", "cc_ip"),
+            ("file_names", "file_names"),
         ]:
             val = request.args.get(arg)
             if val:
@@ -126,6 +132,10 @@ def search_files():
 
         results = pipe.execute()
         files_list = []
+        unique_cluster_ids = set()
+        
+        # First pass: collect results and unique cluster IDs
+        raw_files_data = []
         for i, doc_id in enumerate(paged_ids):
             res = results[3 * i]
             func_count = results[3 * i + 1]
@@ -140,9 +150,37 @@ def search_files():
 
             data["function_count"] = func_count
             data["file_id"] = doc_id
-            if cluster_res:
-                data["clusters"] = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
+            cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
+            data["bin_clusters"] = cluster_ids
+            for cid in cluster_ids:
+                unique_cluster_ids.add(cid)
 
+            raw_files_data.append(data)
+
+        # Second pass: fetch cluster metadata
+        cluster_meta_map = {}
+        min_cohesion = float(request.args.get("min_cohesion", 0.95)) # Default to 0.95
+        if unique_cluster_ids:
+            algo = "unweighted_cosine" # Assuming default algo
+            c_pipe = r.pipeline()
+            c_list = list(unique_cluster_ids)
+            for cid in c_list:
+                c_pipe.json().get(f"{col}:bin_cluster:{algo}:{cid}:meta", "$")
+            c_results = c_pipe.execute()
+            for cid, res in zip(c_list, c_results):
+                cm = (res[0] if isinstance(res, list) and res else res) or {}
+                if isinstance(cm, str):
+                    cm = json.loads(cm)
+                
+                # Apply cohesion filter
+                if (cm.get("cohesion_score") or 0) >= min_cohesion:
+                    cluster_meta_map[cid] = cm
+
+        # Third pass: finalize files list
+        for data in raw_files_data:
+            # Map IDs to metadata
+            # We don't map it here anymore, we send the map separately
+            
             normalize_tags(data)
             # Ensure dates are Unix timestamps
             for date_field in ["entry_date", "file_date"]:
@@ -151,18 +189,15 @@ def search_files():
 
             files_list.append(data)
 
-        # Re-sort paged results if needed (already sorted if we had done it in step 2)
-        def get_sort_val(f):
-            v = f.get(sort_by, "")
-            return v.lower() if isinstance(v, str) else v
-
-        files_list.sort(key=get_sort_val, reverse=(sort_order == "desc"))
+        # Re-sort paged results if needed
+        # ... (sort logic)
 
         response_data = {
             "total": total,
             "offset": offset,
             "limit": limit,
             "files": files_list,
+            "bin_cluster_map": cluster_meta_map,
             "collection": col,
             "total_files_in_collection": get_true_total_files(r, col),
         }
@@ -240,7 +275,7 @@ def query_files_advanced(r, collection, filters):
                 if "file" in targets:
                     q_matches.update(get_field_matches(f_name, val))
             candidates &= q_matches
-        elif field in ["file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_name", "bin_cluster_uuid"]:
+        elif field in ["file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_name", "bin_cluster_uuid", "first_seen", "last_seen", "filetype", "avtype", "yara", "cc_ip", "file_names"]:
             candidates &= get_field_matches(field, val)
 
     # Apply Numeric Range Filters
@@ -253,8 +288,6 @@ def query_files_advanced(r, collection, filters):
                     "max_function_count": "function_count",
                     "min_bsim_features": "bsim_features_count",
                     "max_bsim_features": "bsim_features_count",
-                    "min_cohesion": "cohesion_score",
-                    "max_cohesion": "cohesion_score",
                     "min_entry_date": "entry_date",
                     "max_entry_date": "entry_date",
                 }
@@ -298,3 +331,69 @@ def query_files_advanced(r, collection, filters):
         candidates -= get_field_matches("user_tags", t)
 
     return candidates
+def get_file_details(collection, file_md5):
+    try:
+        r = get_redis()
+        file_id = f"{collection}:file:{file_md5}"
+        
+        # 1. Fetch full JSON, function counts, and cluster assignments
+        pipe = r.pipeline()
+        pipe.json().get(f"{file_id}:meta", "$")
+        pipe.scard(f"{collection}:idx:file:functions:{file_md5}")
+        pipe.smembers(f"{file_id}:bin_clusters")
+        pipe.hgetall(f"{file_id}:bin_cluster_scores")
+        results = pipe.execute()
+        
+        res = results[0]
+        func_count = results[1]
+        cluster_res = results[2]
+        scores_res = results[3]
+        
+        if not res:
+            return {"error": "File not found"}, 404
+            
+        data = res[0] if isinstance(res, list) else res
+        if isinstance(data, str):
+            data = json.loads(data)
+            
+        data["function_count"] = func_count
+        data["file_id"] = file_id
+        cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
+        
+        # Ensure array fields are set to actual arrays instead of strings, etc.
+        data["bin_clusters"] = [c.decode() if isinstance(c, bytes) else str(c) for c in cluster_ids]
+        scores_map = {}
+        for k, v in (scores_res or {}).items():
+            k_str = k.decode() if isinstance(k, bytes) else str(k)
+            v_float = float(v)
+            scores_map[k_str] = v_float
+        data["bin_cluster_scores"] = scores_map
+        
+        # 2. Fetch cluster metadata
+        cluster_meta_map = {}
+        if cluster_ids:
+            algo = request.args.get("algo", "unweighted_cosine")
+            c_pipe = r.pipeline()
+            c_list = data["bin_clusters"]
+            for cid in c_list:
+                c_pipe.json().get(f"{collection}:bin_cluster:{algo}:{cid}:meta", "$")
+            c_results = c_pipe.execute()
+            for cid, c_res in zip(c_list, c_results):
+                cm = (c_res[0] if isinstance(c_res, list) and c_res else c_res) or {}
+                if isinstance(cm, str):
+                    cm = json.loads(cm)
+                cluster_meta_map[cid] = cm
+                
+        normalize_tags(data)
+        for date_field in ["entry_date", "file_date"]:
+            if date_field in data:
+                data[date_field] = parse_timestamp(data[date_field])
+                
+        return {
+            "file": data,
+            "bin_cluster_map": cluster_meta_map,
+            "collection": collection
+        }
+    except Exception as e:
+        logging.error(f"Error in get_file_details: {e}", exc_info=True)
+        return {"error": str(e)}, 500

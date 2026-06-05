@@ -56,9 +56,9 @@ function getHierarchyTooltip() {
     return el;
 }
 
-function loadHierarchyView(params) {
+function loadHierarchyView(params, clusterType = 'function') {
     if (!window.hierarchyInstance) {
-        window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
+        window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container', clusterType);
     }
     window.hierarchyInstance.fetch(params);
 }
@@ -71,8 +71,9 @@ function loadPackingView(params) {
 }
 
 class ClusterHierarchy {
-    constructor(containerId) {
+    constructor(containerId, clusterType = 'function') {
         this.container = document.getElementById(containerId);
+        this.clusterType = clusterType;
         this.width = this.container ? this.container.clientWidth : 800;
         this.height = this.container ? (this.container.clientHeight || 700) : 700;
         this.root = null;
@@ -415,8 +416,6 @@ class ClusterHierarchy {
 
         try {
             const queryParams = new URLSearchParams(params.toString());
-            // We want to fetch all matching clusters for the dendrogram view
-            queryParams.set('limit', 10000);
             
             if (this.params.min_cluster_size > 0) queryParams.set('min_count', this.params.min_cluster_size);
             if (this.params.max_cluster_size < 1000 && this.params.max_cluster_size > 0) queryParams.set('max_count', this.params.max_cluster_size);
@@ -1197,7 +1196,7 @@ class ClusterHierarchy {
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
                             </div>
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
@@ -1215,11 +1214,18 @@ class ClusterHierarchy {
 
                         <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
                             <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-                                ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
+                                ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live...' : `${this.clusterType === 'file' ? 'Files' : 'Samples'} (${members.length}):`}
                             </div>
                             <div class="hier-function-list">
                                 <div class="hier-function-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
                                     ${members.map((m, i) => {
+                                        if (this.clusterType === 'file') {
+                                            return `
+                                                <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
+                                                    ${m.file_name || 'Unknown'} ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                </div>
+                                            `;
+                                        }
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
@@ -1380,8 +1386,9 @@ class ClusterHierarchy {
 }
 
 class ClusterPacking {
-    constructor(containerId) {
+    constructor(containerId, clusterType = 'function') {
         this.container = document.getElementById(containerId);
+        this.clusterType = clusterType;
         this.width = this.container ? this.container.clientWidth : 800;
         this.height = this.container ? (this.container.clientHeight || 700) : 700;
         this.root = null;
@@ -1692,8 +1699,6 @@ class ClusterPacking {
 
         try {
             const queryParams = new URLSearchParams(params.toString());
-            // We want to fetch all matching clusters for the packing view
-            queryParams.set('limit', 10000);
             
             if (this.params.min_cluster_size > 0) queryParams.set('min_count', this.params.min_cluster_size);
             if (this.params.max_cluster_size < 1000 && this.params.max_cluster_size > 0) queryParams.set('max_count', this.params.max_cluster_size);
@@ -2219,7 +2224,7 @@ class ClusterPacking {
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">funcs</span></div>
+                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
                             </div>
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
@@ -2237,11 +2242,18 @@ class ClusterPacking {
 
                         <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
                             <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-                                ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
+                                ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live...' : `${this.clusterType === 'file' ? 'Files' : 'Samples'} (${members.length}):`}
                             </div>
                             <div class="hier-function-list">
                                 <div class="hier-function-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
                                     ${members.map((m, i) => {
+                                        if (this.clusterType === 'file') {
+                                            return `
+                                                <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
+                                                    ${m.file_name || 'Unknown'} ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                </div>
+                                            `;
+                                        }
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
@@ -2407,13 +2419,16 @@ class ClusterPacking {
 
 const clusterTooltipMockCache = new Map();
 
-function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null) {
+function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null, clusterType = 'function') {
     const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
     if (isMenuOpen) return;
     if (window.setTrigger) window.setTrigger(event);
     if (!window.hierarchyInstance) {
-        window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container');
+        window.hierarchyInstance = new ClusterHierarchy('hierarchy-view-container', clusterType);
     }
+    // Update type if changed
+    window.hierarchyInstance.clusterType = clusterType;
+
     if (!clusterTooltipMockCache.has(uuid)) {
         clusterTooltipMockCache.set(uuid, {
             data: { uuid, name, size, stability, cohesion, avg_features, scrollOffset: 0 }

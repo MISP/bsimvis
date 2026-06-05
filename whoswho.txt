@@ -1,0 +1,315 @@
+HASH | first_seen | last_seen | filetype | avtype | yara | names | CC ip
+cd4df2be265b8ef1c4e4c191432d6341 | 2026-05-31 20:53:48 | 2026-05-31 20:53:48 | ELF 32-bit MSB executable, shared object, MIPS, MIPS32 rel2 version 1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | Backdoor_Linux_Mirai_E_xp | chernobyl.mips | -
+b1ef9c2a944280c1a2ec04f2c1be3c70 | 2026-05-31 15:21:42 | 2026-05-31 15:21:42 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | Backdoor_Linux_Mirai_GC_MTB | mpsl | -
+1a62914fbfce1aaea3e0df9a164c2f1f | 2026-05-28 08:51:00 | 2026-05-28 08:51:00 | ASCII text | OK | - | w.sh | -
+315a79aafaab2547380c1d3cac678be7 | 2026-05-19 14:15:48 | 2026-05-19 14:15:48 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | UPX_Protector | wife.mpsl | -
+79450efb960885c2f6910f96f75d9959 | 2026-05-14 23:57:29 | 2026-05-16 17:52:17 | HTML document | OK | - | rondo.kqa.sh; rondo; rondo.qpu.sh; rondo.naz.sh | -
+65d77a33f57ca2fae69c3add65416313 | 2026-05-13 21:48:58 | 2026-05-13 21:48:58 | POSIX shell script | OK | - | load.sh | -
+8821ba9facf40285a9d6c5d604a3fbae | 2026-05-12 20:26:45 | 2026-05-12 20:26:45 | POSIX shell script | OK | - | realtek.sh | -
+244f09619822076ebe8a32c3f33f2ed5 | 2026-05-11 03:05:55 | 2026-05-11 03:05:55 | ELF32 LSB SO MIPS MIPS32 rel2 v1 (SYSV) | OK | - | pkf4m2 | -
+b4362029cd2662755b375f512848259d | 2026-05-10 16:05:30 | 2026-05-10 16:05:30 | POSIX shell script | OK | - | bins.sh | -
+7315d6b3184da18833691c46c63e8ede | 2026-05-09 23:50:47 | 2026-05-09 23:50:47 | ELF 32-bit LSB executable, shared object, MIPS, MIPS32 version 1 (SYSV) | OK | - | mipsle | -
+050871547d2dda42636922a95bbc9216 | 2026-05-08 23:22:55 | 2026-05-08 23:22:55 | POSIX shell script | OK | - | kaf.sh | -
+4c3d8daae0ce3c5f7ae081b3aa36bdd0 | 2026-05-08 06:39:22 | 2026-05-08 06:39:22 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | OK | UPX_Protector | boatnet.mips | -
+7bdcdfdba754f2270e8c67d432f28c53 | 2026-05-07 17:29:47 | 2026-05-07 17:29:47 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | UPX_Protector | boatnet.mpsl | -
+a27302b04b1eab1a905f268218d389b2 | 2026-05-03 15:40:01 | 2026-05-03 15:40:01 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | - | manji.mpsl | -
+df1b7bbc7aa719cdcf9aa5106a32cd22 | 2026-05-01 20:47:41 | 2026-05-01 20:47:41 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | - | iran.mipsel | -
+2e6c324031824e1a88125dc50d15ada7 | 2026-04-26 09:38:54 | 2026-04-26 09:38:54 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | - | nova.mipsel | -
+da8f55004e542890460736e660b9c424 | 2026-04-24 23:02:21 | 2026-04-24 23:02:21 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7355719-0 | Trojan_Linux_Mirai_X_MTB | bin.mipsel | -
+55c0419e1745de8fac66cb2c3fc7bebd | 2026-04-24 21:30:48 | 2026-04-24 21:30:48 | Bourne-Again shell script text executable | OK | - | bins.sh | -
+ccde098c49a1fee6028d365521385964 | 2026-04-24 16:57:28 | 2026-04-24 16:57:28 | Bourne-Again shell script text executable | OK | - | upd.sh | -
+ee6974102a0286ff4d05432dbcac6040 | 2026-04-24 16:57:28 | 2026-04-24 16:57:28 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | Backdoor_Linux_Mirai_AM_xp, Backdoor_Linux_Mirai_BJ_MTB, Backdoor_Linux_Mirai_GC_MTB | miniiupnpd | -
+84198c4f55d979362e6f218ab67a8e61 | 2026-04-24 16:57:28 | 2026-04-24 16:57:28 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | Backdoor_Linux_Mirai_AM_xp, Backdoor_Linux_Mirai_BJ_MTB, Backdoor_Linux_Mirai_GL_MTB | upnnpd | -
+2c8ddb20ac9cb8fbbcbec3ef81b3efd8 | 2026-04-24 10:55:04 | 2026-04-24 10:55:04 | POSIX shell script | OK | - | bins.sh | -
+d3f9f282a5a5e5e941875dca19a31b15 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | Bourne-Again shell script text executable | OK | - | x.sh | -
+640995548918da036e53d491ba236e6d | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 LSB SO Synopsys ARCompact ARC700 cores v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | arc | -
+318bf65afc7d06fbe762feac8bdfcaf3 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp | arm | -
+798f8340dab65410f3caf397bdffd7eb | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_DA_MTB, Backdoor_Linux_Mirai_E_xp | arm6 | -
+de967d1c76068cc8a06edb56ac3c4331 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp, Backdoor_Linux_Mirai_HQ_MTB | arm7 | -
+9f41c68cf6184c5b698ebfa444e6a763 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp, Backdoor_Linux_Mirai_HF_MTB, Backdoor_Linux_Mirai_HK_MTB | m68k | -
+af751937459c0c14f020e633723a0d6f | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp | mips | -
+ae264f9096811e3eb69973e00fb98360 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp | mpsl | -
+90ae0bc1e900022c95bb85d99c02791e | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp | ppc | -
+9fa3e4cb407b4a15244191292efac441 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp | sh4 | -
+31f390fc1f0b87cdede503fc7cc66fc5 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp | spc | -
+cc40e161d86df196dd50199630904893 | 2026-04-18 01:44:16 | 2026-04-18 01:44:16 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | Backdoor_Linux_Mirai_E_xp, Backdoor_Linux_Mirai_LF_MTB, Linux_Trojan_Mirai_389ee3e9, Linux_Trojan_Mirai_cc93863b | x86 | -
+b93646e96fdbcba971d03a446d529cbc | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | Bourne-Again shell script text executable | OK | - | ohshit.sh | -
+cfb320f6def8a7beb32784cf1496f42d | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO Synopsys ARCompact ARC700 cores v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | Backdoor_Linux_Mirai_E_xp, Backdoor_Linux_Mirai_GS_MTB, Backdoor_Linux_Mirai_JC_MTB, Backdoor_Linux_Mirai_JG_MTB | boatnet.arc | -
+4af9ec6e2af934ec19c657c7624aed10 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm | -
+4feede5e7cedb5686a0ea772e64cec74 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm5 | -
+1331644208d1fbf940e35eede21fe8ad | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm6 | -
+eb17fb7a53c6fedec8a18ae6625b699f | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7135925-0 | UPX_Protector | boatnet.arm7 | -
+45c37bdbc0b7ca83f40e8c3909848c1f | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.i686 | -
+3007a4b0b30c5db681f832c8ace3be8b | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | Backdoor_Linux_Mirai_E_xp, Backdoor_Linux_Mirai_GB_MTB, Backdoor_Linux_Mirai_HK_MTB | boatnet.m68k | -
+dcaa4ff0c72a6b5d044b024499418808 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.mips | -
+059f336bebc1052a7862149b6b00fb43 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.mpsl | -
+3ecb483120cd9603e61565111e9180f7 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Dropper.Mirai-7135957-0 | UPX_Protector | boatnet.ppc | -
+1cbed851ba68b35a1207432d0b33bb07 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | Backdoor_Linux_Mirai_E_xp | boatnet.sh4 | -
+409f21b67398fa9195abcf89e366f725 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | Backdoor_Linux_Mirai_BR_xp, Backdoor_Linux_Mirai_E_xp, Backdoor_Linux_Mirai_IL_MTB | boatnet.spc | -
+e92826d3f11d7d096fbed9767e465f71 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.x86 | -
+dc2aaea372fc6fa59c2838f735d99a56 | 2026-04-17 21:55:52 | 2026-04-17 21:55:52 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.x86_64 | -
+7ff61dddf93808911d7f936dd730ae93 | 2026-04-07 22:24:14 | 2026-04-07 22:24:14 | POSIX shell script | OK | - | - | -
+0a6524a475e606cd2f6eaa9cde37fc74 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ASCII text | OK | - | - | -
+bdb431408ca37c09241892aaf05595b4 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | Josho.ppc | -
+feff91effc49fba46a78ddc61cbb1ff4 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | Josho.sh4 | -
+069a963215886b09b570c345e46ba20a | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-7640640-0 | - | chrome | -
+30cc5be6a3ebe186b49b4fd0091bfab1 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | Backdoor_Linux_Mirai_GC_MTB | - | -
+02e9bb2a57a6c924818ff0883bf219e4 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | OK | Trojan_Linux_Mirai_Y_MTB | - | -
+17a373b6ef2c95394453a02d03540480 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 LSB SO ARM v1 (ARM) | OK | Backdoor_Linux_Mirai_AW_xp | - | -
+474d28ac2e0ed518d960c9aa6ae4e40e | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 LSB SO ARM v1 (ARM) | OK | Backdoor_Linux_Mirai_AW_xp | - | -
+3d1cc5c4c42e43ace192728a05654943 | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | OK | Backdoor_Linux_Mirai_AW_xp, Backdoor_Linux_Mirai_DA_MTB | - | -
+d1fd618e4ed430a09e879bf4294315fc | 2026-04-07 17:12:25 | 2026-04-07 17:12:25 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135925-0 | - | kkk.arm7 | -
+6199adc7cb1ea2f8da5b22391f7593f7 | 2026-04-05 04:15:30 | 2026-04-05 04:15:30 | Bourne-Again shell script text executable | OK | - | - | -
+4f80418188150bd81d5033a0876e3d8e | 2026-04-05 04:15:30 | 2026-04-05 04:15:30 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | OK | - | - | -
+b14c44765eb4d5dc788a4350dd632459 | 2026-04-05 04:15:30 | 2026-04-05 04:15:30 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | OK | - | - | -
+dc58bebcba7ed75426c484d445a21e42 | 2026-04-05 04:15:30 | 2026-04-05 04:15:30 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | OK | - | - | -
+e609c77b01d0fe9513206e44bbdb6d30 | 2026-04-05 04:15:30 | 2026-04-05 04:15:30 | ELF 32-bit MSB executable, shared object, MIPS, MIPS32 version 1 (SYSV) | OK | - | - | -
+c57c374c39a3af9ece667639c2d3927e | 2026-04-05 04:15:30 | 2026-04-05 04:15:30 | ELF64 LSB SO x86-64 v1 (SYSV) | OK | - | - | -
+33acdb3da37be3b4a222e1410671dc89 | 2026-04-05 01:47:02 | 2026-04-06 17:36:01 | ELF 32-bit LSB executable, shared object, MIPS, MIPS32 version 1 (SYSV) | OK | - | - | -
+7680c97dcff5c56114257a3923a9342d | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ASCII text | OK | - | - | -
+6f7e25dc4391b73c2356184748eb5aad | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm | -
+2c82f5bf108ffee8955627a78654108a | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm5 | -
+433a7a06da6d6f134b37e85a6e4e40cb | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm6 | -
+e42c734335850a2e8bf1aac5eafd8ea3 | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm7 | -
+20be272edd356638e4df9fcf77f9d33a | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | DEMONS.m68k | -
+fb8080ac715a80b0de8594db0ce5acbd | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.mips | -
+ad97756dbda9e843dcd7134c8453ab42 | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.mpsl | -
+7aaa664672ca7dffa656bfb8870fbcc0 | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.ppc | -
+31967eb79cec14142f814b09f92bc2cb | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.sh4 | -
+88e17e55216e46241406f19b55c50d00 | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.spc | -
+706cb88847ff8f491a8a96b1a57cc9ad | 2026-04-03 11:22:51 | 2026-04-03 11:22:51 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.x86 | -
+6f276fb35587a7fa723543ff6df97281 | 2026-04-03 08:56:48 | 2026-04-03 08:56:48 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Gafgyt-9939811-0 | - | mipsel | -
+c1ab9286df653d335565d8fcd4b60d64 | 2026-04-02 23:33:50 | 2026-04-02 23:33:50 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Trojan.Mirai-9760303-0 | - | arm7 | -
+4a00c198153af6a22e57c09f488b9747 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | Bourne-Again shell script text executable | OK | - | - | -
+9128c97d3d14cc6c843d544e66bd62c9 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm | -
+a4ef841063e97d9e55f3b6a47a77bbb5 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm5 | -
+4d210b6a01762b8bdd55ab5153825c29 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm6 | -
+0cf8ec8d5af0972b66ad9abdd276e22a | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7135925-0 | UPX_Protector | boatnet.arm7 | -
+83be5abb8743e98b2a9cce66a499e6e7 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.i686 | -
+6b42876f1879f2f884676979208df912 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | boatnet.m68k | -
+58120ba940e70d27c8bc3d5ea74f0106 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.mips | -
+160d0a15d530fc906c4cf874f0a1e677 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.mpsl | -
+14dcd7065fef86fb0bc2178a12f59ff3 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Dropper.Mirai-7135957-0 | UPX_Protector | boatnet.ppc | -
+41af93a0fa236ae436fb94952175dcf8 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | - | boatnet.sh4 | -
+75c861b0cebb3405362400aad26c350a | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | - | boatnet.spc | -
+b0fbdec136bcc877bb0a87cb678e920c | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.x86 | -
+556e453a00ad2dc741c90af763e25098 | 2026-03-30 19:01:31 | 2026-03-30 19:01:31 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.x86_64 | -
+83866cc199ebdb057b19649efbc703bb | 2026-03-30 12:21:05 | 2026-03-30 12:21:05 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | OK | - | - | -
+242c5bd5126ac5b4d54ca6a97edf0678 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | Bourne-Again shell script text executable | OK | - | - | -
+44a94732a1980363c7c06aff7167af38 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF64 LSB SO ARM aarch64 v1 (SYSV) | OK | - | - | -
+cfe905c5b37cd3fcf0c18ef94ed1ae3c | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO Synopsys ARCompact ARC700 cores v1 (SYSV) | OK | Backdoor_Linux_Mirai_GS_MTB, Backdoor_Linux_Mirai_JC_MTB, Backdoor_Linux_Mirai_JG_MTB | - | -
+11b5bca019537cf6486ee5827d383935 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO ARM v1 (ARM) | OK | - | - | -
+3f15bcb05a8d4931c72cfe5d06eebbd4 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO ARM v1 (ARM) | OK | Backdoor_Linux_Mirai_FO_MTB | - | -
+1108e44314223ae8245932c239388a5a | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | OK | Backdoor_Linux_Mirai_DA_MTB, Backdoor_Linux_Mirai_GJ_MTB | - | -
+a67aa00dd30e1bc45c5d7eab8e5f57d6 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | OK | - | - | -
+fc00f4cc694aa606563c17c4aea10c63 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO Intel i386 v1 (SYSV) | OK | Linux_Trojan_Mirai_3a56423b | - | -
+98a1307e711744a7c4a567fc91a7de8e | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Gafgyt-7782058-0 | - | boatnet.m68k | -
+999c20befe0b77c2429366b7c88f3f1d | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-8041698-0 | - | boatnet.mips | -
+ce750fab8c32d73decd307845864d031 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | - | - | -
+e080c88f93ccb57569a4d6a3dd8fbd97 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-8041698-0 | - | boatnet.mipsrouter | -
+e4b603e0fa4883451f568ef095002d05 | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Trojan.Mirai-10012200-0 | - | boatnet.powerpc | -
+c5f3f9cde7856d0f24f7b0ca595cbd3a | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7136288-0 | - | boatnet.sh4 | -
+676346035726ad2d301f0b6dc96ce0ba | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF32 MSB SO SPARC v1 (SYSV) | OK | - | - | -
+ba5b60475db6177cd7cefe90942cf20f | 2026-03-29 23:58:18 | 2026-03-29 23:58:18 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Dropper.Mirai-7540662-0 | UPX_Protector | boatnet.x86_64 | -
+47b25769d3a902d992d2cab41d48b3e2 | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | Bourne-Again shell script text executable | OK | - | - | -
+2cc0a0d961ad60bb6c613713dcc4c7bb | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm5 | -
+1de0d0093f48ce33ae88ded5530830c6 | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm6 | -
+da6246dc5176bc889b95e30fd679b35a | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.arm7 | -
+bb0cd0842f5a6e1a939f1daffedba29f | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.mips | -
+1d6e40f1e0f2624e4e31620d9b8123f5 | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.mpsl | -
+58e7a217923dc8608c65d46269adf797 | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.ppc | -
+28639a678d442da61be5e5268d211673 | 2026-03-29 21:44:51 | 2026-03-29 21:44:51 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Dropper.Mirai-7135828-0 | - | DEMONS.x86 | -
+d6dc063f57715dd9ab8bae667f39d902 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | Bourne-Again shell script text executable | OK | - | - | -
+a47aff0cf8ae0a54aceafe818a589cd3 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm | -
+43c5c0acc26599838037641e1a12b108 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm5 | -
+544993177e452644c8cc76fe97795c72 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.arm6 | -
+671e9d728437b0597b3bfccd6ee1b51f | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7135925-0 | UPX_Protector | boatnet.arm7 | -
+9eb21397e2a8075d66121dd9ec6da5d4 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.i686 | -
+7465c8ae64b715b79fae15e1f3f3bcea | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | boatnet.m68k | -
+eaca40fd3d5b1dd375e2d2407b74f786 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.mips | -
+d0625fc2edadd6b5a92ee69e85573830 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.mpsl | -
+954b93efe471bd1842109ed373650ddd | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Dropper.Mirai-7135957-0 | UPX_Protector | boatnet.ppc | -
+f274843f966f951d6610bb7f8e50a2be | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | - | boatnet.sh4 | -
+8e5491882081c571cbd309f90ec9d393 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | - | boatnet.spc | -
+bb63cf4f899b12b2fb5c31b3fb73d834 | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.x86 | -
+4f1b5fae28549b60751a054821e4895b | 2026-03-28 20:15:31 | 2026-03-28 20:15:31 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Dropper.Mirai-7136013-0 | UPX_Protector | boatnet.x86_64 | -
+8ace49d1802577f2401ad1fdc0f98749 | 2026-03-28 11:17:18 | 2026-03-28 11:17:18 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-10018488-0 | - | mipsel | -
+6999e2a2903b135b6ce213545de612e9 | 2026-03-26 21:00:32 | 2026-03-27 23:59:57 | ELF 32-bit LSB executable, shared object, MIPS, MIPS32 version 1 (SYSV) | OK | - | - | -
+bded860e9282736229a0c57cab631273 | 2026-03-26 00:00:47 | 2026-03-26 00:00:47 | ELF 32-bit MSB executable, shared object, MIPS, MIPS32 version 1 (SYSV) | OK | - | - | -
+9554161730e4d77a607b89d6d9184efc | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ASCII text | OK | - | - | -
+a4ac8d1efb14add8b245976f2100c6c5 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF64 LSB SO ARM aarch64 v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnaarch64xnxn | -
+2743e23ee39f92f16b57025d97f3ba57 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxni386xnxn | -
+1692c4d6598a831a43f742ac029d7488 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF64 LSB SO LoongArch v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnloongarch64xnxn | -
+700b874b3dbcb8b3f42eb932b48e0ab3 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnm68kxnxn | -
+6fc973c0667ece64f0ffb10865a23ca7 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 MSB SO Xilinx MicroBlaze 32-bit RISC v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnmicroblazexnxn | -
+4c5dba456d5f631d9c32e1d7c93acfc5 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnmipsxnxn | -
+e0ed11958233d1ac1db83e1e751e7ddb | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 MSB SO OpenRISC v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnor1kxnxn | -
+bff593e83c967c63a757e60be854bc75 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnpowerpcxnxn | -
+375abb4dba44f64ef61d952e51954c95 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF32 LSB SO UCB RISC-V RVC double-float ABI v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnriscv32xnxn | -
+73ddc9560f56a45abc67d3ff34fe4493 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF64 LSB SO UCB RISC-V RVC double-float ABI v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnriscv64xnxn | -
+8829f6d0dc26a6eb1e495f9671c5a26a | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnsh2xnxn | -
+92d54dea46de76e881efe7be93a1e973 | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnsh4xnxn | -
+2af6ea4d369b8563f3bd020ac5f3c48d | 2026-03-25 13:16:12 | 2026-03-25 13:16:12 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnx86_64xnxn | -
+807a8a6522836ce6b00c2ea0056b22d3 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | Bourne-Again shell script text executable | OK | - | - | -
+1f93bc5eadade556603fbf11824599ca | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO Synopsys ARCompact ARC700 cores v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.arc | -
+7b91536cfc0c63077420a6fe27a927fb | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.arm | -
+31f4dbfe3e9e43e7717e38bf04abb4b4 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO ARM v1 (ARM) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.arm5 | -
+b587c99df221295fd6bbc50d926340de | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.arm6 | -
+0fac505e1c34ad2c2f108c8fa586d8a3 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135925-0 | - | nuclear.arm7 | -
+f7be80ba920da30c57acc630852e4209 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.i686 | -
+23d815d05f6901340b4e2ed399dcc65b | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | nuclear.m68k | -
+be6a8e08039353d786a71932a3ec9223 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.mpsl | -
+d245cc9d5a0e1b74fe03d0c579f6eabf | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Dropper.Mirai-7135957-0 | - | nuclear.ppc | -
+ff67d4e7e7d5e3da10aaad093e79cdf9 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.sh4 | -
+6ba4f69d18d9a788fe9752d5898bd16d | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.spc | -
+26fdc113cd46767e6fdc2dac14ad5508 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.x86 | -
+a35a8bd7ce2c6d772f02332f26381ba4 | 2026-03-24 07:35:54 | 2026-03-24 07:35:54 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.x86_64 | -
+ac12eb053b1344025d236c7d506f5479 | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | Bourne-Again shell script text executable | OK | - | - | -
+df1fa88de81cb966632e562d3b076492 | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | parm7 | -
+099d362164d53badf0848696c6ff9704 | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | pm68k | -
+e602b668953df6596c2d846d8e4b3e25 | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | pmips | -
+844d438f332bf8bb9bfabec5cac8f5a5 | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | px86_64 | -
+d16128e0e95fc5f06b858947677ae2ff | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | px86_i486 | -
+4322e27e542e3a062725d2eda6595d33 | 2026-03-23 10:30:05 | 2026-03-23 10:30:05 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | px86_i686 | -
+299324c2fcb0d6c630c4003efc53e402 | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | parm | -
+b5b37d13330d9d6922e9984857ebd1e7 | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | parm5 | -
+fd775139119e46cc8bad2e524825892e | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF 32-bit LSB executable, shared object, ARM, EABI5 version 1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | parm7 | -
+29ac6da82188aa21d725b70c825c0c41 | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | pm68k | -
+f657a66c4aaee7a0070664e54f3cbb1b | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | pppc | -
+710077bb2375397a5cdf3fd7d3aa5366 | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | psh4 | -
+8c3dbb4c02edd6eef4c97f11dc609b50 | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | px86_64 | -
+4ddda7112592bbfd5247e27038f9782d | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | px86_i486 | -
+f73f3f31b64f47c970bbc4bd18473403 | 2026-03-22 20:06:08 | 2026-03-22 20:06:08 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | px86_i686 | -
+71dcd589e38a5bcd0d2b7e11bc44d5e4 | 2026-03-22 17:55:25 | 2026-03-22 20:06:08 | Bourne-Again shell script text executable | OK | - | - | -
+1b83286935aca57550a5aec928ebf90e | 2026-03-22 16:34:39 | 2026-03-22 16:34:39 | POSIX shell script | OK | - | - | -
+3754cbb30d05f2dd62d74ddb6bc1b9e2 | 2026-03-21 22:51:44 | 2026-03-21 22:51:44 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | pmpsl | -
+0efee0938b784a2f4a1a6c30c677db7c | 2026-03-21 19:15:40 | 2026-03-21 19:15:40 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | - | pmips | -
+aae2160ef449bdd36ead230510e045e8 | 2026-03-20 21:05:33 | 2026-03-20 21:05:33 | Bourne-Again shell script text executable | OK | - | - | -
+f3a8ad85f0b1fac4f1865ab2e679f410 | 2026-03-20 21:05:33 | 2026-03-20 21:05:33 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Mirai-9858729-0 | - | parm | -
+0e2a4ae2af5aa2e300c4c12efad4b1da | 2026-03-20 21:05:33 | 2026-03-20 21:05:33 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | pmips | -
+68d184e936520c26fccb5022dbde100c | 2026-03-20 21:05:33 | 2026-03-20 21:05:33 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-7640640-0 | UPX_Protector | px86_64 | -
+48502e5ab5a10bf0b4619042ba8b2364 | 2026-03-20 21:05:33 | 2026-03-20 21:05:33 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | px86_i486 | -
+9ba59d95878d85589be5a906f58f0ab1 | 2026-03-20 21:05:33 | 2026-03-20 21:05:33 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | px86_i686 | -
+e10d63cb5e48931b6f23a6cd35e05615 | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | mips | -
+6fc7502c5270236ee0d4f240ad60b74c | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | sh4 | -
+d4a262fa634f427818482a7e52f866aa | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | x86 | -
+c0373303c658407ac396d17ddd2de9f0 | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | arm6 | -
+0479a683c44c1834c6cbaae1cf7a3e29 | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | ppc | -
+0064bd45fdb7a8dc60d1d0a72590f8ab | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | m68k | -
+65ffd4316d47223f16bb59f4f4741d20 | 2026-03-20 14:17:49 | 2026-03-20 14:17:49 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | arm7 | -
+b3636763f4afd5934e7822c7d1be753c | 2026-03-18 23:52:40 | 2026-03-18 23:52:40 | ASCII text | OK | - | - | -
+f10a44c26147b88486546758338678da | 2026-03-18 23:52:40 | 2026-03-18 23:52:40 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135966-0 | - | nuclear.mips | -
+a0cfcb197312a10e06e9843debf09576 | 2026-03-18 21:38:29 | 2026-03-18 21:38:29 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | pmpsl | -
+91e42ffd877e35670b9a66d860e32444 | 2026-03-18 21:38:29 | 2026-03-18 21:38:29 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7135925-0 | UPX_Protector | parm7 | -
+94c58793e85bbb6141c5a365859f1db7 | 2026-03-18 21:38:29 | 2026-03-18 21:38:29 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-9857931-0 | UPX_Protector | px86 | -
+a1aff10953e4d4afd1d1ad9c089298e2 | 2026-03-18 21:38:29 | 2026-03-18 21:38:29 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | parm6 | -
+2084947da635c9b56d36e2b3dc08f48b | 2026-03-18 21:38:29 | 2026-03-18 21:38:29 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Mirai-9858729-0 | - | parm5 | -
+995b944c483d67eee3de069432f74d1d | 2026-03-18 20:58:41 | 2026-03-18 20:58:41 | ASCII text | OK | - | - | -
+0f0479874bf6f4a7281099b15df27c27 | 2026-03-18 07:40:33 | 2026-03-18 07:40:33 | JSON text data | OK | - | - | -
+174c9b45d4376b2c467e5983852c3752 | 2026-03-18 07:40:33 | 2026-03-18 07:40:33 | HTML document | OK | - | - | -
+e3818e90c5237500858e8efd7027a4de | 2026-03-17 00:01:04 | 2026-03-17 00:01:04 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | pmpsl | -
+ae344b324284bea789728f0400a6764e | 2026-03-16 12:47:53 | 2026-03-16 12:47:53 | ASCII text | OK | - | - | -
+8a708e6ed102d24a8b8d7951e28937e7 | 2026-03-16 12:47:53 | 2026-03-16 12:47:53 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | OK | - | - | -
+284c5f8e950d870ad778e0f89cf37344 | 2026-03-16 12:47:53 | 2026-03-16 12:47:53 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | - | - | -
+707de9fbcd15fc532de63e2e053da5e2 | 2026-03-15 21:27:15 | 2026-03-15 21:27:15 | POSIX shell script | OK | - | - | -
+2ad848d5241871c8a8987d848c2153fe | 2026-03-13 00:29:55 | 2026-03-13 00:29:55 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10017641-0 | - | tuxnokill.mpsl | -
+f27a648653ed8b580eb292f3bf490c5b | 2026-03-11 21:50:56 | 2026-03-11 21:50:56 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | mips | -
+20f37ddd64cc4420e7cbe0c86de11c54 | 2026-03-11 00:27:38 | 2026-03-11 00:27:38 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | Backdoor_Linux_Mirai_GC_MTB | - | -
+40cfee292a4375cab18a22fa4edffda0 | 2026-03-08 00:06:50 | 2026-03-08 00:06:50 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | Backdoor_Linux_Mirai_GC_MTB | - | -
+085efcef06ea995885d7879fd3af2be9 | 2026-03-06 23:10:53 | 2026-03-06 23:10:53 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | mips | -
+c3755eda65b54cc55f4ca42d94d3283e | 2026-03-04 00:02:40 | 2026-03-04 00:02:40 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | OK | - | - | -
+09bad3b3149802d08a050f09f3c15b26 | 2026-03-03 23:30:47 | 2026-03-03 23:30:47 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | mips | -
+2f86f89f4b8e6887538c4fb4586df346 | 2026-03-01 23:43:56 | 2026-03-01 23:43:56 | Bourne-Again shell script text executable | OK | - | - | -
+7d80585b6581ca57b16d8c78da3a8cf2 | 2026-03-01 23:37:14 | 2026-03-01 23:37:14 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | - | m-p.s-l.dick | -
+f3f8af384317a201a9cc4167d3004912 | 2026-02-27 09:30:37 | 2026-02-27 09:30:37 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9944332-0 | - | mipsel | -
+05d802743047f1bd7771a4dce73eeb70 | 2026-02-24 00:00:50 | 2026-02-24 00:00:50 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10059029-0 | - | iran.mipsel | -
+807787a0b175aec8ef4babf41f61b95f | 2026-02-24 00:00:50 | 2026-02-24 00:00:50 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-8041698-0 | - | iran.mips | -
+847e331148ecc4cac06c1fe163f50b94 | 2026-02-23 01:11:07 | 2026-02-23 01:11:07 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | Backdoor_Linux_Mirai_GR_MTB, TrojanDownloader_Linux_Mirai_C_MTB | - | -
+b1676efd14ae4d2b1350ce2eab07095d | 2026-02-22 22:56:21 | 2026-02-22 22:56:21 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | Backdoor_Linux_Mirai_GC_MTB | - | -
+468723b8a4a80d29f73811b3ec0b061b | 2026-02-20 20:40:29 | 2026-02-20 20:40:29 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-10056463-0 | - | bin.x86_64 | -
+ee518fb241614b9845c69cf85f04b2bf | 2026-02-18 22:41:44 | 2026-02-18 22:41:44 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | UPX_Protector | - | -
+de5e56a6bfd88f1a8e1ade46ad5190d0 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | Bourne-Again shell script text executable | OK | - | - | -
+6436e628a1a90d9caa72b89d3be5ce42 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | parm5 | -
+35d11fda9eb4d885c35ce566b43072ed | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | parm6 | -
+60a848d364d7094870023ec831a2dfe2 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Dropper.Mirai-7135925-0 | UPX_Protector | parm7 | -
+0987f84e807a81c742e344c7cec0cb02 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | pm68k | -
+6fdd18bd69a722772731d612873c128c | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | pmips | -
+2726b98a97da1215984c806807c3fe5c | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-9858729-0 | UPX_Protector | pmpsl | -
+ea2a750283c04dec1931cc42214d2051 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Dropper.Mirai-7135957-0 | UPX_Protector | pppc | -
+cff9ce73a1c29be2d5ad9d9240e74347 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7136288-0 | - | psh4 | -
+7c404cbc8245e5bc2057e1ad295ea455 | 2026-02-16 20:38:38 | 2026-02-16 20:38:38 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-9857931-0 | UPX_Protector | px86 | -
+30d0a9d2ec4b7d3d3e878a04e82ded32 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ASCII text | OK | - | - | -
+16c2addf057b3e3b2703500462e38c1c | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF64 LSB SO ARM aarch64 v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnaarch64xnxn | -
+17212e14813a2d5eb0ec9d9cb4ed6feb | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxni386xnxn | -
+5a67f06434f58276d180c38559f44801 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF64 LSB SO LoongArch v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnloongarch64xnxn | -
+5092967ec7f0ebc3b790c4957750f884 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnm68kxnxn | -
+1e3f665d57c6a527c5ceb45b8c701bb1 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 MSB SO Xilinx MicroBlaze 32-bit RISC v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnmicroblazexnxn | -
+b266a7f254f58ba8976d54b10b946306 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnmipsxnxn | -
+de4c10658308f799bb3a7dda04fc9e74 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 MSB SO OpenRISC v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnor1kxnxn | -
+3a803f13f69a9d848607c4ff087bf51c | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnpowerpcxnxn | -
+5c42c5aa0c5554ddd9adba932531e5b2 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF32 LSB SO UCB RISC-V RVC double-float ABI v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnriscv32xnxn | -
+0ed905e85235efcfce5ba4c042375b63 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF64 LSB SO UCB RISC-V RVC double-float ABI v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnriscv64xnxn | -
+cf7ecde5dde926e0245f6ffdca9ddd47 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnsh2xnxn | -
+62425251d256c09cdd3c3121701a5c73 | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | - | xnxnxnxnxnxnxnxnsh4xnxn | -
+fbd9fc3f818320c03d14a7c7a3a070ea | 2026-02-14 08:50:45 | 2026-02-14 08:50:45 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-10056451-0 | UPX_Protector | xnxnxnxnxnxnxnxnx86_64xnxn | -
+569e267ff2af8f494bca4c53f392ebf3 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ASCII text | OK | - | - | -
+ae903375839b1d2703b9ae9a830ce158 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO Synopsys ARCompact ARC700 cores v1 (SYSV) | Unix.Trojan.Mirai-9770090-0 | - | - | -
+bde323b77c8ba80c15a5f650261d7f66 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO ARM v1 (ARM) | Unix.Malware.Mirai-9950761-0 | - | - | -
+e5ef583618a4d70ca4f3628e0d062893 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO ARM v1 (ARM) | Unix.Malware.Mirai-9950761-0 | - | - | -
+4d99226ed34af9f97717552634df055d | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | 202.155.10.112
+719d6c26275d3680c855d168cef80271 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | 202.155.10.112
+6c63810565d33b948c19add3e55ef485 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | -
+ecb631d4bfd82411e1988b902073d2af | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | -
+39c4e32f04904570466d04470dae0344 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | - | -
+d0013608f0d82e0f8af918d0c84857ee | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | 202.155.10.112
+e35ba778e046c104a201f6d9eb1e0b07 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | 202.155.10.112
+766183f37ea9f7408b7fe71018a57c0a | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Trojan.Mirai-9940367-0 | - | - | 202.155.10.112
+1a907dd4c92797996033348bf1be51fb | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Dropper.Mirai-7136288-0 | - | - | 202.155.10.112
+2e907c293d242ae36c59696dd328ae4f | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF32 MSB SO SPARC v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | 202.155.10.112
+1d1b07065613cc12b70a8e11817e0aa5 | 2026-02-10 14:51:19 | 2026-02-10 14:51:19 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Malware.Mirai-9950761-0 | - | - | 202.155.10.112
+8cf35e8a597f814508927e1382a8d503 | 2026-02-09 23:46:55 | 2026-02-09 23:46:55 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10059786-0 | - | - | -
+d6710f8547aabee0f9c9f4638a5ec00b | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | Bourne-Again shell script text executable | OK | - | - | -
+7c9a4490dcb8dd4a0494fc0402c43796 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | swatnet | -
+948e2aa93f8aa32ac54bd1f6e5437289 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | weednet | -
+a8f1a1b7da2c6c53c73ca800c4a02335 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Tsunami-6981155-0 | - | unet | -
+f56f5bba23702556c68bcf84c301840a | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | gaynet | -
+5d2c1d7436d3a989a6c3c580fb547525 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | botnet | -
+abccf21a652f8d012fe811cf961e0119 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 LSB SO Intel i386 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | fucknet | -
+cae4326cb21a35eacb8ace5288c2c918 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Tsunami-6981155-0 | - | ballnet | -
+168036e68ea46fd5dd2be5f70e248d9d | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | cock | -
+282898fac2e6a88c4108e9751cfc8ce4 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | net | -
+904adc6569d83a1f3be37956740f1d02 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 MSB SO PowerPC or cisco 4500 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | cracknet | -
+4c5a7be674be8ec71ac929aa44a5d6f2 | 2026-02-09 21:49:47 | 2026-02-09 21:49:47 | ELF32 LSB SO ARM EABI4 v1 (SYSV) | Unix.Trojan.Tsunami-6981155-0 | - | dicknet | -
+927d2f4d12dbf78c1a8c5ff59d589433 | 2026-02-07 23:57:46 | 2026-02-07 23:57:46 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7135890-0 | - | - | -
+5991b6c6b8e96e75fdb71ae25b68bc97 | 2026-02-06 06:07:25 | 2026-02-06 06:07:25 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | OK | - | - | -
+6ab3f168d8a10c45c1c2914dcce68587 | 2026-01-28 18:47:19 | 2026-01-28 18:47:19 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7355719-0 | - | - | -
+38ea4d206fe17ad4889d0cfe43f5bd0f | 2026-01-24 09:03:50 | 2026-01-24 09:03:50 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10056463-0 | - | - | -
+32817e09143327d4552c1510473214df | 2026-01-22 19:40:35 | 2026-01-22 19:40:35 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-8041698-0 | - | - | -
+4854ea67c459263d05799931be693f36 | 2026-01-22 19:40:35 | 2026-01-22 19:40:35 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-10059029-0 | - | - | -
+6e05a46adcfdb572705b6df690aad0b0 | 2026-01-16 00:01:06 | 2026-01-16 00:01:06 | ELF32 LSB SO MIPS MIPS32 rel2 v1 (SYSV) | Unix.Malware.Mirai-10059790-0 | - | - | -
+b6c14c2821bea02b0603ec8b8a8c5d63 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | Bourne-Again shell script text executable | OK | - | - | -
+a186de0274dc842998d87f263a5b1ec6 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+762ef22840a768874c52007a44cfb639 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+76967ae237e049914ddf302f6937ae06 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+aa815409644f5fe353c8442b754d018e | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 MSB SO PowerPC or cisco 4500 v1 | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | -
+eabad3c84bf05d93d7078e31baad9291 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 MSB SO Motorola m68k 68020 v1 (SYSV) | Unix.Trojan.Mirai-6981989-0 | - | - | -
+baf3d3dfbc28ff11ce1063eb83a0a686 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF64 LSB SO ARM aarch64 v1 (GNU/Linux) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | -
+20532b27d976e865aceb0ec11d9f2ff8 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF64 LSB SO x86-64 v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+be311388d45c5c1c9da13f011d7e16cf | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO Synopsys ARCompact ARC700 cores v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | - | - | -
+1504da4e2f8861fadaf106de4c22a59d | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO ARM v1 (ARM) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | -
+2abe9d933d6821e118fadbaadddfa44c | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF 32LSB SO Renesas SH v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | - | - | -
+412addf4c974ec7cb0eeff939e7e60a7 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 MSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+e2d9d09de0da60b37bf485dafd26a1bf | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+2ce92c91c2d338fe6e87a8a5ccf8767d | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO Intel i386 v1 (GNU/Linux) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+673c690dbad12aa01e0d0623b280f611 | 2026-01-15 08:30:24 | 2026-01-15 08:30:24 | ELF32 LSB SO ARM EABI4 v1 (GNU/Linux) | Unix.Trojan.Mirai-7100807-0 | UPX_Protector | - | 143.20.185.245
+fab4aa3bc10fe3020538e90252e9b8f3 | 2026-01-14 02:51:21 | 2026-03-04 05:18:49 | XML 1.0 document | OK | - | - | -
+35ed02ac4ec6ea5c7590d2e97ddd56e7 | 2026-01-14 02:51:21 | 2026-01-14 02:51:21 | XML 1.0 document | OK | - | - | -
+0a3e69b8b37a6df0acd7e7f5d9d3b854 | 2025-11-04 01:26:21 | 2025-11-04 01:26:21 | HTML document | OK | - | - | -
+e1059f0307358c02766193e5e24c107b | 2025-10-07 11:20:16 | 2025-10-07 11:20:16 | XML 1.0 document | OK | - | - | -
+692efa6f8aac1909e8ca33b3ea501443 | 2025-10-07 11:20:16 | 2025-10-07 11:20:16 | XHTML document text (version 1.0) XHTML document text (version 1.0) | OK | - | - | -
+9014dac7d1b1355420a27c428b31c139 | 2025-06-01 08:14:08 | 2025-06-01 08:14:08 | POSIX shell script | OK | - | - | -
+90034709fe640f9badeae47d62c88f37 | 2025-04-04 11:08:47 | 2025-04-04 17:49:10 | POSIX shell script | OK | - | - | -
+7b70aceca81d038bcf859ea5a28f9fd9 | 2025-04-04 10:38:10 | 2025-04-04 10:38:10 | ELF32 LSB SO MIPS MIPS-I v1 (SYSV) | Unix.Dropper.Mirai-7138865-0 | - | - | -
+fb7367cdd72752c2bab35ec17d9a3e74 | 2025-02-18 14:11:53 | 2025-02-18 14:11:53 | HTML document | OK | - | - | -
+fe3ade671d6bc6864a017835749bb5bf | 2025-02-17 12:57:11 | 2025-02-17 12:57:11 | HTML document | OK | - | - | -
+85767a4782556c3df31a08ae7e9d71c0 | 2025-02-17 12:57:11 | 2025-02-17 12:57:11 | HTML document | OK | - | - | -

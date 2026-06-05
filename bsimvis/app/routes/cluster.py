@@ -276,6 +276,7 @@ def list_clusters():
 
     # 2. Fetch all metadata
     results = []
+    total = 0
 
     # Fetch tree links to provide parent information
     links_key = f"{collection}:cluster:tree_links:{algo}"
@@ -411,27 +412,52 @@ def list_clusters():
                             filtered_valid_nodes.add(cid)
                 valid_nodes = filtered_valid_nodes
 
+        # Paginate matched nodes BEFORE expanding
+        matched_results = []
+        for cid in valid_nodes:
+            m = meta_map.get(cid)
+            if not m:
+                m = {"cluster_id": cid}
+            matched_results.append(m)
+
+        reverse = sort_order == "desc"
+        if sort_by == "stability":
+            matched_results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
+        elif sort_by == "count":
+            matched_results.sort(key=lambda x: x.get("member_count", 0), reverse=reverse)
+        elif sort_by == "features":
+            matched_results.sort(key=lambda x: x.get("avg_features", 0), reverse=reverse)
+        elif sort_by == "cohesion":
+            matched_results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
+        else:
+            matched_results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
+
+        total = len(matched_results)
+        page_metas = matched_results[offset : offset + limit]
+        
+        page_nodes = set(str(m.get("cluster_id")) for m in page_metas)
+        expanded_nodes = set(page_nodes)
+
         # Expand parents if requested
-        original_nodes = set(valid_nodes)
         if show_parents:
-            for node in original_nodes:
+            for node in page_nodes:
                 curr = node
                 while curr in child_to_parent:
                     curr = child_to_parent[curr]
-                    valid_nodes.add(curr)
+                    expanded_nodes.add(curr)
 
         # Expand children if requested
         if show_children:
-            queue = list(original_nodes)
+            queue = list(page_nodes)
             while queue:
                 curr = queue.pop(0)
                 children = parent_to_children.get(curr, [])
                 for child in children:
-                    if child not in valid_nodes:
-                        valid_nodes.add(child)
+                    if child not in expanded_nodes:
+                        expanded_nodes.add(child)
                         queue.append(child)
 
-        for cid in valid_nodes:
+        for cid in expanded_nodes:
             m = meta_map.get(cid)
             if not m:
                 if not show_parents and not show_children:
@@ -452,21 +478,20 @@ def list_clusters():
             }
             results.append(cluster_result)
 
-    # 3. Sorting
+    # 3. Sorting expanded results
     reverse = sort_order == "desc"
     if sort_by == "stability":
-        results.sort(key=lambda x: x["avg_stability"], reverse=reverse)
+        results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
     elif sort_by == "count":
-        results.sort(key=lambda x: x["count"], reverse=reverse)
+        results.sort(key=lambda x: x.get("count") or 0, reverse=reverse)
     elif sort_by == "features":
         results.sort(key=lambda x: x.get("avg_features", 0), reverse=reverse)
     elif sort_by == "cohesion":
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
     else:
-        results.sort(key=lambda x: str(x["cluster_id"]), reverse=reverse)
+        results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
 
-    total = len(results)
-    page = results[offset : offset + limit]
+    page = results
 
     # 4. Fetch direct members for ONLY the clusters in the current page
     if show_members and page:

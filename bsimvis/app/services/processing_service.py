@@ -154,6 +154,13 @@ class ProcessingService:
             # --- Extract parts ---
             func_meta = dict(func_data.get("function_metadata", {}))
             func_meta["collection"] = collection
+            
+            # Copy file-level metadata to function metadata
+            fields_to_copy = ["first_seen", "last_seen", "filetype", "avtype", "yara", "cc_ip", "file_names"]
+            for f in fields_to_copy:
+                if f in file_meta:
+                    func_meta[f] = file_meta[f]
+            
             func_features = func_data.get("function_features", {})
             func_source = func_data.get("function_source", {})
 

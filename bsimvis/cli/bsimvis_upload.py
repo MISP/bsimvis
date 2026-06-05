@@ -1,4 +1,4 @@
-import tomllib, json, uuid
+import tomllib, json, uuid, csv, hashlib
 
 import time, logging, argparse, os, tempfile, zipfile
 from pathlib import Path
@@ -58,6 +58,12 @@ def upload_bsim_data(data, args, config):
 
     file_meta = data.get("file_metadata", {})
     file_md5 = file_meta.get("file_md5", "unknown_md5")
+
+    if getattr(args, "metadata_dict", None) and file_md5 in args.metadata_dict:
+        extra_meta = args.metadata_dict[file_md5]
+        data.setdefault("file_metadata", {}).update(extra_meta)
+        if "file_name" in extra_meta:
+            data["file_metadata"]["file_name"] = extra_meta["file_name"]
 
     # Ensure collection is at the root for the API
     collections = args.collections if args.collections else ["main"]
@@ -143,7 +149,21 @@ def upload_bsim_data(data, args, config):
                         }
                     )
             except Exception as e:
-                logging.error(f"[!] API Submission failed for {api_url}: {e}")
+                is_duplicate = False
+                err_msg = ""
+                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                    try:
+                        err_json = e.response.json()
+                        err_msg = err_json.get("error") or err_json.get("message") or ""
+                        if e.response.status_code == 400 and "already exists" in err_msg:
+                            logging.warning(f"[!] Skipped: {file_md5} - {err_msg}")
+                            is_duplicate = True
+                    except Exception:
+                        err_msg = e.response.text[:200]
+
+                if not is_duplicate:
+                    err_suffix = f" (Details: {err_msg})" if err_msg else ""
+                    logging.error(f"[!] API Submission failed for {api_url}: {e}{err_suffix}")
 
     return pipeline_details
 
@@ -214,6 +234,15 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 "min_func_len": args.min_func_len,
                 "enqueue": "false",
             }
+
+            if getattr(args, "metadata_dict", None):
+                file_md5 = hashlib.md5(raw_bytes).hexdigest()
+                extra_meta = args.metadata_dict.get(file_md5)
+                if extra_meta:
+                    params["file_metadata_extra"] = json.dumps(extra_meta)
+                    if "file_name" in extra_meta:
+                        params["file_name"] = extra_meta["file_name"]
+
             # Ghidra Import options
             if getattr(args, "processor", None) is not None:
                 params["processor"] = args.processor
@@ -257,7 +286,21 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                         }
                     )
             except Exception as e:
-                logging.error(f"[!] Upload failed for {api_url}: {e}")
+                is_duplicate = False
+                err_msg = ""
+                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                    try:
+                        err_json = e.response.json()
+                        err_msg = err_json.get("error") or err_json.get("message") or ""
+                        if e.response.status_code == 400 and "already exists" in err_msg:
+                            logging.warning(f"[!] Skipped: {file_name} - {err_msg}")
+                            is_duplicate = True
+                    except Exception:
+                        err_msg = e.response.text[:200]
+
+                if not is_duplicate:
+                    err_suffix = f" (Details: {err_msg})" if err_msg else ""
+                    logging.error(f"[!] Upload failed for {api_url}: {e}{err_suffix}")
                 success = False
 
     return (1 if success else 0), pipeline_details
@@ -345,6 +388,39 @@ def main(args):
 
     if not args.batch_uuid:
         args.batch_uuid = str(uuid.uuid4())
+
+    args.metadata_dict = {}
+    if getattr(args, "metadata", None):
+        try:
+            with open(args.metadata, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f, delimiter="|")
+                reader.fieldnames = [n.strip() for n in reader.fieldnames]
+                for row in reader:
+                    hash_val = row.get("HASH", "").strip()
+                    if not hash_val:
+                        continue
+
+                    def parse_list(val):
+                        if not val or val.strip() == "-":
+                            return []
+                        return [v.strip() for v in val.split(",")]
+
+                    names = parse_list(row.get("names", ""))
+                    extra = {
+                        "first_seen": parse_list(row.get("first_seen", "")),
+                        "last_seen": parse_list(row.get("last_seen", "")),
+                        "filetype": parse_list(row.get("filetype", "")),
+                        "avtype": parse_list(row.get("avtype", "")),
+                        "yara": parse_list(row.get("yara", "")),
+                        "file_names": names,
+                        "cc_ip": parse_list(row.get("CC ip", "")),
+                    }
+                    if names:
+                        extra["file_name"] = names[0]
+                    args.metadata_dict[hash_val] = extra
+            logging.info(f"[i] Parsed metadata for {len(args.metadata_dict)} hashes from {args.metadata}")
+        except Exception as e:
+            logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
 
     logging.info(f"[i] Processing targets using profile: {args.profile}")
     print(
@@ -502,6 +578,12 @@ def cli_main():
         default=DEFAULT_CONFIG_NAME,
         metavar="FILE",
         help="Config file",
+    )
+
+    parser.add_argument(
+        "--metadata",
+        metavar="FILE",
+        help="Path to a metadata CSV file to enrich uploaded binaries",
     )
 
     decomp_args = parser.add_argument_group("Decompilation options")

@@ -40,10 +40,11 @@
     selection_method = "eom"
     min_sim = 0.0
     min_features = 0
+    min_cohesion = 0.5
 
 [similarity]
     top_k = 1000
-    min_score = 0.3
+    min_score = 0.7
     min_features = 0
     algo = "unweighted_cosine"
 

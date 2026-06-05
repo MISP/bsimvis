@@ -141,43 +141,127 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        matrix_mem_mb = (num_nodes * num_nodes * 4) / (1024 * 1024)
-        msg = f"Allocating {num_nodes}x{num_nodes} distance matrix (~{matrix_mem_mb:.2f} MB)..."
+        import scipy.sparse as sp
+        from scipy.sparse.csgraph import connected_components
+        import pandas as pd
+
+        msg = f"Shattering binary graph into connected components to avoid OOM..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        try:
-            dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
-        except MemoryError:
-            msg = f"FAILED to allocate distance matrix of size {num_nodes}x{num_nodes} (OOM)."
-            logging.error(f"[!] {msg}")
-            if job_service and job_id:
-                job_service.add_log(job_id, msg)
-            return False
-
-        np.fill_diagonal(dist_matrix, 0)
-
+        rows = []
+        cols = []
+        data = []
         for i, j, d in edges:
-            dist_matrix[i, j] = d
-            dist_matrix[j, i] = d
+            if d < 1.0: # Only real similarity edges
+                rows.extend([i, j])
+                cols.extend([j, i])
+                data.extend([1, 1])
 
-        msg = f"Running HDBSCAN (min_cluster_size={min_cluster_size}, min_samples={min_samples}, epsilon={cluster_selection_epsilon})..."
+        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        
+        comp_to_nodes = {}
+        for i, comp_id in enumerate(labels):
+            if comp_id not in comp_to_nodes:
+                comp_to_nodes[comp_id] = []
+            comp_to_nodes[comp_id].append(i)
+
+        comp_to_edges = {}
+        for i, j, d in edges:
+            c = labels[i]
+            if c not in comp_to_edges:
+                comp_to_edges[c] = []
+            comp_to_edges[c].append((i, j, d))
+
+        msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-            min_samples=min_samples,
-            cluster_selection_epsilon=cluster_selection_epsilon,
-            cluster_selection_method=selection_method,
-            metric="precomputed",
-            gen_min_span_tree=True,
-        )
+        global_tree_rows = []
+        global_root_id = num_nodes
+        next_cluster_id = num_nodes + 1
+        comp_roots = []
         
         start_fit = time.time()
-        clusterer.fit(dist_matrix.astype(np.float64))
+        
+        for comp_id, comp_nodes in comp_to_nodes.items():
+            size = len(comp_nodes)
+            if size < min_cluster_size:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+                
+            sub_id_to_global = {i: global_idx for i, global_idx in enumerate(comp_nodes)}
+            global_to_sub_id = {global_idx: i for i, global_idx in enumerate(comp_nodes)}
+            
+            sub_dist = np.ones((size, size), dtype=np.float32)
+            np.fill_diagonal(sub_dist, 0)
+            
+            if comp_id in comp_to_edges:
+                for u, v, d in comp_to_edges[comp_id]:
+                    ui = global_to_sub_id[u]
+                    vi = global_to_sub_id[v]
+                    sub_dist[ui, vi] = d
+                    sub_dist[vi, ui] = d
+                    
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=min(min_cluster_size, size),
+                min_samples=min(min_samples, size),
+                cluster_selection_epsilon=cluster_selection_epsilon,
+                cluster_selection_method=selection_method,
+                metric="precomputed",
+                gen_min_span_tree=True,
+            )
+            clusterer.fit(sub_dist.astype(np.float64))
+            
+            local_tree_df = clusterer.condensed_tree_.to_pandas()
+            if local_tree_df.empty:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+                
+            sub_internal_to_global = {}
+            # Ensure local root maps to a single global internal ID
+            local_root_sub = local_tree_df['parent'].min()
+            
+            for _, row in local_tree_df.iterrows():
+                parent = int(row['parent'])
+                child = int(row['child'])
+                
+                if parent not in sub_internal_to_global:
+                    sub_internal_to_global[parent] = next_cluster_id
+                    next_cluster_id += 1
+                    
+                if child < size: # Leaf
+                    global_child = sub_id_to_global[child]
+                else: # Internal
+                    if child not in sub_internal_to_global:
+                        sub_internal_to_global[child] = next_cluster_id
+                        next_cluster_id += 1
+                    global_child = sub_internal_to_global[child]
+                    
+                global_tree_rows.append({
+                    'parent': sub_internal_to_global[parent],
+                    'child': global_child,
+                    'lambda_val': float(row['lambda_val']),
+                    'child_size': int(row['child_size'])
+                })
+                
+            comp_roots.append((sub_internal_to_global[local_root_sub], size))
+            
+        # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
+        for comp_root, size in comp_roots:
+            global_tree_rows.append({
+                'parent': global_root_id,
+                'child': comp_root,
+                'lambda_val': 1.0,
+                'child_size': size
+            })
+            
+        tree_df = pd.DataFrame(global_tree_rows)
         fit_time = time.time() - start_fit
         
         msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
@@ -185,8 +269,7 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        tree_df = clusterer.condensed_tree_.to_pandas()
-        msg = f"Condensed tree has {len(tree_df)} rows."
+        msg = f"Global condensed tree has {len(tree_df)} rows."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
@@ -433,12 +516,14 @@ class BinClusterService:
             chunk = all_member_file_ids[i : i + 1000]
             m_pipe = r.pipeline()
             for file_id in chunk:
-                m_pipe.json().get(f"{file_id}:meta", "$.file_name")
+                m_pipe.json().get(f"{file_id}:meta", "$")
             results = m_pipe.execute()
             for idx, file_id in enumerate(chunk):
-                name_res = results[idx]
-                name = name_res[0] if isinstance(name_res, list) and name_res else None
-                all_member_meta[file_id] = {"file_name": name}
+                meta_res = results[idx]
+                m = meta_res[0] if isinstance(meta_res, list) and meta_res else {}
+                if isinstance(m, str):
+                    m = json.loads(m)
+                all_member_meta[file_id] = m
             
             if i % 1000 == 0:
                 logging.info(f"[*] Fetched meta for {i}/{total_members} files...")
@@ -464,22 +549,37 @@ class BinClusterService:
 
         for idx, (label, members) in enumerate(cluster_members.items()):
             names = []
-            func_counts = []
+            yara_list = []
+            avtype_list = []
+            filetype_list = []
+            ccip_list = []
 
             for file_id in members:
                 m = all_member_meta.get(file_id, {})
                 if m.get("file_name"):
                     names.append(m["file_name"])
-
-                # We don't have direct bsim_features_count for files here easily,
-                # but we can use function count or other metrics if needed.
-                # For now let's stick to name and member count.
+                if m.get("yara"):
+                    yara_list.extend(m["yara"] if isinstance(m["yara"], list) else [m["yara"]])
+                if m.get("avtype"):
+                    avtype_list.extend(m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]])
+                if m.get("filetype"):
+                    filetype_list.extend(m["filetype"] if isinstance(m["filetype"], list) else [m["filetype"]])
+                if m.get("cc_ip"):
+                    ccip_list.extend(m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]])
 
             default_name = (
                 Counter(names).most_common(1)[0][0]
                 if names
                 else f"Binary Cluster {label}"
             )
+            
+            def build_freq(items):
+                return [{"value": k, "count": v, "percent": round((v / len(items)) * 100)} for k, v in Counter(items).most_common(5)] if items else []
+
+            yara_freq = build_freq(yara_list)
+            avtype_freq = build_freq(avtype_list)
+            filetype_freq = build_freq(filetype_list)
+            ccip_freq = build_freq(ccip_list)
 
             # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
             if len(members) > 1:
@@ -519,6 +619,10 @@ class BinClusterService:
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
                 "sample_members": names[:5],
+                "yara_distribution": yara_freq,
+                "avtype_distribution": avtype_freq,
+                "filetype_distribution": filetype_freq,
+                "ccip_distribution": ccip_freq,
                 "created_at": int(time.time() * 1000),
             }
 

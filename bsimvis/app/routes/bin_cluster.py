@@ -205,6 +205,7 @@ def list_bin_clusters():
             pass
 
     results = []
+    total = 0
     if all_meta_keys:
         pipe = r.pipeline()
         for k in all_meta_keys:
@@ -230,7 +231,9 @@ def list_bin_clusters():
                 keywords = [k for k in q.split() if k]
                 match = True
                 for kw in keywords:
-                    if not any(kw in v.lower() for v in [cid, cuuid, cname]):
+                    yara_values = [item.get("value", "").lower() for item in m.get("yara_distribution", []) if item.get("value")]
+                    search_targets = [cid, cuuid, cname] + yara_values
+                    if not any(kw in v.lower() for v in search_targets):
                         match = False
                         break
                 if not match:
@@ -240,8 +243,11 @@ def list_bin_clusters():
                 continue
             if cluster_uuid_q and cluster_uuid_q not in cuuid.lower():
                 continue
-            if cluster_name_q and cluster_name_q not in cname.lower():
-                continue
+            if cluster_name_q:
+                yara_values = [item.get("value", "").lower() for item in m.get("yara_distribution", []) if item.get("value")]
+                search_targets = [cname.lower()] + yara_values
+                if not any(cluster_name_q in v for v in search_targets):
+                    continue
             if min_stability > 0 and m.get("avg_stability", 0) < min_stability:
                 continue
             if max_stability > 0 and m.get("avg_stability", 0) > max_stability:
@@ -301,27 +307,50 @@ def list_bin_clusters():
                             filtered_valid_nodes.add(cid)
                 valid_nodes = filtered_valid_nodes
 
+        # Paginate matched nodes BEFORE expanding
+        matched_results = []
+        for cid in valid_nodes:
+            m = meta_map.get(cid)
+            if not m:
+                m = {"cluster_id": cid}
+            matched_results.append(m)
+
+        reverse = sort_order == "desc"
+        if sort_by == "stability":
+            matched_results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
+        elif sort_by == "count":
+            matched_results.sort(key=lambda x: x.get("member_count", 0), reverse=reverse)
+        elif sort_by == "cohesion":
+            matched_results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
+        else:
+            matched_results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
+
+        total = len(matched_results)
+        page_metas = matched_results[offset : offset + limit]
+
+        page_nodes = set(str(m.get("cluster_id")) for m in page_metas)
+        expanded_nodes = set(page_nodes)
+
         # Expand parents if requested
-        original_nodes = set(valid_nodes)
         if show_parents:
-            for node in original_nodes:
+            for node in page_nodes:
                 curr = node
                 while curr in child_to_parent:
                     curr = child_to_parent[curr]
-                    valid_nodes.add(curr)
+                    expanded_nodes.add(curr)
 
         # Expand children if requested
         if show_children:
-            queue = list(original_nodes)
+            queue = list(page_nodes)
             while queue:
                 curr = queue.pop(0)
                 children = parent_to_children.get(curr, [])
                 for child in children:
-                    if child not in valid_nodes:
-                        valid_nodes.add(child)
+                    if child not in expanded_nodes:
+                        expanded_nodes.add(child)
                         queue.append(child)
 
-        for cid in valid_nodes:
+        for cid in expanded_nodes:
             m = meta_map.get(cid)
             if not m:
                 m = {"cluster_id": cid}
@@ -329,6 +358,7 @@ def list_bin_clusters():
                 "cluster_id": m.get("cluster_id"),
                 "cluster_uuid": m.get("cluster_uuid"),
                 "cluster_name": m.get("cluster_name"),
+                "is_custom_name": m.get("is_custom_name", False),
                 "avg_stability": m.get("avg_stability", 0.0),
                 "cohesion_score": m.get("cohesion_score", 0),
                 "count": m.get("member_count"),
@@ -336,22 +366,25 @@ def list_bin_clusters():
                 "parent": child_to_parent.get(str(m.get("cluster_id"))),
                 "snippet": m.get("snippet", ""),
                 "sample_members": m.get("sample_members", []),
+                "yara_distribution": m.get("yara_distribution", []),
+                "avtype_distribution": m.get("avtype_distribution", []),
+                "filetype_distribution": m.get("filetype_distribution", []),
+                "ccip_distribution": m.get("ccip_distribution", []),
             }
             results.append(cluster_result)
 
-    # Sorting
+    # Sorting expanded results
     reverse = sort_order == "desc"
     if sort_by == "stability":
-        results.sort(key=lambda x: x["avg_stability"], reverse=reverse)
+        results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
     elif sort_by == "count":
-        results.sort(key=lambda x: x["count"], reverse=reverse)
+        results.sort(key=lambda x: x.get("count") or 0, reverse=reverse)
     elif sort_by == "cohesion":
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
     else:
-        results.sort(key=lambda x: str(x["cluster_id"]), reverse=reverse)
+        results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
 
-    total = len(results)
-    page = results[offset : offset + limit]
+    page = results
 
     # Fetch direct members for ONLY the clusters in the current page
     if show_members and page:
@@ -409,6 +442,10 @@ def list_bin_clusters():
                     ),
                     "tags": member_meta_map.get(mid, {}).get("tags", []),
                     "user_tags": member_meta_map.get(mid, {}).get("user_tags", []),
+                    "avtype": member_meta_map.get(mid, {}).get("avtype", []),
+                    "filetype": member_meta_map.get(mid, {}).get("filetype", []),
+                    "yara": member_meta_map.get(mid, {}).get("yara", []),
+                    "cc_ip": member_meta_map.get(mid, {}).get("cc_ip", []),
                 }
                 for mid in mids
             ]
@@ -466,6 +503,7 @@ def update_bin_cluster_meta():
         return {"error": "Cluster meta not found"}, 404
 
     r.json().set(meta_key, "$.cluster_name", cluster_name)
+    r.json().set(meta_key, "$.is_custom_name", True)
 
     # Propagate name to all member files for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
@@ -585,13 +623,21 @@ def get_bin_cluster_files():
     pipe = r.pipeline()
     for fid in page:
         pipe.json().get(f"{fid}:meta", "$")
+        parts = fid.split(":")
+        md5 = parts[-1] if len(parts) >= 3 else ""
+        pipe.scard(f"{collection}:idx:file:functions:{md5}")
     raw_metas = pipe.execute()
 
     files = []
-    for fid, meta in zip(page, raw_metas):
+    for idx, fid in enumerate(page):
+        meta = raw_metas[2 * idx]
+        func_count = raw_metas[2 * idx + 1]
         m = meta[0] if isinstance(meta, list) and meta else meta
         if isinstance(m, str):
-            m = json.loads(m)
+            try:
+                m = json.loads(m)
+            except Exception:
+                m = {}
         if not m:
             m = {}
 
@@ -602,6 +648,15 @@ def get_bin_cluster_files():
                 "file_md5": m.get("file_md5", ""),
                 "language_id": m.get("language_id", ""),
                 "architecture": m.get("architecture", ""),
+                "function_count": func_count,
+                "avtype": m.get("avtype", []),
+                "filetype": m.get("filetype", []),
+                "yara": m.get("yara", []),
+                "yara_matches": m.get("yara", []),
+                "ips": m.get("cc_ip", []),
+                "first_seen": m.get("first_seen", []),
+                "tags": m.get("tags", []),
+                "user_tags": m.get("user_tags", []),
             }
         )
 

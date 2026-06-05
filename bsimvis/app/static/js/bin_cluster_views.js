@@ -349,19 +349,26 @@ class BinClusterHierarchy {
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error("Cluster data not found");
             const data = await res.json();
+            const nameType = params.get('cluster_name_type') || 'file';
 
-            let nodes = (data.results || []).map(m => ({
-                id: String(m.cluster_id),
-                parent: m.parent ? String(m.parent) : null,
-                name: m.cluster_name || `Cluster ${m.cluster_id}`,
-                uuid: m.cluster_uuid,
-                size: m.count || 0,
-                stability: m.avg_stability || 0.0,
-                cohesion: m.cohesion_score || 0.0,
-                snippet: m.snippet || "",
-                members: m.sample_members || [],
-                direct_members: m.direct_members || []
-            }));
+            let nodes = (data.results || []).map(m => {
+                let displayName = m.cluster_name || `Cluster ${m.cluster_id}`;
+                if (nameType === 'yara' && !m.is_custom_name && m.yara_distribution && m.yara_distribution.length > 0) {
+                    displayName = m.yara_distribution[0].value;
+                }
+                return {
+                    id: String(m.cluster_id),
+                    parent: m.parent ? String(m.parent) : null,
+                    name: displayName,
+                    uuid: m.cluster_uuid,
+                    size: m.count || 0,
+                    stability: m.avg_stability || 0.0,
+                    cohesion: m.cohesion_score || 0.0,
+                    snippet: m.snippet || "",
+                    members: m.sample_members || [],
+                    direct_members: m.direct_members || []
+                };
+            });
 
             if (this.params.show_members) {
                 const memberNodes = [];
@@ -381,7 +388,11 @@ class BinClusterHierarchy {
                                 size: 1,
                                 stability: 0,
                                 cohesion: 0,
-                                members: []
+                                members: [],
+                                avtype: m.avtype,
+                                filetype: m.filetype,
+                                yara: m.yara,
+                                cc_ip: m.cc_ip
                             });
                         });
                     }
@@ -619,7 +630,13 @@ class BinClusterHierarchy {
                     d.data.tags,
                     event,
                     d.data.tags,
-                    d.data.user_tags
+                    d.data.user_tags,
+                    {
+                        avtype: d.data.avtype,
+                        filetype: d.data.filetype,
+                        yara: d.data.yara,
+                        cc_ip: d.data.cc_ip
+                    }
                 );
             }
             return;
@@ -641,6 +658,8 @@ class BinClusterHierarchy {
             if (this._hoveredNodeEl) { d3.select(this._hoveredNodeEl).select("circle").attr("r", 8); this._hoveredNodeEl = null; }
         };
 
+        if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
+
         this.renderTooltip(tooltip, d);
 
         if (!d.data.runtime_members && d.data.uuid && d.data.uuid !== 'root') {
@@ -657,56 +676,191 @@ class BinClusterHierarchy {
     renderTooltip(tooltip, d) {
         const members = d.data.runtime_members || [];
         const isLoading = !d.data.runtime_members && d.data.uuid !== 'root';
-        
-        tooltip.innerHTML = `
-            <div style="display:flex; flex-direction:row; min-width:450px; height:320px; background:#0d0f14;">
-                <div style="flex:1; padding:15px; border-right:1px solid #333; display:flex; flex-direction:column;">
-                    <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                    <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
-                    
-                    <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                            <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">bins</span></div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
-                            <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
-                            <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
-                            <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
-                        </div>
-                    </div>
+        const scrollOffset = d.data.scrollOffset || 0;
+        const selectedFile = members[scrollOffset];
 
-                    <div style="border-top:1px solid #333; padding-top:10px; flex:1; overflow-y:auto;">
-                        <div style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
-                            ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
+        const isSameNode = tooltip.querySelector('.hier-tooltip-container') && this._renderedNodeUuid === d.data.uuid;
+        
+        if (!isSameNode) {
+            this._renderedNodeUuid = d.data.uuid;
+            tooltip.innerHTML = `
+                <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:#0d0f14;">
+                    <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid #333; display:flex; flex-direction:column;">
+                        <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
+                        <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        
+                        <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
+                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
+                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">bins</span></div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
+                                <div style="color:var(--accent); font-weight:bold;">${(d.data.stability || 0).toFixed(2)}</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                                <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
+                                <div style="color:var(--success); font-weight:bold;">${((d.data.cohesion || 0) * 100).toFixed(1)}%</div>
+                            </div>
                         </div>
-                        <div style="display:flex; flex-direction:column; gap:4px;">
-                            ${members.map((m, i) => `
-                                <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-                                    <span style="color:var(--accent); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
-                                    <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+
+                        <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                            <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                                ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
+                            </div>
+                            <div class="hier-function-list" style="flex:1; position:relative; overflow:hidden;">
+                                <div class="hier-function-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
+                                    ${members.map((m, i) => `
+                                        <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+                                            <span class="file-name-span" style="color:#eee; font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
+                                            <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+                                        </div>
+                                    `).join('')}
                                 </div>
-                            `).join('')}
+                            </div>
+                            ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                        </div>
+                    </div>
+                    <div class="hier-right-col" id="bin-hier-snippet-container" style="width:200px; padding:15px; background:rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:10px; overflow-y:auto;">
+                        <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                            ${selectedFile ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a file to preview'}
                         </div>
                     </div>
                 </div>
-                <div style="width:180px; padding:15px; background:rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:10px;">
-                    <div style="font-size:0.6rem; color:#555; text-transform:uppercase;">Quick Stats</div>
-                    ${d.data.snippet ? `<div style="font-size:0.7rem; color:#aaa; font-style:italic;">"${d.data.snippet}"</div>` : ''}
-                    <div style="font-size:0.7rem; color:#777;">
-                        Architecture: <span style="color:#aaa;">${members[0]?.architecture || 'N/A'}</span><br>
-                        Language: <span style="color:#aaa;">${members[0]?.language_id || 'N/A'}</span>
+            `;
+        } else {
+            const samplesTitle = tooltip.querySelector('.hier-samples-title');
+            if (samplesTitle) {
+                samplesTitle.innerHTML = isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`;
+            }
+
+            const listScroll = tooltip.querySelector('.hier-function-list-scroll');
+            if (listScroll && listScroll.children.length === 0 && members.length > 0) {
+                listScroll.innerHTML = members.map((m, i) => `
+                    <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+                        <span class="file-name-span" style="color:#eee; font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
+                        <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        const listScroll = tooltip.querySelector('.hier-function-list-scroll');
+        if (listScroll) {
+            listScroll.style.transform = `translateY(-${scrollOffset * 28}px)`;
+            Array.from(listScroll.children).forEach((itemEl, idx) => {
+                const isSelected = idx === scrollOffset;
+                itemEl.classList.toggle('selected', isSelected);
+                const nameSpan = itemEl.querySelector('.file-name-span');
+                if (nameSpan) {
+                    nameSpan.style.color = isSelected ? 'var(--accent)' : '#eee';
+                }
+                itemEl.style.background = isSelected ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.02)';
+            });
+        }
+
+        if (selectedFile) {
+            this.updateSnippet(selectedFile);
+        }
+    }
+
+    updateSnippet(file) {
+        const container = document.getElementById('bin-hier-snippet-container');
+        if (!container || !file) return;
+
+        let yaraHtml = '';
+        if (file.yara_matches && file.yara_matches.length > 0) {
+            yaraHtml = `
+                <div style="margin-top: 8px;">
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Yara Matches</div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        ${file.yara_matches.map(y => `<div class="mono" style="font-size: 0.65rem; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${y}">${y}</div>`).join('')}
                     </div>
                 </div>
+            `;
+        } else if (file.yara) {
+             yaraHtml = `
+                <div style="margin-top: 8px;">
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Yara Match</div>
+                    <div class="mono" style="font-size: 0.65rem; color: var(--accent);">${file.yara}</div>
+                </div>
+            `;
+        }
+
+        let ipsHtml = '';
+        if (file.ips && file.ips.length > 0) {
+            ipsHtml = `
+                <div style="margin-top: 8px;">
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">CC IPs</div>
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        ${file.ips.map(ip => `<div class="mono" style="font-size: 0.65rem; color: var(--info);">${ip}</div>`).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        let tagsHtml = '';
+        const allTags = [...(file.tags || []), ...(file.user_tags || [])].filter(t => t && t.trim());
+        if (allTags.length > 0) {
+            tagsHtml = `
+                <div style="margin-top: 8px;">
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Tags</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                        ${allTags.map(tag => {
+                            const isBookmark = tag === 'bookmark';
+                            const isIgnore = tag === 'ignore';
+                            let color = '#66d9ef';
+                            if (isBookmark) color = '#66d9ef';
+                            else if (isIgnore) color = '#f92672';
+                            else if (window.getTagMetadata) color = window.getTagMetadata(tag).color;
+                            
+                            return `<span class="tag-card" style="border-color:${color}44; color:${color}; background:${color}11; font-size: 0.6rem; padding: 2px 6px; border-radius: 12px; display: inline-flex; align-items: center;">${tag}</span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        const formatArray = (arr) => (arr && arr.length > 0) ? arr.join(', ') : 'N/A';
+        
+        container.innerHTML = `
+            <div style="font-size:0.6rem; color:#555; text-transform:uppercase; margin-bottom:5px;">File Metadata</div>
+            
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div>
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">AV Type</div>
+                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${formatArray(file.avtype)}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">File Type</div>
+                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${formatArray(file.filetype)}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Dates</div>
+                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${formatArray(file.first_seen)}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">MD5</div>
+                    <div class="mono" style="font-size: 0.65rem; color: #aaa; word-break: break-all;">${file.file_md5 || file.md5 || 'N/A'}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Language</div>
+                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${file.language_id || 'N/A'}</div>
+                </div>
+                <div>
+                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Functions</div>
+                    <div class="mono" style="font-size: 0.7rem; color: var(--success);">${file.function_count || 0}</div>
+                </div>
+                ${yaraHtml}
+                ${ipsHtml}
+                ${tagsHtml}
             </div>
         `;
     }
 
     hideTooltip() {
         this._activeD = null;
+        this._renderedNodeUuid = null;
         const el = getBinHierarchyTooltip();
         if (el) el.style.display = 'none';
         if (window.hideBinaryPreview) {
@@ -714,6 +868,52 @@ class BinClusterHierarchy {
         }
     }
 }
+
+const binClusterTooltipMockCache = new Map();
+
+function showBinClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null) {
+    const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+    if (isMenuOpen) return;
+    if (window.setTrigger) window.setTrigger(event);
+    if (!window.binHierarchyInstance) {
+        window.binHierarchyInstance = new BinClusterHierarchy('hierarchy-view-container');
+    }
+
+    if (!binClusterTooltipMockCache.has(uuid)) {
+        binClusterTooltipMockCache.set(uuid, {
+            data: { uuid, name, size, stability, cohesion, avg_features, scrollOffset: 0 }
+        });
+    } else {
+        binClusterTooltipMockCache.get(uuid).data.name = name;
+    }
+    const mockD = binClusterTooltipMockCache.get(uuid);
+    if (customMembers) {
+        mockD.data.runtime_members = customMembers;
+    }
+    window.binHierarchyInstance.showTooltip(event, mockD);
+}
+
+function hideBinClusterTableTooltip() {
+    if (window.hideAllTooltips) window.hideAllTooltips();
+    else if (window.binHierarchyInstance) window.binHierarchyInstance.hideTooltip();
+}
+
+function moveBinClusterTableTooltip(e) {
+    const tooltip = getBinHierarchyTooltip();
+    if (tooltip && tooltip.style.display === 'block') {
+        let x = e.clientX + 20;
+        let y = e.clientY + 20;
+        const rect = tooltip.getBoundingClientRect();
+        if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - 20;
+        if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - 20;
+        tooltip.style.left = x + 'px';
+        tooltip.style.top = y + 'px';
+    }
+}
+
+window.showBinClusterTableTooltip = showBinClusterTableTooltip;
+window.hideBinClusterTableTooltip = hideBinClusterTableTooltip;
+window.moveBinClusterTableTooltip = moveBinClusterTableTooltip;
 
 class BinClusterPacking {
     constructor(containerId) {
@@ -979,19 +1179,26 @@ class BinClusterPacking {
             const res = await fetch(url, { signal });
             if (!res.ok) throw new Error("Cluster data not found");
             const data = await res.json();
+            const nameType = params.get('cluster_name_type') || 'file';
 
-            let nodes = (data.results || []).map(m => ({
-                id: String(m.cluster_id),
-                parent: m.parent ? String(m.parent) : null,
-                name: m.cluster_name || `Cluster ${m.cluster_id}`,
-                uuid: m.cluster_uuid,
-                size: m.count || 0,
-                stability: m.avg_stability || 0.0,
-                cohesion: m.cohesion_score || 0.0,
-                snippet: m.snippet || "",
-                members: m.sample_members || [],
-                direct_members: m.direct_members || []
-            }));
+            let nodes = (data.results || []).map(m => {
+                let displayName = m.cluster_name || `Cluster ${m.cluster_id}`;
+                if (nameType === 'yara' && !m.is_custom_name && m.yara_distribution && m.yara_distribution.length > 0) {
+                    displayName = m.yara_distribution[0].value;
+                }
+                return {
+                    id: String(m.cluster_id),
+                    parent: m.parent ? String(m.parent) : null,
+                    name: displayName,
+                    uuid: m.cluster_uuid,
+                    size: m.count || 0,
+                    stability: m.avg_stability || 0.0,
+                    cohesion: m.cohesion_score || 0.0,
+                    snippet: m.snippet || "",
+                    members: m.sample_members || [],
+                    direct_members: m.direct_members || []
+                };
+            });
 
             if (this.params.show_members) {
                 const memberNodes = [];
@@ -1004,11 +1211,17 @@ class BinClusterPacking {
                             file_md5: m.file_md5,
                             language_id: m.language_id,
                             function_count: m.function_count,
+                            tags: m.tags,
+                            user_tags: m.user_tags,
                             is_member: true,
                             size: 1,
                             stability: 0,
                             cohesion: 0,
-                            members: []
+                            members: [],
+                            avtype: m.avtype,
+                            filetype: m.filetype,
+                            yara: m.yara,
+                            cc_ip: m.cc_ip
                         });
                     });
                 });
@@ -1217,7 +1430,12 @@ class BinClusterPacking {
         if (d.data.is_member) {
             const el = getBinHierarchyTooltip();
             if (el) el.style.display = 'none';
-            if (window.showBinaryPreview) window.showBinaryPreview(d.data.file_md5, d.data.name, d.data.function_count, d.data.language_id, null, event, null, null);
+            if (window.showBinaryPreview) window.showBinaryPreview(d.data.file_md5, d.data.name, d.data.function_count, d.data.language_id, d.data.tags, event, d.data.tags, d.data.user_tags, {
+                avtype: d.data.avtype,
+                filetype: d.data.filetype,
+                yara: d.data.yara,
+                cc_ip: d.data.cc_ip
+            });
             return;
         }
         const tooltip = getBinHierarchyTooltip();
@@ -1241,39 +1459,13 @@ class BinClusterPacking {
     }
 
     renderTooltip(tooltip, d) {
-        const members = d.data.runtime_members || [];
-        const isLoading = !d.data.runtime_members && d.data.uuid !== 'root';
-        tooltip.innerHTML = `
-            <div style="display:flex; flex-direction:row; min-width:420px; height:280px; background:#0d0f14;">
-                <div style="flex:1; padding:15px; border-right:1px solid #333; display:flex; flex-direction:column;">
-                    <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                    <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace;">${d.data.uuid}</div>
-                    <div style="margin-bottom:10px; display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:0.75rem;">
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
-                            <div style="font-size:0.6rem; color:#666; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                            <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="color:#666; font-size:0.65rem; font-weight:normal;">bins</span></div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
-                            <div style="font-size:0.6rem; color:#666; text-transform:uppercase; margin-bottom:2px;">Stability</div>
-                            <div style="color:var(--accent); font-weight:bold;">${(d.data.stability || 0).toFixed(2)}</div>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
-                            <div style="font-size:0.6rem; color:#666; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
-                            <div style="color:var(--success); font-weight:bold;">${((d.data.cohesion || 0) * 100).toFixed(1)}%</div>
-                        </div>
-                    </div>
-                    <div style="border-top:1px solid #333; padding-top:8px; flex:1; overflow-y:auto;">
-                        <div style="font-size:0.6rem; color:#555; margin-bottom:5px; text-transform:uppercase;">
-                            ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Loading...' : `Samples (${members.length}):`}
-                        </div>
-                        ${members.map((m, i) => `
-                            <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer; margin-bottom:2px;">
-                                <span style="color:var(--accent); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
-                                <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
-                            </div>`).join('')}
-                    </div>
-                </div>
-            </div>`;
+        if (!window.binHierarchyInstance) return;
+        window.binHierarchyInstance.renderTooltip.call(this, tooltip, d);
+    }
+
+    updateSnippet(file) {
+        if (!window.binHierarchyInstance) return;
+        window.binHierarchyInstance.updateSnippet.call(this, file);
     }
 
     hideTooltip() {

@@ -348,12 +348,12 @@
 
     <script>
         // Sync UI settings from parent if available
-        let UIParams = { cohesionThreshold: 0.5, colorByTag: false };
+        let UIParams = { cohesionThreshold: 0.95, colorByTag: false };
         if (window.parent && window.parent.UIParams) {
             UIParams = window.parent.UIParams;
         } else {
             UIParams = {
-                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
+                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
                 colorByTag: localStorage.getItem('colorByTag') === 'true'
             };
         }

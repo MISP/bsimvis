@@ -438,24 +438,27 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
     }
 };
 
-window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features) {
+window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function') {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    if (typeof targetWindow.showClusterTableTooltip === 'function') {
-        let adjustedEvent = event;
-        if (targetWindow !== window) {
-            let iframeId = 'code-frame';
-            if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-            const iframe = targetWindow.document.getElementById(iframeId);
-            if (iframe) {
-                const rect = iframe.getBoundingClientRect();
-                adjustedEvent = {
-                    clientX: event.clientX + rect.left,
-                    clientY: event.clientY + rect.top,
-                    target: event.target
-                };
-            }
+    let adjustedEvent = event;
+    if (targetWindow !== window) {
+        let iframeId = 'code-frame';
+        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
+        const iframe = targetWindow.document.getElementById(iframeId);
+        if (iframe) {
+            const rect = iframe.getBoundingClientRect();
+            adjustedEvent = {
+                clientX: event.clientX + rect.left,
+                clientY: event.clientY + rect.top,
+                target: event.target
+            };
         }
-        targetWindow.showClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features);
+    }
+    
+    if (clusterType === 'file' && typeof targetWindow.showBinClusterTableTooltip === 'function') {
+        targetWindow.showBinClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null);
+    } else if (typeof targetWindow.showClusterTableTooltip === 'function') {
+        targetWindow.showClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null, clusterType);
     }
 };
 
@@ -464,14 +467,22 @@ window.hideClusterCardTooltip = function(event) {
     if (typeof targetWindow.hideClusterTableTooltip === 'function') {
         targetWindow.hideClusterTableTooltip(event);
     }
+    if (typeof targetWindow.hideBinClusterTableTooltip === 'function') {
+        targetWindow.hideBinClusterTableTooltip(event);
+    }
     const el = targetWindow.document.getElementById('hierarchy-tooltip');
     if (el) el.style.display = 'none';
+    const binEl = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+    if (binEl) binEl.style.display = 'none';
 };
 
 window.moveClusterCardTooltip = function(e) {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     const tooltip = targetWindow.document.getElementById('hierarchy-tooltip');
-    if (!tooltip || tooltip.style.display !== 'block') return;
+    const binTooltip = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+    const activeTooltip = (tooltip && tooltip.style.display === 'block') ? tooltip : ((binTooltip && binTooltip.style.display === 'block') ? binTooltip : null);
+    
+    if (!activeTooltip) return;
     
     if (targetWindow !== window) {
         let iframeId = 'code-frame';
@@ -483,8 +494,10 @@ window.moveClusterCardTooltip = function(e) {
                 clientX: e.clientX + rect.left,
                 clientY: e.clientY + rect.top
             };
-            if (typeof targetWindow.moveClusterTableTooltip === 'function') {
+            if (activeTooltip === tooltip && typeof targetWindow.moveClusterTableTooltip === 'function') {
                 targetWindow.moveClusterTableTooltip(adjustedEvent);
+            } else if (activeTooltip === binTooltip && typeof targetWindow.moveBinClusterTableTooltip === 'function') {
+                targetWindow.moveBinClusterTableTooltip(adjustedEvent);
             }
             return;
         }
@@ -495,7 +508,7 @@ window.moveClusterCardTooltip = function(e) {
         const overflow = container.querySelector('.cluster-overflow-box');
         const isOverflowVisible = overflow && window.getComputedStyle(overflow).display !== 'none';
         const boxRect = (isOverflowVisible && overflow) ? overflow.getBoundingClientRect() : container.getBoundingClientRect();
-        const tooltipRect = tooltip.getBoundingClientRect();
+        const tooltipRect = activeTooltip.getBoundingClientRect();
         
         let x = boxRect.right + 15;
         let y = boxRect.top;
@@ -507,19 +520,15 @@ window.moveClusterCardTooltip = function(e) {
             y = Math.max(10, window.innerHeight - tooltipRect.height - 15);
         }
         
-        tooltip.style.left = x + 'px';
-        tooltip.style.top = y + 'px';
+        activeTooltip.style.left = x + 'px';
+        activeTooltip.style.top = y + 'px';
     }
 };
 
 window.renderClusterCards = (clusters, isBinary = false) => {
     if (!clusters || clusters.length === 0) return '';
     
-    const threshold = typeof UIParams !== 'undefined' ? UIParams.cohesionThreshold : 0.5;
-    const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= threshold);
-    if (validClusters.length === 0) return '';
-    
-    const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;
         const score = (c.cohesion_score || 0).toFixed(2);
@@ -527,11 +536,27 @@ window.renderClusterCards = (clusters, isBinary = false) => {
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
         const color = `hsl(${hue}, 100%, 65%)`;
         
-        const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
+        let displayName = name;
+        if (isBinary) {
+            let extra = '';
+            if (c.yara_distribution && c.yara_distribution.length > 0) {
+                extra = `${c.yara_distribution[0].value} (${c.yara_distribution[0].percent}%)`;
+            } else if (c.avtype_distribution && c.avtype_distribution.length > 0) {
+                extra = `${c.avtype_distribution[0].value} (${c.avtype_distribution[0].percent}%)`;
+            }
+            if (extra) {
+                displayName = `${extra}`;
+            }
+        }
         
+        const maxWidth = isBinary ? '160px' : '80px';
+        
+        const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
+        const clusterType = isBinary ? 'file' : 'function';
+
         return `
         <span class="${cardClass}"
-              onmouseenter="showClusterCardTooltip(event, '${uuid}', '${name.replace(/'/g, "\\'")}', ${c.member_count || 0}, ${c.cluster_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})"
+              onmouseenter="showClusterCardTooltip(event, '${uuid}', '${name.replace(/'/g, "\\'")}', ${c.member_count || 0}, ${c.cluster_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0}, '${clusterType}')"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
               onclick="applyClusterFilter('${uuid}', ${isBinary})"
@@ -541,7 +566,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
                 <circle cx="12" cy="12" r="10"></circle>
                 <circle cx="12" cy="12" r="4"></circle>
             </svg>
-            <span style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
+            <span style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${displayName.replace(/"/g, '&quot;')}">${displayName}</span>
             <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${c.member_count || 0}</span>
         </span>`;
     };

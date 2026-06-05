@@ -186,55 +186,128 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        # 3. Run HDBSCAN
-        # For graph-based data, we use a condensed distance matrix or just provide the edges
-        # However, hdbscan.HDBSCAN(metric='precomputed') expects a full distance matrix.
-        # For scalability, we use the 'geometric' approach if we have vectors,
-        # but here we only have the graph.
+        # 3. Connected Components and Local HDBSCAN
+        import scipy.sparse as sp
+        from scipy.sparse.csgraph import connected_components
+        import pandas as pd
 
-        # Alternative: Build a sparse distance matrix
-        # But HDBSCAN precomputed requires a full dense matrix usually.
-        # If the dataset is huge, we might need a different approach.
-        # For now, let's use a dense matrix with a large default distance (1.0)
-
-        matrix_mem_mb = (num_nodes * num_nodes * 4) / (1024 * 1024)
-        msg = f"Allocating {num_nodes}x{num_nodes} distance matrix (~{matrix_mem_mb:.2f} MB)..."
+        msg = f"Shattering graph into connected components to avoid OOM..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        try:
-            dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
-        except MemoryError:
-            msg = f"FAILED to allocate distance matrix of size {num_nodes}x{num_nodes} (OOM)."
-            logging.error(f"[!] {msg}")
-            if job_service and job_id:
-                job_service.add_log(job_id, msg)
-            return False
-
-        np.fill_diagonal(dist_matrix, 0)
-
+        rows = []
+        cols = []
+        data = []
         for i, j, d in edges:
-            dist_matrix[i, j] = d
-            dist_matrix[j, i] = d
+            if d < 1.0: # Only real similarity edges
+                rows.extend([i, j])
+                cols.extend([j, i])
+                data.extend([1, 1])
 
-        msg = f"Running HDBSCAN (min_cluster_size={min_cluster_size}, min_samples={min_samples}, epsilon={cluster_selection_epsilon})..."
+        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        
+        comp_to_nodes = {}
+        for i, comp_id in enumerate(labels):
+            if comp_id not in comp_to_nodes:
+                comp_to_nodes[comp_id] = []
+            comp_to_nodes[comp_id].append(i)
+
+        comp_to_edges = {}
+        for i, j, d in edges:
+            c = labels[i]
+            if c not in comp_to_edges:
+                comp_to_edges[c] = []
+            comp_to_edges[c].append((i, j, d))
+
+        msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-            min_samples=min_samples,
-            cluster_selection_epsilon=cluster_selection_epsilon,
-            cluster_selection_method=selection_method,
-            metric="precomputed",
-            gen_min_span_tree=True,
-        )
+        global_tree_rows = []
+        global_root_id = num_nodes
+        next_cluster_id = num_nodes + 1
+        comp_roots = []
         
         start_fit = time.time()
-        # Only fit to get the condensed tree (no flat clustering)
-        clusterer.fit(dist_matrix.astype(np.float64))
+        
+        for comp_id, comp_nodes in comp_to_nodes.items():
+            size = len(comp_nodes)
+            if size < min_cluster_size:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+                
+            sub_id_to_global = {i: global_idx for i, global_idx in enumerate(comp_nodes)}
+            global_to_sub_id = {global_idx: i for i, global_idx in enumerate(comp_nodes)}
+            
+            sub_dist = np.ones((size, size), dtype=np.float32)
+            np.fill_diagonal(sub_dist, 0)
+            
+            if comp_id in comp_to_edges:
+                for u, v, d in comp_to_edges[comp_id]:
+                    ui = global_to_sub_id[u]
+                    vi = global_to_sub_id[v]
+                    sub_dist[ui, vi] = d
+                    sub_dist[vi, ui] = d
+                    
+            clusterer = hdbscan.HDBSCAN(
+                min_cluster_size=min(min_cluster_size, size),
+                min_samples=min(min_samples, size),
+                cluster_selection_epsilon=cluster_selection_epsilon,
+                cluster_selection_method=selection_method,
+                metric="precomputed",
+                gen_min_span_tree=True,
+            )
+            clusterer.fit(sub_dist.astype(np.float64))
+            
+            local_tree_df = clusterer.condensed_tree_.to_pandas()
+            if local_tree_df.empty:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+                
+            sub_internal_to_global = {}
+            # Ensure local root maps to a single global internal ID
+            local_root_sub = local_tree_df['parent'].min()
+            
+            for _, row in local_tree_df.iterrows():
+                parent = int(row['parent'])
+                child = int(row['child'])
+                
+                if parent not in sub_internal_to_global:
+                    sub_internal_to_global[parent] = next_cluster_id
+                    next_cluster_id += 1
+                    
+                if child < size: # Leaf
+                    global_child = sub_id_to_global[child]
+                else: # Internal
+                    if child not in sub_internal_to_global:
+                        sub_internal_to_global[child] = next_cluster_id
+                        next_cluster_id += 1
+                    global_child = sub_internal_to_global[child]
+                    
+                global_tree_rows.append({
+                    'parent': sub_internal_to_global[parent],
+                    'child': global_child,
+                    'lambda_val': float(row['lambda_val']),
+                    'child_size': int(row['child_size'])
+                })
+                
+            comp_roots.append((sub_internal_to_global[local_root_sub], size))
+            
+        # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
+        for comp_root, size in comp_roots:
+            global_tree_rows.append({
+                'parent': global_root_id,
+                'child': comp_root,
+                'lambda_val': 1.0,
+                'child_size': size
+            })
+            
+        tree_df = pd.DataFrame(global_tree_rows)
         fit_time = time.time() - start_fit
         
         msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
@@ -242,10 +315,7 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        # Calculate HDBSCAN stabilities and per-function membership strengths
-        # We use the condensed tree to calculate persistence for all nodes
-        tree_df = clusterer.condensed_tree_.to_pandas()
-        msg = f"Condensed tree has {len(tree_df)} rows."
+        msg = f"Global condensed tree has {len(tree_df)} rows."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)

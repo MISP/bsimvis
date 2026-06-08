@@ -203,7 +203,6 @@
 
     <div id="content" style="display: none;">
         <div class="hero-section">
-            <div class="hero-icon"><i class="fa-solid fa-file-binary"></i></div>
             <div class="hero-details">
                 <h1 id="file-name">unknown</h1>
                 <div class="md5" id="file-md5">MD5: ---</div>
@@ -235,7 +234,7 @@
             </div>
 
             <div class="card">
-                <div class="card-title"><i class="fa-solid fa-folder-tree"></i> Binary Clusters (<span id="cluster-count">0</span>)</div>
+                <div class="card-title"><i class="fa-solid fa-bullseye"></i> Binary Clusters (<span id="cluster-count">0</span>)</div>
                 <div class="cluster-list" id="cluster-list">
                     <!-- Cluster cards injected here -->
                 </div>
@@ -285,7 +284,7 @@
 
                 // Quick actions
                 const actionsHtml = `
-                    <a href="#" class="quick-action-btn" onclick="openFunctions(event)"><i class="fa-solid fa-list"></i> View Functions</a>
+                    <a href="#" class="quick-action-btn" onclick="openFunctions(event)"><i class="fa-solid fa-code"></i> View Functions</a>
                     <a href="#" class="quick-action-btn" onclick="openCallGraph(event)"><i class="fa-solid fa-sitemap"></i> Call Graph</a>
                 `;
                 document.getElementById('quick-actions').innerHTML = actionsHtml;
@@ -437,7 +436,7 @@
                         clustersHtml += `
                             <div class="cluster-item">
                                 <div class="cluster-item-header">
-                                    <span style="color: var(--accent);"><i class="fa-solid fa-folder-tree" style="margin-right: 6px;"></i>${name}</span>
+                                    <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
                                     <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="openClusterFiles(event, '${cm.cluster_uuid}')">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
                                 </div>
                                 <div class="cluster-stat-badges" style="margin-bottom: 5px;">

@@ -42,7 +42,7 @@ class WindowManager {
         let defaultWidth = 800;
         let defaultHeight = 500;
         
-        if (type === 'diff' || type === 'features' || type === 'global-feature') {
+        if (type === 'diff' || type === 'features' || type === 'global-feature' || type === 'file') {
             defaultWidth = Math.min(1200, window.innerWidth - 100);
             defaultHeight = Math.min(750, window.innerHeight - 100);
         }

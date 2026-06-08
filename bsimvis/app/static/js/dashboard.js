@@ -3407,7 +3407,7 @@ const viewMetaData = {
     '#features-global': { name: 'Features', icon: 'fa-fingerprint' },
     '#function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     '#clusters': { name: 'Clusters', icon: 'fa-bullseye' },
-    '#bin-clusters': { name: 'Bin Clusters', icon: 'fa-folder-tree' },
+    '#bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' },
     '#file-call-graph': { name: 'Call Graph', icon: 'fa-sitemap' }
 };
 

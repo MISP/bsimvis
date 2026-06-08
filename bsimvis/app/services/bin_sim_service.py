@@ -580,66 +580,6 @@ class BinSimService:
 
         pipe.execute()
 
-        # 6. UMAP Projection for Density Graph
-        if num_binaries >= 2:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    f"[*] Computing UMAP projection for {num_binaries} binaries...",
-                )
-            try:
-                import umap
-                import numpy as np
-
-                md5_to_idx = {m: i for i, m in enumerate(binaries)}
-                n = len(binaries)
-
-                # Build symmetric distance matrix
-                dist_matrix = np.ones((n, n), dtype=np.float32)
-                np.fill_diagonal(dist_matrix, 0.0)
-
-                for (m_a, m_b), score in pair_scores.items():
-                    if m_a in md5_to_idx and m_b in md5_to_idx:
-                        i, j = md5_to_idx[m_a], md5_to_idx[m_b]
-                        # Use a power transform to emphasize high similarities (low distances)
-                        # This pulls similar binaries much closer together
-                        d = 1.0 - float(score)
-                        d = max(0.0, min(1.0, d))
-                        d_final = d  # float(d ** 4) # Stronger pull for small distances
-                        dist_matrix[i, j] = d_final
-                        dist_matrix[j, i] = d_final
-
-                # n_neighbors must be < n_samples
-                n_neighbors = min(15, n - 1)
-                reducer = umap.UMAP(
-                    metric="precomputed",
-                    n_neighbors=n_neighbors,
-                    min_dist=0.05,  # Allow tighter clustering
-                    random_state=42,
-                    n_components=2,
-                )
-                embedding = reducer.fit_transform(dist_matrix)
-
-                umap_doc = {}
-                for m, idx in md5_to_idx.items():
-                    umap_doc[m] = [float(embedding[idx, 0]), float(embedding[idx, 1])]
-
-                umap_key = f"{collection}:bin_sim:umap:{algo}"
-                r.json().set(umap_key, "$", umap_doc)
-
-                if job_service and job_id:
-                    job_service.add_log(job_id, "[+] UMAP projection completed.")
-
-            except ImportError:
-                if job_service and job_id:
-                    job_service.add_log(
-                        job_id,
-                        "[!] umap-learn or numpy not installed, skipping projection.",
-                    )
-            except Exception as e:
-                if job_service and job_id:
-                    job_service.add_log(job_id, f"[!] UMAP projection failed: {str(e)}")
-
         if job_service and job_id:
             job_service.update_progress(
                 job_id, 100, f"Completed binary similarity build for {processed} pairs."
@@ -713,7 +653,6 @@ class BinSimService:
 
             r.delete(f"{collection}:bin_sim:score:{algo}")
             r.delete(f"{collection}:bin_sim:built:{algo}")
-            r.delete(f"{collection}:bin_sim:umap:{algo}")
 
         if job_service and job_id:
             job_service.update_progress(job_id, 100, "Cleared binary similarities.")

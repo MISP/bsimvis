@@ -551,7 +551,7 @@ function updateUI(path, params, route) {
     if (window.packingInstance) window.packingInstance.stop();
     if (window.callGraphInstance) window.callGraphInstance.stop();
     if (window.chordGraphInstance) window.chordGraphInstance.stop();
-    if (window.binaryDensityMapInstance) window.binaryDensityMapInstance.stop();
+
 
     if (path === '#upload') {
         tableWrap.style.display = 'none';
@@ -734,7 +734,6 @@ function updateUI(path, params, route) {
                         <div class="view-toggle">
                             <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinSimView('table')">Table</button>
                             <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchBinSimView('graph')">Graph</button>
-                            <button class="view-btn ${viewMode === 'density' ? 'active' : ''}" onclick="switchBinSimView('density')">Density</button>
                         </div>`;
                 } else if (path === '#clusters') {
                     settingsHtml += `
@@ -788,7 +787,7 @@ function updateUI(path, params, route) {
 
         if (path === '#function-similarity' || path === '#binary-similarity') {
             const viewMode = params.get('view') || 'table';
-            if (viewMode === 'graph' || viewMode === 'density') {
+            if (viewMode === 'graph') {
                 tableWrap.style.display = 'flex';
                 tableWrap.style.flex = 'none';
                 if (tableBodyWrap) tableBodyWrap.style.display = 'none';
@@ -799,16 +798,8 @@ function updateUI(path, params, route) {
                     loadGraphView(params);
                 } else {
                     const chordView = document.getElementById('chord-view-container');
-                    const densityView = document.getElementById('binary-density-view-container');
-                    if (viewMode === 'graph') {
-                        if (chordView) chordView.style.display = 'flex';
-                        if (densityView) densityView.style.display = 'none';
-                        loadChordView(params);
-                    } else {
-                        if (chordView) chordView.style.display = 'none';
-                        if (densityView) densityView.style.display = 'flex';
-                        loadBinaryDensityMap(params);
-                    }
+                    if (chordView) chordView.style.display = 'flex';
+                    loadChordView(params);
                 }
             } else {
                 tableWrap.style.display = 'flex';
@@ -817,9 +808,7 @@ function updateUI(path, params, route) {
                 pag.style.display = 'block';
                 gview.style.display = 'none';
                 const chordView = document.getElementById('chord-view-container');
-                const densityView = document.getElementById('binary-density-view-container');
                 if (chordView) chordView.style.display = 'none';
-                if (densityView) densityView.style.display = 'none';
             }
         } else {
             tableWrap.style.display = 'flex';
@@ -828,9 +817,7 @@ function updateUI(path, params, route) {
             pag.style.display = 'block';
             if (gview) gview.style.display = 'none';
             const chordView = document.getElementById('chord-view-container');
-            const densityView = document.getElementById('binary-density-view-container');
             if (chordView) chordView.style.display = 'none';
-            if (densityView) densityView.style.display = 'none';
         }
 
         const p = new URLSearchParams(params);
@@ -1594,13 +1581,6 @@ function loadChordView(params) {
     window.chordGraphInstance.fetch(params);
 }
 
-function loadBinaryDensityMap(params) {
-    document.getElementById('binary-density-view-container').style.display = 'flex';
-    if (!window.binaryDensityMapInstance) {
-        window.binaryDensityMapInstance = new BinaryDensityMap('binary-density-view-container');
-    }
-    window.binaryDensityMapInstance.fetch(params);
-}
 
 function applySimSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);

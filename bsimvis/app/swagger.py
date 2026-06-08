@@ -1804,20 +1804,6 @@ class BinSimSearch(Resource):
         return search_bin_sims()
 
 
-@ns_bin_sim.route("/umap")
-class BinSimUmap(Resource):
-    @ns_bin_sim.doc(
-        params={
-            "collection": {"description": "Collection name", "default": "main"},
-            "algo": {"description": "Algorithm name", "default": "unweighted_cosine"},
-        }
-    )
-    def get(self):
-        """Retrieve 2D UMAP coordinates for all binaries in the collection."""
-        from bsimvis.app.routes.search_bin_sim import search_umap
-
-        return search_umap()
-
 
 @ns_bin_sim.route("/reindex")
 class BinSimReindex(Resource):

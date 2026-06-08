@@ -667,12 +667,6 @@ def run_all_tests():
     # ── Binary Similarity ──────────────────────────────────────────────────
     print(_color("\n  [Binary Similarity]", BOLD))
     test_endpoint("GET", "/api/bin_sim/search", params={"collection": COLLECTION})
-    test_endpoint(
-        "GET",
-        "/api/bin_sim/umap",
-        params={"collection": COLLECTION},
-        label="GET /api/bin_sim/umap",
-    )
     if file_md5:
         test_endpoint(
             "GET",

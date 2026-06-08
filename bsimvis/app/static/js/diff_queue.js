@@ -282,10 +282,7 @@ function updateFileDiffQueueUI() {
         }
     });
 
-    // Update binary force graph if it exists
-    if (window.binaryDensityMapInstance && typeof window.binaryDensityMapInstance.updateSelection === 'function') {
-        window.binaryDensityMapInstance.updateSelection();
-    }
+
 }
 
 function openStandaloneDiff() {

@@ -680,6 +680,31 @@ def run_all_tests():
             params={"collection": COLLECTION, "md5": file_md5},
         )
 
+    # ── Collection Delete ──────────────────────────────────────────────────
+    print(_color("\n  [Collection Delete]", BOLD))
+    delete_body = test_endpoint(
+        "POST",
+        "/api/collection/delete",
+        data={"collection": COLLECTION},
+        label="POST /api/collection/delete",
+    )
+    if delete_body and "job_id" in delete_body:
+        job_id = delete_body["job_id"]
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            try:
+                resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                if resp.status_code == 200:
+                    job = resp.json()
+                    status = str(job.get("status", "unknown")).lower()
+                    if status in ("completed", "failed", "cancelled"):
+                        print(f"     deletion status={status}")
+                        break
+            except Exception as e:
+                vprint(f"     Poll deletion error: {e}")
+            time.sleep(2)
+
+
 
 # ---------------------------------------------------------------------------
 # Step 5 – Print summary

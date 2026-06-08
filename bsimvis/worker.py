@@ -597,7 +597,13 @@ class Worker:
                 collection, self.job_service, job_id
             )
 
+        elif jtype == JobType.DELETE_COLLECTION.value:
+            return self.processing_service.delete_collection(
+                collection, self.job_service, job_id
+            )
+
         return False
+
 
 
 if __name__ == "__main__":

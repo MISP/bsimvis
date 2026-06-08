@@ -187,3 +187,26 @@ def search_batches():
     except Exception as e:
         logging.error(f"Error in search_batches: {e}", exc_info=True)
         return {"error": str(e)}, 500
+
+
+def delete_collection():
+    try:
+        from flask import request
+        from bsimvis.app.services.job_service import JobService, JobType
+
+        # Accept parameters from request body (JSON) or query parameters
+        data = request.json or {}
+        collection = data.get("collection") or request.args.get("collection")
+        if not collection:
+            return {"error": "collection parameter is required"}, 400
+
+        job_service = JobService()
+        job_id = job_service.create_job(
+            JobType.DELETE_COLLECTION,
+            {"collection": collection}
+        )
+        return {"job_id": job_id, "status": "enqueued"}
+    except Exception as e:
+        logging.error(f"Error in delete_collection route: {e}", exc_info=True)
+        return {"error": str(e)}, 500
+

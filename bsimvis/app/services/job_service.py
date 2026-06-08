@@ -31,6 +31,7 @@ class JobType(Enum):
     CLEAR_BIN_SIM = "clear_bin_sim"
     REINDEX_BIN_SIM = "reindex_bin_sim"
     ENRICH_FEATURES = "enrich_features"
+    DELETE_COLLECTION = "delete_collection"
 
 
 class JobService:

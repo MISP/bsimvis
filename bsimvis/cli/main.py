@@ -14,6 +14,7 @@ from bsimvis.cli import (
     bsimvis_worker,
     bsimvis_cluster,
     bsimvis_binsim,
+    bsimvis_collection,
 )
 
 
@@ -526,6 +527,19 @@ def main():
         help="Skip building similarities after upload",
     )
 
+    # --- COLLECTION ---
+    collection_parser = subparsers.add_parser(
+        "collection", help="Collection management"
+    )
+    collection_actions = collection_parser.add_subparsers(dest="action", required=True)
+
+    collection_delete = collection_actions.add_parser(
+        "delete", help="Wipe and delete a collection completely"
+    )
+    collection_delete.add_argument(
+        "-c", "--collection", required=True, help="Collection name to delete"
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 
@@ -592,6 +606,9 @@ def main():
             bsimvis_cluster.run_cluster(g_host, int(g_port), args)
         elif args.subcommand == "binsim":
             bsimvis_binsim.run_binsim(g_host, int(g_port), args)
+        elif args.subcommand == "collection":
+            bsimvis_collection.run_collection(g_host, int(g_port), args)
+
 
     except Exception as e:
         import traceback

@@ -330,6 +330,24 @@ class CollectionSearch(Resource):
         return search_collections()
 
 
+@ns_collection.route("/delete")
+class CollectionDelete(Resource):
+    @ns_collection.expect(
+        api.model(
+            "CollectionDelete",
+            {
+                "collection": fields.String(required=True, description="Collection name to delete"),
+            },
+        )
+    )
+    def post(self):
+        """Wipes and deletes a collection entirely (asynchronous background job)."""
+        from bsimvis.app.routes.search_collection import delete_collection
+
+        return delete_collection()
+
+
+
 # --- Batch Namespace ---
 @ns_batch.route("/search")
 class BatchSearch(Resource):

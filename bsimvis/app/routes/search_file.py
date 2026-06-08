@@ -341,13 +341,11 @@ def get_file_details(collection, file_md5):
         pipe.json().get(f"{file_id}:meta", "$")
         pipe.scard(f"{collection}:idx:file:functions:{file_md5}")
         pipe.smembers(f"{file_id}:bin_clusters")
-        pipe.hgetall(f"{file_id}:bin_cluster_scores")
         results = pipe.execute()
         
         res = results[0]
         func_count = results[1]
         cluster_res = results[2]
-        scores_res = results[3]
         
         if not res:
             return {"error": "File not found"}, 404
@@ -362,12 +360,6 @@ def get_file_details(collection, file_md5):
         
         # Ensure array fields are set to actual arrays instead of strings, etc.
         data["bin_clusters"] = [c.decode() if isinstance(c, bytes) else str(c) for c in cluster_ids]
-        scores_map = {}
-        for k, v in (scores_res or {}).items():
-            k_str = k.decode() if isinstance(k, bytes) else str(k)
-            v_float = float(v)
-            scores_map[k_str] = v_float
-        data["bin_cluster_scores"] = scores_map
         
         # 2. Fetch cluster metadata
         cluster_meta_map = {}

@@ -339,7 +339,7 @@
                         if (!cm) return;
                         
                         const name = cm.cluster_name || `Cluster ${cid}`;
-                        const size = cm.size || cm.members || cm.count || 0;
+                        const size = cm.size || cm.member_count || cm.members || cm.count || 0;
                         const cohesionScore = cm.cohesion_score || 0;
                         const cohesion = cohesionScore.toFixed(2);
                         const cohesionPercent = Math.round(cohesionScore * 100);

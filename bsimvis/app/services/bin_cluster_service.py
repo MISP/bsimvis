@@ -480,29 +480,12 @@ class BinClusterService:
         for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
             file_id = idx_to_id[leaf]
             clusters_key = f"{file_id}:bin_clusters"
-            scores_key = f"{file_id}:bin_cluster_scores"
 
             if clusters:
                 pipe.delete(clusters_key)
                 pipe.sadd(clusters_key, *clusters)
-
-                scores = {}
-                l_death_leaf = leaf_death_lambdas.get(leaf, 0.0)
-                for c in clusters:
-                    l_birth_c = birth_lambdas.get(c, 0.0)
-                    l_death_c = death_lambdas.get(c, l_death_leaf)
-
-                    if l_death_c > l_birth_c:
-                        score = (l_death_leaf - l_birth_c) / (l_death_c - l_birth_c)
-                    else:
-                        score = 1.0
-                    scores[str(c)] = float(max(0.0, min(1.0, score)))
-
-                pipe.delete(scores_key)
-                pipe.hset(scores_key, mapping=scores)
             else:
                 pipe.delete(clusters_key)
-                pipe.delete(scores_key)
 
             if i % 500 == 0:
                 pipe.execute()
@@ -753,7 +736,6 @@ class BinClusterService:
                     mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
                     _unindex_tag(pipe, collection, "file", "bin_cluster_id", cid, mid)
                     pipe.delete(f"{mid}:bin_clusters")
-                    pipe.delete(f"{mid}:bin_cluster_scores")
 
                     if j % 500 == 0:
                         pipe.execute()

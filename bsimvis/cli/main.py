@@ -15,6 +15,7 @@ from bsimvis.cli import (
     bsimvis_cluster,
     bsimvis_binsim,
     bsimvis_collection,
+    bsimvis_metadata,
 )
 
 
@@ -547,6 +548,22 @@ def main():
         "-c", "--collection", required=True, help="Collection name to clean"
     )
 
+    # --- METADATA ---
+    metadata_parser = subparsers.add_parser(
+        "metadata", help="Metadata management and propagation"
+    )
+    metadata_actions = metadata_parser.add_subparsers(dest="action", required=True)
+
+    metadata_propagate = metadata_actions.add_parser(
+        "propagate", help="Propagate metadata from a CSV file"
+    )
+    metadata_propagate.add_argument(
+        "-m", "--metadata", required=True, help="Path to pipe-delimited metadata CSV file"
+    )
+    metadata_propagate.add_argument(
+        "-c", "--collection", required=True, help="Target collection name"
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 
@@ -615,6 +632,8 @@ def main():
             bsimvis_binsim.run_binsim(g_host, int(g_port), args)
         elif args.subcommand == "collection":
             bsimvis_collection.run_collection(g_host, int(g_port), args)
+        elif args.subcommand == "metadata":
+            bsimvis_metadata.run_metadata(g_host, int(g_port), args)
 
 
     except Exception as e:

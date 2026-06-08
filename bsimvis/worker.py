@@ -22,6 +22,7 @@ from bsimvis.app.services.ghidra_service import ghidra_service
 from bsimvis.app.services.cluster_service import cluster_service
 from bsimvis.app.services.bin_cluster_service import bin_cluster_service
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.metadata_service import MetadataService
 
 # Setup Logging
 logging.basicConfig(
@@ -48,6 +49,7 @@ class Worker:
         ghidra_service.ensure_launcher()
 
         self.similarity_service = SimilarityService(self.r_data)
+        self.metadata_service = MetadataService(self.r_data)
         self.running = True
 
     def stop(self, signum, frame):
@@ -596,6 +598,14 @@ class Worker:
         elif jtype == JobType.CLEAN_COLLECTION.value:
             return self.processing_service.clean_collection(
                 collection, self.job_service, job_id
+            )
+
+        elif jtype == JobType.PROPAGATE_METADATA.value:
+            return self.metadata_service.propagate_metadata(
+                collection,
+                payload.get("updates"),
+                job_service=self.job_service,
+                job_id=job_id,
             )
 
         return False

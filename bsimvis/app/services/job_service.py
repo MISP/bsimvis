@@ -33,6 +33,7 @@ class JobType(Enum):
     ENRICH_FEATURES = "enrich_features"
     DELETE_COLLECTION = "delete_collection"
     CLEAN_COLLECTION = "clean_collection"
+    PROPAGATE_METADATA = "propagate_metadata"
 
 
 

@@ -680,6 +680,82 @@ def run_all_tests():
             params={"collection": COLLECTION, "md5": file_md5},
         )
 
+    # ── Metadata Propagation ───────────────────────────────────────────────
+    print(_color("\n  [Metadata Propagation]", BOLD))
+    if file_md5:
+        patch_body = test_endpoint(
+            "PATCH",
+            f"/api/file/{file_md5}/metadata",
+            data={
+                "collection": COLLECTION,
+                "metadata": {
+                    "yara": ["test_yara_rule_propagate"],
+                    "avtype": ["test_avtype_propagate"],
+                    "file_names": ["propagated_test_name.exe"]
+                }
+            },
+            label=f"PATCH /api/file/{file_md5}/metadata"
+        )
+        if patch_body and "job_id" in patch_body:
+            job_id = patch_body["job_id"]
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                    if resp.status_code == 200:
+                        job = resp.json()
+                        status = str(job.get("status", "unknown")).lower()
+                        if status in ("completed", "failed", "cancelled"):
+                            print(f"     propagation job status={status}")
+                            break
+                except Exception as e:
+                    vprint(f"     Poll propagation error: {e}")
+                time.sleep(2)
+
+            test_endpoint(
+                "GET",
+                "/api/file/search",
+                params={"collection": COLLECTION, "yara": "test_yara_rule_propagate"},
+                label="GET /api/file/search (by propagated yara)"
+            )
+
+        bulk_body = test_endpoint(
+            "POST",
+            "/api/file/metadata/propagate",
+            data={
+                "collection": COLLECTION,
+                "updates": {
+                    file_md5: {
+                        "yara": ["bulk_yara_rule_propagate"],
+                        "avtype": ["bulk_avtype_propagate"],
+                    }
+                }
+            },
+            label="POST /api/file/metadata/propagate"
+        )
+        if bulk_body and "job_id" in bulk_body:
+            job_id = bulk_body["job_id"]
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                    if resp.status_code == 200:
+                        job = resp.json()
+                        status = str(job.get("status", "unknown")).lower()
+                        if status in ("completed", "failed", "cancelled"):
+                            print(f"     bulk propagation job status={status}")
+                            break
+                except Exception as e:
+                    vprint(f"     Poll bulk propagation error: {e}")
+                time.sleep(2)
+
+            test_endpoint(
+                "GET",
+                "/api/file/search",
+                params={"collection": COLLECTION, "yara": "bulk_yara_rule_propagate"},
+                label="GET /api/file/search (by bulk propagated yara)"
+            )
+
     # ── Collection Clean ───────────────────────────────────────────────────
     print(_color("\n  [Collection Clean]", BOLD))
     clean_body = test_endpoint(

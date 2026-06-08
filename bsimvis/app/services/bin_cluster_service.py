@@ -171,9 +171,10 @@ class BinClusterService:
         comp_to_edges = {}
         for i, j, d in edges:
             c = labels[i]
-            if c not in comp_to_edges:
-                comp_to_edges[c] = []
-            comp_to_edges[c].append((i, j, d))
+            if c == labels[j]:
+                if c not in comp_to_edges:
+                    comp_to_edges[c] = []
+                comp_to_edges[c].append((i, j, d))
 
         msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")

@@ -127,6 +127,22 @@ file_upload_data_model = api.model(
     },
 )
 
+file_metadata_update_model = api.model(
+    "FileMetadataUpdate",
+    {
+        "collection": fields.String(default="main", description="Collection name"),
+        "metadata": fields.Raw(required=True, description="Dictionary of metadata fields to update")
+    }
+)
+
+bulk_metadata_propagate_model = api.model(
+    "BulkMetadataPropagate",
+    {
+        "collection": fields.String(default="main", description="Collection name"),
+        "updates": fields.Raw(required=True, description="Mapping of MD5 to metadata dictionary")
+    }
+)
+
 # Similarity Models
 similarity_build_model = api.model(
     "SimilarityBuild",
@@ -590,6 +606,26 @@ class BatchFinalize(Resource):
         from bsimvis.app.routes.file import finalize_batch_upload
 
         return finalize_batch_upload()
+
+
+@ns_file.route("/<string:file_md5>/metadata")
+class FileMetadata(Resource):
+    @ns_file.doc(description="Updates metadata fields for a file and propagates them")
+    @ns_file.expect(file_metadata_update_model)
+    def patch(self, file_md5):
+        """Partially updates metadata for a file and triggers propagation."""
+        from bsimvis.app.routes.file import update_file_metadata
+        return update_file_metadata(file_md5)
+
+
+@ns_file.route("/metadata/propagate")
+class BulkMetadataPropagate(Resource):
+    @ns_file.doc(description="Updates metadata fields in bulk and propagates them")
+    @ns_file.expect(bulk_metadata_propagate_model)
+    def post(self):
+        """Updates metadata fields in bulk and propagates them."""
+        from bsimvis.app.routes.file import bulk_propagate_metadata
+        return bulk_propagate_metadata()
 
 
 @ns_file.route("/call_graph")

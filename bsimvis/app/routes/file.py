@@ -297,3 +297,64 @@ def finalize_batch_upload():
         "master_pipeline_id": master_id,
         "batch_uuid": batch_uuid,
     }
+
+
+def update_file_metadata(file_md5):
+    """
+    Partially updates metadata for a single file and enqueues propagation.
+    """
+    try:
+        data = request.json or {}
+        collection = data.get("collection", "main")
+        metadata = data.get("metadata", {})
+
+        if not metadata:
+            return {"error": "Missing metadata to update"}, 400
+
+        payload = {
+            "collection": collection,
+            "updates": {file_md5: metadata}
+        }
+
+        job_id = job_service.create_job(JobType.PROPAGATE_METADATA, payload)
+
+        return {
+            "status": "processing",
+            "job_id": job_id,
+            "message": "Metadata propagation job enqueued."
+        }
+
+    except Exception as e:
+        logging.error(f"Failed to update file metadata: {e}")
+        return {"error": str(e)}, 500
+
+
+def bulk_propagate_metadata():
+    """
+    Updates metadata for multiple files in bulk and enqueues propagation.
+    """
+    try:
+        data = request.json or {}
+        collection = data.get("collection", "main")
+        updates = data.get("updates", {})
+
+        if not updates:
+            return {"error": "Missing updates mapping"}, 400
+
+        payload = {
+            "collection": collection,
+            "updates": updates
+        }
+
+        job_id = job_service.create_job(JobType.PROPAGATE_METADATA, payload)
+
+        return {
+            "status": "processing",
+            "job_id": job_id,
+            "message": "Bulk metadata propagation job enqueued."
+        }
+
+    except Exception as e:
+        logging.error(f"Failed bulk metadata propagation: {e}")
+        return {"error": str(e)}, 500
+

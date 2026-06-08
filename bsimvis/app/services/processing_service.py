@@ -259,7 +259,7 @@ class ProcessingService:
         for idx, batch_uuid in enumerate(batch_uuids):
             global_batch_key = f"global:batch:{batch_uuid}"
             # Fetch global batch metadata
-            raw_meta = r.json().get(global_batch_key)
+            raw_meta = r.json().get(global_batch_key, "$")
             if raw_meta:
                 meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
                 if isinstance(meta, str):

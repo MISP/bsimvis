@@ -34,6 +34,7 @@ class BinClusterService:
         min_sim=None,
         job_service=None,
         job_id=None,
+        min_cohesion=None,
     ):
         """
         Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
@@ -50,6 +51,8 @@ class BinClusterService:
             selection_method = config_service.get("clustering.selection_method", "eom")
         if min_sim is None:
             min_sim = config_service.get("clustering.min_sim", 0.0)
+        if min_cohesion is None:
+            min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
 
         if hdbscan is None:
             logging.error(
@@ -636,6 +639,12 @@ class BinClusterService:
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
+
+            if cohesion_score < min_cohesion:
+                yara_freq = []
+                avtype_freq = []
+                filetype_freq = []
+                ccip_freq = []
 
             rep_file_id = members[0] if members else None
             rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}

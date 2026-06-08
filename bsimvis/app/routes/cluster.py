@@ -150,6 +150,9 @@ def rebuild_all_pipeline():
                 "min_sim": data.get(
                     "min_sim", config_service.get("clustering.min_sim", 0.0)
                 ),
+                "min_cohesion": data.get(
+                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+                ),
             },
         ),
     ]

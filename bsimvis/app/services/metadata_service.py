@@ -15,6 +15,7 @@ from bsimvis.app.services.bin_sim_service import (
     _index_bin_sim_pair,
     _unindex_bin_sim_pair,
 )
+from bsimvis.app.services.config_service import config_service
 
 
 class MetadataService:
@@ -287,6 +288,14 @@ class MetadataService:
                 avtype_freq = build_freq(avtype_list)
                 filetype_freq = build_freq(filetype_list)
                 ccip_freq = build_freq(ccip_list)
+
+                min_cohesion = config_service.get("clustering.min_cohesion", 0.5)
+                cohesion_score = old_cm.get("cohesion_score", 1.0)
+                if cohesion_score < min_cohesion:
+                    yara_freq = []
+                    avtype_freq = []
+                    filetype_freq = []
+                    ccip_freq = []
 
                 snippet = names[0] if names else "unknown"
                 new_default_name = (

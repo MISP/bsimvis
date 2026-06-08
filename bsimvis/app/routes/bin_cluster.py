@@ -28,6 +28,9 @@ def build_bin_cluster():
             "selection_method", config_service.get("clustering.selection_method", "eom")
         ),
         "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
+        "min_cohesion": data.get(
+            "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+        ),
     }
 
     job_id = job_service.create_job(JobType.CLUSTER_BINARIES, payload)
@@ -69,6 +72,9 @@ def rebuild_bin_cluster():
                 ),
                 "min_sim": data.get(
                     "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_cohesion": data.get(
+                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
                 ),
             },
         ),

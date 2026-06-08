@@ -251,6 +251,7 @@ def finalize_batch_upload():
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
     skip_sim = data.get("skip_sim", False)
+    min_cohesion = data.get("min_cohesion")
 
     if not pipeline_ids:
         return {"error": "No pipelines provided"}, 400
@@ -272,14 +273,27 @@ def finalize_batch_upload():
         master_tasks.append(
             (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
         )
+        build_payload = {
+            "collection": collection,
+            "algo": algo,
+            "batch_uuid": batch_uuid,
+        }
+        if min_cohesion is not None:
+            build_payload["min_cohesion"] = min_cohesion
         master_tasks.append(
             (
                 JobType.BUILD_BIN_SIM.value,
-                {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
+                build_payload,
             )
         )
+        cluster_payload = {
+            "collection": collection,
+            "algo": algo,
+        }
+        if min_cohesion is not None:
+            cluster_payload["min_cohesion"] = min_cohesion
         master_tasks.append(
-            (JobType.CLUSTER_BINARIES.value, {"collection": collection, "algo": algo})
+            (JobType.CLUSTER_BINARIES.value, cluster_payload)
         )
 
     # Enrich features must be the absolute last job to run:

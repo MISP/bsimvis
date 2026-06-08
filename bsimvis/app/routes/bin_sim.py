@@ -86,7 +86,14 @@ def rebuild_bin_sim():
             (JobType.CLEAR_BIN_SIM.value, clear_payload),
             (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo}),
             (JobType.BUILD_BIN_SIM.value, build_payload),
-            (JobType.CLUSTER_BINARIES.value, {"collection": collection, "algo": algo}),
+            (
+                JobType.CLUSTER_BINARIES.value,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "min_cohesion": min_cohesion,
+                },
+            ),
         ]
     )
     return {

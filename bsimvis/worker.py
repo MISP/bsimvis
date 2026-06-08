@@ -530,6 +530,9 @@ class Worker:
             min_sim = payload.get(
                 "min_sim", config_service.get("clustering.min_sim", 0.0)
             )
+            min_cohesion = payload.get(
+                "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+            )
 
             return bin_cluster_service.run_clustering(
                 collection,
@@ -541,6 +544,7 @@ class Worker:
                 min_sim=min_sim,
                 job_service=self.job_service,
                 job_id=job_id,
+                min_cohesion=min_cohesion,
             )
 
         elif jtype == JobType.CLEAR_BIN_CLUSTER.value:

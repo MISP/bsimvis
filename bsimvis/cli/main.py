@@ -540,6 +540,13 @@ def main():
         "-c", "--collection", required=True, help="Collection name to delete"
     )
 
+    collection_clean = collection_actions.add_parser(
+        "clean", help="Clean up temporary raw/JSON upload keys in a collection"
+    )
+    collection_clean.add_argument(
+        "-c", "--collection", required=True, help="Collection name to clean"
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 

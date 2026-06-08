@@ -19,6 +19,9 @@ from bsimvis.app.services.bin_sim_service import bin_sim_service
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.timer_service import job_timer
 from bsimvis.app.services.ghidra_service import ghidra_service
+from bsimvis.app.services.cluster_service import cluster_service
+from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+from bsimvis.app.services.config_service import config_service
 
 # Setup Logging
 logging.basicConfig(
@@ -419,8 +422,6 @@ class Worker:
             )
 
         elif jtype == JobType.BUILD_SIM.value:
-            from bsimvis.app.services.config_service import config_service
-
             algo = payload.get(
                 "algo", config_service.get("similarity.algo", "unweighted_cosine")
             )
@@ -469,9 +470,6 @@ class Worker:
             )
 
         elif jtype == JobType.CLUSTER_FUNCTIONS.value:
-            from bsimvis.app.services.cluster_service import cluster_service
-            from bsimvis.app.services.config_service import config_service
-
             algo = payload.get("algo", "unweighted_cosine")
             min_cluster_size = payload.get(
                 "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
@@ -507,17 +505,12 @@ class Worker:
             )
 
         elif jtype == JobType.CLEAR_CLUSTER.value:
-            from bsimvis.app.services.cluster_service import cluster_service
-
             algo = payload.get("algo", "unweighted_cosine")
             return cluster_service.clear_clustering(
                 collection, algo=algo, job_service=self.job_service, job_id=job_id
             )
 
         elif jtype == JobType.CLUSTER_BINARIES.value:
-            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
-            from bsimvis.app.services.config_service import config_service
-
             algo = payload.get("algo", "unweighted_cosine")
             min_cluster_size = payload.get(
                 "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
@@ -549,8 +542,6 @@ class Worker:
             )
 
         elif jtype == JobType.CLEAR_BIN_CLUSTER.value:
-            from bsimvis.app.services.bin_cluster_service import bin_cluster_service
-
             algo = payload.get("algo", "unweighted_cosine")
             return bin_cluster_service.clear_clusters(
                 collection, algo=algo, job_service=self.job_service, job_id=job_id
@@ -599,6 +590,11 @@ class Worker:
 
         elif jtype == JobType.DELETE_COLLECTION.value:
             return self.processing_service.delete_collection(
+                collection, self.job_service, job_id
+            )
+
+        elif jtype == JobType.CLEAN_COLLECTION.value:
+            return self.processing_service.clean_collection(
                 collection, self.job_service, job_id
             )
 

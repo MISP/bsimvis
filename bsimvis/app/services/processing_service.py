@@ -347,3 +347,42 @@ class ProcessingService:
 
         return True
 
+    def clean_collection(self, collection, job_service=None, job_id=None):
+        """Cleans up temporary raw and JSON upload keys in a collection to save space."""
+        r = self.r
+        logging.info(f"[*] Starting cleanup of temporary keys for collection: {collection}")
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Starting cleanup of temporary keys for collection: {collection}")
+
+        patterns = [
+            f"{collection}:file:*:data",
+            f"{collection}:file:*:raw"
+        ]
+
+        pipe = r.pipeline()
+        total_deleted = 0
+
+        for pattern in patterns:
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+                if keys:
+                    pipe.delete(*keys)
+                    total_deleted += len(keys)
+                    if len(pipe) >= 1000:
+                        pipe.execute()
+                        if job_service and job_id:
+                            job_service.add_log(job_id, f"Deleted {total_deleted} temporary keys...")
+                if cursor == 0:
+                    break
+        
+        pipe.execute()
+
+        logging.info(f"[+] Wiped {total_deleted} temporary upload keys for collection {collection}")
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Wiped {total_deleted} temporary upload keys.")
+            job_service.update_progress(job_id, 100)
+
+        return True
+
+

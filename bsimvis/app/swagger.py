@@ -347,6 +347,24 @@ class CollectionDelete(Resource):
         return delete_collection()
 
 
+@ns_collection.route("/clean")
+class CollectionClean(Resource):
+    @ns_collection.expect(
+        api.model(
+            "CollectionClean",
+            {
+                "collection": fields.String(required=True, description="Collection name to clean"),
+            },
+        )
+    )
+    def post(self):
+        """Cleans up temporary raw and JSON upload keys in a collection (asynchronous background job)."""
+        from bsimvis.app.routes.search_collection import clean_collection
+
+        return clean_collection()
+
+
+
 
 # --- Batch Namespace ---
 @ns_batch.route("/search")

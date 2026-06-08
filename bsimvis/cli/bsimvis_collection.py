@@ -31,3 +31,14 @@ def run_collection(host, port, args):
             print(f"[+] Success! Job ID: {res.get('job_id')}")
         except Exception as e:
             print(f"[!] Delete collection failed: {e}")
+
+    elif args.action == "clean":
+        try:
+            print(f"[*] Enqueuing clean job for collection '{coll}'...")
+            resp = requests.post(f"{api_url}/clean", json={"collection": coll})
+            resp.raise_for_status()
+            res = resp.json()
+            print(f"[+] Success! Job ID: {res.get('job_id')}")
+        except Exception as e:
+            print(f"[!] Clean collection failed: {e}")
+

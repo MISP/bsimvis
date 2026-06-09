@@ -52,5 +52,5 @@
 [llm]
     ollama_url = "http://10.1.0.143:11434"
     model = "qwen3.6:35b"
-    prompt = "You are a reverse engineer. Explain this function to an experienced reverse engineer. Be concise"
+    prompt =  "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]"
 

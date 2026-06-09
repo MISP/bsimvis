@@ -8,14 +8,8 @@ class LLMService:
 
     def _load_config(self):
         self.ollama_url = config_service.get("llm.ollama_url", "http://localhost:11434")
-        self.model = config_service.get("llm.model", "qwen2.5:32b")
-        self.default_prompt = config_service.get("llm.prompt", (
-            "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function.\\n"
-            "**CORE**: [One-line summary of functionality]\\n"
-            "**KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names]\\n"
-            "**FLOW**: [Brief description of data transformation or logic path]\\n"
-            "**IMPACT**: [Side-effects, security implications, or critical dependencies]"
-        ))
+        self.model = config_service.get("llm.model", "qwen3.6:35b")
+        self.default_prompt = config_service.get("llm.prompt", "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]")
 
     def summarize_function(self, function_name, code, custom_prompt=None):
         self._load_config()

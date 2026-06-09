@@ -9,7 +9,7 @@ class LLMService:
     def _load_config(self):
         self.ollama_url = config_service.get("llm.ollama_url", "http://localhost:11434")
         self.model = config_service.get("llm.model", "qwen2.5:32b")
-        self.default_prompt = config_service.get("llm.prompt", "Provide an ultra-concise TL;DR summary (max 3 sentences) of this function's purpose. Focus on core logic only.")
+        self.default_prompt = config_service.get("llm.prompt", "You are a reverse engineer. Explain this function's purpose briefly but exhaustively.")
 
     def summarize_function(self, function_name, code, custom_prompt=None):
         self._load_config()
@@ -24,8 +24,8 @@ class LLMService:
                 stream=False,
                 think=False,
                 options={
-                    'num_predict': 500,
-                    'temperature': 0.1
+                    'num_predict': -1,
+                    'temperature': 0.3
                 }
             )
             msg = response.get('message', {})
@@ -47,7 +47,7 @@ class LLMService:
                 stream=True,
                 think=False,
                 options={
-                    'num_predict': 500,
+                    'num_predict': -1,
                     'temperature': 0.1
                 }
             )
@@ -71,7 +71,7 @@ class LLMService:
                 stream=False,
                 think=False,
                 options={
-                    'num_predict': 500,
+                    'num_predict': -1,
                     'temperature': 0.1
                 }
             )
@@ -91,7 +91,7 @@ class LLMService:
                 stream=True,
                 think=False,
                 options={
-                    'num_predict': 500,
+                    'num_predict': -1,
                     'temperature': 0.1
                 }
             )

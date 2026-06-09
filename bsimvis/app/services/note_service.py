@@ -52,6 +52,7 @@ class NoteService:
                 notes = []
             notes.append(note)
             r.json().set(doc_id, "$.notes", notes)
+            r.json().set(doc_id, "$.note_count", len(notes))
 
             # 3. Update note_owners for indexing
             owners = doc.get("note_owners", [])
@@ -108,6 +109,7 @@ class NoteService:
                 return False
 
             r.json().set(doc_id, "$.notes", new_notes)
+            r.json().set(doc_id, "$.note_count", len(new_notes))
 
             # Update owners index if this was the last note by this owner
             remaining_owners = set(n["owner"] for n in new_notes)

@@ -1,5 +1,4 @@
-import asyncio
-from flask import request, Response
+from flask import request, Response, stream_with_context
 from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.function_service import fetch_function_data
 import logging
@@ -64,24 +63,17 @@ def summarize():
     if not code:
         return {"error": "Missing code or func_id"}, 400
 
+    @stream_with_context
     def generate():
-        # Create a new event loop for this thread to run the async generator
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        async_gen = llm_service.stream_summarize_function(func_name or "unknown", code, custom_prompt)
-        
-        try:
-            while True:
-                try:
-                    chunk = loop.run_until_complete(async_gen.__anext__())
-                    yield chunk
-                except StopAsyncIteration:
-                    break
-        finally:
-            loop.close()
+        logging.info("Starting LLM stream generator...")
+        for chunk in llm_service.stream_summarize_function(func_name or "unknown", code, custom_prompt):
+            logging.info(f"Yielding chunk to response: {len(chunk)} chars")
+            yield chunk
+        logging.info("LLM stream generator finished.")
 
-    return Response(generate(), mimetype='text/plain')
+    resp = Response(generate(), mimetype='text/plain')
+    resp.headers['X-Accel-Buffering'] = 'no'
+    return resp
 
 def chat():
     data = request.json
@@ -89,20 +81,14 @@ def chat():
     if not messages:
         return {"error": "Missing messages"}, 400
         
+    @stream_with_context
     def generate():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        async_gen = llm_service.stream_chat(messages)
-        
-        try:
-            while True:
-                try:
-                    chunk = loop.run_until_complete(async_gen.__anext__())
-                    yield chunk
-                except StopAsyncIteration:
-                    break
-        finally:
-            loop.close()
+        logging.info("Starting LLM chat stream generator...")
+        for chunk in llm_service.stream_chat(messages):
+            logging.info(f"Yielding chat chunk to response: {len(chunk)} chars")
+            yield chunk
+        logging.info("LLM chat stream generator finished.")
 
-    return Response(generate(), mimetype='text/plain')
+    resp = Response(generate(), mimetype='text/plain')
+    resp.headers['X-Accel-Buffering'] = 'no'
+    return resp

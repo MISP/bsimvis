@@ -252,31 +252,9 @@
         <div id="v-height"></div>
         <div id="v-content" class="c-code-container"></div>
 
-        <button id="llm-summary-btn" class="floating-copy-btn" style="right: 70px;" title="AI Summary" onclick="showLLMSummary()">
-            <i class="fas fa-robot"></i>
-        </button>
-
         <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="copyFunctionCode(this)">
             <i class="fas fa-copy"></i>
         </button>
-    </div>
-
-    <div id="llm-panel" class="side-panel">
-        <div class="side-panel-header">
-            <span>AI Function Summary</span>
-            <button onclick="closeLLMPanel()">&times;</button>
-        </div>
-        <div id="llm-content" class="side-panel-content">
-            <div id="llm-chat-history"></div>
-            <div id="llm-status" style="margin-top: 10px; color: #888; font-style: italic;"></div>
-        </div>
-        <div class="side-panel-footer">
-            <textarea id="llm-input" placeholder="Ask a question about this function..."></textarea>
-            <div class="side-panel-actions">
-                <button id="llm-send-btn" onclick="sendLLMChat()">Send</button>
-                <button id="llm-save-note-btn" onclick="saveSummaryAsNote()" style="display:none;">Save as Note</button>
-            </div>
-        </div>
     </div>
 
     <div id="bsim-tooltip"></div>
@@ -428,6 +406,11 @@
 
                 await fetchTagMetadata(data.meta['collection'] || id.split(':')[0]);
                 renderMeta(data.meta);
+
+                // Initialize notes and AI insight panels (handles visible, panels closed)
+                if (typeof showNotes === 'function' && window.currentFuncId) {
+                    showNotes(window.currentFuncId, false);
+                }
 
                 document.getElementById('loader').style.display = 'none';
                 scrollEl.style.display = 'block';
@@ -728,172 +711,6 @@
                     el.classList.add('feature-locked', 'bsim-group-active-unique');
                 });
             });
-        }
-
-        // LLM Logic
-        let chatHistory = [];
-
-        async function showLLMSummary() {
-            const panel = document.getElementById("llm-panel");
-            panel.classList.add("open");
-            
-            if (chatHistory.length === 0) {
-                generateSummary();
-            }
-        }
-
-        function closeLLMPanel() {
-            document.getElementById("llm-panel").classList.remove("open");
-        }
-
-        async function readStream(response, onChunk) {
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = "";
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                fullText += chunk;
-                onChunk(fullText);
-            }
-            return fullText;
-        }
-
-        async function generateSummary() {
-            const statusEl = document.getElementById("llm-status");
-            statusEl.innerText = "Generating summary...";
-            
-            try {
-                const response = await fetch("/api/llm/summarize", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ func_id: window.currentFuncId })
-                });
-                
-                if (!response.ok) {
-                    let errMsg = "Failed to generate summary";
-                    try {
-                        const errorData = await response.json();
-                        errMsg = errorData.error || errMsg;
-                    } catch(e) {}
-                    throw new Error(errMsg);
-                }
-
-                const msgEl = addChatMessage("ai", "");
-                document.getElementById("llm-save-note-btn").style.display = "block";
-
-                const summary = await readStream(response, (text) => {
-                    updateChatMessage(msgEl, text);
-                });
-                
-                if (chatHistory.length > 0) {
-                    chatHistory[chatHistory.length - 1].content = summary;
-                }
-
-            } catch (err) {
-                addChatMessage("ai", "Error: " + err.message);
-            } finally {
-                statusEl.innerText = "";
-            }
-        }
-
-        function addChatMessage(role, content) {
-            const historyEl = document.getElementById("llm-chat-history");
-            const msgEl = document.createElement("div");
-            msgEl.className = `chat-msg ${role}`;
-            
-            updateChatMessage(msgEl, content);
-            
-            historyEl.appendChild(msgEl);
-            chatHistory.push({ role: role === "ai" ? "assistant" : "user", content: content });
-            
-            const contentEl = document.getElementById("llm-content");
-            contentEl.scrollTop = contentEl.scrollHeight;
-            return msgEl;
-        }
-
-        function updateChatMessage(msgEl, content) {
-            if (typeof marked !== "undefined" && marked.parse) {
-                msgEl.innerHTML = marked.parse(content);
-                msgEl.classList.add("markdown-content");
-            } else {
-                msgEl.innerText = content;
-            }
-            const contentEl = document.getElementById("llm-content");
-            contentEl.scrollTop = contentEl.scrollHeight;
-        }
-
-        async function sendLLMChat() {
-            const inputEl = document.getElementById("llm-input");
-            const text = inputEl.value.trim();
-            if (!text) return;
-            
-            addChatMessage("user", text);
-            inputEl.value = "";
-            
-            const statusEl = document.getElementById("llm-status");
-            statusEl.innerText = "Thinking...";
-            
-            try {
-                const response = await fetch("/api/llm/chat", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ messages: chatHistory })
-                });
-                
-                if (!response.ok) {
-                    let errMsg = "Failed to get response";
-                    try {
-                        const errorData = await response.json();
-                        errMsg = errorData.error || errMsg;
-                    } catch(e) {}
-                    throw new Error(errMsg);
-                }
-
-                const msgEl = addChatMessage("ai", "");
-                const reply = await readStream(response, (text) => {
-                    updateChatMessage(msgEl, text);
-                });
-                
-                if (chatHistory.length > 0) {
-                    chatHistory[chatHistory.length - 1].content = reply;
-                }
-
-            } catch (err) {
-                addChatMessage("ai", "Error: " + err.message);
-            } finally {
-                statusEl.innerText = "";
-            }
-        }
-
-        async function saveSummaryAsNote() {
-            const summary = chatHistory.find(m => m.role === "assistant")?.content;
-            if (!summary) return;
-            
-            const collection = window.currentFuncId.split(":")[0];
-            
-            try {
-                const response = await fetch("/api/notes/add", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        collection: collection,
-                        func_id: window.currentFuncId,
-                        text: "AI Summary:\n" + summary,
-                        owner: "AI"
-                    })
-                });
-                
-                const data = await response.json();
-                if (data.status === "success") {
-                    alert("Summary saved to notes!");
-                } else {
-                    alert("Error saving note: " + data.error);
-                }
-            } catch (err) {
-                alert("Error: " + err.message);
-            }
         }
 
         init();

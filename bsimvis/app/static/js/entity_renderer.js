@@ -39,7 +39,7 @@ window.EntityRenderer = {
             
             actionsHtml = `
                 <div class="entity-actions" style="display:inline-flex; gap:4px; margin-left: auto; flex-shrink: 0; padding-left: 8px;">
-                    ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, options)}
+                    ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, { ...options, raw_data: f })}
                     <button class="btn-diff-action ${isActive ? 'active' : ''}" 
                             data-func-id="${typeof normalizeFuncId === 'function' ? normalizeFuncId(funcId) : funcId}" 
                             onmouseenter="typeof onHoverDiffButton === 'function' && onHoverDiffButton(event, '${funcId}', '${safeName}')"
@@ -78,6 +78,10 @@ window.EntityRenderer = {
         const hasNotes = noteOwners && noteOwners.length > 0;
         const isTable = options.isTable === true;
         
+        // We look for note_count in the parent data if available
+        const f = options.raw_data || {};
+        const noteCount = f.note_count || noteOwners.length || 0;
+        
         if (isTable && !hasNotes) return '';
         
         const title = hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note';
@@ -88,6 +92,7 @@ window.EntityRenderer = {
                     onclick="event.stopPropagation(); showNotePanel('${id}', event)" 
                     title="${title}">
                 <i class="${iconClass}"></i>
+                ${noteCount > 0 ? `<div class="note-count-badge">+${noteCount}</div>` : ''}
             </button>
         `;
     },

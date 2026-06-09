@@ -2087,8 +2087,9 @@ function renderFunctions(data, clustersMap = {}) {
                 </div>
             </td>
             <td class="sim-cell" style="text-align:center;">
-                ${EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true })}
+                ${EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f })}
             </td>
+
             <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
 
             <td class="sim-cell">${EntityRenderer.renderMd5(file_md5)}</td>
@@ -2291,10 +2292,10 @@ function renderTopCorrelations(items, clustersMap = {}) {
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
-                        ${EntityRenderer.renderNoteButton(p.id1, p.meta1?.note_owners, { isTable: true })}
+                        ${EntityRenderer.renderNoteButton(p.id1, p.meta1?.note_owners, { isTable: true, raw_data: p.meta1 })}
                     </div>
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
-                        ${EntityRenderer.renderNoteButton(p.id2, p.meta2?.note_owners, { isTable: true })}
+                        ${EntityRenderer.renderNoteButton(p.id2, p.meta2?.note_owners, { isTable: true, raw_data: p.meta2 })}
                     </div>
                 </div>
             </td>

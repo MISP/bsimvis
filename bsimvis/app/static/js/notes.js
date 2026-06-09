@@ -47,7 +47,7 @@ async function showNotes(funcId) {
         document.body.appendChild(backdrop);
     }
     
-    panel.innerHTML = `
+        panel.innerHTML = `
         <div style="padding: 12px 16px; background: #252525; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center;">
             <h3 style="margin: 0; font-size: 1rem; color: #ffd700;"><i class="fa-solid fa-note-sticky"></i> Function Notes</h3>
             <button onclick="closeNotes()" style="background: none; border: none; color: #888; cursor: pointer; font-size: 1.2rem;">&times;</button>
@@ -56,7 +56,7 @@ async function showNotes(funcId) {
             <div style="text-align: center; color: #888; padding: 20px;">Loading notes...</div>
         </div>
         <div style="padding: 16px; background: #252525; border-top: 1px solid #333;">
-            <textarea id="new-note-text" placeholder="Add a new note..." style="width: 100%; min-height: 80px; background: #121212; border: 1px solid #444; color: #eee; padding: 8px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box;"></textarea>
+            <textarea id="new-note-text" placeholder="Add a new note (Markdown supported)..." style="width: 100%; min-height: 100px; background: #121212; border: 1px solid #444; color: #eee; padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', 'Cascadia Code', 'Source Code Pro', monospace; font-size: 0.9rem; line-height: 1.5;"></textarea>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <select id="note-owner-select" style="background: #121212; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem;">
                     <option value="user">User</option>
@@ -84,6 +84,23 @@ async function refreshNotes(funcId) {
     const listEl = document.getElementById('notes-list');
     const collection = funcId.split(':')[0];
     
+    // Inject markdown styles if not present
+    if (!document.getElementById('notes-md-styles')) {
+        const style = document.createElement('style');
+        style.id = 'notes-md-styles';
+        style.textContent = `
+            .note-markdown-body { font-size: 0.9rem; line-height: 1.5; color: #eee; }
+            .note-markdown-body p { margin-top: 0; margin-bottom: 8px; }
+            .note-markdown-body code { background: #333; padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+            .note-markdown-body pre { background: #121212; padding: 10px; border-radius: 4px; overflow-x: auto; border: 1px solid #333; margin: 8px 0; }
+            .note-markdown-body pre code { background: none; padding: 0; }
+            .note-markdown-body ul, .note-markdown-body ol { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }
+            .note-markdown-body h1, .note-markdown-body h2, .note-markdown-body h3 { margin-top: 12px; margin-bottom: 8px; color: #ffd700; border-bottom: 1px solid #333; padding-bottom: 4px; }
+            .note-markdown-body blockquote { border-left: 3px solid var(--accent); margin: 8px 0; padding-left: 12px; color: #bbb; font-style: italic; }
+        `;
+        document.head.appendChild(style);
+    }
+    
     try {
         const res = await fetch(`/api/notes/list?collection=${encodeURIComponent(collection)}&func_id=${encodeURIComponent(funcId)}`);
         const data = await res.json();
@@ -93,19 +110,23 @@ async function refreshNotes(funcId) {
             if (notes.length === 0) {
                 listEl.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No notes yet. Be the first to add one!</div>';
             } else {
-                listEl.innerHTML = notes.map(note => `
-                    <div class="note-item" style="background: #2a2a2a; border-radius: 6px; padding: 12px; border-left: 3px solid ${note.owner === 'llm' ? '#ae81ff' : '#ffd700'};">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 0.75rem; font-weight: bold; color: ${note.owner === 'llm' ? '#ae81ff' : '#ffd700'}; text-transform: uppercase;">${note.owner}</span>
-                            <span style="font-size: 0.7rem; color: #888;">${new Date(note.timestamp).toLocaleString()}</span>
+                listEl.innerHTML = notes.map(note => {
+                    const renderedText = (typeof marked !== 'undefined') ? marked.parse(note.text) : note.text;
+                    const rawTextEscaped = note.text.replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+                    return `
+                        <div class="note-item" data-raw-text="${rawTextEscaped}" style="background: #2a2a2a; border-radius: 6px; padding: 12px; border-left: 3px solid ${note.owner === 'llm' ? '#ae81ff' : '#ffd700'};">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <span style="font-size: 0.75rem; font-weight: bold; color: ${note.owner === 'llm' ? '#ae81ff' : '#ffd700'}; text-transform: uppercase;">${note.owner}</span>
+                                <span style="font-size: 0.7rem; color: #888;">${new Date(note.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div class="note-text note-markdown-body" style="font-family: inherit;">${renderedText}</div>
+                            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; border-top: 1px solid #333; padding-top: 8px;">
+                                <button onclick="editNoteUI('${funcId}', '${note.id}', this)" style="background: none; border: none; color: #666; cursor: pointer; font-size: 0.8rem;" title="Edit"><i class="fa-solid fa-pen"></i></button>
+                                <button onclick="deleteNote('${funcId}', '${note.id}')" style="background: none; border: none; color: #666; cursor: pointer; font-size: 0.8rem;" title="Delete"><i class="fa-solid fa-trash"></i></button>
+                            </div>
                         </div>
-                        <div class="note-text" style="font-size: 0.9rem; line-height: 1.4; color: #eee; white-space: pre-wrap;">${note.text}</div>
-                        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;">
-                            <button onclick="editNoteUI('${funcId}', '${note.id}', this)" style="background: none; border: none; color: #666; cursor: pointer; font-size: 0.8rem;" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                            <button onclick="deleteNote('${funcId}', '${note.id}')" style="background: none; border: none; color: #666; cursor: pointer; font-size: 0.8rem;" title="Delete"><i class="fa-solid fa-trash"></i></button>
-                        </div>
-                    </div>
-                `).join('');
+                    `;
+                }).join('');
             }
         } else {
             listEl.innerHTML = `<div style="color: var(--danger); padding: 20px;">Error: ${data.error || 'Unknown error'}</div>`;
@@ -176,13 +197,21 @@ async function deleteNote(funcId, note_id) {
 function editNoteUI(funcId, note_id, btn) {
     const item = btn.closest('.note-item');
     const textEl = item.querySelector('.note-text');
-    const currentText = textEl.textContent;
+    const collection = funcId.split(':')[0];
+    
+    // We need the raw text to edit, but it might be rendered as HTML.
+    // Let's fetch the raw text from the original data or just parse it back if simple.
+    // A better way is to store the raw text in a data attribute when rendering.
+    // For now, let's just use the textContent which should be close enough for simple text.
+    // Or better: update the render loop to include a data-raw-text attribute.
+    
+    const rawText = item.dataset.rawText || textEl.innerText;
     
     textEl.innerHTML = `
-        <textarea style="width: 100%; min-height: 60px; background: #121212; border: 1px solid var(--accent); color: #eee; padding: 4px; border-radius: 4px; font-size: 0.9rem;">${currentText}</textarea>
-        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">
-            <button onclick="refreshNotes('${funcId}')" style="font-size: 0.75rem; background: #444; border: none; color: #eee; padding: 2px 8px; border-radius: 3px; cursor: pointer;">Cancel</button>
-            <button onclick="saveEdit('${funcId}', '${note_id}', this)" style="font-size: 0.75rem; background: var(--accent); border: none; color: #000; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-weight: bold;">Save</button>
+        <textarea style="width: 100%; min-height: 100px; background: #121212; border: 1px solid var(--accent); color: #eee; padding: 10px; border-radius: 4px; font-size: 0.9rem; font-family: 'Fira Code', 'Cascadia Code', 'Source Code Pro', monospace; line-height: 1.5; resize: vertical;">${rawText}</textarea>
+        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;">
+            <button onclick="refreshNotes('${funcId}')" style="font-size: 0.75rem; background: #444; border: none; color: #eee; padding: 4px 12px; border-radius: 3px; cursor: pointer;">Cancel</button>
+            <button onclick="saveEdit('${funcId}', '${note_id}', this)" style="font-size: 0.75rem; background: var(--accent); border: none; color: #000; padding: 4px 12px; border-radius: 3px; cursor: pointer; font-weight: bold;">Save</button>
         </div>
     `;
     // Hide original actions

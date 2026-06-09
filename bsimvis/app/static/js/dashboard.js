@@ -14,7 +14,7 @@ function handleFilterKey(e, searchFn) {
     if (e.key === 'Enter') {
         e.preventDefault();
         if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-        
+
         // Capture focus and selection before searching
         currentFocusId = e.target.id;
         try {
@@ -27,7 +27,7 @@ function handleFilterKey(e, searchFn) {
             preservedSelection.start = 0;
             preservedSelection.end = 0;
         }
-        
+
         searchFn();
     }
 }
@@ -75,12 +75,12 @@ function initColumnResize(th, path, label) {
     resizer.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         startX = e.clientX;
         startWidth = th.getBoundingClientRect().width;
-        
+
         document.body.classList.add('resizing');
-        
+
         // Disable pointer events on iframes during resize
         document.querySelectorAll('iframe').forEach(ifrm => {
             ifrm.style.pointerEvents = 'none';
@@ -545,7 +545,7 @@ function updateUI(path, params, route) {
         updateNavLink('nav-clusters', '#clusters');
         updateNavLink('nav-jobs', '#jobs');
         updateNavLink('nav-upload', '#upload');
-        
+
         const fileMd5 = params.get('file_md5');
         const cgNav = document.getElementById('nav-file-call-graph');
         if (cgNav) {
@@ -571,7 +571,7 @@ function updateUI(path, params, route) {
     const dataTable = document.getElementById('data-table');
     const dataTableHeader = document.getElementById('data-table-header');
     let headHtml = '<tr>';
-    
+
     const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[path];
     const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
     const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
@@ -646,9 +646,9 @@ function updateUI(path, params, route) {
                 settingsHtml += `
                     <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
                     <div style="position:relative; display:inline-flex; align-items:center;">
-                        <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
-                            title="Max candidates to score / filter" 
-                            style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                        <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000"
+                            title="Max candidates to score / filter"
+                            style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;"
                             onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                         <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
                     </div>`;
@@ -657,9 +657,9 @@ function updateUI(path, params, route) {
             settingsHtml += `
                 <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
                 <div style="position:relative; display:inline-flex; align-items:center;">
-                    <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
-                        title="Max results to display (Output Limit)" 
-                        style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                    <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000"
+                        title="Max results to display (Output Limit)"
+                        style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;"
                         onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                     <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
                 </div>
@@ -980,7 +980,7 @@ function updateUI(path, params, route) {
         const p = new URLSearchParams(params);
         const fileMd5 = p.get('file_md5');
         const callGraphBtn = fileMd5 ? `<a class="btn-action" href="#file-call-graph?collection=${p.get('collection')}&file_md5=${fileMd5}" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem;">View File Call Graph 🕸️</a>` : '';
-        
+
         searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
             <div style="display:flex; gap:10px; align-items:center;">
                 <div class="search-input-wrapper">
@@ -1403,7 +1403,7 @@ function createTagCard(columnId, type, value, isExclude = false) {
 
     card.innerHTML = `
         <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
-        <span class="tag-text" title="${value}">${value}</span>
+        <span class="tag-text" title="${escapeAttr(value)}">${escapeHtml(value)}</span>
         <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove(); triggerTagSearch();">×</span>
     `;
 
@@ -1448,22 +1448,22 @@ function renderCollections(data) {
     if (!data.length) return '<tr><td colspan="5" style="text-align:center">No collections found.</td></tr>';
 
     return data.map(col => `
-        <tr data-id="${col.name}">
-            <td><b style="color:var(--accent)">${col.name}</b></td>
+        <tr data-id="${escapeAttr(col.name)}">
+            <td><b style="color:var(--accent)">${escapeHtml(col.name)}</b></td>
             <td class="mono">${col['total_files']}</td>
             <td class="mono">${col['total_functions']}</td>
             <td class="dim">${formatDate(col['last_updated'])}</td>
             <td>
                 <div style="display: flex; gap: 15px;">
-                    <a class="btn-action" href="#upload?collection=${col.name}" style="color:var(--accent)">
+                    <a class="btn-action" href="#upload?collection=${encodeURIComponent(col.name)}" style="color:var(--accent)">
                         <i class="fa-solid fa-cloud-arrow-up"></i> Upload
                     </a>
                     <span style="color:var(--border)">|</span>
-                    <a class="btn-action" href="#batches?collection=${col.name}">
+                    <a class="btn-action" href="#batches?collection=${encodeURIComponent(col.name)}">
                         Browse Batches
                     </a>
                     <span style="color:var(--border)">|</span>
-                    <a class="btn-action" href="#files?collection=${col.name}" style="color:var(--success)">
+                    <a class="btn-action" href="#files?collection=${encodeURIComponent(col.name)}" style="color:var(--success)">
                         View All Files →
                     </a>
                 </div>
@@ -1476,11 +1476,11 @@ function renderBatches(data) {
     return data.map(b => {
         const col = b.collection || 'unknown';
         return `
-        <tr data-id="${b['batch_uuid']}">
+        <tr data-id="${escapeAttr(b['batch_uuid'])}">
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <b>${b.name || 'Unnamed'}</b>
-                    <button class="btn-copy" title="Copy Batch ID: ${b['batch_id']}" onclick="copyToClipboard('${b['batch_id']}', this)">
+                    <b>${escapeHtml(b.name || 'Unnamed')}</b>
+                    <button class="btn-copy" title="Copy Batch ID: ${escapeAttr(b['batch_id'])}" onclick="copyToClipboard(${escapeAttr(jsString(b['batch_id']))}, this)">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
@@ -1506,21 +1506,21 @@ function renderFiles(data) {
         const funcCount = f['function_count'] !== undefined ? f['function_count'] : 0;
 
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${fileId}">
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}">
             <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <b style="color:var(--accent)">${f['file_name']}</b>
-                    <button class="btn-copy" title="Copy File ID: ${fileId}" onclick="copyToClipboard('${fileId}', this)">
+                    <b style="color:var(--accent)">${escapeHtml(f['file_name'])}</b>
+                    <button class="btn-copy" title="Copy File ID: ${escapeAttr(fileId)}" onclick="copyToClipboard(${escapeAttr(jsString(fileId))}, this)">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
             </td>
             <td class="sim-cell">
-                <div class="mono" style="font-size:0.7rem"># ${f['file_md5']}</div>
-                <div class="dim" style="font-size:0.65rem">${f['language_id']}</div>
+                <div class="mono" style="font-size:0.7rem"># ${escapeHtml(f['file_md5'])}</div>
+                <div class="dim" style="font-size:0.65rem">${escapeHtml(f['language_id'])}</div>
             </td>
-            <td class="sim-cell mono dim" style="font-size:0.7rem" title="${batchUuid}">
-                ${batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid}
+            <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}">
+                ${escapeHtml(batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid)}
             </td>
             <td class="sim-cell">
                 <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
@@ -1559,44 +1559,45 @@ function renderFunctions(data) {
 
         const safeName = (name || '').replace(/'/g, "\\'");
         const fInfo = formatSigComponent(namespace, returnType, name, parameters);
+        const renderedSig = `${fInfo.ret ? `<span style="color:#ae81ff">${escapeHtml(fInfo.ret)}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${escapeHtml(fInfo.ns)}::</span>` : ''}${escapeHtml(name)}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>`;
         const rowStyle = getRowTagColor(tags, user_tags);
 
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${funcId}">
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(funcId)}">
             <td class="sim-cell">
-                <div style="display:flex; align-items:center; gap:8px; overflow:hidden;" title="${fInfo.fullSig}">
-                    <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                       onmouseenter="showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
+                <div style="display:flex; align-items:center; gap:8px; overflow:hidden;" title="${escapeAttr(fInfo.fullSig)}">
+                    <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;"
+                       onmouseenter="showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${featCount}, event)"
                        onmousemove="moveCodePreview(event)"
                        onmouseleave="hideCodePreview(event)"
-                       onclick="showFunctionCodeById('${funcId}', '${safeName}', '', event)">
-                        ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                       onclick="showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)">
+                        ${renderedSig}
                     </b>
                     <div style="display:inline-flex; gap:4px; margin-left: 8px;">
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(funcId)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(funcId)}" 
-                                onmouseenter="onHoverDiffButton(event, '${funcId}', '${safeName}')"
+                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(funcId)) ? 'active' : ''}"
+                                data-func-id="${escapeAttr(normalizeFuncId(funcId))}"
+                                onmouseenter="onHoverDiffButton(event, ${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))})"
                                 onmousemove="moveCodePreview(event)"
                                 onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px;"><span>±</span></button>
+                                onclick="addToDiff(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))})" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px;"><span>±</span></button>
                         <a class="btn-sim-action" href="#function-similarity?collection=${f.collection || 'main'}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
                     </div>
                 </div>
             </td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
+            <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(entry)}</span></td>
             <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
             <td class="cluster-cards-cell" data-clusters='${JSON.stringify(f['clusters'] || []).replace(/'/g, "&apos;")}'>${renderClusterCards(f['clusters'])}</td>
             <td class="sim-cell" style="text-align:center;">
 
                 <div style="display:inline-flex; align-items:center; gap:6px;">
                     <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
-                    <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
+                    <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(funcId))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                 </div>
             </td>
-            <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${file_md5}"># ${file_md5}</span></td>
+            <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${escapeAttr(fileName)}">${escapeHtml(fileName)}</div></td>
+            <td class="sim-cell"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${escapeAttr(file_md5)}"># ${escapeHtml(file_md5)}</span></td>
             <td>${renderTagEditor('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
+            <td class="sim-cell"><span class="mono" style="color:var(--accent)">${escapeHtml(language)}</span></td>
             <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
             <td class="sim-cell"></td>
         </tr>
@@ -1614,7 +1615,7 @@ function renderGlobalFeatures(items) {
         let pcodeHtml = `
             <div class="code-card">
                 <div class="code-card-line">
-                    <div class="code-card-text pcode-text">${ctx.pcode_full || 'N/A'}</div>
+                    <div class="code-card-text pcode-text">${escapeHtml(ctx.pcode_full || 'N/A')}</div>
                 </div>
             </div>`;
 
@@ -1637,14 +1638,14 @@ function renderGlobalFeatures(items) {
                     'keyword': 'tok-keyword', 'comment': 'tok-comment', 'string': 'tok-string', 'number': 'tok-number'
                 };
                 const cls = colorMap[t.type] || 'tok-default';
-                cCodeHtml += `<span class="${cls} feature-highlight" 
-                    data-hashes="${f.hash}" 
-                    data-type="${ctx.type || ''}" 
-                    data-op="${ctx.op || ''}" 
+                cCodeHtml += `<span class="${cls} feature-highlight"
+                    data-hashes="${f.hash}"
+                    data-type="${ctx.type || ''}"
+                    data-op="${ctx.op || ''}"
                     data-tf="${Math.round(f.tf_score || 0)}"
                     onmouseenter="showTokenTooltip(event)"
                     onmouseleave="hideTokenTooltip()"
-                    onmousemove="moveCodePreview(event)">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
+                    onmousemove="moveCodePreview(event)">${escapeHtml(t.text)}</span>`;
             });
             cCodeHtml += `</div></div></div>`;
         }
@@ -1653,15 +1654,15 @@ function renderGlobalFeatures(items) {
         <tr data-id="${f.hash}">
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <code class="mono" style="color:var(--accent)">${f.hash}</code>
+                    <code class="mono" style="color:var(--accent)">${escapeHtml(f.hash)}</code>
                     <button class="btn-copy" title="Copy Feature ID: ${f['feature_id']}" onclick="copyToClipboard('${f['feature_id']}', this)">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
             </td>
             <td>
-                <div class="dim" style="font-size:0.65rem; font-weight:bold; color:var(--accent);">${ctx.type}</div>
-                <span class="badge" style="margin-top:2px; font-size:0.65rem;">${ctx.op}</span>
+                <div class="dim" style="font-size:0.65rem; font-weight:bold; color:var(--accent);">${escapeHtml(ctx.type)}</div>
+                <span class="badge" style="margin-top:2px; font-size:0.65rem;">${escapeHtml(ctx.op)}</span>
             </td>
             <td style="max-width:300px;">${pcodeHtml}</td>
             <td style="max-width:350px;">${cCodeHtml}</td>
@@ -1697,6 +1698,7 @@ function renderTopCorrelations(items) {
 
         const f1 = formatSigComponent(p.meta1?.namespace || '', p.meta1?.return_type || '', p.name1 || '---', p.meta1?.parameters || []);
         const f2 = formatSigComponent(p.meta2?.namespace || '', p.meta2?.return_type || '', p.name2 || '---', p.meta2?.parameters || []);
+        const renderSig = (info, fallbackName) => `${info.ret ? `<span style="color:#ae81ff">${escapeHtml(info.ret)}</span> ` : ''}${info.ns ? `<span style="color:white; opacity:0.8">${escapeHtml(info.ns)}::</span>` : ''}${escapeHtml(fallbackName || '---')}<span style="color:white">(</span>${info.params.map(t => `<span style="color:#ae81ff">${escapeHtml(t)}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>`;
 
         const tags = p.tags || [];
         const user_tags = p.user_tags || [];
@@ -1704,16 +1706,16 @@ function renderTopCorrelations(items) {
         const pairId = p.sid || `${p.id1}|${p.id2}|${p.algo}`;
 
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                    <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
+                    <button class="btn-diff-action"
+                        onmouseenter="showDiffPreview(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || '---'))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || '---'))}, ${p.score}, event)"
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}', event)" 
-                        title="Run Aligned Diff" 
+                        onclick="openDiffDirectly(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || '---'))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || '---'))}, event)"
+                        title="Run Aligned Diff"
                         style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
                         <span>±</span>
                     </button>
@@ -1722,44 +1724,44 @@ function renderTopCorrelations(items) {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f1.fullSig}">
-                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                           onmouseenter="showCodePreview('${p.id1}', '${name1}', '${addr1}', '${m1}', ${p.meta1?.bsim_features_count || 0}, event, 0, '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}')" 
+                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${escapeAttr(f1.fullSig)}">
+                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;"
+                           onmouseenter="showCodePreview(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || '---'))}, ${escapeAttr(jsString(addr1))}, ${escapeAttr(jsString(m1))}, ${p.meta1?.bsim_features_count || 0}, event, 0, ${escapeAttr(jsString(p.meta1?.file_name || ''))})"
                            onmousemove="moveCodePreview(event)"
                            onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id1}', '${name1}', '', event)">
-                            ${f1.ret ? `<span style="color:#ae81ff">${f1.ret}</span> ` : ''}${f1.ns ? `<span style="color:white; opacity:0.8">${f1.ns}::</span>` : ''}${p.name1 || '---'}<span style="color:white">(</span>${f1.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                           onclick="showFunctionCodeById(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || '---'))}, '', event)">
+                            ${renderSig(f1, p.name1)}
                         </b>
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id1)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(p.id1)}" 
-                                onmouseenter="onHoverDiffButton(event, '${p.id1}', '${name1}', '${p.id2}', ${p.score})"
+                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id1)) ? 'active' : ''}"
+                                data-func-id="${escapeAttr(normalizeFuncId(p.id1))}"
+                                onmouseenter="onHoverDiffButton(event, ${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || '---'))}, ${escapeAttr(jsString(p.id2))}, ${p.score})"
                                 onmousemove="moveCodePreview(event)"
                                 onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${p.id1}', '${name1}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
+                                onclick="addToDiff(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || '---'))})" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
                         <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m1}&address=${addr1}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f2.fullSig}">
-                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                           onmouseenter="showCodePreview('${p.id2}', '${name2}', '${addr2}', '${m2}', ${p.meta2?.bsim_features_count || 0}, event, 0, '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}')" 
+                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${escapeAttr(f2.fullSig)}">
+                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;"
+                           onmouseenter="showCodePreview(${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || '---'))}, ${escapeAttr(jsString(addr2))}, ${escapeAttr(jsString(m2))}, ${p.meta2?.bsim_features_count || 0}, event, 0, ${escapeAttr(jsString(p.meta2?.file_name || ''))})"
                            onmousemove="moveCodePreview(event)"
                            onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id2}', '${name2}', '', event)">
-                            ${f2.ret ? `<span style="color:#ae81ff">${f2.ret}</span> ` : ''}${f2.ns ? `<span style="color:white; opacity:0.8">${f2.ns}::</span>` : ''}${p.name2 || '---'}<span style="color:white">(</span>${f2.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                           onclick="showFunctionCodeById(${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || '---'))}, '', event)">
+                            ${renderSig(f2, p.name2)}
                         </b>
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id2)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(p.id2)}" 
-                                onmouseenter="onHoverDiffButton(event, '${p.id2}', '${name2}', '${p.id1}', ${p.score})"
+                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id2)) ? 'active' : ''}"
+                                data-func-id="${escapeAttr(normalizeFuncId(p.id2))}"
+                                onmouseenter="onHoverDiffButton(event, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || '---'))}, ${escapeAttr(jsString(p.id1))}, ${p.score})"
                                 onmousemove="moveCodePreview(event)"
                                 onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${p.id2}', '${name2}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
+                                onclick="addToDiff(${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || '---'))})" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
                         <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m2}&address=${addr2}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
                     </div>
                 </div>
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${addr1}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${addr2}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(addr1)}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(addr2)}</span></div>
                 </div>
             </td>
             <td>
@@ -1778,24 +1780,24 @@ function renderTopCorrelations(items) {
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta1?.bsim_features_count || 0}</span>
-                        <button class="btn-icon" onclick="showFeaturePanel('${p.id1}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                        <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(p.id1))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span>
-                        <button class="btn-icon" onclick="showFeaturePanel('${p.id2}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                        <button class="btn-icon" onclick="showFeaturePanel(${escapeAttr(jsString(p.id2))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
                     </div>
                 </div>
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta1?.file_name || '')}">${escapeHtml(p.meta1?.file_name || '')}</div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta2?.file_name || '')}">${escapeHtml(p.meta2?.file_name || '')}</div>
                 </div>
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m1}"># ${m1}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m2}"># ${m2}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${escapeAttr(m1)}"># ${escapeHtml(m1)}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${escapeAttr(m2)}"># ${escapeHtml(m2)}</span></div>
                 </div>
             </td>
             <td>
@@ -1806,8 +1808,8 @@ function renderTopCorrelations(items) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta1?.language_id || '---'}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${p.meta2?.language_id || '---'}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${escapeHtml(p.meta1?.language_id || '---')}</span></div>
+                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent)">${escapeHtml(p.meta2?.language_id || '---')}</span></div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -1878,14 +1880,14 @@ function showFunctionCodeById(id, name, lineHash = '', e) {
 function seeSimilarFromCode() {
     const win = windowManager.activeWindow;
     if (!win || !win.iframe || !win.iframe.src) return;
-    
+
     let url;
     try {
         url = new URL(win.iframe.contentWindow.location.href);
     } catch(e) {
         url = new URL(win.iframe.src, window.location.origin);
     }
-    
+
     const id = url.searchParams.get('id');
     if (!id) return;
 
@@ -2003,7 +2005,7 @@ function updateUIParams() {
     localStorage.setItem('cohesionThreshold', UIParams.cohesionThreshold);
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
-    
+
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
 
@@ -2217,7 +2219,7 @@ async function populateCollectionDropdown() {
         if (!res.ok) return;
         const data = await res.json();
         const collections = data.collections || (Array.isArray(data) ? data : []);
-        
+
         const list = document.getElementById('collection-flyout-list');
         const trigger = document.getElementById('nav-collections');
         const flyout = document.getElementById('collection-flyout');
@@ -2233,9 +2235,9 @@ async function populateCollectionDropdown() {
         }
 
         list.innerHTML = collections.map(c => `
-            <div class="collection-item ${c.name === currentCollection ? 'active' : ''}" onclick="selectCollection('${c.name}')">
+            <div class="collection-item ${c.name === currentCollection ? 'active' : ''}" onclick="selectCollection(${escapeAttr(jsString(c.name))})">
                 <i class="fa-solid fa-database"></i>
-                <span>${c.name}</span>
+                <span>${escapeHtml(c.name)}</span>
             </div>
         `).join('') || '<div class="collection-item dim">No collections found</div>';
 
@@ -2262,7 +2264,7 @@ async function populateCollectionDropdown() {
             trigger.addEventListener('mouseleave', hide);
             flyout.addEventListener('mouseenter', () => { if (hideTimeout) clearTimeout(hideTimeout); });
             flyout.addEventListener('mouseleave', hide);
-            
+
             trigger.dataset.hasListener = "true";
         }
     } catch (e) {
@@ -2502,7 +2504,7 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
 
     // Generate HTML content based on type
     let html = '';
-    
+
     if (type === 'node') {
         const nodeId = data.id;
         const nodeName = data.name;
@@ -2512,7 +2514,7 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
         const tags = latestNode.tags || [];
 
         html += `<div class="context-menu-header">Function: ${nodeName}</div>`;
-        
+
         // Bookmark/Ignore/Tag actions
         html += renderBookmarkIgnoreTagItems('function', nodeId, tags, userTags);
 
@@ -2543,17 +2545,17 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
         if (selectedSim) {
             const simId = selectedSim.sid || `${selectedSim.id1}|${selectedSim.id2}|${selectedSim.algo}`;
             // Fetch latest pair from graph all_pairs to get latest tags
-            const latestPair = graph.all_pairs.find(p => 
-                (p.id1 === selectedSim.id1 && p.id2 === selectedSim.id2) || 
+            const latestPair = graph.all_pairs.find(p =>
+                (p.id1 === selectedSim.id1 && p.id2 === selectedSim.id2) ||
                 (p.id1 === selectedSim.id2 && p.id2 === selectedSim.id1)
             ) || selectedSim;
-            
+
             const simUserTags = latestPair.user_tags || [];
             const simTags = latestPair.tags || [];
             const percentScore = (parseFloat(selectedSim.score) * 100).toFixed(1);
 
             html += `<div class="context-menu-header" style="margin-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 6px;">Similarity: ${percentScore}% Match</div>`;
-            
+
             html += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${selectedSim.id1}', '${selectedSim.n1.replace(/'/g, "\\'")}', '${selectedSim.id2}', '${selectedSim.n2.replace(/'/g, "\\'")}', event)">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
@@ -2568,9 +2570,9 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
         const name1 = data.name1;
         const name2 = data.name2;
         const simId = data.sid || `${id1}|${id2}|${data.algo}`;
-        
+
         // Fetch latest pair from graph
-        const latestPair = graph.all_pairs.find(p => 
+        const latestPair = graph.all_pairs.find(p =>
             (p.id1 === id1 && p.id2 === id2) || (p.id1 === id2 && p.id2 === id1)
         ) || data;
 
@@ -2579,7 +2581,7 @@ window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
         const percentScore = (parseFloat(data.score) * 100).toFixed(1);
 
         html += `<div class="context-menu-header">Similarity: ${percentScore}% Match</div>`;
-        
+
         html += `
         <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${id1}', '${name1.replace(/'/g, "\\'")}', '${id2}', '${name2.replace(/'/g, "\\'")}', event)">
             <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
@@ -2663,7 +2665,7 @@ window.closeGraphContextMenu = function() {
 window.toggleContextMenuBookmark = async function(event, etype, eid) {
     const userTags = getEntityUserTags(etype, eid);
     const isBookmarked = userTags.includes('bookmark');
-    
+
     if (isBookmarked) {
         await removeTag(null, etype, eid, 'bookmark');
     } else {
@@ -2674,7 +2676,7 @@ window.toggleContextMenuBookmark = async function(event, etype, eid) {
 window.toggleContextMenuIgnore = async function(event, etype, eid) {
     const userTags = getEntityUserTags(etype, eid);
     const isIgnored = userTags.includes('ignore');
-    
+
     if (isIgnored) {
         await removeTag(null, etype, eid, 'ignore');
     } else {
@@ -2695,7 +2697,7 @@ window.toggleContextMenuTag = async function(event, etype, eid, tag) {
 window.showInlineTagInput = function(event, etype, eid) {
     const item = event.currentTarget;
     const parent = item.parentElement;
-    
+
     // Create an input wrapper
     const wrapper = document.createElement('div');
     wrapper.style.padding = '6px 12px';
@@ -2703,7 +2705,7 @@ window.showInlineTagInput = function(event, etype, eid) {
     wrapper.style.flexDirection = 'column';
     wrapper.style.gap = '4px';
     wrapper.style.position = 'relative';
-    
+
     const input = document.createElement('input');
     input.type = 'text';
     input.placeholder = 'Search or create...';
@@ -2714,14 +2716,14 @@ window.showInlineTagInput = function(event, etype, eid) {
     input.style.padding = '4px 8px';
     input.style.borderRadius = '4px';
     input.style.fontSize = '0.75rem';
-    
+
     wrapper.appendChild(input);
     parent.replaceChild(wrapper, item);
     input.focus();
-    
+
     // Clicking inside the input block shouldn't close the parent context menu
     wrapper.onmousedown = (e) => e.stopPropagation();
-    
+
     input.onkeydown = async (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -2733,7 +2735,7 @@ window.showInlineTagInput = function(event, etype, eid) {
             window.refreshContextMenuUI();
         }
     };
-    
+
     if (window.attachTagAutocomplete) {
         window.attachTagAutocomplete(input, async (tag) => {
             if (tag && tag.trim()) {
@@ -2756,7 +2758,7 @@ window.refreshContextMenuUI = function() {
 function getEntityUserTags(etype, eid) {
     const graph = window.graphInstance;
     if (!graph) return [];
-    
+
     if (etype === 'function') {
         const latest = graph.nodes_map.get(eid);
         return latest ? (latest.user_tags || []) : [];
@@ -2772,8 +2774,8 @@ function getEntityUserTags(etype, eid) {
         if (!latest) {
             const parts = eid.split('|');
             if (parts.length >= 2) {
-                latest = graph.all_pairs.find(p => 
-                    (p.id1 === parts[0] && p.id2 === parts[1]) || 
+                latest = graph.all_pairs.find(p =>
+                    (p.id1 === parts[0] && p.id2 === parts[1]) ||
                     (p.id1 === parts[1] && p.id2 === parts[0])
                 );
             }
@@ -2788,7 +2790,7 @@ function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
     const isIgnored = userTagsList.includes('ignore');
 
     let html = '';
-    
+
     // Bookmark and Ignore side-by-side buttons
     html += `
     <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
@@ -2804,13 +2806,13 @@ function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
 
     // Generate Tags nested submenu dropdown items
     const allKnownTags = Object.keys(window.tagMetadata || {}).filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
-    
+
     let submenuHtml = '';
     allKnownTags.forEach(tag => {
         const isActive = userTagsList.includes(tag);
         const color = window.getTagMetadata ? window.getTagMetadata(tag).color : '#66d9ef';
         const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
-        
+
         submenuHtml += `
         <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')">
             <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
@@ -2834,7 +2836,7 @@ function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
         <i class="fa-solid fa-tags" style="width: 16px; text-align: center; opacity: 0.8;"></i>
         <span>Tags</span>
         <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
-        
+
         <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
             ${submenuHtml}
         </div>
@@ -2849,7 +2851,7 @@ function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
 function renderContextMenuTagsList(etype, eid, tagsList, userTagsList) {
     const allTags = [...(userTagsList || [])].filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
     if (allTags.length === 0) return '';
-    
+
     const tagsHtml = allTags.map(tag => {
         let color = '#66d9ef';
         if (window.getTagMetadata) {
@@ -3024,7 +3026,7 @@ function getFilterSummary(path, params) {
         const language_id = params.get('language_id');
         const min_function_count = params.get('min_function_count');
         const max_function_count = params.get('max_function_count');
-        
+
         if (file_name) summary.push(`Name: "${file_name}"`);
         if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
         if (language_id) summary.push(`Lang: ${language_id}`);
@@ -3038,7 +3040,7 @@ function getFilterSummary(path, params) {
         const min_features = params.get('min_features');
         const cluster_name = params.get('cluster_name');
         const entrypoint_address = params.get('entrypoint_address');
-        
+
         if (function_name) summary.push(`Func: "${function_name}"`);
         if (file_name) summary.push(`File: "${file_name}"`);
         if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
@@ -3054,7 +3056,7 @@ function getFilterSummary(path, params) {
         const algo = params.get('algo');
         const cross_binary = params.get('cross_binary');
         const match_mode = params.get('match_mode');
-        
+
         if (name) summary.push(`Func: "${name}"`);
         if (md5) summary.push(`MD5: ${md5.substring(0, 6)}`);
         if (address) summary.push(`Addr: ${address}`);
@@ -3070,7 +3072,7 @@ function getFilterSummary(path, params) {
         const cluster_name = params.get('cluster_name');
         const min_count = params.get('min_count');
         const min_cohesion = params.get('min_cohesion');
-        
+
         if (cluster_uuid) summary.push(`UUID: ${cluster_uuid.substring(0, 6)}`);
         if (cluster_name) summary.push(`Name: "${cluster_name}"`);
         if (min_count && min_count !== '0') summary.push(`Min Funcs: ${min_count}`);
@@ -3191,7 +3193,7 @@ function addToHistory(path, queryString) {
         const last = history[0];
         const isSameView = last.path === path && last.collection === col && last.view === view;
         const timeDiff = now - last.timestamp;
-        
+
         // Typing merge (debounce within 7 seconds)
         if (isSameView && timeDiff < 7000) {
             history[0] = newItem;
@@ -3396,7 +3398,7 @@ function toggleHistoryDropdown(event) {
     const dropdown = document.getElementById('history-dropdown');
     if (!dropdown) return;
     const isVisible = dropdown.style.display === 'block';
-    
+
     closeAllHistoryDropdowns();
 
     if (!isVisible) {
@@ -3415,7 +3417,7 @@ function toggleViewHistoryDropdown(event) {
     const dropdown = document.getElementById('view-history-dropdown');
     if (!dropdown) return;
     const isVisible = dropdown.style.display === 'block';
-    
+
     closeAllHistoryDropdowns();
 
     if (!isVisible) {
@@ -3478,7 +3480,7 @@ function restoreGraphSettings() {
         if (settings.colorSim !== undefined) setVal('graph-color-sim', settings.colorSim);
         if (settings.bundleTension !== undefined) setVal('graph-bundle-tension', settings.bundleTension);
         if (settings.linkWidth !== undefined) setVal('graph-link-width', settings.linkWidth);
-        
+
         const chk = document.getElementById('graph-scale-width');
         if (chk && settings.scaleWidth !== undefined) chk.checked = settings.scaleWidth;
 
@@ -3508,14 +3510,14 @@ function downloadSearchResults(format) {
         alert("Downloads are not available for this view.");
         return;
     }
-    
+
     const params = new URLSearchParams(queryString);
     params.set('format', format);
     // For downloads, we want to fetch all matches, so we set limit to a large number
     params.set('limit', '100000');
-    
+
     const downloadUrl = route.api + '?' + params.toString();
-    
+
     // Create a temporary anchor element to trigger the browser download
     const link = document.createElement('a');
     link.href = downloadUrl;

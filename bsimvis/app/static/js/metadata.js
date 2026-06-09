@@ -2,21 +2,26 @@
 
 function renderFunctionMetadata(container, m, fullId, options = {}) {
     if (!m) return "";
-    
+
     // Core data extraction
     const label = m['function_name'] || 'unknown_func';
+    const safeLabel = escapeHtml(label);
     const returnType = m['return_type'] || 'void';
+    const safeReturnType = escapeHtml(returnType);
     const namespace = m['namespace'] || '';
+    const safeNamespace = escapeHtml(namespace);
     const parameters = m['parameters'] || [];
     const addr = m['entrypoint_address'] || (fullId ? fullId.split(':').pop() : 'N/A');
+    const safeAddr = escapeHtml(addr);
     const fileMd5 = m['file_md5'] || 'N/A';
+    const safeFileMd5 = escapeHtml(fileMd5);
 
     const collection = fullId ? fullId.split(':')[0] : 'main';
     const fileId = m['file_md5'] ? `${collection}:file:${m['file_md5']}` : null;
-    
+
     // Tags and Clusters
-    const fileTagsHtml = (fileId && typeof renderTagEditor === 'function') 
-        ? renderTagEditor('file', fileId, m['file_tags'] || [], m['file_user_tags'] || []) 
+    const fileTagsHtml = (fileId && typeof renderTagEditor === 'function')
+        ? renderTagEditor('file', fileId, m['file_tags'] || [], m['file_user_tags'] || [])
         : '';
     const tags = m['tags'] || [];
     const user_tags = m['user_tags'] || [];
@@ -31,7 +36,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 <div class="relation-list none">None</div>
             </div>`;
         }
-        
+
         const itemsHtml = list.map(t => {
             if (typeof t === 'object' && t !== null && t.name) {
                 const isExt = t.is_external;
@@ -41,22 +46,22 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 const ns = t.namespace || '';
                 const ret = t.return_type || '';
                 const params = t.parameters || [];
-                
+
                 let labelHtml = '';
                 if (typeof formatSigComponent === 'function') {
                     const sig = formatSigComponent(ns, ret, name, params);
-                    labelHtml = `${sig.ret ? `<span class="sig-ret">${sig.ret}</span> ` : ''}${sig.ns ? `<span class="sig-ns">${sig.ns}::</span>` : ''}${name}<span class="sig-paren">(</span>${sig.params.map(p => `<span class="sig-param">${p}</span>`).join(', ')}<span class="sig-paren">)</span>`;
+                    labelHtml = `${sig.ret ? `<span class="sig-ret">${escapeHtml(sig.ret)}</span> ` : ''}${sig.ns ? `<span class="sig-ns">${escapeHtml(sig.ns)}::</span>` : ''}${escapeHtml(name)}<span class="sig-paren">(</span>${sig.params.map(p => `<span class="sig-param">${escapeHtml(p)}</span>`).join(', ')}<span class="sig-paren">)</span>`;
                 } else {
-                    labelHtml = name;
+                    labelHtml = escapeHtml(name);
                 }
-                
-                if (addr) labelHtml += ` <span class="sig-addr">@${addr}</span>`;
-                
+
+                if (addr) labelHtml += ` <span class="sig-addr">@${escapeHtml(addr)}</span>`;
+
                 const color = isExt ? '#f92672' : 'var(--accent)';
                 const cursor = (isExt || !fid) ? 'default' : 'pointer';
                 const previewAttrs = (isExt || !fid) ? '' : `
                     onmouseenter="
-                        const fid='${fid}'; const n='${name.replace(/'/g, "\\'")}'; const a='${addr}';
+                        const fid=${jsString(fid)}; const n=${jsString(name)}; const a=${jsString(addr)};
                         if(window.showCodePreview) { showCodePreview(fid, n, a, '', 0, event); }
                         else if(window.parent && window.parent.showCodePreview) { window.parent.showCodePreview(fid, n, a, '', 0, event); }
                     "
@@ -70,14 +75,14 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                     "
                 `;
                 const clickAttr = (isExt || !fid) ? '' : `onclick="
-                    const fid='${fid}'; 
-                    const name='${name.replace(/'/g, "\\'")}';
-                    if(window.showFunctionCodeById) { 
-                        showFunctionCodeById(fid, name, '', event); 
-                    } else if(window.parent && window.parent.showFunctionCodeById) { 
-                        window.parent.showFunctionCodeById(fid, name, '', event); 
-                    } else { 
-                        window.location.href='/function/index.html?id='+encodeURIComponent(fid); 
+                    const fid=${jsString(fid)};
+                    const name=${jsString(name)};
+                    if(window.showFunctionCodeById) {
+                        showFunctionCodeById(fid, name, '', event);
+                    } else if(window.parent && window.parent.showFunctionCodeById) {
+                        window.parent.showFunctionCodeById(fid, name, '', event);
+                    } else {
+                        window.location.href='/function/index.html?id='+encodeURIComponent(fid);
                     }"` ;
 
                 return `<span class="relation-tag" style="border-color:${color}; color:${color}; cursor:${cursor};" ${previewAttrs} ${clickAttr}>
@@ -85,9 +90,9 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                     ${isExt ? '<span class="ext-badge">EXT</span>' : ''}
                 </span>`;
             }
-            return `<span class="relation-tag">${JSON.stringify(t)}</span>`;
+            return `<span class="relation-tag">${escapeHtml(JSON.stringify(t))}</span>`;
         }).join('');
-        
+
         return `<div class="relation-column">
             <div class="relation-list">${itemsHtml}</div>
         </div>`;
@@ -98,13 +103,13 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
 
     // Action Buttons - Compact versions for header
     let headerActionsHtml = '';
-    
+
     if (options.showDiffBtn) {
         const fullTextAttr = options.diffBtnFullText ? 'data-full-text="true"' : '';
-        const onhover = `onmouseenter="if(window.currentFuncId || '${fullId}') onHoverDiffButton(event, '${fullId}', '${label}')" onmouseleave="hideDiffPreview(event)" onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"`;
+        const onhover = `onmouseenter="if(window.currentFuncId || ${escapeAttr(jsString(fullId))}) onHoverDiffButton(event, ${escapeAttr(jsString(fullId))}, ${escapeAttr(jsString(label))})" onmouseleave="hideDiffPreview(event)" onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"`;
         headerActionsHtml += `
-            <button id="${options.diffBtnId || 'add-diff-btn'}" class="btn-diff-action ${window.diffSelection && window.diffSelection.some(item => item.id === normalizeFuncId(fullId)) ? 'active' : ''}" 
-                data-func-id="${normalizeFuncId(fullId)}" ${fullTextAttr} ${onhover} onclick="addToDiff('${fullId}', '${label}')" 
+            <button id="${options.diffBtnId || 'add-diff-btn'}" class="btn-diff-action ${window.diffSelection && window.diffSelection.some(item => item.id === normalizeFuncId(fullId)) ? 'active' : ''}"
+                data-func-id="${escapeAttr(normalizeFuncId(fullId))}" ${fullTextAttr} ${onhover} onclick="addToDiff(${escapeAttr(jsString(fullId))}, ${escapeAttr(jsString(label))})"
                 title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;">
                 <span>±</span>
             </button>`;
@@ -112,7 +117,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
 
     if (options.showCodeLink) {
         headerActionsHtml += `
-            <a class="btn-code-compact" href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" title="Open Code" 
+            <a class="btn-code-compact" href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" title="Open Code"
                style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: rgba(102, 217, 239, 0.1); color: var(--accent); border: 1px solid rgba(102, 217, 239, 0.3);">
                <i class="fa-solid fa-code"></i>
             </a>`;
@@ -120,20 +125,20 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
 
     // Grouping Metadata
     const funcMetaKeys = [
-        'calling_convention', 'instruction_count', 'instructions_count', 'basic_blocks_count', 
+        'calling_convention', 'instruction_count', 'instructions_count', 'basic_blocks_count',
         'cyclomatic_complexity', 'size_bytes'
     ];
     const bsimMetaKeys = ['bsim_features_count', 'bsim_unique_features_count', 'score', 'milvus_id'];
     const fileMetaKeys = ['file_name', 'language_id', 'file_size', 'file_md5'];
-    
+
     const renderRow = (key, val, icon = null) => {
         const labelText = key.replace(/_/g, ' ');
         const prefix = icon ? `<i class="fa-solid ${icon}" style="margin-right:8px; opacity:0.5; width:14px;"></i>` : '';
-        let valueDisplay = (key === 'entrypoint_address') ? `@ ${val}` : (key === 'file_md5' ? `# ${val}` : val);
+        let valueDisplay = (key === 'entrypoint_address') ? `@ ${escapeHtml(val)}` : (key === 'file_md5' ? `# ${escapeHtml(val)}` : escapeHtml(val));
         const valueColor = (key.includes('address') || key.includes('md5') || key.includes('id') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
-        
+
         if (key === 'bsim_features_count') {
-            valueDisplay = `${val} <button class="btn-icon" onclick="if (window.parent && typeof window.parent.showFeaturePanel === 'function') { window.parent.showFeaturePanel('${fullId}', event); } else if (typeof window.showFeaturePanel === 'function') { window.showFeaturePanel('${fullId}', event); } else { window.location.href = '/function/features/index.html?id=' + encodeURIComponent('${fullId}'); }" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
+            valueDisplay = `${val} <button class="btn-icon" onclick="if (window.parent && typeof window.parent.showFeaturePanel === 'function') { window.parent.showFeaturePanel(${jsString(fullId)}, event); } else if (typeof window.showFeaturePanel === 'function') { window.showFeaturePanel(${jsString(fullId)}, event); } else { window.location.href = '/function/features/index.html?id=' + encodeURIComponent(${jsString(fullId)}); }" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
         }
 
         return `<div class="meta-row" title="${labelText}">
@@ -167,10 +172,10 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     bsimMetaKeys.forEach(k => { if (m[k] !== undefined) bsimHtml += renderRow(k, m[k], getIcon(k)); });
 
     let fileHtml = '';
-    fileMetaKeys.forEach(k => { 
+    fileMetaKeys.forEach(k => {
         let val = m[k];
         if (k === 'file_md5' && val === undefined) val = fileMd5;
-        if (val !== undefined) fileHtml += renderRow(k, val, getIcon(k)); 
+        if (val !== undefined) fileHtml += renderRow(k, val, getIcon(k));
     });
     const cachedCollapsed = localStorage.getItem('metadata_more_collapsed');
     const startCollapsed = (cachedCollapsed === null || cachedCollapsed === 'true');
@@ -180,17 +185,17 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     const toggleText = startCollapsed ? 'Show More' : 'Show Less';
 
     const cardHtml = `
-    <div class="func-meta-card modern flattened compact" ${options.side ? `data-side="${options.side}"` : ''}>
+    <div class="func-meta-card modern flattened compact" ${options.side ? `data-side="${escapeAttr(options.side)}"` : ''}>
         <div class="meta-header">
             <div class="meta-title-row" style="margin-bottom: 8px;">
                 <div class="meta-sig">
-                    <span class="meta-return-type">${returnType}</span>
-                    ${namespace ? `<span class="meta-namespace">${namespace}::</span>` : ''}
-                    <span class="meta-func-name">${label}</span>
-                    <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
-                    
+                    <span class="meta-return-type">${safeReturnType}</span>
+                    ${namespace ? `<span class="meta-namespace">${safeNamespace}::</span>` : ''}
+                    <span class="meta-func-name">${safeLabel}</span>
+                    <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${escapeHtml(typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p)}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
+
                     <div class="meta-sig-actions" style="margin-left: 10px;">
-                        <a class="btn-sim-action" href="javascript:void(0)" onclick="seeSimilar('${fullId}')" 
+                        <a class="btn-sim-action" href="javascript:void(0)" onclick="seeSimilar(${escapeAttr(jsString(fullId))})"
                            title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background: rgba(174, 129, 255, 0.1); color: var(--info); border: 1px solid rgba(174, 129, 255, 0.3);">
                            <i class="fa-solid fa-code-compare"></i>
                         </a>
@@ -198,7 +203,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                     </div>
 
                     <div class="meta-header-addr mono" style="margin-left: 10px; color: var(--accent); font-size: 0.8rem; opacity: 0.8;">
-                        @ ${addr}
+                        @ ${safeAddr}
                     </div>
 
                     <div class="meta-header-tags" style="display: inline-flex; gap: 4px; margin-left: 10px;">
@@ -206,17 +211,17 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                     </div>
                 </div>
                 <div class="meta-header-actions">
-                    <button class="btn-copy-small" title="Copy Function ID" onclick="copyToClipboard('${fullId}', this)">
+                    <button class="btn-copy-small" title="Copy Function ID" onclick="copyToClipboard(${escapeAttr(jsString(fullId))}, this)">
                         <i class="fa-solid fa-copy"></i>
                     </button>
                     ${options.rightHeaderHtml || ''}
                 </div>
             </div>
-            
+
             <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); color: #ddd; margin-top: 6px;">
                 <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;">
-                    <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${fileMd5}</span>
-                    <span><b style="font-size: 1rem; color: #aaa; font-family: 'Inter', sans-serif;">${m['file_name'] || 'N/A'}</b></span>
+                    <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${safeFileMd5}</span>
+                    <span><b style="font-size: 1rem; color: #aaa; font-family: 'Inter', sans-serif;">${escapeHtml(m['file_name'] || 'N/A')}</b></span>
                     <div style="display: flex; align-items: center; overflow: hidden; margin-left: 5px;">
                         ${fileTagsHtml}
                     </div>
@@ -245,11 +250,11 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                             <span class="meta-label"><i class="fa-solid fa-bullseye" style="margin-right:8px; opacity:0.5; width:14px;"></i>Clusters</span>
                             <span class="meta-value">${clustersHtml}</span>
                         </div>` : ''}
-                        
+
                         <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-top:12px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-file-invoice"></i> File Metadata</div>
                         ${fileHtml}
                     </div>
-                    
+
                     <!-- Row 2: Relations (Callers & Callees aligned) -->
                     <div class="meta-col" style="grid-column: span 2; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px; margin-top: 8px;">
                         <div class="meta-columns" style="margin-bottom: 0;">
@@ -287,15 +292,15 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
 function toggleMetaDetail(id, event) {
     const el = document.getElementById(id);
     if (!el) return;
-    
+
     const isExpanded = el.classList.toggle('expanded');
-    
+
     // Find the toggle button that was clicked to rotate the icon
     let btn = event ? event.currentTarget : null;
     if (!btn && event) {
         btn = event.target.closest('.btn-details-toggle');
     }
-    
+
     if (btn) {
         btn.classList.toggle('expanded', isExpanded);
         const icon = btn.querySelector('.toggle-icon');
@@ -359,7 +364,7 @@ function toggleSection(headerEl) {
         const chevron = cCard.querySelector('.toggle-chevron');
         const textSpan = cCard.querySelector('.toggle-text');
         const toggleIcon = cCard.querySelector('.toggle-icon');
-        
+
         if (body) {
             const isCollapsed = (forceState !== undefined) ? body.classList.toggle('collapsed', forceState) : body.classList.toggle('collapsed');
             if (chevron) {
@@ -383,10 +388,10 @@ function toggleSection(headerEl) {
                     toggleIcon.classList.add('fa-angles-up');
                 }
             }
-            
+
             // Save state in cache
             localStorage.setItem('metadata_more_collapsed', isCollapsed ? 'true' : 'false');
-            
+
             return isCollapsed;
         }
         return false;
@@ -394,7 +399,7 @@ function toggleSection(headerEl) {
 
     if (card) {
         const newState = performToggle(card);
-        
+
         // Sync with other side in diff mode
         if (side) {
             const otherSide = side === 'l' ? 'r' : 'l';

@@ -384,8 +384,8 @@
                 if (currentOffset === 0) {
                     body.innerHTML = '';
                     const fullId = `${collection}:feature:${featureHash}`;
-                    document.getElementById('title-text').innerHTML = `Feature occurences: <span class="hash-badge">${featureHash}</span> <button class="btn-copy" style="vertical-align:text-bottom" title="Copy Feature ID: ${fullId}" onclick="copyToClipboard('${fullId}', this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
-                    document.getElementById('meta-info').innerHTML = `<span class="dim">Collection:</span> ${collection} | <span class="dim">Total Instances:</span> ${totalOccurrences}`;
+                    document.getElementById('title-text').innerHTML = `Feature occurences: <span class="hash-badge">${escapeHtml(featureHash)}</span> <button class="btn-copy" style="vertical-align:text-bottom" title="Copy Feature ID: ${escapeAttr(fullId)}" onclick="copyToClipboard(${escapeAttr(jsString(fullId))}, this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
+                    document.getElementById('meta-info').innerHTML = `<span class="dim">Collection:</span> ${escapeHtml(collection)} | <span class="dim">Total Instances:</span> ${escapeHtml(totalOccurrences)}`;
                 }
 
                 // Iterate through every representation of this feature in this page
@@ -401,28 +401,28 @@
                     const funcName = (sourceData && sourceData.meta) ? sourceData.meta['function_name'] : addr;
 
                     const originHtml = `
-                        <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${funcName}</div>
-                        <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
-                        <div class="dim" style="font-size:0.7rem;">Binary: ${md5}</div>
+                        <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${escapeHtml(funcName)}</div>
+                        <div class="dim" style="font-size:0.7rem;">Address: ${escapeHtml(addr)}</div>
+                        <div class="dim" style="font-size:0.7rem;">Binary: ${escapeHtml(md5)}</div>
                         <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${(occ['line_idx'] || []).map(l => l + 1).join(', ')}</span></div>
                         <div style="display:flex; align-items:center; gap:5px; margin-top:8px;">
-                            <code class="origin-id" style="font-size:0.6rem;">${funcId}</code>
-                            <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
+                            <code class="origin-id" style="font-size:0.6rem;">${escapeHtml(funcId)}</code>
+                            <button class="btn-copy" title="Copy Function ID: ${escapeAttr(funcId)}" onclick="copyToClipboard(${escapeAttr(jsString(funcId))}, this)">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             </button>
                         </div>
                         <div style="display:flex; gap:5px; margin-top:5px;">
-                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}'), '_blank'); }">
+                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById(${jsString(funcId)}, ${jsString(funcName)}, '', event); } else { window.open('/function/index.html?id=' + encodeURIComponent(${jsString(funcId)}), '_blank'); }">
                                 <span>↗</span> Code
                             </button>
-                            <button class="btn-diff-action" data-func-id="${funcId}" data-full-text="true"
-                                onmouseenter="onHoverDiffButton(event, '${funcId}', '${funcName.replace(/'/g, "\\'")}')"
+                            <button class="btn-diff-action" data-func-id="${escapeAttr(funcId)}" data-full-text="true"
+                                onmouseenter="onHoverDiffButton(event, ${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(funcName))})"
                                 onmouseleave="hideDiffPreview(event)"
                                 onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"
-                                onclick="addToDiff('${funcId}', '${funcName.replace(/'/g, "\\'")}')">
+                                onclick="addToDiff(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(funcName))})">
                                 <span>±</span> Add to Diff
                             </button>
-                            <button class="btn-sim-action" onclick="seeSimilar('${funcId}')">
+                            <button class="btn-sim-action" onclick="seeSimilar(${escapeAttr(jsString(funcId))})">
                                 <i class="fa-solid fa-code-compare"></i> See Similar
                             </button>
                         </div>
@@ -430,11 +430,11 @@
 
                     // 2. Meta Column
                     const metaHtml = `
-                        <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${occ.type}</div>
+                        <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${escapeHtml(occ.type)}</div>
                         <div style="display:flex; flex-direction:column; gap:2px;">
-                            ${occ['previous_pcode_op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${occ['previous_pcode_op']}</span>` : ''}
-                            <span class="op-badge" title="${occ['pcode_op_full'] || ''}">${occ['pcode_op']}</span>
-                            ${occ['addr'] ? `<span class="addr-badge">${occ['addr']}</span>` : ''}
+                            ${occ['previous_pcode_op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${escapeHtml(occ['previous_pcode_op'])}</span>` : ''}
+                            <span class="op-badge" title="${escapeAttr(occ['pcode_op_full'] || '')}">${escapeHtml(occ['pcode_op'])}</span>
+                            ${occ['addr'] ? `<span class="addr-badge">${escapeHtml(occ['addr'])}</span>` : ''}
                         </div>
                     `;
 
@@ -445,7 +445,7 @@
                     const pcodeHtml = `
                         <div class="code-card" style="box-shadow: none;">
                             <div class="code-card-line">
-                                <div class="code-card-text pcode-text">${occ['pcode_op_full'] || '<span class="dim">N/A</span>'}</div>
+                                <div class="code-card-text pcode-text">${occ['pcode_op_full'] ? escapeHtml(occ['pcode_op_full']) : '<span class="dim">N/A</span>'}</div>
                             </div>
                         </div>
                     `;
@@ -459,7 +459,7 @@
                             const isPrevActive = (s === occ['previous_seq']);
                             const cls = isActive ? 'active' : (isPrevActive ? 'prev-active' : '');
                             const addrPart = s.split(':')[0];
-                            return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${op.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</div>`;
+                            return `<div class="pcode-block-line ${cls}"><span class="pcode-block-seq">${addrPart}</span>${escapeHtml(op)}</div>`;
                         }).join('')}
                         </div>` :
                         '<div class="dim">---</div>';
@@ -472,7 +472,7 @@
                     let contextHtml = '<div class="dim">Source code mapping unavailable</div>';
                     if (sourceData && sourceData.rows) {
                         contextHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
-                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
+                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById(${jsString(funcId)}, ${jsString(funcName)}, ${jsString(lineHash)}, event); } else { window.open('/function/index.html?id=' + encodeURIComponent(${jsString(funcId)}) + ${jsString(lineHash)}, '_blank'); }">`;
 
                         const contextLineSet = new Set();
                         (occ['line_idx'] || []).forEach(l => {
@@ -507,7 +507,7 @@
                     tr.innerHTML = `
                         <td class="code-cell">${originHtml}</td>
                         <td class="code-cell">${metaHtml}</td>
-                        <td class="code-cell"><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${occ['seq'] || 'N/A'}</span></td>
+                        <td class="code-cell"><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${escapeHtml(occ['seq'] || 'N/A')}</span></td>
                         <td class="code-cell">${pcodeHtml}</td>
                         <td class="code-cell">${pcodeBlockHtml}</td>
                         <td class="code-cell">${tfHtml}</td>
@@ -533,7 +533,7 @@
             } catch (err) {
                 console.error(err);
                 if (currentOffset === 0) {
-                    body.innerHTML = `<tr><td colspan="7" class="loader" style="color:#f92672">Error: ${err.message}</td></tr>`;
+                    body.innerHTML = `<tr><td colspan="7" class="loader" style="color:#f92672">Error: ${escapeHtml(err.message)}</td></tr>`;
                 }
             }
         }
@@ -546,7 +546,7 @@
 
                 return renderTokenHtml(t)
                     .replace('class="token ', `class="token ${highlightClass} `)
-                    .replace('<span ', `<span data-func-id="${funcId}" onmouseenter="handleHoverMove(event, true); setGlobalHighlight(true)" onmouseleave="handleHoverMove(event, false); setGlobalHighlight(false)" `);
+                    .replace('<span ', `<span data-func-id="${escapeAttr(funcId)}" onmouseenter="handleHoverMove(event, true); setGlobalHighlight(true)" onmouseleave="handleHoverMove(event, false); setGlobalHighlight(false)" `);
             }).join('');
         }
 

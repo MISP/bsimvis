@@ -53,20 +53,25 @@ window.applyLocks = function (container) {
 window.renderTokenHtml = function (t, options = {}) {
     if (!t) return '';
     const featClass = t.has_features ? 'feature-highlight' : '';
-    const hashes = (t.hash_list || []).join(' ');
-    const featClasses = (t.hash_list || []).map(h => `feat-${h}`).join(' ');
+    const safeHashes = (t.hash_list || []).map(h => safeCssClassPart(h));
+    const hashes = escapeAttr((t.hash_list || []).join(' '));
+    const featClasses = safeHashes.map(h => `feat-${h}`).join(' ');
 
-    const calledAttr = t.called_func_id ? `data-called-func-id="${t.called_func_id}" data-is-external="${t.is_external || false}" data-target-name="${t.target_name || ''}"` : '';
+    const calledAttr = t.called_func_id
+        ? `data-called-func-id="${escapeAttr(t.called_func_id)}" data-is-external="${escapeAttr(t.is_external || false)}" data-target-name="${escapeAttr(t.target_name || '')}"`
+        : '';
     const clickClass = t.called_func_id ? (t.is_external ? 'func-call-external' : 'func-call-clickable') : '';
-    const titleAttr = t.called_func_id ? `title="Click to navigate to ${t.target_name || 'called function'}"` : '';
+    const titleAttr = t.called_func_id ? `title="Click to navigate to ${escapeAttr(t.target_name || 'called function')}"` : '';
 
-    const diffClass = t.diff_class || '';
-    const sideAttr = options.side ? `data-side="${options.side}"` : '';
+    const diffClass = safeCssClassPart(t.diff_class || '');
+    const sideAttr = options.side ? `data-side="${escapeAttr(options.side)}"` : '';
 
-    const escapedText = t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const escapedText = escapeHtml(t.text);
+    const tokenType = safeCssClassPart(t.type || 'default');
+    const idx = escapeAttr(t.global_idx ?? '');
     const hoverHandlers = options.inlineHoverHandlers ? `onmouseenter="handleHoverMove(event, true)" onmouseleave="handleHoverMove(event, false)"` : '';
 
-    return `<span class="token token-${t.type} ${featClass} ${clickClass} ${featClasses} ${diffClass}" data-idx="${t.global_idx}" data-hashes="${hashes}" ${calledAttr} ${titleAttr} ${sideAttr} ${hoverHandlers}>${escapedText}</span>`;
+    return `<span class="token token-${tokenType} ${featClass} ${clickClass} ${featClasses} ${diffClass}" data-idx="${idx}" data-hashes="${hashes}" ${calledAttr} ${titleAttr} ${sideAttr} ${hoverHandlers}>${escapedText}</span>`;
 };
 
 window.TOKEN_COLORS = {

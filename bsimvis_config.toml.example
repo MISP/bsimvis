@@ -48,7 +48,9 @@
     min_features = 0
     algo = "unweighted_cosine"
 
+
 [llm]
-    ollama_url = "http://10.1.0.143:11434"
+    ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"
-    prompt = "You are an expert reverse engineer. Summarize the following decompiled function, explaining its purpose and key logic. Be brief and exhaustive, so that we have a condensed note of what this function does."
+    prompt =  "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]"
+

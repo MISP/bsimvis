@@ -54,6 +54,12 @@ def search_files():
             ("yara", "yara"),
             ("cc_ip", "cc_ip"),
             ("file_names", "file_names"),
+            ("inferred_yara", "inferred_yara"),
+            ("inferred_avtype", "inferred_avtype"),
+            ("inferred_filetype", "inferred_filetype"),
+            ("inferred_ccip", "inferred_ccip"),
+            ("inferred_filename", "inferred_filename"),
+            ("inferred_md5", "inferred_md5"),
         ]:
             val = request.args.get(arg)
             if val:
@@ -275,7 +281,12 @@ def query_files_advanced(r, collection, filters):
                 if "file" in targets:
                     q_matches.update(get_field_matches(f_name, val))
             candidates &= q_matches
-        elif field in ["file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_name", "bin_cluster_uuid", "first_seen", "last_seen", "filetype", "avtype", "yara", "cc_ip", "file_names"]:
+        elif field in [
+            "file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_name", 
+            "bin_cluster_uuid", "first_seen", "last_seen", "filetype", "avtype", "yara", 
+            "cc_ip", "file_names", "inferred_yara", "inferred_avtype", "inferred_filetype", 
+            "inferred_ccip", "inferred_filename", "inferred_md5"
+        ]:
             candidates &= get_field_matches(field, val)
 
     # Apply Numeric Range Filters
@@ -376,6 +387,62 @@ def get_file_details(collection, file_md5):
                     cm = json.loads(cm)
                 cluster_meta_map[cid] = cm
                 
+        # 3. Compute inferred metadata (server-side)
+        from bsimvis.app.services.config_service import config_service
+        min_cohesion = float(request.args.get("min_cohesion", config_service.get("clustering.min_cohesion", 0.5)))
+        
+        inferred_meta = {
+            "yara": {},
+            "avtype": {},
+            "filetype": {},
+            "ccip": {},
+            "filename": {},
+            "md5": {}
+        }
+        
+        # Collect existing values to exclude
+        def to_list(v):
+            if not v: return []
+            if isinstance(v, list): return v
+            return [v]
+            
+        existing = {
+            "yara": set(to_list(data.get("yara"))),
+            "avtype": set(to_list(data.get("avtype"))),
+            "filetype": set(to_list(data.get("filetype"))),
+            "ccip": set(to_list(data.get("cc_ip"))),
+            "filename": set(to_list(data.get("file_names")) + to_list(data.get("file_name"))),
+            "md5": set(to_list(data.get("file_md5")))
+        }
+        
+        for cid, cm in cluster_meta_map.items():
+            cohesion_score = cm.get("cohesion_score") or 0
+            if cohesion_score >= min_cohesion:
+                cohesion_pct = round(cohesion_score * 100)
+                mapping = {
+                    "yara_distribution": "yara",
+                    "avtype_distribution": "avtype",
+                    "filetype_distribution": "filetype",
+                    "ccip_distribution": "ccip",
+                    "filename_distribution": "filename",
+                    "md5_distribution": "md5"
+                }
+                for dist_key, meta_key in mapping.items():
+                    dist = cm.get(dist_key) or []
+                    for item in dist:
+                        val = item.get("value")
+                        if not val: continue
+                        
+                        # Exclude if already in binary's own metadata
+                        if val in existing[meta_key]:
+                            continue
+
+                        if val not in inferred_meta[meta_key] or inferred_meta[meta_key][val]["percent"] < cohesion_pct:
+                            inferred_meta[meta_key][val] = {
+                                "percent": cohesion_pct,
+                                "cluster_uuid": cm.get("cluster_uuid")
+                            }
+                            
         normalize_tags(data)
         for date_field in ["entry_date", "file_date"]:
             if date_field in data:
@@ -384,6 +451,7 @@ def get_file_details(collection, file_md5):
         return {
             "file": data,
             "bin_cluster_map": cluster_meta_map,
+            "inferred_meta": inferred_meta,
             "collection": collection
         }
     except Exception as e:

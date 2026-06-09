@@ -40,34 +40,10 @@ def search_functions():
 
         # Search parameters
         search_q = request.args.get("q", "").lower().strip()
-        name_filter = (
-            request.args.get("function_name", request.args.get("name", "")).lower().strip()
-        )
 
         tag_filters = request.args.getlist("tag")
         static_tag_filters = request.args.getlist("static_tag")
         user_tag_filters = request.args.getlist("user_tag")
-
-        lang_filter = (
-            request.args.get("language_id", request.args.get("language", ""))
-            .lower()
-            .strip()
-        )
-        namespace_filter = request.args.get("namespace", "").lower().strip()
-        ret_type_filter = (
-            request.args.get("return_type", request.args.get("ret_type", ""))
-            .lower()
-            .strip()
-        )
-        address_filter = (
-            request.args.get("entrypoint_address", request.args.get("address", ""))
-            .lower()
-            .strip()
-        )
-        md5_filter = (
-            request.args.get("file_md5", request.args.get("md5", "")).lower().strip()
-        )
-        file_name_filter = request.args.get("file_name", "").lower().strip()
 
         # Exclusion filters (list)
         ex_tag_filters = request.args.getlist("exclude_tag")
@@ -235,6 +211,7 @@ def search_functions():
                             "function_name": ["name"],
                             "language_id": ["language"],
                             "return_type": ["ret_type"],
+                            "note_owners": ["note_owner"],
                         }
                         if target_field in aliases:
                             for alias in aliases[target_field]:

@@ -13,9 +13,11 @@
     <script src="/js/code_renderer.js"></script>
     <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
+    <script src="/js/notes.js"></script>
     <script src="/js/diff_queue.js"></script>
     <script src="/js/previews.js"></script>
     <script src="/js/context_menu.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="/js/cluster_views.js"></script>
     <style>
@@ -105,6 +107,137 @@
         .floating-copy-btn i {
             font-size: 1.1rem;
         }
+
+        /* LLM Side Panel */
+        .side-panel {
+            position: fixed;
+            top: 0;
+            right: -400px;
+            width: 400px;
+            height: 100vh;
+            background: #1e1e1e;
+            border-left: 1px solid #444;
+            display: flex;
+            flex-direction: column;
+            transition: right 0.3s ease;
+            z-index: 2000;
+            box-shadow: -4px 0 12px rgba(0, 0, 0, 0.5);
+        }
+
+        .side-panel.open {
+            right: 0;
+        }
+
+        .side-panel-header {
+            padding: 15px;
+            background: #252526;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .side-panel-header span {
+            font-weight: bold;
+            color: var(--accent);
+        }
+
+        .side-panel-header button {
+            background: none;
+            border: none;
+            color: #ccc;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .side-panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        #llm-chat-history {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .chat-msg {
+            padding: 10px;
+            border-radius: 6px;
+            max-width: 90%;
+        }
+
+        .chat-msg.user {
+            align-self: flex-end;
+            background: #264f78;
+            color: white;
+        }
+
+        .chat-msg.ai {
+            align-self: flex-start;
+            background: #333;
+            color: #ddd;
+            border: 1px solid #444;
+        }
+
+        .side-panel-footer {
+            padding: 15px;
+            border-top: 1px solid #333;
+            background: #252526;
+        }
+
+        #llm-input {
+            width: 100%;
+            height: 80px;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            color: #ddd;
+            padding: 8px;
+            border-radius: 4px;
+            resize: none;
+            font-family: inherit;
+            margin-bottom: 10px;
+        }
+
+        .side-panel-actions {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .side-panel-actions button {
+            padding: 6px 12px;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background: #333;
+            color: #ccc;
+            cursor: pointer;
+        }
+
+        .side-panel-actions button:hover {
+            background: #444;
+            color: white;
+        }
+
+        #llm-send-btn {
+            background: var(--accent);
+            color: #121212;
+            border-color: var(--accent);
+            font-weight: bold;
+        }
+
+        #llm-send-btn:hover {
+            background: #5ccfe6;
+        }
+
+        .markdown-content pre {
+            background: #121212;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
     </style>
 </head>
 
@@ -119,9 +252,31 @@
         <div id="v-height"></div>
         <div id="v-content" class="c-code-container"></div>
 
+        <button id="llm-summary-btn" class="floating-copy-btn" style="right: 70px;" title="AI Summary" onclick="showLLMSummary()">
+            <i class="fas fa-robot"></i>
+        </button>
+
         <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="copyFunctionCode(this)">
             <i class="fas fa-copy"></i>
         </button>
+    </div>
+
+    <div id="llm-panel" class="side-panel">
+        <div class="side-panel-header">
+            <span>AI Function Summary</span>
+            <button onclick="closeLLMPanel()">&times;</button>
+        </div>
+        <div id="llm-content" class="side-panel-content">
+            <div id="llm-chat-history"></div>
+            <div id="llm-status" style="margin-top: 10px; color: #888; font-style: italic;"></div>
+        </div>
+        <div class="side-panel-footer">
+            <textarea id="llm-input" placeholder="Ask a question about this function..."></textarea>
+            <div class="side-panel-actions">
+                <button id="llm-send-btn" onclick="sendLLMChat()">Send</button>
+                <button id="llm-save-note-btn" onclick="saveSummaryAsNote()" style="display:none;">Save as Note</button>
+            </div>
+        </div>
     </div>
 
     <div id="bsim-tooltip"></div>
@@ -575,7 +730,171 @@
             });
         }
 
-        // fetchData(); // This call is not needed here as init() already handles data loading.
+        // LLM Logic
+        let chatHistory = [];
+
+        async function showLLMSummary() {
+            const panel = document.getElementById("llm-panel");
+            panel.classList.add("open");
+            
+            if (chatHistory.length === 0) {
+                generateSummary();
+            }
+        }
+
+        function closeLLMPanel() {
+            document.getElementById("llm-panel").classList.remove("open");
+        }
+
+        async function readStream(response, onChunk) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let fullText = "";
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value, { stream: true });
+                fullText += chunk;
+                onChunk(fullText);
+            }
+            return fullText;
+        }
+
+        async function generateSummary() {
+            const statusEl = document.getElementById("llm-status");
+            statusEl.innerText = "Generating summary...";
+            
+            try {
+                const response = await fetch("/api/llm/summarize", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ func_id: window.currentFuncId })
+                });
+                
+                if (!response.ok) {
+                    let errMsg = "Failed to generate summary";
+                    try {
+                        const errorData = await response.json();
+                        errMsg = errorData.error || errMsg;
+                    } catch(e) {}
+                    throw new Error(errMsg);
+                }
+
+                const msgEl = addChatMessage("ai", "");
+                document.getElementById("llm-save-note-btn").style.display = "block";
+
+                const summary = await readStream(response, (text) => {
+                    updateChatMessage(msgEl, text);
+                });
+                
+                if (chatHistory.length > 0) {
+                    chatHistory[chatHistory.length - 1].content = summary;
+                }
+
+            } catch (err) {
+                addChatMessage("ai", "Error: " + err.message);
+            } finally {
+                statusEl.innerText = "";
+            }
+        }
+
+        function addChatMessage(role, content) {
+            const historyEl = document.getElementById("llm-chat-history");
+            const msgEl = document.createElement("div");
+            msgEl.className = `chat-msg ${role}`;
+            
+            updateChatMessage(msgEl, content);
+            
+            historyEl.appendChild(msgEl);
+            chatHistory.push({ role: role === "ai" ? "assistant" : "user", content: content });
+            
+            const contentEl = document.getElementById("llm-content");
+            contentEl.scrollTop = contentEl.scrollHeight;
+            return msgEl;
+        }
+
+        function updateChatMessage(msgEl, content) {
+            if (typeof marked !== "undefined" && marked.parse) {
+                msgEl.innerHTML = marked.parse(content);
+                msgEl.classList.add("markdown-content");
+            } else {
+                msgEl.innerText = content;
+            }
+            const contentEl = document.getElementById("llm-content");
+            contentEl.scrollTop = contentEl.scrollHeight;
+        }
+
+        async function sendLLMChat() {
+            const inputEl = document.getElementById("llm-input");
+            const text = inputEl.value.trim();
+            if (!text) return;
+            
+            addChatMessage("user", text);
+            inputEl.value = "";
+            
+            const statusEl = document.getElementById("llm-status");
+            statusEl.innerText = "Thinking...";
+            
+            try {
+                const response = await fetch("/api/llm/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ messages: chatHistory })
+                });
+                
+                if (!response.ok) {
+                    let errMsg = "Failed to get response";
+                    try {
+                        const errorData = await response.json();
+                        errMsg = errorData.error || errMsg;
+                    } catch(e) {}
+                    throw new Error(errMsg);
+                }
+
+                const msgEl = addChatMessage("ai", "");
+                const reply = await readStream(response, (text) => {
+                    updateChatMessage(msgEl, text);
+                });
+                
+                if (chatHistory.length > 0) {
+                    chatHistory[chatHistory.length - 1].content = reply;
+                }
+
+            } catch (err) {
+                addChatMessage("ai", "Error: " + err.message);
+            } finally {
+                statusEl.innerText = "";
+            }
+        }
+
+        async function saveSummaryAsNote() {
+            const summary = chatHistory.find(m => m.role === "assistant")?.content;
+            if (!summary) return;
+            
+            const collection = window.currentFuncId.split(":")[0];
+            
+            try {
+                const response = await fetch("/api/notes/add", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        collection: collection,
+                        func_id: window.currentFuncId,
+                        text: "AI Summary:\n" + summary,
+                        owner: "AI"
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.status === "success") {
+                    alert("Summary saved to notes!");
+                } else {
+                    alert("Error saving note: " + data.error);
+                }
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        }
 
         init();
         updateDiffQueueUI();

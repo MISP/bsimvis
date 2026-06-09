@@ -277,6 +277,7 @@
 
                 const file = data.file;
                 const clusters = data.bin_cluster_map || {};
+                const inferredMeta = data.inferred_meta || {};
 
                 // 1. Hero Section
                 document.getElementById('file-name').innerText = file.file_name || file.file_names?.[0] || 'Unknown Binary';
@@ -318,12 +319,6 @@
                 document.getElementById('cluster-count').innerText = clusterIds.length;
                 
                 let clustersHtml = '';
-                const inferredMeta = {
-                    yara: {},
-                    avtype: {},
-                    filetype: {},
-                    ccip: {}
-                };
 
                 if (clusterIds.length === 0) {
                     clustersHtml = '<div class="dim" style="text-align:center; padding: 20px;">Binary does not belong to any clusters.</div>';
@@ -344,21 +339,6 @@
                         const cohesion = cohesionScore.toFixed(2);
                         const cohesionPercent = Math.round(cohesionScore * 100);
                         const cohesionColor = d3.interpolateRdYlGn(cohesionScore);
-
-                        const addMeta = (dist, targetMap) => {
-                            if (!dist) return;
-                            dist.forEach(item => {
-                                const label = item.value;
-                                if (!targetMap[label] || targetMap[label] < cohesionPercent) {
-                                    targetMap[label] = cohesionPercent;
-                                }
-                            });
-                        };
-                        
-                        addMeta(cm.yara_distribution, inferredMeta.yara);
-                        addMeta(cm.avtype_distribution, inferredMeta.avtype);
-                        addMeta(cm.filetype_distribution, inferredMeta.filetype);
-                        addMeta(cm.ccip_distribution, inferredMeta.ccip);
                         
                         let distBadges = '';
                         
@@ -432,6 +412,8 @@
                         distBadges += renderDist('AV Type Distributions', 'fa-solid fa-shield', cm.avtype_distribution);
                         distBadges += renderDist('File Type Distributions', 'fa-solid fa-file-code', cm.filetype_distribution);
                         distBadges += renderDist('CC IP Distributions', 'fa-solid fa-network-wired', cm.ccip_distribution);
+                        distBadges += renderDist('File Name Distributions', 'fa-solid fa-file', cm.filename_distribution);
+                        distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
 
                         clustersHtml += `
                             <div class="cluster-item">
@@ -452,12 +434,14 @@
                 document.getElementById('cluster-list').innerHTML = clustersHtml || '<div class="dim" style="text-align:center; padding: 20px;">No cluster metadata available.</div>';
 
                 const renderInferredRow = (icon, label, mapObj) => {
-                    const keys = Object.keys(mapObj).sort((a,b) => mapObj[b] - mapObj[a]);
+                    const keys = Object.keys(mapObj).sort((a,b) => mapObj[b].percent - mapObj[a].percent);
                     if (keys.length === 0) return '';
                     const badges = keys.map(k => {
-                        const confScore = mapObj[k];
+                        const confObj = mapObj[k];
+                        const confScore = confObj.percent;
                         const confColor = d3.interpolateRdYlGn(confScore / 100);
-                        return `<span class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0;"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></span>`;
+                        const clusterLink = `/#files?collection=${encodeURIComponent(collection)}&bin_cluster_uuid=${confObj.cluster_uuid}`;
+                        return `<a href="${clusterLink}" target="_parent" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                     }).join('');
                     return `
                         <div class="meta-label" style="align-items: flex-start; margin-top: 4px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -466,6 +450,8 @@
                 };
 
                 let inferredHtml = '';
+                inferredHtml += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename);
+                inferredHtml += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5);
                 inferredHtml += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype);
                 inferredHtml += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype);
                 inferredHtml += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara);

@@ -203,12 +203,13 @@ const routes = {
         headers: [
             { label: 'Function', width: '20%' },
             { label: 'Address', width: '8%', sort: 'entrypoint_address' },
-            { label: 'Function Tags', width: '12%' },
+            { label: 'Function Tags', width: '10%' },
             { label: 'Clusters', width: '10%' },
             { label: 'Feat', width: '5%', sort: 'bsim_features_count' },
+            { label: 'Notes', width: '3%' },
             { label: 'File Name', width: '10%', sort: 'file_name' },
             { label: 'MD5', width: '5%', sort: 'file_md5' },
-            { label: 'File Tags', width: '12%' },
+            { label: 'File Tags', width: '11%' },
             { label: 'Language', width: '5%', sort: 'language_id' },
             { label: 'Date', width: '8%', sort: 'entry_date' },
             { label: 'Actions', width: '5%' }
@@ -239,11 +240,12 @@ const routes = {
             { label: 'Function Tags', width: '10%' },
             { label: 'Clusters', width: '10%' },
             { label: 'Feat', sort: 'feat_count', width: '5%' },
+            { label: 'Notes', width: '3%' },
             { label: 'File Name', width: '9%' },
             { label: 'MD5', width: '5%' },
             { label: 'File Tags', width: '10%' },
             { label: 'Language', width: '5%' },
-            { label: 'Date', sort: 'entry_date', width: '15%' }
+            { label: 'Date', sort: 'entry_date', width: '12%' }
         ],
         renderer: renderTopCorrelations
     },
@@ -870,6 +872,15 @@ function updateUI(path, params, route) {
                             <input type="text" id="flt-file-yara" placeholder="Yara..." value="${p.get('yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${p.get('avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${p.get('cc_ip') || ''}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            <hr style="margin: 2px 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);">
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
+                                <input type="text" id="flt-file-inf-yara" placeholder="Inf.Yara" title="Inferred Yara" value="${p.get('inferred_yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                <input type="text" id="flt-file-inf-avtype" placeholder="Inf.AV" title="Inferred AVType" value="${p.get('inferred_avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                            </div>
+                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
+                                <input type="text" id="flt-file-inf-type" placeholder="Inf.Type" title="Inferred Type" value="${p.get('inferred_filetype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_filetype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                <input type="text" id="flt-file-inf-ccip" placeholder="Inf.IP" title="Inferred CC IP" value="${p.get('inferred_ccip') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_ccip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                            </div>
                         </div>
                     </th>
                     <th>
@@ -954,6 +965,7 @@ function updateUI(path, params, route) {
                         </div>
                     </th>
                     <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="text" id="flt-func-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'func', 'note_owners', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
                     <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
                     <th style="position:relative">
@@ -1507,6 +1519,7 @@ function applyAdvancedFuncSearch() {
     const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
     const minCohesionFlt = document.getElementById('flt-func-min-cohesion')?.value;
     const minFeatFlt = document.getElementById('flt-func-min-features')?.value;
+    const noteOwnerFlt = document.getElementById('flt-func-note-owner')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
@@ -1520,7 +1533,7 @@ function applyAdvancedFuncSearch() {
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (minFeatFlt) params.set('min_features', minFeatFlt); else params.delete('min_features');
-
+    if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
     const poolLimit = document.getElementById('sim-pool-limit')?.value;
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('pool_limit', poolLimit || '1000000');
@@ -1689,6 +1702,10 @@ function applyAdvancedFileSearch() {
     const yaraFlt = document.getElementById('flt-file-yara')?.value;
     const avtypeFlt = document.getElementById('flt-file-avtype')?.value;
     const ccipFlt = document.getElementById('flt-file-ccip')?.value;
+    const infYaraFlt = document.getElementById('flt-file-inf-yara')?.value;
+    const infAvtypeFlt = document.getElementById('flt-file-inf-avtype')?.value;
+    const infTypeFlt = document.getElementById('flt-file-inf-type')?.value;
+    const infCcipFlt = document.getElementById('flt-file-inf-ccip')?.value;
 
     if (nameFlt) params.set('file_name', nameFlt); else params.delete('file_name');
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
@@ -1705,6 +1722,10 @@ function applyAdvancedFileSearch() {
     if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
     if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
     if (ccipFlt) params.set('cc_ip', ccipFlt); else params.delete('cc_ip');
+    if (infYaraFlt) params.set('inferred_yara', infYaraFlt); else params.delete('inferred_yara');
+    if (infAvtypeFlt) params.set('inferred_avtype', infAvtypeFlt); else params.delete('inferred_avtype');
+    if (infTypeFlt) params.set('inferred_filetype', infTypeFlt); else params.delete('inferred_filetype');
+    if (infCcipFlt) params.set('inferred_ccip', infCcipFlt); else params.delete('inferred_ccip');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -1965,10 +1986,42 @@ function renderFiles(data, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:2px; font-size:0.65rem;">
-                    ${f['yara'] && f['yara'].length ? `<div class="dim">Yara: <span style="color:var(--accent)">${f['yara'].join(', ')}</span></div>` : ''}
-                    ${f['avtype'] && f['avtype'].length ? `<div class="dim">AV: <span style="color:var(--accent)">${f['avtype'].join(', ')}</span></div>` : ''}
-                    ${f['filetype'] && f['filetype'].length ? `<div class="dim">Type: <span style="color:var(--accent)">${f['filetype'].join(', ')}</span></div>` : ''}
-                    ${f['cc_ip'] && f['cc_ip'].length ? `<div class="dim">IP: <span style="color:var(--accent)">${f['cc_ip'].join(', ')}</span></div>` : ''}
+                    ${(() => {
+                        const fields = [
+                            { key: 'yara', label: 'Yara', dist: 'yara_distribution' },
+                            { key: 'avtype', label: 'AV', dist: 'avtype_distribution' },
+                            { key: 'filetype', label: 'Type', dist: 'filetype_distribution' },
+                            { key: 'cc_ip', label: 'IP', dist: 'ccip_distribution' }
+                        ];
+                        
+                        return fields.map(field => {
+                            const val = f[field.key];
+                            if (val && val.length) {
+                                return `<div class="dim">${field.label}: <span style="color:var(--accent)">${val.join(', ')}</span></div>`;
+                            }
+                            
+                            // Try inference
+                            let bestInf = null;
+                            clusters.forEach(c => {
+                                const dist = c[field.dist] || [];
+                                if (dist.length > 0) {
+                                    const cohesion = c.cohesion_score || 0;
+                                    if (!bestInf || cohesion > bestInf.cohesion) {
+                                        bestInf = { value: dist[0].value, cohesion: cohesion };
+                                    }
+                                }
+                            });
+                            
+                            if (bestInf) {
+                                const hue = Math.max(0, Math.min(120, bestInf.cohesion * 120));
+                                const color = `hsl(${hue}, 80%, 60%)`;
+                                return `<div class="dim" title="Inferred from cluster (cohesion: ${(bestInf.cohesion*100).toFixed(1)}%)">
+                                    ${field.label}: <span style="color:${color}; opacity: 0.9; font-style: italic;">${bestInf.value} <small>(${(bestInf.cohesion*100).toFixed(0)}%)</small></span>
+                                </div>`;
+                            }
+                            return '';
+                        }).join('');
+                    })()}
                     ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${f['first_seen'].join(', ')}</span></div>` : ''}
                 </div>
             </td>
@@ -2022,7 +2075,7 @@ function renderFunctions(data, clustersMap = {}) {
             data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
             <td class="sim-cell" style="min-width: 300px;">
-                ${EntityRenderer.renderFunction(f)}
+                ${EntityRenderer.renderFunction(f, { hideNote: true })}
             </td>
             <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
             <td>${EntityRenderer.renderTag('function', funcId, tags, user_tags)}</td>
@@ -2033,7 +2086,11 @@ function renderFunctions(data, clustersMap = {}) {
                     <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
                 </div>
             </td>
+            <td class="sim-cell" style="text-align:center;">
+                ${EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true })}
+            </td>
             <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
+
             <td class="sim-cell">${EntityRenderer.renderMd5(file_md5)}</td>
             <td>${EntityRenderer.renderTag('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
             <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
@@ -2194,10 +2251,10 @@ function renderTopCorrelations(items, clustersMap = {}) {
             <td style="min-width: 300px;">
                 <div style="display:flex; flex-direction:column; gap:8px; width: 100%;">
                     <div style="min-height:24px; display:flex; align-items:center; width: 100%;">
-                        ${EntityRenderer.renderFunction(func1Data)}
+                        ${EntityRenderer.renderFunction(func1Data, { hideNote: true })}
                     </div>
                     <div style="min-height:24px; display:flex; align-items:center; width: 100%;">
-                        ${EntityRenderer.renderFunction(func2Data)}
+                        ${EntityRenderer.renderFunction(func2Data, { hideNote: true })}
                     </div>
                 </div>
             </td>
@@ -2228,6 +2285,16 @@ function renderTopCorrelations(items, clustersMap = {}) {
                     <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
                         <span class="mono" style="color:var(--accent);">${p.meta2?.bsim_features_count || 0}</span>
                         <button class="btn-icon" onclick="showFeaturePanel('${p.id2}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7; margin-left: 5px;">🔍</button>
+                    </div>
+                </div>
+            </td>
+            <td class="sim-cell" style="text-align:center; vertical-align:middle;">
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
+                        ${EntityRenderer.renderNoteButton(p.id1, p.meta1?.note_owners, { isTable: true })}
+                    </div>
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
+                        ${EntityRenderer.renderNoteButton(p.id2, p.meta2?.note_owners, { isTable: true })}
                     </div>
                 </div>
             </td>
@@ -2363,6 +2430,14 @@ function showFeaturePanel(id, e) {
 
     const addr = id.split(':').pop();
     windowManager.createWindow(`Features: ${addr}`, url, { type: 'features' });
+}
+
+function showNotePanel(id, e) {
+    if (typeof showNotes === 'function') {
+        showNotes(id);
+    } else {
+        console.error("showNotes not found");
+    }
 }
 
 function showGlobalFeaturePanel(hash, collection, e) {
@@ -3926,3 +4001,31 @@ function closeExportDropdown() {
     if (dropdown) dropdown.style.display = 'none';
 }
 window.closeExportDropdown = closeExportDropdown;
+
+async function refreshFunctionRow(funcId) {
+    const row = document.querySelector(`.sim-row[data-id="${funcId}"]`);
+    if (!row) return;
+    
+    const parts = funcId.split(':');
+    const collection = parts[0];
+    const md5 = parts[2];
+    const addr = parts[3];
+    
+    try {
+        // Use exact ID search
+        const res = await fetch(`/api/function/search?collection=${collection}&entrypoint_address=${addr}&file_md5=${md5}`);
+        const data = await res.json();
+        if (data.functions && data.functions.length > 0) {
+            const f = data.functions[0];
+            const newHtml = renderFunctions([f], {});
+            const temp = document.createElement('tbody');
+            temp.innerHTML = newHtml;
+            const newRow = temp.firstElementChild;
+            row.replaceWith(newRow);
+        }
+    } catch (e) {
+        console.error("Failed to refresh function row:", e);
+    }
+}
+
+window.refreshFunctionRow = refreshFunctionRow;

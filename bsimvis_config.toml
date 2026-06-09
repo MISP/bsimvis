@@ -50,7 +50,7 @@
 
 
 [llm]
-    ollama_url = "http://localhost:11434"
+    ollama_url = "http://10.1.0.143:11434"
     model = "qwen3.6:35b"
     prompt = "You are a reverse engineer. Explain this function to an experienced reverse engineer. Be concise"
 

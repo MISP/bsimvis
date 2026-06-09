@@ -2432,14 +2432,6 @@ function showFeaturePanel(id, e) {
     windowManager.createWindow(`Features: ${addr}`, url, { type: 'features' });
 }
 
-function showNotePanel(id, e) {
-    if (typeof showNotes === 'function') {
-        showNotes(id);
-    } else {
-        console.error("showNotes not found");
-    }
-}
-
 function showGlobalFeaturePanel(hash, collection, e) {
     const url = `/feature/index.html?hash=${encodeURIComponent(hash)}&collection=${encodeURIComponent(collection)}`;
     if (e && (e.ctrlKey || e.metaKey)) {

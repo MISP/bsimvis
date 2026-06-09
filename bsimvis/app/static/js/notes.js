@@ -220,3 +220,14 @@ window.saveNote = saveNote;
 window.deleteNote = deleteNote;
 window.editNoteUI = editNoteUI;
 window.saveEdit = saveEdit;
+
+/**
+ * Global wrapper for note buttons rendered by EntityRenderer.
+ */
+window.showNotePanel = function(id, e) {
+    if (typeof showNotes === 'function') {
+        showNotes(id);
+    } else {
+        console.error("showNotes function not found");
+    }
+};

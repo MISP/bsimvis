@@ -29,6 +29,7 @@ window.EntityRenderer = {
             : { ns: namespace, ret: returnType, params: parameters, fullSig: name };
 
         const showActions = options.showActions !== false;
+        const hideNote = options.hideNote === true;
         
         let actionsHtml = '';
         if (showActions) {
@@ -38,6 +39,7 @@ window.EntityRenderer = {
             
             actionsHtml = `
                 <div class="entity-actions" style="display:inline-flex; gap:4px; margin-left: auto; flex-shrink: 0; padding-left: 8px;">
+                    ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, options)}
                     <button class="btn-diff-action ${isActive ? 'active' : ''}" 
                             data-func-id="${typeof normalizeFuncId === 'function' ? normalizeFuncId(funcId) : funcId}" 
                             onmouseenter="typeof onHoverDiffButton === 'function' && onHoverDiffButton(event, '${funcId}', '${safeName}')"
@@ -66,6 +68,27 @@ window.EntityRenderer = {
                 </b>
                 ${actionsHtml}
             </div>
+        `;
+    },
+
+    /**
+     * Renders a note button with consistent styling.
+     */
+    renderNoteButton: function(id, noteOwners = [], options = {}) {
+        const hasNotes = noteOwners && noteOwners.length > 0;
+        const isTable = options.isTable === true;
+        
+        if (isTable && !hasNotes) return '';
+        
+        const title = hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note';
+        const iconClass = hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky';
+        
+        return `
+            <button class="btn-note-action ${hasNotes ? 'has-notes' : ''}" 
+                    onclick="event.stopPropagation(); showNotePanel('${id}', event)" 
+                    title="${title}">
+                <i class="${iconClass}"></i>
+            </button>
         `;
     },
 

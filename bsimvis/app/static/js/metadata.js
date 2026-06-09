@@ -172,6 +172,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                            title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background: rgba(174, 129, 255, 0.1); color: var(--info); border: 1px solid rgba(174, 129, 255, 0.3);">
                            <i class="fa-solid fa-code-compare"></i>
                         </a>
+                        ${EntityRenderer.renderNoteButton(fullId, m.note_owners)}
                         ${headerActionsHtml}
                     </div>
 

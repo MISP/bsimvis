@@ -34,6 +34,8 @@ ns_diff = Namespace("diff", description="Function diff and alignment")
 ns_bin_sim = Namespace(
     "bin_sim", description="Binary-level similarity and clustering comparison"
 )
+ns_notes = Namespace("notes", description="Function notes management")
+ns_llm = Namespace("llm", description="Large Language Model integration (Ollama)")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -50,6 +52,8 @@ api.add_namespace(ns_bin_cluster)
 api.add_namespace(ns_features)
 api.add_namespace(ns_diff)
 api.add_namespace(ns_bin_sim)
+api.add_namespace(ns_notes)
+api.add_namespace(ns_llm)
 
 # --- Models & Examples ---
 
@@ -178,7 +182,6 @@ bin_sim_build_model = api.model(
         "min_cohesion": fields.Float(default=0.5),
     },
 )
-
 bin_sim_clear_model = api.model(
     "BinSimClear",
     {
@@ -188,6 +191,69 @@ bin_sim_clear_model = api.model(
     },
 )
 
+# Note Models
+note_model = api.model(
+    "Note",
+    {
+        "id": fields.String(example="7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d"),
+        "text": fields.String(example="This function handles input validation"),
+        "owner": fields.String(example="user"),
+        "timestamp": fields.Integer(example=1775639990508),
+    },
+)
+
+note_add_model = api.model(
+    "NoteAdd",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "text": fields.String(required=True, example="This function handles input validation"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+note_update_model = api.model(
+    "NoteUpdate",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "note_id": fields.String(required=True, example="uuid"),
+        "text": fields.String(required=True, example="Updated note text"),
+    },
+)
+
+note_remove_model = api.model(
+    "NoteRemove",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "note_id": fields.String(required=True, example="uuid"),
+    },
+)
+
+# LLM Models
+llm_summary_request_model = api.model(
+    "LLMSummaryRequest",
+    {
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "prompt": fields.String(description="Optional custom prompt"),
+        "code": fields.String(description="Optional code string"),
+        "func_name": fields.String(description="Optional function name"),
+    },
+)
+
+llm_chat_request_model = api.model(
+    "LLMChatRequest",
+    {
+        "messages": fields.List(
+            fields.Raw,
+            required=True,
+            example=[{"role": "user", "content": "What does this function do?"}],
+        )
+    },
+)
+
+# --- Routes & Resources ---
 sim_pair_model = api.model(
     "SimilarityPair",
     {
@@ -1821,3 +1887,62 @@ class BinSimReindex(Resource):
         from bsimvis.app.routes.bin_sim import reindex_bin_sim
 
         return reindex_bin_sim()
+
+# --- Notes Routes ---
+
+@ns_notes.route("/add")
+class NoteAdd(Resource):
+    @ns_notes.expect(note_add_model)
+    @ns_notes.response(200, "Success", note_model)
+    def post(self):
+        """Adds a note to a function."""
+        from bsimvis.app.routes.notes import add_note
+        return add_note()
+
+@ns_notes.route("/update")
+class NoteUpdate(Resource):
+    @ns_notes.expect(note_update_model)
+    @ns_notes.response(200, "Success", note_model)
+    def put(self):
+        """Updates an existing note."""
+        from bsimvis.app.routes.notes import update_note
+        return update_note()
+
+@ns_notes.route("/remove")
+class NoteRemove(Resource):
+    @ns_notes.expect(note_remove_model)
+    @ns_notes.response(200, "Success")
+    def delete(self):
+        """Removes a note from a function."""
+        from bsimvis.app.routes.notes import remove_note
+        return remove_note()
+
+@ns_notes.route("/list")
+class NoteList(Resource):
+    @ns_notes.doc(params={
+        "collection": "Collection name",
+        "func_id": "Function ID"
+    })
+    @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
+    def get(self):
+        """Lists all notes for a function."""
+        from bsimvis.app.routes.notes import get_notes
+        return get_notes()
+
+# --- LLM Namespace ---
+
+@ns_llm.route("/summarize")
+class LLMSummarize(Resource):
+    @ns_llm.expect(llm_summary_request_model)
+    def post(self):
+        """Generates a summary for a function using LLM."""
+        from bsimvis.app.routes.llm import summarize
+        return summarize()
+
+@ns_llm.route("/chat")
+class LLMChat(Resource):
+    @ns_llm.expect(llm_chat_request_model)
+    def post(self):
+        """Continues a discussion about a function using LLM."""
+        from bsimvis.app.routes.llm import chat
+        return chat()

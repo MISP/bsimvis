@@ -9,3 +9,4 @@ hdbscan
 scikit-learn
 python-dotenv
 requests
+ollama

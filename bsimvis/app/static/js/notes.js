@@ -89,9 +89,9 @@ async function refreshNotes(funcId) {
         const style = document.createElement('style');
         style.id = 'notes-md-styles';
         style.textContent = `
-            .note-markdown-body { font-size: 0.9rem; line-height: 1.5; color: #eee; }
+            .note-markdown-body { font-family: 'Fira Code', 'Cascadia Code', 'Source Code Pro', monospace; font-size: 0.9rem; line-height: 1.5; color: #eee; }
             .note-markdown-body p { margin-top: 0; margin-bottom: 8px; }
-            .note-markdown-body code { background: #333; padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+            .note-markdown-body code { background: #333; padding: 2px 4px; border-radius: 3px; }
             .note-markdown-body pre { background: #121212; padding: 10px; border-radius: 4px; overflow-x: auto; border: 1px solid #333; margin: 8px 0; }
             .note-markdown-body pre code { background: none; padding: 0; }
             .note-markdown-body ul, .note-markdown-body ol { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }

@@ -41,6 +41,12 @@ INDEX_CONFIG = {
         "yara": ["file", "func", "sim"],
         "cc_ip": ["file", "func", "sim"],
         "file_names": ["file", "func", "sim"],
+        "inferred_yara": ["file"],
+        "inferred_avtype": ["file"],
+        "inferred_filetype": ["file"],
+        "inferred_ccip": ["file"],
+        "inferred_filename": ["file"],
+        "inferred_md5": ["file"],
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name
@@ -58,6 +64,7 @@ INDEX_CONFIG = {
         "cluster_uuid": ["func"],
         "cluster_name": ["func"],
         "cluster_stability": ["func"],
+        "note_owners": ["func"],
     },
     "sim": {
         "tags": ["sim"],
@@ -119,6 +126,7 @@ INDEX_CONFIG_legacy = {
         "calling_convention": ["func"],
         "entrypoint_address": ["func", "sim"],
         "decompiler_id": ["func"],
+        "note_owners": ["func"],
         "instruction_count": ["func"],  # numeric
         "bsim_features_count": ["func"],  # numeric
     },

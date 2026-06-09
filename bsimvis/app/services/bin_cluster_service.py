@@ -566,7 +566,8 @@ class BinClusterService:
             )
 
         for idx, (label, members) in enumerate(cluster_members.items()):
-            names = []
+            names_list = []
+            md5s_list = []
             yara_list = []
             avtype_list = []
             filetype_list = []
@@ -574,8 +575,14 @@ class BinClusterService:
 
             for file_id in members:
                 m = all_member_meta.get(file_id, {})
-                if m.get("file_name"):
-                    names.append(m["file_name"])
+                if m.get("file_names"):
+                    names_list.extend(m["file_names"])
+                elif m.get("file_name"):
+                    names_list.append(m["file_name"])
+                
+                if m.get("file_md5"):
+                    md5s_list.append(m["file_md5"])
+
                 if m.get("yara"):
                     yara_list.extend(m["yara"] if isinstance(m["yara"], list) else [m["yara"]])
                 if m.get("avtype"):
@@ -586,18 +593,20 @@ class BinClusterService:
                     ccip_list.extend(m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]])
 
             default_name = (
-                Counter(names).most_common(1)[0][0]
-                if names
+                Counter(names_list).most_common(1)[0][0]
+                if names_list
                 else f"Binary Cluster {label}"
             )
             
             def build_freq(items):
-                return [{"value": k, "count": v, "percent": round((v / len(items)) * 100)} for k, v in Counter(items).most_common(5)] if items else []
+                return [{"value": k, "count": v, "percent": round((v / len(members)) * 100)} for k, v in Counter(items).most_common(5)] if items else []
 
             yara_freq = build_freq(yara_list)
             avtype_freq = build_freq(avtype_list)
             filetype_freq = build_freq(filetype_list)
             ccip_freq = build_freq(ccip_list)
+            filename_freq = build_freq(names_list)
+            md5_freq = build_freq(md5s_list)
 
             # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
             if len(members) > 1:
@@ -628,6 +637,8 @@ class BinClusterService:
                 avtype_freq = []
                 filetype_freq = []
                 ccip_freq = []
+                filename_freq = []
+                md5_freq = []
 
             rep_file_id = members[0] if members else None
             rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}
@@ -642,11 +653,13 @@ class BinClusterService:
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
-                "sample_members": names[:5],
+                "sample_members": names_list[:5],
                 "yara_distribution": yara_freq,
                 "avtype_distribution": avtype_freq,
                 "filetype_distribution": filetype_freq,
                 "ccip_distribution": ccip_freq,
+                "filename_distribution": filename_freq,
+                "md5_distribution": md5_freq,
                 "created_at": int(time.time() * 1000),
             }
 
@@ -662,6 +675,26 @@ class BinClusterService:
                 )
                 pipe.sadd(bucket_key, *members)
                 pipe.sadd(f"{collection}:reg:file:bin_cluster_name", bucket_key)
+
+            # Index top inferred metadata if cohesion is high enough
+            if cohesion_score >= min_cohesion:
+                inferred_mapping = {
+                    "yara_distribution": "inferred_yara",
+                    "avtype_distribution": "inferred_avtype",
+                    "filetype_distribution": "inferred_filetype",
+                    "ccip_distribution": "inferred_ccip",
+                    "filename_distribution": "inferred_filename",
+                    "md5_distribution": "inferred_md5"
+                }
+                for dist_key, meta_key in inferred_mapping.items():
+                    dist = meta.get(dist_key) or []
+                    if dist:
+                        top_val = dist[0].get("value")
+                        if top_val:
+                            # Standardized Bucket indexing
+                            bucket_key = f"{collection}:idx:file:{meta_key}:{str(top_val).lower()}"
+                            pipe.sadd(bucket_key, *members)
+                            pipe.sadd(f"{collection}:reg:file:{meta_key}", bucket_key)
 
             if job_service and job_id and (idx + 1) % 50 == 0:
                 pct = 50 + int(((idx + 1) / total_clusters) * 50)
@@ -753,6 +786,14 @@ class BinClusterService:
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_name")
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_uuid")
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_id")
+        
+        # Clear inferred metadata indexes
+        self._clear_indexes_via_registry(collection, "file", "inferred_yara")
+        self._clear_indexes_via_registry(collection, "file", "inferred_avtype")
+        self._clear_indexes_via_registry(collection, "file", "inferred_filetype")
+        self._clear_indexes_via_registry(collection, "file", "inferred_ccip")
+        self._clear_indexes_via_registry(collection, "file", "inferred_filename")
+        self._clear_indexes_via_registry(collection, "file", "inferred_md5")
 
         r.delete(f"{collection}:bin_cluster:tree:{algo}")
         r.delete(f"{collection}:bin_cluster:list:{algo}")

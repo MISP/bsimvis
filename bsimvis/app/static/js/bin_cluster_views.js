@@ -43,7 +43,7 @@ function getBinHierarchyTooltip() {
                     const file = members[idx];
                     if (file && file.file_id) {
                         const url = `/static/bin_sim/index.html?collection=${encodeURIComponent(getCurrentCollection())}&md5_a=${encodeURIComponent(file.file_md5)}`;
-                        window.open(url, '_blank');
+                        Nav.openPath(url, event, { title: `File: ${file.file_name || file.file_md5}`, type: 'file' });
                     }
                 }
             }
@@ -329,7 +329,11 @@ class BinClusterHierarchy {
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             
-            window.location.hash = `${path}?${p.toString()}`;
+            if (typeof navigate === 'function') {
+                navigate(parseRestfulPath().view || 'bin-clusters', p);
+            } else {
+                window.location.search = p.toString();
+            }
         };
 
         try {
@@ -493,14 +497,14 @@ class BinClusterHierarchy {
                 const col = getCurrentCollection();
                 if (d.data.is_member) {
                     if (d.data.file_md5) {
-                        window.location.hash = `#files/sim?collection=${col}&md5=${d.data.file_md5}`;
+                        Nav.openPath(`#files/sim?collection=${col}&md5=${d.data.file_md5}`, e);
                     } else {
-                        window.location.hash = `#files?collection=${col}&q=${encodeURIComponent(d.data.name)}`;
+                        Nav.openPath(`#files?collection=${col}&q=${encodeURIComponent(d.data.name)}`, e);
                     }
                     return;
                 }
                 if (d.data.uuid && d.data.uuid !== 'root') {
-                    window.location.hash = `#files?collection=${col}&bin_cluster_uuid=${d.data.uuid}`;
+                    Nav.openPath(`#files?collection=${col}&bin_cluster_uuid=${d.data.uuid}`, e);
                 }
             })
             .on("mouseenter", (e, d) => {
@@ -1159,7 +1163,11 @@ class BinClusterPacking {
             p.set('show_children', this.params.show_children);
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
-            window.location.hash = `${path}?${p.toString()}`;
+            if (typeof navigate === 'function') {
+                navigate(parseRestfulPath().view || 'bin-clusters', p);
+            } else {
+                window.location.search = p.toString();
+            }
         };
 
         try {
@@ -1351,7 +1359,18 @@ class BinClusterPacking {
             })
             .on("click", (event, d) => {
                 if (d.data.is_member) {
-                    if (d.data.file_md5) window.location.hash = `#files/sim?collection=${getCurrentCollection()}&md5=${d.data.file_md5}`;
+                    if (d.data.file_md5) {
+                        const col = getCurrentCollection();
+                        const url = `/collection/${encodeURIComponent(col)}/bin_sim/${encodeURIComponent(d.data.file_md5)}`;
+                        if (typeof navigate === 'function') {
+                            const p = new URLSearchParams();
+                            p.set('md5', d.data.file_md5);
+                            // We don't have a dashboard view for single bin_sim detail yet, so use openPath
+                            Nav.openPath(url, event, { title: `Sim: ${d.data.file_md5}`, type: 'bin_sim' });
+                        } else {
+                            window.location.href = url;
+                        }
+                    }
                     event.stopPropagation();
                     return;
                 }

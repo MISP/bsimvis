@@ -313,11 +313,11 @@
             </div>`;
         } else if (resolvedType === 'file') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); const h = '#file-call-graph?collection=${col}&file_md5=${norm.md5}'; if (event.ctrlKey || event.metaKey) { window.open('/' + h, '_blank'); } else { window.location.hash = h; }">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/call_graph/${norm.md5}', event, { title: 'Call Graph: ${norm.md5}', type: 'call_graph' })">
                 <i class="fa-solid fa-sitemap" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Call Graph</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); const h = '#function-similarity?collection=${col}&md5=${norm.md5}'; if (event.ctrlKey || event.metaKey) { window.open('/' + h, '_blank'); } else { window.location.hash = h; }">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('#function-similarity?collection=${col}&md5=${norm.md5}', event)">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
             </div>`;
@@ -332,7 +332,7 @@
             const safeNameA = String(norm.name_a || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
             const safeNameB = String(norm.name_b || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); if (event.ctrlKey || event.metaKey) { window.open('${diffUrl}', '_blank'); } else if (typeof windowManager !== 'undefined') { windowManager.createWindow('Bin Diff: ${safeNameA} vs ${safeNameB}', '${diffUrl}', { type: 'diff' }); } else { window.open('${diffUrl}', '_blank'); }">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'diff' })">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Binary Diff</span>
             </div>`;
@@ -342,7 +342,7 @@
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); const h = '#functions?collection=${col}&cluster_uuid=${norm.uuid}'; if (event.ctrlKey || event.metaKey) { window.open('/' + h, '_blank'); } else { window.location.hash = h; }">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('#functions?collection=${col}&cluster_uuid=${norm.uuid}', event)">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
@@ -352,7 +352,7 @@
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); const h = '#files?collection=${col}&bin_cluster_uuid=${norm.uuid}'; if (event.ctrlKey || event.metaKey) { window.open('/' + h, '_blank'); } else { window.location.hash = h; }">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('#files?collection=${col}&bin_cluster_uuid=${norm.uuid}', event)">
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;

@@ -89,6 +89,7 @@ class ProcessingService:
         pipe.hincrby(coll_meta_key, "total_files", 1)
         pipe.hincrby(coll_meta_key, "total_functions", num_functions)
         pipe.hset(coll_meta_key, "last_updated", timestamp)
+        pipe.sadd(f"{collection}:all_batches", batch_uuid)
 
         # 5. Collection Batch Metadata
         batch_key = f"{collection}:batch:{batch_uuid}"

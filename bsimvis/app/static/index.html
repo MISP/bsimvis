@@ -10,6 +10,9 @@
         integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
         crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/notes.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -17,12 +20,14 @@
     <script src="/js/diff_queue.js"></script>
     <script src="/js/previews.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/js/d3_layouts.js"></script>
     <script src="https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
     <link rel="stylesheet" href="/css/dashboard.css">
     <script src="/js/utils.js"></script>
     <script src="/js/entity_renderer.js"></script>
     <script src="/js/code_renderer.js"></script>
     <script src="/js/metadata.js"></script>
+    <script src="/js/table_renderers.js"></script>
     <script src="/js/similarity_graph.js"></script>
     <script src="/js/cluster_views.js"></script>
     <script src="/js/bin_cluster_views.js"></script>
@@ -39,90 +44,7 @@
 
 <body>
 
-    <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">⟨</button>
-    <nav>
-        <h2 title="BSimVis">
-            <a href="https://github.com/MISP/bsimvis" target="_blank" id="brand-link">
-                <img src="/logo.svg" alt="Logo">
-                <span>BSimVis</span>
-            </a>
-        </h2>
-        <a href="#collections" id="nav-collections" title="Collections"
-            style="border-bottom: 1px solid var(--border); margin-bottom: 15px; padding-bottom: 15px;">
-            <i class="fa-solid fa-layer-group"></i>
-            <span id="current-collection-name">Collections</span>
-        </a>
-
-        <div class="nav-section-title">
-            <span>Binaries</span>
-        </div>
-        <div class="nav-section-content">
-            <a href="#batches" id="nav-batches" title="Batches" style="display:none"><i
-                    class="fa-solid fa-boxes-stacked"></i> <span>Batches</span></a>
-            <a href="#files" id="nav-files" title="Files" style="display:none"><i class="fa-solid fa-file-code"></i>
-                <span>Files</span></a>
-            <a href="#binary-similarity" id="nav-binary-similarity" title="Similarities" style="display:none">
-                <i class="fa-solid fa-code-compare"></i>
-                <span>Similarities</span>
-                <button class="nav-rebuild-btn"
-                    onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();"
-                    title="Rebuild Analysis">
-                    <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
-                </button>
-            </a>
-            <a href="#bin-clusters" id="nav-bin-clusters" title="Clusters" style="display:none">
-                <i class="fa-solid fa-bullseye"></i>
-                <span>Clusters</span>
-            </a>
-            <a href="#file-call-graph" id="nav-file-call-graph" title="Call Graph" style="display:none"><i
-                    class="fa-solid fa-sitemap"></i>
-                <span>Call Graph</span></a>
-        </div>
-
-        <div class="nav-section-title">
-            <span>Functions</span>
-        </div>
-        <div class="nav-section-content">
-            <a href="#functions" id="nav-functions" title="Functions" style="display:none"><i
-                    class="fa-solid fa-code"></i>
-                <span>Functions</span></a>
-            <a href="#function-similarity" id="nav-function-similarity" title="Function Similarities"
-                style="display:none"><i class="fa-solid fa-code-compare"></i> <span>Similarities</span></a>
-            <a href="#clusters" id="nav-clusters" title="Clusters" style="display:none">
-                <i class="fa-solid fa-bullseye"></i>
-                <span>Clusters</span>
-                <button class="nav-rebuild-btn"
-                    onclick="event.preventDefault(); event.stopPropagation(); triggerRebuildAll();"
-                    title="Rebuild Analysis">
-                    <i class="fa-solid fa-arrows-rotate nav-rebuild-icon"></i>
-                </button>
-            </a>
-            <a href="#features-global" id="nav-features-global" title="Features" style="display:none"><i
-                    class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
-        </div>
-
-        <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
-            <a href="#" id="nav-diffing" onclick="showDiffView()" title="Diffing Tool"
-                style="color:var(--accent); font-weight:bold;"><i class="fa-solid fa-plus-minus"
-                    style="color: var(--accent);"></i> <span>Diffing Tool</span></a>
-            <a href="#upload" id="nav-upload" title="Upload Binaries"><i class="fa-solid fa-cloud-arrow-up"></i>
-                <span>Upload</span></a>
-            <a href="#jobs" id="nav-jobs" title="Background Jobs" style="color:var(--text);"><i id="nav-jobs-icon"
-                    class="fa-solid fa-server" style="color: var(--subtle);"></i>
-                <div id="nav-jobs-loader" class="nav-job-spinner" style="display:none;"></div> <span>Jobs</span>
-            </a>
-            <div class="history-dropdown-container" style="position: relative;">
-                <a href="javascript:void(0)" id="nav-history" title="Search History" style="color:var(--text);"><i
-                        class="fa-solid fa-clock-rotate-left" style="color: var(--subtle);"></i> <span>History</span>
-                    <i class="fa-solid fa-chevron-down" id="nav-history-chevron"
-                        style="font-size:0.75rem; margin-left:auto; transition: transform 0.2s;"></i>
-                </a>
-                <div id="history-dropdown" class="history-dropdown" style="display:none;"></div>
-            </div>
-            <a href="/api/" target="_blank" id="nav-api" title="API Documentation" style="color:var(--text);"><i
-                    class="fa-solid fa-book" style="color: var(--subtle);"></i> <span>API</span></a>
-        </div>
-    </nav>
+    <div id="sidebar-container"></div>
 
     <main>
         <div class="header">
@@ -217,6 +139,10 @@
             <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
                 <input type="checkbox" id="param-include-headers" onchange="updateUIParams()">
                 <label style="font-size:0.8rem;">Include Headers in Copy</label>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
+                <input type="checkbox" id="param-use-floating-windows" onchange="updateUIParams()">
+                <label style="font-size:0.8rem;">Use Floating Windows</label>
             </div>
 
             <div style="border-top: 1px solid var(--border); padding-top: 15px;">
@@ -342,10 +268,6 @@
                 style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
             </div>
 
-            <div id="call-graph-view-container"
-                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
-            </div>
-
             <div id="upload-view-container"
                 style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow-y:auto; margin: 10px; position:relative; padding: 30px;">
             </div>
@@ -370,10 +292,6 @@
         style="position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;">
     </div>
 
-
-    <div id="collection-flyout">
-        <div id="collection-flyout-list"></div>
-    </div>
 
     <div id="window-tray"></div>
     <div id="notification-container"

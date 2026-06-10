@@ -67,7 +67,7 @@ function getRowTagColor(analysisTags, userTags = []) {
 
 function refreshAllRowColors() {
     const rows = document.querySelectorAll('tr.sim-row');
-    const [hashPath] = (window.location.hash || '#collections').split('?');
+    const [hashPath] = (window.location.hash || 'collections').split('?');
     const isColorEnabled = typeof UIParams !== 'undefined' ? UIParams.colorByTag : (localStorage.getItem('sim-color-by-tag') === 'true');
 
     rows.forEach(tr => {
@@ -78,9 +78,9 @@ function refreshAllRowColors() {
 
         // Only collect tags from the PRIMARY editor of the row
         let selector = '.entity-tags-editor[data-etype="function"]';
-        if (hashPath === '#function-similarity') {
+        if (hashPath === 'function-similarity') {
             selector = '.sim-tags-editor[data-etype="similarity"]';
-        } else if (hashPath === '#files') {
+        } else if (hashPath === 'files') {
             selector = '.entity-tags-editor[data-etype="file"]';
         }
 
@@ -382,7 +382,7 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 };
 window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const hash = targetWindow.location.hash || '#collections';
+    const hash = targetWindow.location.hash || 'collections';
     
     if (isBinary) {
         const targetHashPath = '#files';
@@ -400,7 +400,11 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
                 params.set('collection', currentParams.get('collection'));
             }
             
-            targetWindow.location.hash = `${targetHashPath}?${params.toString()}`;
+            if (typeof targetWindow.navigate === 'function') {
+                targetWindow.navigate(targetWindow.parseRestfulPath().view || 'functions', params);
+            } else {
+                targetWindow.location.search = params.toString();
+            }
         } else {
             input.value = uuid;
             if (targetWindow.applyAdvancedFileSearch) {

@@ -18,6 +18,13 @@ body.sidebar-collapsed {
     --sidebar-width: 70px;
 }
 
+#sidebar-container {
+    height: 100vh;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 /* Sidebar */
 nav {
     width: var(--sidebar-width);
@@ -26,14 +33,12 @@ nav {
     display: flex;
     flex-direction: column;
     padding: 20px 0;
+    flex: 1;
+    box-sizing: border-box;
 }
 
 nav h2 {
     padding: 0;
-    color: var(--accent);
-    font-size: 1.1rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
     display: flex;
     align-items: center;
     justify-content: center; /* centered */
@@ -44,41 +49,11 @@ nav h2 {
     margin: 0 0 20px 0; /* space below logo */
 }
 
-#brand-link {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    color: inherit;
-    text-decoration: none;
-    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-
-#brand-link:hover {
-    transform: scale(1.08);
-}
-
-/* Center the logo image within its container */
-nav h2 img {
-    display: block;
-    margin: 0;
-    flex-shrink: 0;
-    height: 48px;
-    width: 48px;
-}
-
 /* Collapsed sidebar adjustments */
 body.sidebar-collapsed nav h2 {
     padding: 0;                   /* remove padding to allow bigger logo */
     justify-content: center;      /* center the icon */
     margin-bottom: 10px;
-}
-body.sidebar-collapsed nav h2 span {
-    display: none;                /* hide text label */
-}
-body.sidebar-collapsed nav h2 img {
-    height: 44px;                 /* larger logo for narrow bar */
-    width: 44px;
 }
 
 body.sidebar-collapsed nav a {
@@ -1288,101 +1263,6 @@ body.sidebar-collapsed #sidebar-toggle {
     left: 55px;
 }
 
-/* Collection Flyout Menu */
-#collection-flyout {
-    position: fixed;
-    left: var(--sidebar-width);
-    top: 200px;
-    background: #0a0c10;
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--accent);
-    z-index: 30000;
-    display: none;
-    flex-direction: column;
-    min-width: 240px;
-    max-width: 400px;
-    max-height: 70vh;
-    overflow-y: auto;
-    box-shadow: 20px 0 50px rgba(0,0,0,0.9);
-    border-radius: 0 8px 8px 0;
-    padding: 10px 0;
-    animation: collectionFlyoutFade 0.2s ease-out;
-}
-
-@keyframes collectionFlyoutFade {
-    from { opacity: 0; transform: translateX(-10px); }
-    to { opacity: 1; transform: translateX(0); }
-}
-
-.collection-item {
-    padding: 12px 20px;
-    color: var(--subtle);
-    cursor: pointer;
-    text-decoration: none;
-    font-size: 0.85rem;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    transition: all 0.2s;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.collection-item i {
-    font-size: 1rem;
-    width: 20px;
-    text-align: center;
-    color: var(--subtle);
-}
-
-.collection-item:hover {
-    background: rgba(255, 255, 255, 0.05);
-    color: var(--accent);
-}
-
-.collection-item:hover i {
-    color: var(--accent);
-}
-
-.collection-item.active {
-    background: rgba(4, 217, 255, 0.1);
-    color: var(--accent);
-    font-weight: bold;
-}
-
-.collection-item.active i {
-    color: var(--accent);
-}
-
-#current-collection-name {
-    font-size: 1rem;
-    font-weight: 800;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 150px;
-    transition: all 0.3s;
-}
-
-body.sidebar-collapsed #current-collection-name {
-    font-size: 0.75rem;
-    max-width: 50px;
-    margin-top: 0;
-    display: inline-block;
-    text-align: center;
-}
-
-body.sidebar-collapsed nav a#nav-collections {
-    flex-direction: column;
-    height: auto;
-    padding: 15px 0;
-}
-
-body.sidebar-collapsed nav a#nav-collections i {
-    display: none;
-}
-
 /* Top Bar Buttons */
 .top-action-btn {
     background: var(--card-bg);
@@ -2049,6 +1929,7 @@ body.sidebar-collapsed nav #nav-history-chevron {
 }
 
 /* If loaded inside a floating window iframe, hide sidebar and main layout components */
+body.in-iframe #sidebar-container,
 body.in-iframe nav,
 body.in-iframe #sidebar-toggle,
 body.in-iframe main > .header {

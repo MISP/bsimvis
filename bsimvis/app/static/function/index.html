@@ -6,8 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Function Code View</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/entity_renderer.js"></script>
     <script src="/js/code_renderer.js"></script>
@@ -18,20 +22,7 @@
     <script src="/js/previews.js"></script>
     <script src="/js/context_menu.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-    <script src="/js/cluster_views.js"></script>
     <style>
-        body {
-            background-color: #121212;
-            color: #f8f8f2;
-            margin: 0;
-            padding: 0;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
         #meta-container {
             display: flex;
             width: 100%;
@@ -242,9 +233,11 @@
 </head>
 
 <body>
-    <div id="meta-container">
-        <!-- Dynically populated to match formatMetaCard in diff view -->
-    </div>
+    <div id="sidebar-container"></div>
+    <main style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+        <div id="meta-container">
+            <!-- Dynically populated to match formatMetaCard in diff view -->
+        </div>
 
     <div id="loader">Fetching View...</div>
 
@@ -258,16 +251,35 @@
     </div>
 
     <div id="bsim-tooltip"></div>
+    </main>
+
+    <div id="token-tooltip"></div>
+    <div id="diff-preview-tooltip"></div>
+    <div id="code-preview-tooltip"></div>
+
+    <div id="job-details-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-content" style="max-width: 800px; width: 90%;">
+            <div class="modal-header">
+                <h3 id="job-modal-title">Job Details</h3>
+                <button class="close-btn" onclick="closeJobModal()">&times;</button>
+            </div>
+            <div id="job-modal-body" class="modal-body"></div>
+            <div class="modal-footer">
+                <button class="btn-action" onclick="closeJobModal()">Close</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         // Sync UI settings from parent if available
-        let UIParams = { cohesionThreshold: 0.95, colorByTag: false };
+        let UIParams = { cohesionThreshold: 0.95, colorByTag: false, useFloatingWindows: true };
         if (window.parent && window.parent.UIParams) {
             UIParams = window.parent.UIParams;
         } else {
             UIParams = {
                 cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
-                colorByTag: localStorage.getItem('colorByTag') === 'true'
+                colorByTag: localStorage.getItem('colorByTag') === 'true',
+                useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? true : localStorage.getItem('useFloatingWindows') === 'true'
             };
         }
 
@@ -290,7 +302,12 @@
         let id = '';
 
         function navigateToFeatures(id, e) {
-            const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
+            const parts = id.split(':');
+            const col = parts[0];
+            const md5 = parts[2];
+            const addr = parts[3];
+            const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}/features`;
+            
             if (e && (e.ctrlKey || e.metaKey)) {
                 window.open(url, '_blank');
                 return;
@@ -379,13 +396,18 @@
         }
 
         async function init() {
+            if (typeof UI !== 'undefined' && UI.Sidebar) {
+                UI.Sidebar.init('sidebar-container');
+            }
+
             scrollEl = document.getElementById('code-scroll');
             vHeightEl = document.getElementById('v-height');
             vContentEl = document.getElementById('v-content');
             tooltipEl = document.getElementById('bsim-tooltip');
 
+            const restful = parseRestfulPath();
             const params = new URLSearchParams(window.location.search);
-            id = params.get('id');
+            id = restful.id || params.get('id');
             if (!id) {
                 document.getElementById('loader').innerText = "ID is missing";
                 return;
@@ -429,7 +451,12 @@
                 });
                 function navigateToFunction(funcId, isExternal, e) {
                     if (isExternal) return;  // no navigation for external functions
-                    const url = `/function/index.html?id=${encodeURIComponent(funcId)}`;
+                    const parts = funcId.split(':');
+                    const col = parts[0];
+                    const md5 = parts[2];
+                    const addr = parts[3];
+                    const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}`;
+
                     if (e && (e.ctrlKey || e.metaKey)) {
                         window.open(url, '_blank');
                         return;
@@ -713,8 +740,10 @@
             });
         }
 
-        init();
-        updateDiffQueueUI();
+        init().catch(err => {
+            console.error("Initialization failed:", err);
+            document.getElementById('loader').innerText = "Initialization failed: " + err.message;
+        });
     </script>
 </body>
 

@@ -1,20 +1,24 @@
 // Cluster Hierarchy (Dendrogram) and Packing Visualizations for BSimVis
 
 function getCurrentCollection() {
-    // 1. Try parent hash params first (most reliable for views)
-    if (window.parent && window.parent.location) {
-        const hash = window.parent.location.hash || '';
-        const params = new URLSearchParams(hash.split('?')[1] || '');
-        if (params.get('collection')) return params.get('collection');
-        const id = params.get('id') || params.get('id1') || params.get('id2');
-        if (id && id.includes(':')) return id.split(':')[0];
+    let restful;
+    if (window.parent && window.parent.parseRestfulPath) {
+        restful = window.parent.parseRestfulPath();
+    } else if (window.parseRestfulPath) {
+        restful = parseRestfulPath();
+    }
+    if (restful && restful.collection) {
+        return restful.collection;
     }
 
-    // 2. Try URL params
+    // Fallback for old system
     const params = new URLSearchParams(window.location.search);
     if (params.get('collection')) return params.get('collection');
 
-    // 4. Try parsing from function IDs
+    const hash = window.location.hash || '';
+    const hashParams = new URLSearchParams(hash.split('?')[1] || '');
+    if (hashParams.get('collection')) return hashParams.get('collection');
+
     const id = params.get('id') || params.get('id1') || params.get('id2') || window.currentFuncId;
     if (id && id.includes(':')) return id.split(':')[0];
 
@@ -46,7 +50,7 @@ function getHierarchyTooltip() {
                             showFunctionCodeById(func.function_id, name, '', event);
                         } else {
                             const url = `/function/index.html?id=${encodeURIComponent(func.function_id)}`;
-                            window.open(url, '_blank');
+                            Nav.openPath(url, event, { title: `Code: ${name}`, type: 'code' });
                         }
                     }
                 }
@@ -70,27 +74,16 @@ function loadPackingView(params) {
     window.packingInstance.fetch(params);
 }
 
-class ClusterHierarchy {
+class ClusterHierarchy extends D3BaseLayout {
     constructor(containerId, clusterType = 'function') {
-        this.container = document.getElementById(containerId);
+        super(containerId);
         this.clusterType = clusterType;
-        this.width = this.container ? this.container.clientWidth : 800;
-        this.height = this.container ? (this.container.clientHeight || 700) : 700;
-        this.root = null;
-        this.svg = null;
-        this.g = null;
-        this.zoom = null;
         this.params = {
             min_cluster_size: 2,
             stability_threshold: 0.0,
             show_parents: true,
             path_compression: true
         };
-        this.abortController = null;
-    }
-
-    stop() {
-        if (this.abortController) this.abortController.abort();
     }
 
     applyTagUpdate(action, etype, eid, tag) {
@@ -394,9 +387,8 @@ class ClusterHierarchy {
         }
 
         document.getElementById('hier-refresh-btn').onclick = () => {
-            const hash = window.location.hash;
-            const [path, qs] = hash.split('?');
-            const p = new URLSearchParams(qs || '');
+            const { view } = parseRestfulPath();
+            const p = new URLSearchParams(window.location.search);
             
             if (this.params.min_cluster_size > 0) p.set('min_count', this.params.min_cluster_size); else p.delete('min_count');
             if (this.params.max_cluster_size > 0) p.set('max_count', this.params.max_cluster_size); else p.delete('max_count');
@@ -411,7 +403,11 @@ class ClusterHierarchy {
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             p.set('show_binary_sankey', this.params.show_binary_sankey ? 'true' : 'false');
             
-            window.location.hash = `${path}?${p.toString()}`;
+            if (typeof navigate === 'function') {
+                navigate(view || 'clusters', p);
+            } else {
+                window.location.search = p.toString();
+            }
         };
 
         try {
@@ -520,26 +516,10 @@ class ClusterHierarchy {
             nodes = compressedNodes;
         }
 
-        const width = this.container.clientWidth;
-        const height = this.container.offsetHeight || 700;
+        const width = this.width;
+        const height = this.height;
 
-        d3.select(this.container).selectAll("svg").remove();
-
-        this.svg = d3.select(this.container).append("svg")
-            .attr("viewBox", `0 0 ${width} ${height}`)
-            .attr("width", "100%")
-            .attr("height", "100%")
-            .attr("style", "background:#0d0f14; cursor:grab;");
-
-        this.g = this.svg.append("g");
-
-        this.zoom = d3.zoom()
-            .scaleExtent([0.05, 10])
-            .on("zoom", (event) => {
-                this.g.attr("transform", event.transform);
-            });
-
-        this.svg.call(this.zoom);
+        this.initSvg();
 
         const stratify = d3.stratify()
             .id(d => d.id)
@@ -633,13 +613,15 @@ class ClusterHierarchy {
                     } else if (typeof showFunctionCodeById === 'function') {
                         showFunctionCodeById(d.data.id, d.data.name, '', event);
                     } else {
-                        window.location.hash = `#functions?collection=${col}&q=${encodeURIComponent(d.data.name)}`;
+                        const url = `/collection/${col}/search/functions?q=${encodeURIComponent(d.data.name)}`;
+                        Nav.openPath(url, event);
                     }
                     return;
                 }
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
-                    window.location.hash = '#functions?collection=' + col + '&cluster_uuid=' + uuid;
+                    const url = `/collection/${col}/search/functions?cluster_uuid=${uuid}`;
+                    Nav.openPath(url, event);
                 }
             })
             .on("mouseover", (e, d) => {
@@ -1010,8 +992,15 @@ class ClusterHierarchy {
                 
                 binNodesMerge
                     .on("click", (event, d) => {
-                        const col = getCurrentCollection();
-                        window.location.hash = `#files?collection=${col}&q=${encodeURIComponent(d.name)}`;
+                        const col = getCollectionFromHash();
+                        const url = `/collection/${encodeURIComponent(col)}/search/files?q=${encodeURIComponent(d.name)}`;
+                        if (typeof navigate === 'function') {
+                            const p = new URLSearchParams();
+                            p.set('q', d.name);
+                            navigate('files', p, col);
+                        } else {
+                            window.location.href = url;
+                        }
                     })
                     .on("mouseover", function(event, d) {
                         binNodesMerge.filter(n => n.md5 === d.md5).select("rect").transition().duration(100).attr("width", 14);
@@ -1121,7 +1110,14 @@ class ClusterHierarchy {
         btn.onclick = () => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
+            const url = `/collection/${encodeURIComponent(col)}/search/functions?cluster_uuid=${uuid}`;
+            if (typeof navigate === 'function') {
+                const p = new URLSearchParams();
+                p.set('cluster_uuid', uuid);
+                navigate('functions', p, col);
+            } else {
+                window.location.href = url;
+            }
         };
     }
 
@@ -1678,9 +1674,8 @@ class ClusterPacking {
         }
 
         document.getElementById('pack-refresh-btn').onclick = () => {
-            const hash = window.location.hash;
-            const [path, qs] = hash.split('?');
-            const p = new URLSearchParams(qs || '');
+            const { view } = parseRestfulPath();
+            const p = new URLSearchParams(window.location.search);
             
             if (this.params.min_cluster_size > 0) p.set('min_count', this.params.min_cluster_size); else p.delete('min_count');
             if (this.params.max_cluster_size > 0) p.set('max_count', this.params.max_cluster_size); else p.delete('max_count');
@@ -1694,7 +1689,11 @@ class ClusterPacking {
             p.set('show_members', this.params.show_members ? 'true' : 'false');
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             
-            window.location.hash = `${path}?${p.toString()}`;
+            if (typeof navigate === 'function') {
+                navigate(view || 'clusters', p);
+            } else {
+                window.location.search = p.toString();
+            }
         };
 
         try {
@@ -2134,7 +2133,14 @@ class ClusterPacking {
         btn.onclick = () => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            window.location.hash = `#functions?collection=${col}&cluster_uuid=${uuid}`;
+            const url = `/collection/${encodeURIComponent(col)}/search/functions?cluster_uuid=${uuid}`;
+            if (typeof navigate === 'function') {
+                const p = new URLSearchParams();
+                p.set('cluster_uuid', uuid);
+                navigate('functions', p, col);
+            } else {
+                window.location.href = url;
+            }
         };
     }
 

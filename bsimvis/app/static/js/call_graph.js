@@ -36,9 +36,9 @@ class FileCallGraph {
                 
                 select.onchange = (e) => {
                     if (e.target.value) {
-                        window.location.hash = `#file-call-graph?collection=${col}&file_md5=${e.target.value}`;
+                        window.location.search = `?collection=${col}&file_md5=${e.target.value}`;
                     } else {
-                        window.location.hash = `#file-call-graph?collection=${col}`;
+                        window.location.search = `?collection=${col}`;
                     }
                 };
             }

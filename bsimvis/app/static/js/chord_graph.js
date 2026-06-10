@@ -256,8 +256,8 @@ class ChordGraph {
                 const n1 = nodes[d.source.index];
                 const n2 = nodes[d.target.index];
                 // Navigate to binary similarity diff view
-                const collection = new URLSearchParams(window.location.hash.split('?')[1]).get('collection') || 'main';
-                const diffUrl = `/static/bin_sim/index.html?collection=${collection}&md5_a=${n1.md5}&md5_b=${n2.md5}`;
+                const { collection } = getRoutingState();
+                const diffUrl = Nav.buildUIUrl(collection, ['diff', `${n1.md5}/${n2.md5}`]);
                 const safeNameA = (n1.name || n1.md5.substring(0,8)).replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 const safeNameB = (n2.name || n2.md5.substring(0,8)).replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 
@@ -268,7 +268,7 @@ class ChordGraph {
                 } else if (window.parent && window.parent.windowManager) {
                     window.parent.windowManager.createWindow(`Bin Diff: ${safeNameA} vs ${safeNameB}`, diffUrl, { type: 'diff' });
                 } else {
-                    window.open(diffUrl, '_blank');
+                    window.location.href = diffUrl;
                 }
             });
     }

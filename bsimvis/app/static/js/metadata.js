@@ -50,10 +50,38 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 const funcHtml = EntityRenderer.renderFunction(funcData, renderOptions);
                 const color = isExt ? '#f92672' : 'var(--accent)';
                 
-                return `<span class="relation-tag" style="border-color:${color}; color:${color};">
-                    ${funcHtml}
-                    ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
-                </span>`;
+// Robust navigation handler
+window.getNavHandler = () => {
+    return function(id, name, lineHash = '', e) {
+        // Use global showFunctionCodeById if available (most robust)
+        const globalNav = window.showFunctionCodeById || (window.parent && window.parent.showFunctionCodeById);
+        
+        if (globalNav) {
+            globalNav(id, name, lineHash, e);
+        } else {
+            // Fallback for standalone: construct and open with Nav if available, or window.open
+            const parts = id.split(':');
+            const col = parts[0];
+            const md5 = parts[2];
+            const addr = parts[3];
+            const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;
+            
+            const Nav = window.Nav || (window.parent && window.parent.Nav);
+            if (Nav) {
+                Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
+            } else {
+                window.open(url, '_blank');
+            }
+        }
+    };
+};
+
+const safeName = (funcData.function_name || '').replace(/'/g, "\\'");
+                
+return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()('${funcData.function_id}', '${safeName}', '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
+    ${funcHtml}
+    ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
+</span>`;
             }
             return `<span class="relation-tag">${JSON.stringify(t)}</span>`;
         }).join('');
@@ -292,7 +320,13 @@ function toggleMetaDetail(id, event) {
 }
 
 function navigateToFeatures(id, e) {
-    const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
+    const parts = id.split(':');
+    if (parts.length < 4) return;
+    const col = parts[0];
+    const md5 = parts[2];
+    const addr = parts[3];
+    const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}/features`;
+
     if (e && (e.ctrlKey || e.metaKey)) {
         window.open(url, '_blank');
         return;
@@ -316,22 +350,23 @@ function seeSimilar(fullId, e) {
     const col = parts[0];
     const md5 = parts[2];
     const addr = parts[3];
-    const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+    
+    const url = `/collection/${encodeURIComponent(col)}/search/similarity?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
 
     if (e && (e.ctrlKey || e.metaKey)) {
-        window.open('/' + hash, '_blank');
+        window.open(url, '_blank');
         return;
     }
 
-    if (window.parent && window.parent !== window && typeof window.parent.location !== 'undefined') {
-        window.parent.location.hash = hash;
-        if (typeof window.parent.hideCodePanel === 'function') {
-            window.parent.hideCodePanel();
-        }
+    if (window.parent && window.parent !== window && typeof window.parent.navigate === 'function') {
+        const params = new URLSearchParams();
+        params.set('md5', md5);
+        params.set('address', addr);
+        params.set('algo', 'unweighted_cosine');
+        window.parent.navigate('function-similarity', params, col);
     } else {
-        // Standalone view: redirect to main dashboard with hash
-        // hash already starts with #, so just append it to /
-        window.location.href = '/' + hash;
+        // Standalone view: redirect to main dashboard with restful path
+        window.location.href = url;
     }
 }
 

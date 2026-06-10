@@ -6,11 +6,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Binary Similarity Diff</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
     <link rel="stylesheet" href="/css/dashboard.css">
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/entity_renderer.js"></script>
     <script src="/js/code_renderer.js"></script>
@@ -18,26 +21,14 @@
     <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/context_menu.js"></script>
-    <script src="/js/cluster_views.js"></script>
     <script src="/js/binary_similarity.js"></script>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: var(--bg);
-            color: var(--text);
-            font-family: 'Inter', sans-serif;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-
         #binary-similarity-container {
             display: flex;
             flex-direction: column;
-            width: 100%;
-            height: 100%;
+            flex: 1;
+            height: 100vh;
+            overflow: hidden;
         }
 
         /* Resizable layout overrides */
@@ -55,10 +46,18 @@
 </head>
 
 <body>
+    <div id="sidebar-container"></div>
     <div id="binary-similarity-container"></div>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            if (typeof UI !== 'undefined' && UI.Sidebar) {
+                UI.Sidebar.init('sidebar-container');
+            }
+            const restful = parseRestfulPath();
             const urlParams = new URLSearchParams(window.location.search);
+            if (restful.collection) urlParams.set('collection', restful.collection);
+            if (restful.md5) urlParams.set('md5', restful.md5);
+
             // Re-use the existing logic from binary_similarity.js
             if (typeof renderBinarySimilarityView === 'function') {
                 renderBinarySimilarityView(urlParams);

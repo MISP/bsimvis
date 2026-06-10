@@ -381,7 +381,7 @@ class TableSelection {
     async copySelection() {
         if (this.selectedCells.size === 0) return;
 
-        const isSimilarityTable = window.location.hash.startsWith('#function-similarity');
+        const isSimilarityTable = window.location.pathname.includes('/function-similarity');
 
         // Helper to clean and extract text from an element, formatting tag editors nicely
         const cleanAndGetText = (el) => {
@@ -535,7 +535,7 @@ class TableSelection {
                 const line = [];
                 cols.forEach(c => {
                     const cellEl = rowEl.children[c];
-                    if (window.location.hash.startsWith('#files') && c === 1) {
+                    if (window.location.pathname.includes('/files') && c === 1) {
                         // Split MD5 and Arch/Language
                         if (cellEl) {
                             const divs = cellEl.querySelectorAll('div');
@@ -547,7 +547,7 @@ class TableSelection {
                         } else {
                             line.push('', '');
                         }
-                    } else if (window.location.hash.startsWith('#clusters') && c === 0) {
+                    } else if (window.location.pathname.includes('/clusters') && c === 0) {
                         // Split UUID and ID in cluster view
                         if (cellEl) {
                             const uuid = cellEl.getAttribute('data-uuid') || cleanAndGetText(cellEl).split('ID:')[0].trim();
@@ -588,9 +588,9 @@ class TableSelection {
                         headerLine.push(label);
                     }
                 } else {
-                    if (window.location.hash.startsWith('#files') && c === 1) {
+                    if (window.location.pathname.includes('/files') && c === 1) {
                         headerLine.push('MD5', 'Arch');
-                    } else if (window.location.hash.startsWith('#clusters') && c === 0) {
+                    } else if (window.location.pathname.includes('/clusters') && c === 0) {
                         headerLine.push('UUID', 'ID');
                     } else {
                         headerLine.push(label);

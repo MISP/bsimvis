@@ -6,8 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Binary View</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/entity_renderer.js"></script>
     <script src="/js/metadata.js"></script>
@@ -17,19 +21,6 @@
     <script src="/js/notes.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
-        body {
-            background-color: #121212;
-            color: #f8f8f2;
-            margin: 0;
-            padding: 20px;
-            height: 100vh;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto;
-            font-family: 'Inter', sans-serif;
-        }
-
         #loader {
             text-align: center;
             padding: 50px;
@@ -201,48 +192,51 @@
 </head>
 
 <body>
-    <div id="loader"><i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...</div>
+    <div id="sidebar-container"></div>
+    <main style="display:flex; flex-direction:column; flex:1; overflow-y:auto; padding:20px; box-sizing:border-box;">
+        <div id="loader"><i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...</div>
 
-    <div id="content" style="display: none;">
-        <div class="hero-section">
-            <div class="hero-details">
-                <h1 id="file-name">unknown</h1>
-                <div class="md5" id="file-md5">MD5: ---</div>
-                <div class="quick-actions" id="quick-actions">
-                    <!-- Actions injected here -->
+        <div id="content" style="display: none;">
+            <div class="hero-section">
+                <div class="hero-details">
+                    <h1 id="file-name">unknown</h1>
+                    <div class="md5" id="file-md5">MD5: ---</div>
+                    <div class="quick-actions" id="quick-actions">
+                        <!-- Actions injected here -->
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <div class="dashboard-grid">
-            <div style="display: flex; flex-direction: column; gap: 20px;">
+            <div class="dashboard-grid">
+                <div style="display: flex; flex-direction: column; gap: 20px;">
+                    <div class="card">
+                        <div class="card-title"><i class="fa-solid fa-info-circle"></i> File Metadata</div>
+                        <div class="meta-grid" id="file-meta">
+                            <!-- File metadata injected here -->
+                        </div>
+                        <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
+                            <div style="font-size: 0.75rem; color: var(--dim); text-transform: uppercase; margin-bottom: 8px;">Tags</div>
+                            <div id="file-tags-container"></div>
+                        </div>
+                    </div>
+
+                    <div class="card" id="inferred-meta-card" style="display: none;">
+                        <div class="card-title"><i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata</div>
+                        <div class="meta-grid" id="inferred-meta">
+                            <!-- Inferred metadata injected here -->
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card">
-                    <div class="card-title"><i class="fa-solid fa-info-circle"></i> File Metadata</div>
-                    <div class="meta-grid" id="file-meta">
-                        <!-- File metadata injected here -->
+                    <div class="card-title"><i class="fa-solid fa-bullseye"></i> Binary Clusters (<span id="cluster-count">0</span>)</div>
+                    <div class="cluster-list" id="cluster-list">
+                        <!-- Cluster cards injected here -->
                     </div>
-                    <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
-                        <div style="font-size: 0.75rem; color: var(--dim); text-transform: uppercase; margin-bottom: 8px;">Tags</div>
-                        <div id="file-tags-container"></div>
-                    </div>
-                </div>
-
-                <div class="card" id="inferred-meta-card" style="display: none;">
-                    <div class="card-title"><i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata</div>
-                    <div class="meta-grid" id="inferred-meta">
-                        <!-- Inferred metadata injected here -->
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-title"><i class="fa-solid fa-bullseye"></i> Binary Clusters (<span id="cluster-count">0</span>)</div>
-                <div class="cluster-list" id="cluster-list">
-                    <!-- Cluster cards injected here -->
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <script>
         let collection = '';
@@ -258,9 +252,15 @@
         }
 
         async function init() {
+            if (typeof UI !== 'undefined' && UI.Sidebar) {
+                UI.Sidebar.init('sidebar-container');
+            }
+
+            const restful = parseRestfulPath();
             const params = new URLSearchParams(window.location.search);
-            collection = params.get('collection') || 'main';
-            file_md5 = params.get('file_md5') || params.get('md5');
+            
+            collection = restful.collection || params.get('collection') || 'main';
+            file_md5 = restful.md5 || params.get('file_md5') || params.get('md5');
 
             if (!file_md5) {
                 document.getElementById('loader').innerText = "Error: No file MD5 provided.";
@@ -483,32 +483,20 @@
         // Navigation helpers for window manager
         function openFunctions(e) {
             e.preventDefault();
-            const url = `/#functions?collection=${encodeURIComponent(collection)}&file_md5=${encodeURIComponent(file_md5)}`;
-            if (window.parent && window.parent !== window) {
-                window.parent.location.hash = url.substring(1);
-            } else {
-                window.location.href = url;
-            }
+            const url = Nav.buildUIUrl(collection, ['search', 'functions']) + `?file_md5=${encodeURIComponent(file_md5)}`;
+            Nav.openPath(url, e);
         }
 
         function openCallGraph(e) {
             e.preventDefault();
-            const url = `/#file-call-graph?collection=${encodeURIComponent(collection)}&file_md5=${encodeURIComponent(file_md5)}`;
-            if (window.parent && window.parent !== window) {
-                window.parent.location.hash = url.substring(1);
-            } else {
-                window.location.href = url;
-            }
+            const url = Nav.buildUIUrl(collection, ['call_graph', file_md5]);
+            Nav.openPath(url, e, { title: `Call Graph: ${file_md5}`, type: 'call_graph' });
         }
 
         function openClusterFiles(e, clusterUuid) {
             e.preventDefault();
-            const url = `/#files?collection=${encodeURIComponent(collection)}&bin_cluster_uuid=${encodeURIComponent(clusterUuid)}`;
-            if (window.parent && window.parent !== window) {
-                window.parent.location.hash = url.substring(1);
-            } else {
-                window.location.href = url;
-            }
+            const url = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(clusterUuid)}`;
+            Nav.openPath(url, e);
         }
 
         function showFileNotesPanel(e) {

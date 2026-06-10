@@ -10,20 +10,9 @@ let binSimSortState = {
     uniqueB: { col: 'cohesion', dir: -1 }
 };
 function openClusterView(uuid, name, event) {
-    const col = new URLSearchParams(window.location.search).get('collection') || 'main';
-    const fullUrl = `/#functions?collection=${encodeURIComponent(col)}&cluster_uuid=${encodeURIComponent(uuid)}`;
-    
-    if (event.ctrlKey || event.metaKey) {
-        window.open(fullUrl, '_blank');
-    } else {
-        if (window.parent && window.parent.windowManager) {
-            window.parent.windowManager.createWindow(`Cluster: ${name}`, fullUrl, { type: 'cluster' });
-        } else if (typeof windowManager !== 'undefined') {
-            windowManager.createWindow(`Cluster: ${name}`, fullUrl, { type: 'cluster' });
-        } else {
-            window.open(fullUrl, '_blank');
-        }
-    }
+    const { collection: col } = getRoutingState();
+    const url = Nav.buildUIUrl(col, ['search', 'functions']) + `?cluster_uuid=${encodeURIComponent(uuid)}`;
+    Nav.openPath(url, event, { title: `Cluster: ${name}`, type: 'cluster' });
 }
 window.openClusterView = openClusterView;
 
@@ -1298,7 +1287,7 @@ function renderBinSimPairs(items) {
         const diffUrl = `/static/bin_sim/index.html?collection=${collection}&md5_a=${item.md5_a}&md5_b=${item.md5_b}`;
         const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const onClickHandler = `event.stopPropagation(); if(event.ctrlKey || event.metaKey) { window.open('${diffUrl}', '_blank'); } else if(typeof windowManager !== 'undefined') { windowManager.createWindow('Bin Diff: ${safeNameA} vs ${safeNameB}', '${diffUrl}', { type: 'diff' }); } else if(window.parent && window.parent.windowManager) { window.parent.windowManager.createWindow('Bin Diff: ${safeNameA} vs ${safeNameB}', '${diffUrl}', { type: 'diff' }); } else { window.open('${diffUrl}', '_blank'); }`;
+        const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'diff' });`;
 
         html += `
             <tr class="sim-row">

@@ -1950,3 +1950,76 @@ table td {
     top: -8px;
     right: -8px;
 }
+
+/* UI Component Standard Styles */
+.ui-button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+    position: relative;
+    user-select: none;
+}
+
+.ui-button:hover {
+    background: var(--hover);
+    border-color: var(--accent);
+}
+
+.ui-button i {
+    font-size: 0.9em;
+}
+
+.ui-button small {
+    opacity: 0.6;
+    font-size: 0.75rem;
+}
+
+.ui-button-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #ff4444; /* Standard red for badges */
+    color: #fff;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 1px 4px;
+    border-radius: 10px;
+    border: 1px solid #000;
+}
+
+.ui-button.active {
+    background: rgba(102, 217, 239, 0.1);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.ui-button.danger {
+    color: #f92672;
+    border-color: rgba(249, 38, 114, 0.3);
+}
+
+.ui-button.danger:hover {
+    background: rgba(249, 38, 114, 0.1);
+    border-color: #f92672;
+}
+
+
+.clickable-count {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.1s ease;
+}
+
+.clickable-count:hover {
+    color: #fff;
+    text-decoration: underline;
+    cursor: pointer;
+}

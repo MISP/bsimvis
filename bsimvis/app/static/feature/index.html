@@ -5,31 +5,18 @@
     <meta charset="UTF-8">
     <title>Global Feature Browser</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/utils.js"></script>
     <script src="/js/code_renderer.js"></script>
     <script src="/js/metadata.js"></script>
     <script src="/js/diff_queue.js"></script>
     <script src="/js/table_selection.js"></script>
     <style>
-        :root {
-            --bg: #121212;
-            --card-bg: #1e1e1e;
-            --text: #f8f8f2;
-            --accent: #66d9ef;
-            --subtle: #75715e;
-            --border: #3e3d32;
-            --hover: #2d2d2d;
-        }
-
-        body {
-            background-color: var(--bg);
-            color: var(--text);
-            padding: 20px;
-            font-family: 'Inter', sans-serif;
-        }
-
         .header {
             margin-bottom: 30px;
             border-bottom: 1px solid var(--border);
@@ -233,6 +220,8 @@
 </head>
 
 <body>
+    <div id="sidebar-container"></div>
+    <main style="flex:1; display:flex; flex-direction:column; overflow:hidden; padding: 20px;">
     <div class="header" style="display:flex; justify-content:space-between; align-items:center;">
         <div>
             <h1 id="title-text">Global Feature Analysis</h1>
@@ -286,9 +275,10 @@
         const CONTEXT_WINDOW = 2;
         const DEFAULT_PAGE_LIMIT = 50;
         const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
+        const restful = parseRestfulPath();
         const params = new URLSearchParams(window.location.search);
-        const featureHash = params.get('hash');
-        const collection = params.get('collection');
+        const featureHash = restful.hash || params.get('hash');
+        const collection = restful.collection || params.get('collection');
 
         let currentOffset = 0;
         let totalOccurrences = 0;
@@ -412,7 +402,7 @@
                             </button>
                         </div>
                         <div style="display:flex; gap:5px; margin-top:5px;">
-                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}'), '_blank'); }">
+                            <button class="btn-code-action" onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '', event); } else { const p = '${funcId}'.split(':'); window.open(`/collection/${encodeURIComponent(p[0])}/function/${encodeURIComponent(p[2])}/${encodeURIComponent(p[3])}`, '_blank'); }">
                                 <span>↗</span> Code
                             </button>
                             <button class="btn-diff-action" data-func-id="${funcId}" data-full-text="true"
@@ -469,10 +459,9 @@
                         <div class="mono" style="font-size: 0.75rem; color: var(--accent); text-align: center;">${occ.tf || '---'}</div>
                     `;
 
-                    let contextHtml = '<div class="dim">Source code mapping unavailable</div>';
                     if (sourceData && sourceData.rows) {
                         contextHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
-                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event); } else { window.open('/function/index.html?id=' + encodeURIComponent('${funcId}') + '${lineHash}', '_blank'); }">`;
+                             onclick="if(window.parent && window.parent.showFunctionCodeById) { window.parent.showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event); } else { const p = '${funcId}'.split(':'); window.open(`/collection/${encodeURIComponent(p[0])}/function/${encodeURIComponent(p[2])}/${encodeURIComponent(p[3])}${lineHash}`, '_blank'); }">`;
 
                         const contextLineSet = new Set();
                         (occ['line_idx'] || []).forEach(l => {
@@ -650,9 +639,14 @@
 
 
 
+        if (typeof UI !== 'undefined' && UI.Sidebar) {
+            UI.Sidebar.init('sidebar-container');
+        }
+
         updateDiffQueueUI();
         fetchPage();
     </script>
+</main>
 </body>
 
 </html>

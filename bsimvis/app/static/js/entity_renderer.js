@@ -37,19 +37,33 @@ window.EntityRenderer = {
                 ? diffSelection.some(item => item.id === normalizeFuncId(funcId)) 
                 : false;
             
+            const diffButton = UI.Button.render({
+                className: `btn-diff-action ${isActive ? 'active' : ''}`,
+                label: '±',
+                tooltip: 'Add to Diff',
+                attr: {
+                    'data-func-id': typeof normalizeFuncId === 'function' ? normalizeFuncId(funcId) : funcId,
+                    'onmouseenter': `typeof onHoverDiffButton === 'function' && onHoverDiffButton(event, '${funcId}', '${safeName}')`,
+                    'onmousemove': `typeof moveCodePreview === 'function' && moveCodePreview(event)`,
+                    'onmouseleave': `typeof hideDiffPreview === 'function' && hideDiffPreview(event)`
+                },
+                onClick: `event.stopPropagation(); typeof addToDiff === 'function' && addToDiff('${funcId}', '${safeName}')`,
+                style: 'padding:0; font-size: 0.75rem; border-radius: 3px; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;'
+            });
+
+            const simButton = UI.Button.render({
+                className: 'btn-sim-action',
+                icon: 'fa-solid fa-code-compare',
+                tooltip: 'See Similar Functions',
+                onClick: `event.stopPropagation(); Nav.openPath('/collection/${collection}/search/function-similarity?md5=${file_md5}&address=${entry}&algo=unweighted_cosine', event)`,
+                style: 'padding:0; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;'
+            });
+
             actionsHtml = `
                 <div class="entity-actions" style="display:inline-flex; gap:4px; margin-left: auto; flex-shrink: 0; padding-left: 8px;">
                     ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, { ...options, raw_data: f })}
-                    <button class="btn-diff-action ${isActive ? 'active' : ''}" 
-                            data-func-id="${typeof normalizeFuncId === 'function' ? normalizeFuncId(funcId) : funcId}" 
-                            onmouseenter="typeof onHoverDiffButton === 'function' && onHoverDiffButton(event, '${funcId}', '${safeName}')"
-                            onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
-                            onmouseleave="typeof hideDiffPreview === 'function' && hideDiffPreview(event)"
-                            onclick="event.stopPropagation(); typeof addToDiff === 'function' && addToDiff('${funcId}', '${safeName}')" 
-                            title="Add to Diff" style="padding:0; font-size: 0.75rem; border-radius: 3px; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;"><span>±</span></button>
-                    <a class="btn-sim-action" href="#function-similarity?collection=${collection}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" 
-                       onclick="event.stopPropagation();"
-                       title="See Similar Functions" style="padding:0; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
+                    ${diffButton}
+                    ${simButton}
                 </div>
             `;
         }
@@ -84,17 +98,13 @@ window.EntityRenderer = {
         
         if (isTable && !hasNotes) return '';
         
-        const title = hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note';
-        const iconClass = hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky';
-        
-        return `
-            <button class="btn-note-action ${hasNotes ? 'has-notes' : ''}" 
-                    onclick="event.stopPropagation(); showNotePanel('${id}', event)" 
-                    title="${title}">
-                <i class="${iconClass}"></i>
-                ${noteCount > 0 ? `<div class="note-count-badge">+${noteCount}</div>` : ''}
-            </button>
-        `;
+        return UI.Button.render({
+            className: `btn-note-action ${hasNotes ? 'has-notes' : ''}`,
+            icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
+            tooltip: hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note',
+            onClick: `event.stopPropagation(); showNotePanel('${id}', event)`,
+            badge: noteCount > 0 ? `+${noteCount}` : null
+        });
     },
 
     /**
@@ -109,17 +119,13 @@ window.EntityRenderer = {
 
         if (isTable && !hasNotes) return '';
 
-        const title = hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note';
-        const iconClass = hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky';
-
-        return `
-            <button class="btn-note-action ${hasNotes ? 'has-notes' : ''}" 
-                    onclick="event.stopPropagation(); showFileNotePanel('${id}', event)" 
-                    title="${title}">
-                <i class="${iconClass}"></i>
-                ${noteCount > 0 ? `<div class="note-count-badge">+${noteCount}</div>` : ''}
-            </button>
-        `;
+        return UI.Button.render({
+            className: `btn-note-action ${hasNotes ? 'has-notes' : ''}`,
+            icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
+            tooltip: hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note',
+            onClick: `event.stopPropagation(); showFileNotePanel('${id}', event)`,
+            badge: noteCount > 0 ? `+${noteCount}` : null
+        });
     },
 
     /**

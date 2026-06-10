@@ -1,0 +1,53 @@
+/* BsimVis Logo Styles */
+
+#brand-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: inherit;
+    text-decoration: none;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    background: transparent !important;
+    border-left: none !important;
+    padding: 0 !important;
+    margin: 0;
+    outline: none;
+}
+
+#brand-link:hover {
+    transform: scale(1.08);
+    background: transparent !important;
+    border-left: none !important;
+}
+
+#brand-link img {
+    display: block;
+    margin: 0;
+    flex-shrink: 0;
+    height: 48px;
+    width: 48px;
+}
+
+#brand-link span {
+    color: var(--accent);
+    font-size: 1.1rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-weight: bold;
+}
+
+/* Sidebar collapsed state adjustments */
+body.sidebar-collapsed #brand-link {
+    justify-content: center;
+    width: 100%;
+}
+
+body.sidebar-collapsed #brand-link img {
+    height: 44px;
+    width: 44px;
+}
+
+body.sidebar-collapsed #brand-link span {
+    display: none;
+}

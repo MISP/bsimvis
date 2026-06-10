@@ -98,6 +98,31 @@ window.EntityRenderer = {
     },
 
     /**
+     * Renders a note button for file entities (calls showFileNotePanel).
+     */
+    renderFileNoteButton: function(id, noteOwners = [], options = {}) {
+        const hasNotes = noteOwners && noteOwners.length > 0;
+        const isTable = options.isTable === true;
+
+        const f = options.raw_data || {};
+        const noteCount = f.note_count || noteOwners.length || 0;
+
+        if (isTable && !hasNotes) return '';
+
+        const title = hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note';
+        const iconClass = hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky';
+
+        return `
+            <button class="btn-note-action ${hasNotes ? 'has-notes' : ''}" 
+                    onclick="event.stopPropagation(); showFileNotePanel('${id}', event)" 
+                    title="${title}">
+                <i class="${iconClass}"></i>
+                ${noteCount > 0 ? `<div class="note-count-badge">+${noteCount}</div>` : ''}
+            </button>
+        `;
+    },
+
+    /**
      * Handles context menu by parsing data attribute.
      */
     handleContextMenu: function(e, type, el) {

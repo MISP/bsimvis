@@ -13,6 +13,8 @@
     <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/context_menu.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/js/notes.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         body {
@@ -287,6 +289,7 @@
                 const actionsHtml = `
                     <a href="#" class="quick-action-btn" onclick="openFunctions(event)"><i class="fa-solid fa-code"></i> View Functions</a>
                     <a href="#" class="quick-action-btn" onclick="openCallGraph(event)"><i class="fa-solid fa-sitemap"></i> Call Graph</a>
+                    <a href="#" class="quick-action-btn" id="file-notes-btn" onclick="showFileNotesPanel(event)"><i class="fa-solid fa-note-sticky"></i> Notes</a>
                 `;
                 document.getElementById('quick-actions').innerHTML = actionsHtml;
 
@@ -465,6 +468,12 @@
                 document.getElementById('loader').style.display = 'none';
                 document.getElementById('content').style.display = 'block';
 
+                // Initialize file notes panel (hidden, not expanded)
+                const fileId = `${collection}:file:${file_md5}`;
+                if (typeof showFileNotes === 'function') {
+                    showFileNotes(fileId, false);
+                }
+
             } catch (err) {
                 console.error(err);
                 document.getElementById('loader').innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: #f92672;"></i> ${err.message}`;
@@ -500,6 +509,12 @@
             } else {
                 window.location.href = url;
             }
+        }
+
+        function showFileNotesPanel(e) {
+            e.preventDefault();
+            const fileId = `${collection}:file:${file_md5}`;
+            if (typeof showFileNotes === 'function') showFileNotes(fileId, true);
         }
 
         init();

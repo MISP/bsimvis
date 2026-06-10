@@ -1,5 +1,6 @@
 /**
  * Independent Notes and AI Insight Side Panels for BSimVis
+ * Supports both function notes (/api/notes/*) and file notes (/api/notes/file/*).
  */
 
 let currentNotesFuncId = null;
@@ -8,6 +9,9 @@ let lastRenderedAIFuncId = null;
 let currentEditingNoteId = null;
 let chatHistories = {}; 
 let llmAbortController = null;
+
+// 'func' for function notes, 'file' for file notes
+let entityMode = 'func';
 
 // Panel State
 let isNotesOpen = false;
@@ -44,6 +48,12 @@ async function showNotes(funcId, expand = true) {
 
     // Add key listeners
     setupInputListeners();
+}
+
+/** Entry point for file-level notes. Sets entityMode and delegates to showNotes. */
+async function showFileNotes(fileId, expand = true) {
+    entityMode = 'file';
+    await showNotes(fileId, expand);
 }
 
 function createPanelsIfMissing() {
@@ -376,8 +386,11 @@ async function refreshNotes(funcId) {
     const listEl = document.getElementById('notes-list');
     if (!listEl) return;
     const collection = funcId.split(':')[0];
+    const isFile = entityMode === 'file';
+    const idParam = isFile ? `file_id=${encodeURIComponent(funcId)}` : `func_id=${encodeURIComponent(funcId)}`;
+    const endpoint = isFile ? '/api/notes/file/list' : '/api/notes/list';
     try {
-        const res = await fetch(`/api/notes/list?collection=${encodeURIComponent(collection)}&func_id=${encodeURIComponent(funcId)}`);
+        const res = await fetch(`${endpoint}?collection=${encodeURIComponent(collection)}&${idParam}`);
         const data = await res.json();
         if (data.status === 'success') {
             lastRenderedNotesFuncId = funcId;
@@ -446,16 +459,20 @@ async function saveNote(funcId) {
     const ownerEl = document.getElementById('note-owner-select');
     const text = textEl.value.trim();
     if (!text) return;
+    const isFile = entityMode === 'file';
+    const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
+    const idKey = isFile ? 'file_id' : 'func_id';
     try {
-        const res = await fetch('/api/notes/add', {
+        const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: funcId.split(':')[0], func_id: funcId, text, owner: ownerEl.value })
+            body: JSON.stringify({ collection: funcId.split(':')[0], [idKey]: funcId, text, owner: ownerEl.value })
         });
         if ((await res.json()).status === 'success') {
             textEl.value = '';
             await refreshNotes(funcId);
-            if (window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
     } catch (e) { alert(e.message); }
 }
@@ -481,13 +498,16 @@ async function submitEditNote(funcId, noteId) {
     const text = textEl.value.trim();
     if (!text) return;
 
+    const isFile = entityMode === 'file';
+    const endpoint = isFile ? '/api/notes/file/update' : '/api/notes/update';
+    const idKey = isFile ? 'file_id' : 'func_id';
     try {
-        const res = await fetch('/api/notes/update', {
+        const res = await fetch(endpoint, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 collection: funcId.split(':')[0],
-                func_id: funcId,
+                [idKey]: funcId,
                 note_id: noteId,
                 text: text
             })
@@ -506,15 +526,19 @@ async function submitEditNote(funcId, noteId) {
 
 async function deleteNote(funcId, note_id) {
     if (!confirm('Delete note?')) return;
+    const isFile = entityMode === 'file';
+    const endpoint = isFile ? '/api/notes/file/remove' : '/api/notes/remove';
+    const idKey = isFile ? 'file_id' : 'func_id';
     try {
-        const res = await fetch('/api/notes/remove', {
+        const res = await fetch(endpoint, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: funcId.split(':')[0], func_id: funcId, note_id })
+            body: JSON.stringify({ collection: funcId.split(':')[0], [idKey]: funcId, note_id })
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
-            if (window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
     } catch (e) { alert(e.message); }
 }
@@ -540,12 +564,16 @@ async function generateSummary(funcId) {
     if (sendBtn) sendBtn.style.display = "none";
     if (stopBtn) stopBtn.style.display = "block";
 
+    const isFile = entityMode === 'file';
+    const endpoint = isFile ? "/api/llm/summarize_file" : "/api/llm/summarize";
+    const body = isFile ? { file_id: funcId } : { func_id: funcId };
+
     llmAbortController = new AbortController();
     try {
-        const response = await fetch("/api/llm/summarize", {
+        const response = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ func_id: funcId }),
+            body: JSON.stringify(body),
             signal: llmAbortController.signal
         });
         const msgEl = addChatMessage(funcId, "ai", "");
@@ -652,11 +680,14 @@ function stopLLMGeneration() { if (llmAbortController) llmAbortController.abort(
 async function saveMessageAsNote(funcId, index, btn) {
     const history = chatHistories[funcId];
     if (!history || !history[index]) return;
+    const isFile = entityMode === 'file';
+    const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
+    const idKey = isFile ? 'file_id' : 'func_id';
     try {
-        const res = await fetch("/api/notes/add", {
+        const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ collection: funcId.split(":")[0], func_id: funcId, text: history[index].content, owner: "llm" })
+            body: JSON.stringify({ collection: funcId.split(":")[0], [idKey]: funcId, text: history[index].content, owner: "llm" })
         });
         if ((await res.json()).status === "success") {
             await refreshNotes(funcId);
@@ -667,21 +698,26 @@ async function saveMessageAsNote(funcId, index, btn) {
 }
 
 async function handleDroppedText(funcId, text) {
+    const isFile = entityMode === 'file';
+    const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
+    const idKey = isFile ? 'file_id' : 'func_id';
     try {
-        const res = await fetch('/api/notes/add', {
+        const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: funcId.split(':')[0], func_id: funcId, text: text, owner: 'llm' })
+            body: JSON.stringify({ collection: funcId.split(':')[0], [idKey]: funcId, text: text, owner: 'llm' })
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
-            if (window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
     } catch (e) { alert(e.message); }
 }
 
 // Global exposure
 window.showNotes = showNotes;
+window.showFileNotes = showFileNotes;
 window.toggleNotesPanel = toggleNotesPanel;
 window.toggleAIPanel = toggleAIPanel;
 window.saveNote = saveNote;
@@ -694,3 +730,4 @@ window.stopLLMGeneration = stopLLMGeneration;
 window.saveMessageAsNote = saveMessageAsNote;
 window.toggleContentExpand = toggleContentExpand;
 window.showNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
+window.showFileNotePanel = function(id, e) { if (typeof showFileNotes === 'function') showFileNotes(id); };

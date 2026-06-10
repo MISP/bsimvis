@@ -60,6 +60,8 @@ def search_files():
             ("inferred_ccip", "inferred_ccip"),
             ("inferred_filename", "inferred_filename"),
             ("inferred_md5", "inferred_md5"),
+            ("note_owner", "note_owners"),
+            ("note_owners", "note_owners"),
         ]:
             val = request.args.get(arg)
             if val:
@@ -285,7 +287,7 @@ def query_files_advanced(r, collection, filters):
             "file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_name", 
             "bin_cluster_uuid", "first_seen", "last_seen", "filetype", "avtype", "yara", 
             "cc_ip", "file_names", "inferred_yara", "inferred_avtype", "inferred_filetype", 
-            "inferred_ccip", "inferred_filename", "inferred_md5"
+            "inferred_ccip", "inferred_filename", "inferred_md5", "note_owners"
         ]:
             candidates &= get_field_matches(field, val)
 

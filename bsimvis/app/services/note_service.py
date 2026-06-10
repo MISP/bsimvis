@@ -137,5 +137,124 @@ class NoteService:
         except:
             return []
 
+    # --- File notes ---
+
+    def _resolve_file_id(self, collection, file_id):
+        """Resolves a file ID into its meta document key."""
+        # Accepts: {col}:file:{md5} or {col}:file:{md5}:meta
+        if file_id.endswith(":meta"):
+            return file_id
+        return f"{file_id}:meta"
+
+    def add_file_note(self, collection, file_id, text, owner="user"):
+        """Adds a note to a file and updates indices."""
+        r = self.r
+        text = text.strip()
+        if not text:
+            return None
+
+        doc_id = self._resolve_file_id(collection, file_id)
+        note = {
+            "id": str(uuid.uuid4()),
+            "text": text,
+            "owner": owner,
+            "timestamp": int(time.time() * 1000)
+        }
+
+        try:
+            doc_raw = r.json().get(doc_id, "$")
+            if not doc_raw:
+                logging.error(f"NoteService: File document {doc_id} not found.")
+                return None
+
+            doc = doc_raw[0] if isinstance(doc_raw, list) else doc_raw
+
+            notes = doc.get("notes", [])
+            if not isinstance(notes, list):
+                notes = []
+            notes.append(note)
+            r.json().set(doc_id, "$.notes", notes)
+            r.json().set(doc_id, "$.note_count", len(notes))
+
+            owners = doc.get("note_owners", [])
+            if not isinstance(owners, list):
+                owners = []
+
+            if owner not in owners:
+                owners.append(owner)
+                r.json().set(doc_id, "$.note_owners", owners)
+
+                # Index: {col}:idx:file:note_owners:{owner}
+                indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
+                index_key = f"{collection}:idx:file:note_owners:{owner.lower()}"
+                r.sadd(index_key, indexed_id)
+
+                registry_key = f"{collection}:reg:file:note_owners"
+                r.sadd(registry_key, index_key)
+
+            return note
+        except Exception as e:
+            logging.error(f"NoteService: Error adding file note to {file_id}: {e}")
+            return None
+
+    def update_file_note(self, collection, file_id, note_id, text):
+        """Updates an existing file note's text."""
+        r = self.r
+        doc_id = self._resolve_file_id(collection, file_id)
+
+        try:
+            notes = r.json().get(doc_id, "$.notes")[0]
+            for note in notes:
+                if note["id"] == note_id:
+                    note["text"] = text
+                    note["timestamp"] = int(time.time() * 1000)
+                    r.json().set(doc_id, "$.notes", notes)
+                    return note
+            return None
+        except Exception as e:
+            logging.error(f"NoteService: Error updating file note {note_id}: {e}")
+            return None
+
+    def remove_file_note(self, collection, file_id, note_id):
+        """Removes a file note and updates indices if necessary."""
+        r = self.r
+        doc_id = self._resolve_file_id(collection, file_id)
+
+        try:
+            notes = r.json().get(doc_id, "$.notes")[0]
+            new_notes = [n for n in notes if n["id"] != note_id]
+
+            if len(new_notes) == len(notes):
+                return False
+
+            r.json().set(doc_id, "$.notes", new_notes)
+            r.json().set(doc_id, "$.note_count", len(new_notes))
+
+            remaining_owners = set(n["owner"] for n in new_notes)
+            old_owners = set(n["owner"] for n in notes)
+            removed_owners = old_owners - remaining_owners
+
+            r.json().set(doc_id, "$.note_owners", list(remaining_owners))
+
+            indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
+            for owner in removed_owners:
+                index_key = f"{collection}:idx:file:note_owners:{owner.lower()}"
+                r.srem(index_key, indexed_id)
+
+            return True
+        except Exception as e:
+            logging.error(f"NoteService: Error removing file note {note_id}: {e}")
+            return False
+
+    def get_file_notes(self, collection, file_id):
+        """Returns all notes for a file."""
+        doc_id = self._resolve_file_id(collection, file_id)
+        try:
+            notes = self.r.json().get(doc_id, "$.notes")
+            return notes[0] if notes else []
+        except:
+            return []
+
 
 note_service = NoteService()
+

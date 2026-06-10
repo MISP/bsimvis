@@ -186,12 +186,13 @@ const routes = {
         title: 'Files',
         api: '/api/file/search',
         headers: [
-            { label: 'Filename', width: '18%' },
-            { label: 'MD5 / Arch', width: '12%' },
-            { label: 'Metadata', width: '15%' },
-            { label: 'Batch UUID', width: '10%' },
-            { label: 'Funcs', width: '8%', sort: 'function_count' },
-            { label: 'Clusters', width: '13%' },
+            { label: 'Filename', width: '17%' },
+            { label: 'MD5 / Arch', width: '11%' },
+            { label: 'Metadata', width: '14%' },
+            { label: 'Batch UUID', width: '9%' },
+            { label: 'Funcs', width: '7%', sort: 'function_count' },
+            { label: 'Notes', width: '3%' },
+            { label: 'Clusters', width: '12%' },
             { label: 'Entry Date', width: '8%', sort: 'entry_date' },
             { label: 'Tags', width: '16%' }
         ],
@@ -894,9 +895,11 @@ function updateUI(path, params, route) {
                         </div>
                     </th>
                     <th>
+                        <input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;">
+                    </th>
+                    <th>
                         <div style="display:flex; flex-direction:column; gap:2px;">
-                            <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                            <input type="text" id="flt-file-cluster-name" placeholder="Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                             <div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || ''}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
@@ -1695,7 +1698,6 @@ function applyAdvancedFileSearch() {
     const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
     const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
     const maxFuncsFlt = document.getElementById('flt-file-max-funcs')?.value;
-    const clusterFlt = document.getElementById('flt-file-cluster')?.value;
     const clusterNameFlt = document.getElementById('flt-file-cluster-name')?.value;
     const minCohesionFlt = document.getElementById('flt-file-min-cohesion')?.value;
     const maxCohesionFlt = document.getElementById('flt-file-max-cohesion')?.value;
@@ -1715,7 +1717,6 @@ function applyAdvancedFileSearch() {
     if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
     if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
-    if (clusterFlt) params.set('bin_cluster_uuid', clusterFlt); else params.delete('bin_cluster_uuid');
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
     if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
@@ -1726,6 +1727,9 @@ function applyAdvancedFileSearch() {
     if (infAvtypeFlt) params.set('inferred_avtype', infAvtypeFlt); else params.delete('inferred_avtype');
     if (infTypeFlt) params.set('inferred_filetype', infTypeFlt); else params.delete('inferred_filetype');
     if (infCcipFlt) params.set('inferred_ccip', infCcipFlt); else params.delete('inferred_ccip');
+
+    const noteOwnerFlt = document.getElementById('flt-file-note-owner')?.value;
+    if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -2045,6 +2049,9 @@ function renderFiles(data, clustersMap = {}) {
                     </a>
                 </div>
             </td>
+            <td class="sim-cell file-note-cell" style="text-align:center;">
+                ${EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f })}
+            </td>
             <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${JSON.stringify(clusters).replace(/'/g, "&apos;")}'>
                 ${EntityRenderer.renderClusterCard(clusters, true)}
             </td>
@@ -2056,6 +2063,26 @@ function renderFiles(data, clustersMap = {}) {
     `;
     }).join('');
 }
+
+/** Refreshes a single file row's note badge after a note add/remove from the file detail view. */
+function refreshFileRow(fileId) {
+    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const collection = params.get('collection') || fileId.split(':')[0];
+    const md5 = fileId.split(':')[2];
+    if (!md5) return;
+    fetch(`/api/file/search?collection=${encodeURIComponent(collection)}&file_md5=${encodeURIComponent(md5)}&limit=1`)
+        .then(r => r.json())
+        .then(data => {
+            const f = (data.files || data.items || [])[0];
+            if (!f) return;
+            const row = document.querySelector(`tr[data-id="${fileId}"]`);
+            if (!row) return;
+            const noteCell = row.querySelector('.file-note-cell');
+            if (noteCell) noteCell.innerHTML = EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f });
+        })
+        .catch(() => {});
+}
+window.refreshFileRow = refreshFileRow;
 
 function renderFunctions(data, clustersMap = {}) {
     return data.map(f => {

@@ -47,6 +47,7 @@ INDEX_CONFIG = {
         "inferred_ccip": ["file"],
         "inferred_filename": ["file"],
         "inferred_md5": ["file"],
+        "note_owners": ["file"],
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name

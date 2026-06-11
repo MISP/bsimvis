@@ -65,6 +65,10 @@ window.FunctionView = {
             this.funcRows = data.rows || [];
             this.funcTips = data.tips || {};
             window.currentFuncName = data.meta?.['function_name'] || 'unknown';
+            if (data.meta && data.meta.file_name && file_md5) {
+                window.filenameCache = window.filenameCache || {};
+                window.filenameCache[file_md5] = data.meta.file_name;
+            }
 
             const loader = document.getElementById('function-loader');
             const content = document.getElementById('function-content');
@@ -372,10 +376,15 @@ window.FunctionView = {
         menu.innerHTML = html;
         menu.style.display = 'block';
         let x = e.clientX, y = e.clientY;
-        if (x + 350 > window.innerWidth) x -= 350;
-        if (y + (data[2].length * 52 + 40) > window.innerHeight) y -= (data[2].length * 52 + 40);
-        menu.style.left = x + 'px';
-        menu.style.top = y + 'px';
+        const rect = menu.getBoundingClientRect();
+        const w = rect.width || 350;
+        const h = rect.height || (data[2].length * 52 + 40);
+
+        if (x + w > window.innerWidth) x = window.innerWidth - w - 10;
+        if (y + h > window.innerHeight) y = window.innerHeight - h - 10;
+
+        menu.style.left = Math.max(10, x) + 'px';
+        menu.style.top = Math.max(10, y) + 'px';
 
         const onMenuClick = (me) => {
             const item = me.target.closest('.context-menu-item');

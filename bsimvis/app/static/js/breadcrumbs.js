@@ -121,10 +121,12 @@ window.Breadcrumbs = {
                     url: `/collections/${encodeURIComponent(collection)}/files`,
                     icon: 'fa-solid fa-file-code'
                 });
+                const fmd5Val = params.get('md5') || restful.md5;
+                const cachedFileName = window.filenameCache && window.filenameCache[fmd5Val] ? window.filenameCache[fmd5Val] : null;
                 segments.push({
-                    label: params.get('md5') ? (params.get('md5').substring(0, 12) + '…') : 'Details',
+                    label: cachedFileName || (fmd5Val ? (fmd5Val.substring(0, 12) + '…') : 'Details'),
                     url: window.location.pathname,
-                    icon: 'fa-solid fa-fingerprint'
+                    icon: 'fa-solid fa-file-code'
                 });
                 break;
             case 'function':
@@ -133,11 +135,13 @@ window.Breadcrumbs = {
                     url: `/collections/${encodeURIComponent(collection)}/files`,
                     icon: 'fa-solid fa-file-code'
                 });
-                if (params.get('md5')) {
+                const funcMd5 = params.get('md5') || restful.md5;
+                if (funcMd5) {
+                    const cachedFuncFileName = window.filenameCache && window.filenameCache[funcMd5] ? window.filenameCache[funcMd5] : null;
                     segments.push({
-                        label: params.get('md5').substring(0, 12) + '…',
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}`,
-                        icon: 'fa-solid fa-fingerprint'
+                        label: cachedFuncFileName || (funcMd5.substring(0, 12) + '…'),
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(funcMd5)}`,
+                        icon: 'fa-solid fa-file-code'
                     });
                 }
                 segments.push({
@@ -152,11 +156,13 @@ window.Breadcrumbs = {
                     url: `/collections/${encodeURIComponent(collection)}/files`,
                     icon: 'fa-solid fa-file-code'
                 });
-                if (params.get('md5')) {
+                const featMd5 = params.get('md5') || restful.md5;
+                if (featMd5) {
+                    const cachedFeatFileName = window.filenameCache && window.filenameCache[featMd5] ? window.filenameCache[featMd5] : null;
                     segments.push({
-                        label: params.get('md5').substring(0, 12) + '…',
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}`,
-                        icon: 'fa-solid fa-fingerprint'
+                        label: cachedFeatFileName || (featMd5.substring(0, 12) + '…'),
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(featMd5)}`,
+                        icon: 'fa-solid fa-file-code'
                     });
                 }
                 if (params.get('md5') && params.get('address')) {
@@ -176,8 +182,9 @@ window.Breadcrumbs = {
                 const sourceMd5 = restful.md5 || params.get('md5') || params.get('file_md5');
                 const sourceAddr = restful.address || params.get('address');
                 if (sourceMd5) {
+                    const cachedSourceFileName = window.filenameCache && window.filenameCache[sourceMd5] ? window.filenameCache[sourceMd5] : null;
                     segments.push({
-                        label: sourceMd5.substring(0, 12) + '…',
+                        label: cachedSourceFileName || (sourceMd5.substring(0, 12) + '…'),
                         url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(sourceMd5)}`,
                         icon: 'fa-solid fa-file-code'
                     });
@@ -195,7 +202,8 @@ window.Breadcrumbs = {
                 const targetAddr = restful.addr_b;
                 let targetLabel = 'VS';
                 if (targetMd5 && targetAddr) {
-                    targetLabel = `VS ${targetMd5.substring(0, 8)}@${targetAddr}`;
+                    const cachedTargetFileName = window.filenameCache && window.filenameCache[targetMd5] ? window.filenameCache[targetMd5] : null;
+                    targetLabel = cachedTargetFileName ? `VS ${cachedTargetFileName} @${targetAddr}` : `VS ${targetMd5.substring(0, 8)}@${targetAddr}`;
                 }
                 segments.push({
                     label: targetLabel,
@@ -209,11 +217,15 @@ window.Breadcrumbs = {
                     url: `/collections/${encodeURIComponent(collection)}/files`,
                     icon: 'fa-solid fa-file-code'
                 });
-                segments.push({
-                    label: params.get('md5') ? (params.get('md5').substring(0, 12) + '…') : 'Details',
-                    url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}`,
-                    icon: 'fa-solid fa-fingerprint'
-                });
+                const cgMd5 = params.get('md5') || restful.md5;
+                if (cgMd5) {
+                    const cachedCgFileName = window.filenameCache && window.filenameCache[cgMd5] ? window.filenameCache[cgMd5] : null;
+                    segments.push({
+                        label: cachedCgFileName || (cgMd5.substring(0, 12) + '…'),
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(cgMd5)}`,
+                        icon: 'fa-solid fa-file-code'
+                    });
+                }
                 segments.push({
                     label: 'Call Graph',
                     url: window.location.pathname,
@@ -240,16 +252,18 @@ window.Breadcrumbs = {
                 });
                 const fmd5 = restful.md5 || params.get('md5');
                 if (fmd5) {
+                    const cachedBinSimA = window.filenameCache && window.filenameCache[fmd5] ? window.filenameCache[fmd5] : null;
                     segments.push({
-                        label: fmd5.substring(0, 12) + '…',
+                        label: cachedBinSimA || (fmd5.substring(0, 12) + '…'),
                         url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(fmd5)}`,
-                        icon: 'fa-solid fa-fingerprint'
+                        icon: 'fa-solid fa-file-code'
                     });
                 }
                 const bMd5 = restful.md5_b;
                 let bLabel = 'VS';
                 if (bMd5) {
-                    bLabel = `VS ${bMd5.substring(0, 12)}…`;
+                    const cachedBinSimB = window.filenameCache && window.filenameCache[bMd5] ? window.filenameCache[bMd5] : null;
+                    bLabel = cachedBinSimB ? `VS ${cachedBinSimB}` : `VS ${bMd5.substring(0, 12)}…`;
                 }
                 segments.push({
                     label: bLabel,
@@ -262,15 +276,13 @@ window.Breadcrumbs = {
     },
 
     render: function(segments) {
-        const container = document.getElementById('breadcrumbs-container');
+        const container = document.getElementById('breadcrumbs-list');
         if (!container) return;
 
         if (segments.length <= 1) {
             container.innerHTML = '';
-            container.style.display = 'none';
             return;
         }
-        container.style.display = 'block';
 
         let html = '<nav class="breadcrumb" aria-label="breadcrumb">';
         segments.forEach((segment, index) => {

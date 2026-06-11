@@ -82,6 +82,8 @@ window.FileView = {
 
             // Render Hero
             const fileName = file.file_name || file.file_names?.[0] || 'Unknown Binary';
+            window.filenameCache = window.filenameCache || {};
+            window.filenameCache[file.file_md5] = fileName;
             document.getElementById('file-name').innerText = fileName;
             document.getElementById('file-md5').innerText = `MD5: ${file.file_md5}`;
 

@@ -1,13 +1,22 @@
 // Binary Cluster Hierarchy (Dendrogram) and Packing Visualizations for BSimVis
 
 function getCurrentCollection() {
-    // 1. Try parent hash params first (most reliable for views)
+    // 1. Try parent routing state (new RESTful scheme)
+    if (window.parent && window.parent.getRoutingState) {
+        try {
+            const state = window.parent.getRoutingState();
+            if (state && state.collection) return state.collection;
+        } catch (e) {}
+    }
+    // 2. Try parent hash params (fallback)
     if (window.parent && window.parent.location) {
-        const hash = window.parent.location.hash || '';
-        const params = new URLSearchParams(hash.split('?')[1] || '');
-        if (params.get('collection')) return params.get('collection');
-        const id = params.get('id') || params.get('id1') || params.get('id2');
-        if (id && id.includes(':')) return id.split(':')[0];
+        try {
+            const hash = window.parent.location.hash || '';
+            const params = new URLSearchParams(hash.split('?')[1] || '');
+            if (params.get('collection')) return params.get('collection');
+            const id = params.get('id') || params.get('id1') || params.get('id2');
+            if (id && id.includes(':')) return id.split(':')[0];
+        } catch (e) {}
     }
 
     // 2. Try URL params
@@ -313,9 +322,8 @@ class BinClusterHierarchy {
         }
 
         document.getElementById('hier-refresh-btn').onclick = () => {
-            const hash = window.location.hash;
-            const [path, qs] = hash.split('?');
-            const p = new URLSearchParams(qs || '');
+            const qs = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+            const p = new URLSearchParams(qs);
             const searchVal = document.getElementById('hier-search-input').value.trim();
             
             if (this.params.min_cluster_size > 0) p.set('min_count', this.params.min_cluster_size); else p.delete('min_count');
@@ -331,6 +339,8 @@ class BinClusterHierarchy {
             
             if (typeof navigate === 'function') {
                 navigate(parseRestfulPath().view || 'bin-clusters', p);
+            } else if (window.parent && typeof window.parent.navigate === 'function') {
+                window.parent.navigate(window.parent.parseRestfulPath().view || 'bin-clusters', p);
             } else {
                 window.location.search = p.toString();
             }
@@ -1152,9 +1162,8 @@ class BinClusterPacking {
         }
 
         document.getElementById('bin-pack-refresh-btn').onclick = () => {
-            const hash = window.location.hash;
-            const [path, qs] = hash.split('?');
-            const p = new URLSearchParams(qs || '');
+            const qs = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+            const p = new URLSearchParams(qs);
             const searchVal = document.getElementById('bin-pack-search-input').value.trim();
             if (this.params.min_cluster_size > 0) p.set('min_count', this.params.min_cluster_size); else p.delete('min_count');
             if (this.params.max_cluster_size > 0) p.set('max_count', this.params.max_cluster_size); else p.delete('max_count');
@@ -1168,6 +1177,8 @@ class BinClusterPacking {
             p.set('color_by_md5', this.params.color_by_md5 ? 'true' : 'false');
             if (typeof navigate === 'function') {
                 navigate(parseRestfulPath().view || 'bin-clusters', p);
+            } else if (window.parent && typeof window.parent.navigate === 'function') {
+                window.parent.navigate(window.parent.parseRestfulPath().view || 'bin-clusters', p);
             } else {
                 window.location.search = p.toString();
             }

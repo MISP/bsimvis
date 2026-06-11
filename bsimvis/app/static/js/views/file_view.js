@@ -252,7 +252,7 @@ window.FileView = {
                     const confObj = mapObj[k];
                     const confScore = confObj.percent;
                     const confColor = d3.interpolateRdYlGn(confScore / 100);
-                    const clusterLink = `/collection/${encodeURIComponent(collection)}/search/files?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
+                    const clusterLink = `/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
                     return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');
                 return `

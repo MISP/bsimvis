@@ -237,7 +237,7 @@ window.FunctionFeaturesView = {
                 });
             }
 
-            const targetUrl = `/collection/${encodeURIComponent(currentCollection)}/feature/${encodeURIComponent(f.hash)}`;
+            const targetUrl = `/collections/${encodeURIComponent(currentCollection)}/features/${encodeURIComponent(f.hash)}`;
             const clickHandler = `Nav.openPath('${targetUrl}', event, { title: 'Feature Analysis', type: 'global-feature' });`;
 
             tr.innerHTML = `
@@ -373,7 +373,7 @@ window.FunctionFeaturesView = {
             if (item) {
                 const h = item.dataset.hash;
                 const c = item.dataset.col;
-                const url = `/collection/${encodeURIComponent(c)}/feature/${encodeURIComponent(h)}`;
+                const url = `/collections/${encodeURIComponent(c)}/features/${encodeURIComponent(h)}`;
                 Nav.openPath(url, me, { title: `Feature Analysis: ${h.substring(0, 12)}...`, type: 'global-feature' });
             }
             closeMenu();

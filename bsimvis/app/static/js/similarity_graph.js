@@ -703,7 +703,7 @@ class SimilarityGraph {
 
         // Re-run the updateSources logic but focused on color updates if possible.
         // For simplicity and since D3 is fast enough for 500 nodes, we just call updateSources with current params.
-        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+        const params = (typeof getRoutingState === 'function') ? getRoutingState().params : new URLSearchParams(window.location.search);
         this.updateSources(params);
 
         if (typeof window.saveGraphSettings === 'function') {

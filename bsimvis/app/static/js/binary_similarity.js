@@ -46,10 +46,12 @@ function renderBinarySimilarityView(params) {
     let md5a = params.get('md5_a');
     let md5b = params.get('md5_b');
 
-    // Parse new RESTful URL: /collection/{coll}/file/{md5_a}/vs/{coll_b}/{md5_b}
+    // Parse new RESTful URL: /collections/{coll}/files/{md5_a}/vs/{coll_b}/{md5_b}
     if (!md5a || !md5b) {
         const parts = window.location.pathname.split('/').filter(Boolean);
-        if (parts[0] === 'collection' && parts[2] === 'file' && parts[4] === 'vs') {
+        const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+        const hasFile = parts[2] === 'file' || parts[2] === 'files';
+        if (hasCol && hasFile && parts[4] === 'vs') {
             md5a = md5a || decodeURIComponent(parts[3]);
             md5b = md5b || decodeURIComponent(parts[6]);
         }
@@ -1235,8 +1237,7 @@ window.setSankeyScale = function(scale) {
 
 function applyBinSimSearch() {
     if (window.filterDebounceTimer) clearTimeout(window.filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
     const inputs = {
         'q': 'bsim-search-input',
@@ -1279,16 +1280,19 @@ function applyBinSimSearch() {
         });
     });
 
-    const newHash = hashPath + '?' + params.toString();
-    window.location.hash = newHash;
+    if (typeof navigate === 'function') {
+        navigate(viewKey, params);
+    } else {
+        const newUrl = window.location.pathname + '?' + params.toString();
+        history.pushState(null, '', newUrl);
+        if (window.refreshData) window.refreshData();
+    }
 }
 
 function renderBinSimPairs(items) {
     if (!items || items.length === 0) return '';
     let html = '';
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
-    const collection = params.get('collection') || 'main';
+    const { collection, params } = getRoutingState();
 
     items.forEach(item => {
         const activeScoreType = params.get('sort') || 'score';

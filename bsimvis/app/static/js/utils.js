@@ -61,42 +61,100 @@ function parseRestfulPath() {
         view: 'dashboard',
         md5: null,
         address: null,
-        hash: null
+        hash: null,
+        coll_b: null,
+        md5_b: null,
+        addr_b: null,
+        id1: null,
+        id2: null
     };
 
-    if (parts[0] === 'collection' && parts.length >= 2) {
+    const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+
+    if (hasCol && parts.length >= 2) {
         params.collection = parts[1];
 
-        if (parts[2] === 'search' && parts[3]) {
+        const p2 = parts[2];
+        if (!p2) {
+            params.view = 'files';
+        } else if (p2 === 'batches') {
+            params.view = 'batches';
+        } else if (p2 === 'files' || p2 === 'file') {
+            if (parts.length === 3) {
+                params.view = 'files';
+            } else if (parts.length >= 4) {
+                if (parts[4] === 'vs') {
+                    // File diff: /collections/{coll}/files/{md5}/vs/{coll_b}/{md5_b}
+                    params.view = 'bin_sim';
+                    params.md5 = parts[3];
+                    params.coll_b = parts[5];
+                    params.md5_b = parts[6];
+                } else {
+                    params.md5 = parts[3];
+                    if (parts.length === 4) {
+                        params.view = 'file';
+                    } else if (parts[4] === 'functions' || parts[4] === 'function') {
+                        if (parts.length === 5) {
+                            params.view = 'call_graph';
+                        } else if (parts.length >= 6) {
+                            params.address = parts[5];
+                            if (parts.length === 6) {
+                                params.view = 'function';
+                            } else if (parts[6] === 'vs') {
+                                // Function diff: /collections/{coll}/files/{md5}/functions/{addr}/vs/{coll_b}/{md5_b}/{addr_b}
+                                params.view = 'diff';
+                                params.coll_b = parts[7];
+                                params.md5_b = parts[8];
+                                params.addr_b = parts[9];
+                                params.id1 = `${params.collection}:func:${params.md5}:${params.address}`;
+                                params.id2 = `${params.coll_b}:func:${params.md5_b}:${params.addr_b}`;
+                            } else if (parts[6] === 'features') {
+                                params.view = 'function_features';
+                            }
+                        }
+                    } else if (parts[4] === 'vs') {
+                        params.view = 'bin_sim';
+                        params.coll_b = parts[5];
+                        params.md5_b = parts[6];
+                    }
+                }
+            }
+        } else if (p2 === 'functions' || p2 === 'function') {
+            if (parts.length === 3) {
+                params.view = 'functions';
+            } else if (parts.length >= 4) {
+                if (parts[4] && parts[5] === 'vs') {
+                    params.view = 'diff';
+                    if (parts.length >= 9) {
+                        params.id1 = `${params.collection}:func:${parts[3]}:${parts[4]}`;
+                        params.id2 = `${parts[6]}:func:${parts[7]}:${parts[8]}`;
+                    }
+                } else if (parts[3] && parts[4]) {
+                    params.view = 'function';
+                    params.md5 = parts[3];
+                    params.address = parts[4];
+                    if (parts[5] === 'features') params.view = 'function_features';
+                } else if (parts[3]) {
+                    params.view = 'function';
+                    params.md5 = parts[3];
+                }
+            }
+        } else if (p2 === 'features' || p2 === 'feature') {
+            if (parts.length === 3) {
+                params.view = 'features-global';
+            } else if (parts.length >= 4) {
+                params.view = 'feature';
+                params.hash = parts[3];
+            }
+        } else if (p2 === 'search' && parts[3]) {
             params.view = parts[3];
-        } else if (parts[2] === 'file' && parts[3] && parts[4] === 'vs') {
-            // File diff: /collection/{coll}/file/{md5}/vs/{coll}/{md5}
+        } else if (p2 === 'bin_sim' && parts[3]) {
             params.view = 'bin_sim';
             params.md5 = parts[3];
-        } else if (parts[2] === 'file' && parts[3]) {
-            params.view = 'file';
-            params.md5 = parts[3];
-        } else if (parts[2] === 'call_graph' && parts[3]) {
-            params.view = 'call_graph';
-            params.md5 = parts[3];
-        } else if (parts[2] === 'function' && parts[3] && parts[4] && parts[5] === 'vs') {
-            // Function diff: /collection/{coll}/function/{md5}/{addr}/vs/{coll}/{md5}/{addr}
+        } else if (p2 === 'diff') {
             params.view = 'diff';
-        } else if (parts[2] === 'function' && parts[3]) {
-            params.view = 'function';
-            params.md5 = parts[3];
-            params.address = parts[4];
-            if (parts[5] === 'features') params.view = 'function_features';
-        } else if (parts[2] === 'bin_sim' && parts[3]) {
-            params.view = 'bin_sim';
-            params.md5 = parts[3];
-        } else if (parts[2] === 'diff') {
-            params.view = 'diff';
-        } else if (parts[2] === 'feature' && parts[3]) {
-            params.view = 'feature';
-            params.hash = parts[3];
-        } else if (parts[2]) {
-            params.view = parts[2];
+        } else if (p2) {
+            params.view = p2;
         }
     } else if (parts[0] === 'jobs') {
         params.view = 'jobs';
@@ -122,8 +180,12 @@ function getRoutingState() {
     // Bridge restful params to search params for backward compatibility
     if (restful.md5 && !params.has('md5')) params.set('md5', restful.md5);
     if (restful.md5 && !params.has('file_md5')) params.set('file_md5', restful.md5);
+    if (restful.md5 && !params.has('md5_a')) params.set('md5_a', restful.md5);
+    if (restful.md5_b && !params.has('md5_b')) params.set('md5_b', restful.md5_b);
     if (restful.address && !params.has('address')) params.set('address', restful.address);
     if (restful.hash && !params.has('hash_val')) params.set('hash_val', restful.hash);
+    if (restful.id1 && !params.has('id1')) params.set('id1', restful.id1);
+    if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
 
     return { viewKey, collection, params, ...restful };
 }

@@ -27,21 +27,21 @@ function normalizeFuncId(id) {
 function buildDiffUrl(id1, id2) {
     const n1 = normalizeFuncId(id1);
     const n2 = normalizeFuncId(id2);
-    if (!n1 || !n2) return '/collection/main/function/x/x/vs/collection/main/x/x';
+    if (!n1 || !n2) return '/collections/main/files/x/functions/x/vs/main/x/x';
     const p1 = n1.split(':');
     const p2 = n2.split(':');
-    if (p1.length < 4 || p2.length < 4) return '/collection/main/function/x/x/vs/collection/main/x/x';
+    if (p1.length < 4 || p2.length < 4) return '/collections/main/files/x/functions/x/vs/main/x/x';
     const collA = p1[0] || 'main';
     const md5A = p1[2];
     const addrA = p1[3];
     const collB = p2[0] || 'main';
     const md5B = p2[2];
     const addrB = p2[3];
-    return `/collection/${encodeURIComponent(collA)}/function/${encodeURIComponent(md5A)}/${encodeURIComponent(addrA)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}/${encodeURIComponent(addrB)}`;
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/functions/${encodeURIComponent(addrA)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}/${encodeURIComponent(addrB)}`;
 }
 
 function buildFileDiffUrl(collA, md5A, collB, md5B) {
-    return `/collection/${encodeURIComponent(collA)}/file/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
 }
 
 function getParentEvent(e) {
@@ -142,8 +142,7 @@ function addToFileDiff(id, name, event) {
     updateFileDiffQueueUI();
 
     if (fileDiffSelection.length === 2) {
-        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-        const collection = params.get('collection') || 'main';
+        const collection = (typeof getRoutingState === 'function' ? getRoutingState().collection : null) || 'main';
         const itemA = fileDiffSelection[0];
         const itemB = fileDiffSelection[1];
         const md5a = itemA.id.split(':').pop();

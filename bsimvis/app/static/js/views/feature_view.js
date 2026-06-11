@@ -568,7 +568,7 @@ window.FeatureView = {
             if (item) {
                 const h = item.dataset.hash;
                 const c = item.dataset.col;
-                const url = `/collection/${encodeURIComponent(c)}/feature/${encodeURIComponent(h)}`;
+                const url = `/collections/${encodeURIComponent(c)}/features/${encodeURIComponent(h)}`;
                 Nav.openPath(url, me);
             }
             closeMenu();

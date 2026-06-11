@@ -429,6 +429,24 @@ async function refreshData(appendArg = false, force = false) {
     const route = routes[viewKey];
     if (!route) return;
 
+    // Set default parameters for search views if not present
+    if (viewKey === 'files') {
+        if (!params.has('min_cohesion')) {
+            params.set('min_cohesion', '0.95');
+        }
+    } else if (viewKey === 'functions') {
+        if (!params.has('min_cohesion')) {
+            params.set('min_cohesion', '0.95');
+        }
+    } else if (viewKey === 'function-similarity') {
+        if (!params.has('min_score')) {
+            params.set('min_score', '0.95');
+        }
+        if (!params.has('max_score')) {
+            params.set('max_score', '1.0');
+        }
+    }
+
     updateNavVisibility(collection);
 
     const currentUrlPath = window.location.pathname + window.location.search;
@@ -710,9 +728,22 @@ function updateUI(viewKey, collection, params, route) {
             if (!el) return;
             const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
 
-            let url = `/collection/${col}/search/${targetView}`;
-            if (targetView === 'collections') url = `/collections`;
-            if (targetView === 'jobs') url = `/jobs`;
+            let url = `/collections/${encodeURIComponent(col)}/search/${targetView}`;
+            if (targetView === 'collections') {
+                url = `/collections`;
+            } else if (targetView === 'jobs') {
+                url = `/jobs`;
+            } else if (targetView === 'files') {
+                url = `/collections/${encodeURIComponent(col)}/files`;
+            } else if (targetView === 'functions') {
+                url = `/collections/${encodeURIComponent(col)}/functions`;
+            } else if (targetView === 'batches') {
+                url = `/collections/${encodeURIComponent(col)}/batches`;
+            } else if (targetView === 'features-global') {
+                url = `/collections/${encodeURIComponent(col)}/features`;
+            } else if (targetView === 'upload') {
+                url = `/collections/${encodeURIComponent(col)}/upload`;
+            }
 
             if (saved) {
                 const savedParams = new URLSearchParams(saved);
@@ -725,7 +756,12 @@ function updateUI(viewKey, collection, params, route) {
             el.onclick = (e) => {
                 if (e.ctrlKey || e.metaKey) return;
                 e.preventDefault();
-                Nav.openPath(url, e);
+                const currentState = getRoutingState();
+                if (currentState.viewKey === targetView) {
+                    clearFilters();
+                } else {
+                    Nav.openPath(url, e);
+                }
             };
         };
 
@@ -954,9 +990,10 @@ function updateUI(viewKey, collection, params, route) {
                         <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
                         <th>
                             <div style="display:flex; flex-direction:column; gap:2px;">
+                                <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || ''}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 </div>
@@ -1147,7 +1184,7 @@ function updateUI(viewKey, collection, params, route) {
                     searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'functions') {
                     const fileMd5 = p.get('file_md5');
-                    const callGraphBtn = fileMd5 ? `<a class="btn-action" onclick="Nav.openPath('/collection/${p.get('collection')}/call_graph/${fileMd5}', event, { title: 'Call Graph: ${fileMd5}', type: 'call_graph' })" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; cursor:pointer;">View File Call Graph 🕸️</a>` : '';
+                    const callGraphBtn = fileMd5 ? `<a class="btn-action" onclick="Nav.openPath('/collections/${encodeURIComponent(p.get('collection'))}/files/${encodeURIComponent(fileMd5)}/functions', event, { title: 'Call Graph: ${fileMd5}', type: 'call_graph' })" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; cursor:pointer;">View File Call Graph 🕸️</a>` : '';
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i></div>${callGraphBtn}</div></div>`;
                 } else if (path === 'features-global') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i></div></div></div>`;
@@ -1188,7 +1225,7 @@ function updateUI(viewKey, collection, params, route) {
             syncInput('flt-file-name', 'file_name'); syncInput('flt-file-md5', 'file_md5'); syncInput('flt-file-language', 'language_id'); syncInput('flt-file-yara', 'yara'); syncInput('flt-file-avtype', 'avtype'); syncInput('flt-file-ccip', 'cc_ip');
             syncInput('flt-file-inf-yara', 'inferred_yara'); syncInput('flt-file-inf-avtype', 'inferred_avtype'); syncInput('flt-file-inf-type', 'inferred_filetype'); syncInput('flt-file-inf-ccip', 'inferred_ccip');
             syncInput('flt-file-batch', 'batch_uuid'); syncInput('flt-file-min-funcs', 'min_function_count'); syncInput('flt-file-max-funcs', 'max_function_count');
-            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
+            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
             syncInput('flt-file-min-date', 'min_entry_date'); syncInput('flt-file-max-date', 'max_entry_date');
         } else if (path === 'functions' || path === 'function-similarity') {
             const prefix = path === 'function-similarity' ? 'sim-' : 'flt-func-';
@@ -1583,6 +1620,7 @@ function applyAdvancedFileSearch() {
     const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
     const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
     const maxFuncsFlt = document.getElementById('flt-file-max-funcs')?.value;
+    const clusterUuidFlt = document.getElementById('flt-file-cluster')?.value;
     const clusterNameFlt = document.getElementById('flt-file-cluster-name')?.value;
     const minCohesionFlt = document.getElementById('flt-file-min-cohesion')?.value;
     const maxCohesionFlt = document.getElementById('flt-file-max-cohesion')?.value;
@@ -1602,8 +1640,9 @@ function applyAdvancedFileSearch() {
     if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
     if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
+    if (clusterUuidFlt) params.set('bin_cluster_uuid', clusterUuidFlt); else params.delete('bin_cluster_uuid');
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
-    if (minCohesionFlt) params.set('min_cohesion', minCohesionFlt); else params.delete('min_cohesion');
+    params.set('min_cohesion', minCohesionFlt || '0.95');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
     if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
     if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
@@ -1962,7 +2001,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
 function showDiffPanel(force = false) {
     if (!force && diffSelection.length < 2) return;
 
-    let url = '/collection/main/diff';
+    let url = '/collections/main/diff';
     let label = 'Function Comparison';
 
     if (diffSelection.length === 2) {
@@ -1986,7 +2025,7 @@ function openDiffDirectly(id1, name1, id2, name2, e) {
 }
 
 function showDiffView() {
-    let url = '/collection/main/diff';
+    let url = '/collections/main/diff';
     if (diffSelection.length === 2) {
         url = buildDiffUrl(diffSelection[0].id, diffSelection[1].id);
 
@@ -2006,7 +2045,7 @@ function showFunctionCodeById(id, name, lineHash = '', e) {
     const col = parts[0];
     const md5 = parts[2];
     const addr = parts[3];
-    const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;
+    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}${lineHash}`;
     Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
 }
 
@@ -2064,7 +2103,7 @@ function seeSimilarFromCode() {
 
 
 function showFileDetailsPanel(col, md5, name, e) {
-    const url = `/collection/${encodeURIComponent(col)}/file/${encodeURIComponent(md5)}`;
+    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}`;
     Nav.openPath(url, e, { title: `File: ${name}`, type: 'file' });
 }
 
@@ -2073,12 +2112,12 @@ function showFeaturePanel(id, e) {
     const col = parts[0];
     const md5 = parts[2];
     const addr = parts[3];
-    const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}/features`;
+    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}/features`;
     Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
 }
 
 function showGlobalFeaturePanel(hash, collection, e) {
-    const url = `/collection/${encodeURIComponent(collection)}/feature/${encodeURIComponent(hash)}`;
+    const url = `/collections/${encodeURIComponent(collection)}/features/${encodeURIComponent(hash)}`;
     Nav.openPath(url, e, { title: `Feature Analysis: ${hash.substring(0, 12)}...`, type: 'global-feature' });
 }
 
@@ -2108,10 +2147,30 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     const col = collection || restful.collection || currentParams.get('collection') || 'main';
     const params = queryParams || currentParams;
 
-    let url = `/collection/${col}/search/${viewKey}`;
-    if (viewKey === 'upload') url = `/collection/${col}/upload`;
-    if (viewKey === 'collections') url = `/collections`;
-    if (viewKey === 'jobs') url = `/jobs`;
+    let url = `/collections/${col}/${viewKey}`;
+    if (viewKey === 'files') {
+        url = `/collections/${col}/files`;
+    } else if (viewKey === 'functions') {
+        url = `/collections/${col}/functions`;
+    } else if (viewKey === 'batches') {
+        url = `/collections/${col}/batches`;
+    } else if (viewKey === 'features-global') {
+        url = `/collections/${col}/features`;
+    } else if (viewKey === 'clusters') {
+        url = `/collections/${col}/search/clusters`;
+    } else if (viewKey === 'bin-clusters') {
+        url = `/collections/${col}/search/bin-clusters`;
+    } else if (viewKey === 'binary-similarity') {
+        url = `/collections/${col}/search/binary-similarity`;
+    } else if (viewKey === 'function-similarity') {
+        url = `/collections/${col}/search/function-similarity`;
+    } else if (viewKey === 'upload') {
+        url = `/collections/${col}/upload`;
+    } else if (viewKey === 'collections') {
+        url = `/collections`;
+    } else if (viewKey === 'jobs') {
+        url = `/jobs`;
+    }
 
     // Clean up params as collection is in the path
     const cleanParams = new URLSearchParams(params);
@@ -2260,7 +2319,14 @@ window.addEventListener('load', () => {
     updateNavVisibility(restful.collection);
     if (window.location.pathname === '/' || window.location.pathname === '') {
         history.replaceState(null, '', '/collections');
-    } else if (window.location.hash) {
+    } else {
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
+        if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && restful.collection) {
+            history.replaceState(null, '', `/collections/${encodeURIComponent(restful.collection)}/files`);
+        }
+    }
+
+    if (window.location.hash) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
@@ -2533,10 +2599,10 @@ function renderClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="/collection/${collection}/search/functions?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collection/${collection}/search/functions?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
+                    <a href="/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
                         <i class="fa-solid fa-code"></i>
                     </a>
-                    <a href="/collection/${collection}/search/function-similarity?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collection/${collection}/search/function-similarity?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
+                    <a href="/collections/${encodeURIComponent(collection)}/search/function-similarity?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/search/function-similarity?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
                         <i class="fa-solid fa-code-compare"></i>
                     </a>
                 </div>
@@ -2654,7 +2720,7 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="/collection/${collection}/search/files?bin_cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collection/${collection}/search/files?bin_cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
+                    <a href="/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
                         <i class="fa-solid fa-file-code"></i>
                     </a>
                 </div>

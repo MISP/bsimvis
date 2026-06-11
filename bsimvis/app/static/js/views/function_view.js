@@ -129,6 +129,15 @@ window.FunctionView = {
             this.scrollToLine();
             this.onScroll();
 
+            // Bind hashchange listener
+            this._hashChangeListener = () => this.scrollToLine();
+            window.addEventListener('hashchange', this._hashChangeListener);
+
+            // Rich copy support
+            if (window.setupRichCopyInterceptor) {
+                window.setupRichCopyInterceptor(this.vContentEl, () => this.funcRows);
+            }
+
             // Initialize notes and AI insights side-panel (silent)
             if (typeof window.showNotes === 'function') {
                 window.showNotes(window.currentFuncId, false);
@@ -373,7 +382,7 @@ window.FunctionView = {
             if (item) {
                 const h = item.dataset.hash;
                 const c = item.dataset.col;
-                const url = `/collection/${encodeURIComponent(c)}/feature/${encodeURIComponent(h)}`;
+                const url = `/collections/${encodeURIComponent(c)}/features/${encodeURIComponent(h)}`;
 
                 Nav.openPath(url, me, { title: `Feature Analysis: ${h.substring(0, 12)}...`, type: 'global-feature' });
             }
@@ -402,7 +411,7 @@ window.FunctionView = {
         const col = parts[0];
         const md5 = parts[2];
         const addr = parts[3];
-        const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}`;
+        const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
 
         Nav.openPath(url, e, { title: funcId.split(':').pop(), type: 'function' });
     },
@@ -416,5 +425,10 @@ window.FunctionView = {
         this.tooltipEl = null;
         this.funcRows = [];
         this.funcTips = {};
+
+        if (this._hashChangeListener) {
+            window.removeEventListener('hashchange', this._hashChangeListener);
+            delete this._hashChangeListener;
+        }
     }
 };

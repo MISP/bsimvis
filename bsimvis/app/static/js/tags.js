@@ -1,3 +1,12 @@
+if (typeof window.getCurrentCollection !== 'function') {
+    window.getCurrentCollection = function() {
+        if (typeof getCollectionFromHash === 'function') {
+            return getCollectionFromHash();
+        }
+        return 'main';
+    };
+}
+
 let tagMetadata = {};
 window.tagMetadata = tagMetadata;
 let isFetchingTagMetadata = false;
@@ -67,7 +76,8 @@ function getRowTagColor(analysisTags, userTags = []) {
 
 function refreshAllRowColors() {
     const rows = document.querySelectorAll('tr.sim-row');
-    const [hashPath] = (window.location.hash || 'collections').split('?');
+    const view = typeof parseRestfulPath === 'function' ? parseRestfulPath().view : '';
+    const hash = window.location.hash || '';
     const isColorEnabled = typeof UIParams !== 'undefined' ? UIParams.colorByTag : (localStorage.getItem('sim-color-by-tag') === 'true');
 
     rows.forEach(tr => {
@@ -78,9 +88,9 @@ function refreshAllRowColors() {
 
         // Only collect tags from the PRIMARY editor of the row
         let selector = '.entity-tags-editor[data-etype="function"]';
-        if (hashPath === 'function-similarity') {
+        if (view === 'bin_sim' || view === 'function-similarity' || hash.includes('function-similarity')) {
             selector = '.sim-tags-editor[data-etype="similarity"]';
-        } else if (hashPath === 'files') {
+        } else if (view === 'files' || hash.includes('files')) {
             selector = '.entity-tags-editor[data-etype="file"]';
         }
 
@@ -329,7 +339,7 @@ window.handleTagContextMenu = (e, tag) => {
     setTimeout(() => document.addEventListener('mousedown', closeMenu), 10);
 };
 
-const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
+window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const isBookmarked = userTagsList.includes('bookmark');
     const isIgnored = userTagsList.includes('ignore');
     const editorClass = etype === 'similarity' ? 'sim-tags-editor' : 'entity-tags-editor';
@@ -382,62 +392,48 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 };
 window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const hash = targetWindow.location.hash || 'collections';
-    
+    const { collection } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: 'main' };
+    const col = collection || 'main';
+
     if (isBinary) {
-        const targetHashPath = '#files';
         const inputId = 'flt-file-cluster';
-        
         let input = targetWindow.document.getElementById(inputId);
-        if (!input) {
-            const currentHash = targetWindow.location.hash || `#files`;
-            const [path, query] = currentHash.split('?');
-            const params = new URLSearchParams(query || '');
-            params.set('bin_cluster_uuid', uuid);
-            
-            const currentParams = new URLSearchParams(targetWindow.location.hash.split('?')[1] || '');
-            if (currentParams.has('collection')) {
-                params.set('collection', currentParams.get('collection'));
-            }
-            
-            if (typeof targetWindow.navigate === 'function') {
-                targetWindow.navigate(targetWindow.parseRestfulPath().view || 'functions', params);
-            } else {
-                targetWindow.location.search = params.toString();
-            }
-        } else {
+        if (input) {
             input.value = uuid;
             if (targetWindow.applyAdvancedFileSearch) {
                 targetWindow.applyAdvancedFileSearch();
             }
-        }
-        return;
-    }
-
-    const isSim = hash.startsWith('#function-similarity');
-    
-    const targetHashPath = isSim ? '#function-similarity' : '#functions';
-    const inputId = isSim ? 'flt-sim-cluster' : 'flt-function-cluster';
-    
-    let input = targetWindow.document.getElementById(inputId);
-    if (!input) {
-        const currentHash = targetWindow.location.hash || `#functions`;
-        const [path, query] = currentHash.split('?');
-        const params = new URLSearchParams(query || '');
-        params.set('cluster_uuid', uuid);
-        
-        const currentParams = new URLSearchParams(targetWindow.location.hash.split('?')[1] || '');
-        if (currentParams.has('collection')) {
-            params.set('collection', currentParams.get('collection'));
-        }
-        
-        targetWindow.location.hash = `${targetHashPath}?${params.toString()}`;
-    } else {
-        input.value = uuid;
-        if (isSim) {
-            if (targetWindow.applySimSearch) targetWindow.applySimSearch();
         } else {
-            if (targetWindow.applyAdvancedFuncSearch) targetWindow.applyAdvancedFuncSearch();
+            const params = new URLSearchParams();
+            params.set('bin_cluster_uuid', uuid);
+            if (typeof targetWindow.navigate === 'function') {
+                targetWindow.navigate('files', params, col);
+            } else {
+                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/files?${params.toString()}`;
+            }
+        }
+    } else {
+        const isSim = targetWindow.location.pathname.includes('/similarity') || targetWindow.location.pathname.includes('/vs/');
+        const viewKey = isSim ? 'function-similarity' : 'functions';
+        const inputId = isSim ? 'flt-sim-cluster' : 'flt-func-cluster';
+        
+        let input = targetWindow.document.getElementById(inputId);
+        if (input) {
+            input.value = uuid;
+            if (isSim) {
+                if (targetWindow.applySimSearch) targetWindow.applySimSearch();
+            } else {
+                if (targetWindow.applyAdvancedFuncSearch) targetWindow.applyAdvancedFuncSearch();
+            }
+        } else {
+            const params = new URLSearchParams();
+            params.set('cluster_uuid', uuid);
+            if (typeof targetWindow.navigate === 'function') {
+                targetWindow.navigate(viewKey, params, col);
+            } else {
+                const searchPath = isSim ? 'search/function-similarity' : 'functions';
+                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/${searchPath}?${params.toString()}`;
+            }
         }
     }
 };
@@ -774,9 +770,7 @@ function attachAutocomplete(input, level, field, onSelect) {
 
 
     const showSuggestions = async (filter = '') => {
-        const hashParts = window.location.hash.split('?');
-        const params = new URLSearchParams(hashParts[1] || "");
-        const col = params.get('collection') || 'main';
+        const col = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
 
         try {
             const res = await fetch(`/api/search/autocomplete?collection=${col}&level=${level}&field=${field}&q=${encodeURIComponent(filter)}&limit=50`);
@@ -966,7 +960,7 @@ async function confirmAddTag(etype, eid, tag, container) {
     const colStr = params.get('collection');
     // If not in query, try parsing from eid (e.g. main:function:md5:addr -> main)
     const colParts = eid ? eid.split(':') : [];
-    const col = colStr || (colParts.length > 2 ? colParts[0] : 'main');
+    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : (colParts.length > 2 ? colParts[0] : 'main'));
 
     let targets = [{ etype, eid, container }];
     const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
@@ -1094,7 +1088,7 @@ async function removeTag(event, etype, eid, tag) {
     const colStr = params.get('collection');
     // If not in query, try parsing from eid (e.g. main:function:md5:addr -> main)
     const colParts = eid ? eid.split(':') : [];
-    const col = colStr || (colParts.length > 2 ? colParts[0] : 'main');
+    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : (colParts.length > 2 ? colParts[0] : 'main'));
 
     let targets = [{ etype, eid }];
     const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];

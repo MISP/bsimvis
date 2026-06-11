@@ -62,8 +62,12 @@ window.UI = {
             const buildNavUrl = (view) => {
                 if (view === 'collections') return '/collections';
                 if (view === 'jobs') return '/jobs';
-                if (view === 'upload') return `/collection/${encodeURIComponent(collection)}/upload`;
-                return `/collection/${encodeURIComponent(collection)}/search/${view}`;
+                if (view === 'upload') return `/collections/${encodeURIComponent(collection)}/upload`;
+                if (view === 'batches') return `/collections/${encodeURIComponent(collection)}/batches`;
+                if (view === 'files') return `/collections/${encodeURIComponent(collection)}/files`;
+                if (view === 'functions') return `/collections/${encodeURIComponent(collection)}/functions`;
+                if (view === 'features-global') return `/collections/${encodeURIComponent(collection)}/features`;
+                return `/collections/${encodeURIComponent(collection)}/search/${view}`;
             };
 
             const isActive = (view) => {

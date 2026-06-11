@@ -27,6 +27,12 @@ window.DiffView = {
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
+
+        // Save original globals from code_renderer.js
+        this._originalToggleLock = window.toggleLock;
+        this._originalClearAllLocks = window.clearAllLocks;
+        this._originalSetHighlight = window.setHighlight;
+        this._originalSetChunkHighlight = window.setChunkHighlight;
         
         // Expose globals for HTML inline onclick handlers
         window.copyDiffCode = (side, btn) => this.copyDiffCode(side, btn);
@@ -171,17 +177,26 @@ window.DiffView = {
                 
                 const path = window.location.pathname;
                 const parts = path.split('/').filter(Boolean);
-                if (parts[0] === 'collection' && parts[2] === 'function') {
-                    if (parts.length >= 9 && parts[5] === 'vs') {
-                        const collA = decodeURIComponent(parts[1]);
-                        const md5A = decodeURIComponent(parts[3]);
-                        const addrA = decodeURIComponent(parts[4]);
-                        const collB = decodeURIComponent(parts[6]);
-                        const md5B = decodeURIComponent(parts[7]);
-                        const addrB = decodeURIComponent(parts[8]);
-                        id1 = `${collA}:func:${md5A}:${addrA}`;
-                        id2 = `${collB}:func:${md5B}:${addrB}`;
-                    }
+                const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+                
+                if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[5]);
+                    const collB = decodeURIComponent(parts[7]);
+                    const md5B = decodeURIComponent(parts[8]);
+                    const addrB = decodeURIComponent(parts[9]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
+                } else if (hasCol && parts[2] === 'function' && parts[5] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[4]);
+                    const collB = decodeURIComponent(parts[6]);
+                    const md5B = decodeURIComponent(parts[7]);
+                    const addrB = decodeURIComponent(parts[8]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
                 }
 
                 if (id1 && id2) {
@@ -198,10 +213,20 @@ window.DiffView = {
         let id1 = this.params.id1 || new URLSearchParams(window.location.search).get('id1');
         let id2 = this.params.id2 || new URLSearchParams(window.location.search).get('id2');
         
-        // Try RESTful path parsing /collection/COLL_A/function/MD5_A/ADDR_A/vs/collection/COLL_B/MD5_B/ADDR_B
         const path = window.location.pathname;
         const parts = path.split('/').filter(Boolean);
-        if (parts[0] === 'collection' && parts[2] === 'function') {
+        const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+
+        if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
+            const collA = decodeURIComponent(parts[1]);
+            const md5A = decodeURIComponent(parts[3]);
+            const addrA = decodeURIComponent(parts[5]);
+            const collB = decodeURIComponent(parts[7]);
+            const md5B = decodeURIComponent(parts[8]);
+            const addrB = decodeURIComponent(parts[9]);
+            id1 = `${collA}:func:${md5A}:${addrA}`;
+            id2 = `${collB}:func:${md5B}:${addrB}`;
+        } else if (hasCol && parts[2] === 'function') {
             if (parts.length >= 9 && parts[5] === 'vs') {
                 const collA = decodeURIComponent(parts[1]);
                 const md5A = decodeURIComponent(parts[3]);
@@ -252,6 +277,22 @@ window.DiffView = {
             metaContainer.innerHTML = this.formatMetaCard(data.meta1, id1, true) + this.formatMetaCard(data.meta2, id2, false);
             this.fetchSimilarity(id1, id2);
             if (typeof window.updateDiffQueueUI === 'function') window.updateDiffQueueUI();
+
+            // Dynamically update breadcrumbs with actual function names
+            if (data.meta1 && data.meta2) {
+                const name1 = data.meta1.function_name || 'unknown';
+                const name2 = data.meta2.function_name || 'unknown';
+                const addr2 = data.meta2.entrypoint_address || data.meta2.address || '';
+                const md52 = data.meta2.file_md5 || '';
+
+                const items = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
+                if (items.length >= 4) {
+                    const sourceSpan = items[2].querySelector('span');
+                    if (sourceSpan) sourceSpan.innerText = name1;
+                    const vsSpan = items[3].querySelector('span');
+                    if (vsSpan) vsSpan.innerText = `VS ${name2} (${md52.substring(0, 8)}@${addr2})`;
+                }
+            }
 
             this.bsimRows = data.rows || [];
             this.tokenTipsL = data.left_tips || {};
@@ -748,7 +789,7 @@ window.DiffView = {
             if (item) {
                 const h = item.dataset.hash;
                 const c = item.dataset.col;
-                const url = `/collection/${encodeURIComponent(c)}/feature/${encodeURIComponent(h)}`;
+                const url = `/collections/${encodeURIComponent(c)}/features/${encodeURIComponent(h)}`;
                 Nav.openPath(url, me, { title: `Feature Analysis: ${h.substring(0, 12)}...`, type: 'global-feature' });
             }
             closeMenu();
@@ -775,7 +816,7 @@ window.DiffView = {
         const col = parts[0] || 'main';
         const md5 = parts[2];
         const addr = parts[3];
-        const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}`;
+        const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
         
         Nav.openPath(url, e, { title: `Code: ${addr}`, type: 'function' });
     },
@@ -984,6 +1025,12 @@ window.DiffView = {
         this.container = null;
         this.params = null;
         
+        // Restore original global handlers
+        window.toggleLock = this._originalToggleLock;
+        window.clearAllLocks = this._originalClearAllLocks;
+        window.setHighlight = this._originalSetHighlight;
+        window.setChunkHighlight = this._originalSetChunkHighlight;
+        
         // Clean up global references to prevent memory leak and unexpected behaviors
         delete window.copyDiffCode;
         delete window.updateSimDisplay;
@@ -994,9 +1041,5 @@ window.DiffView = {
         delete window.startComparison;
         delete window.toggleBothDetail;
         delete window.navigateToFunction;
-        delete window.toggleLock;
-        delete window.clearAllLocks;
-        delete window.setHighlight;
-        delete window.setChunkHighlight;
     }
 };

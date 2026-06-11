@@ -3,13 +3,14 @@
 window.Breadcrumbs = {
     generate: function(routingState, route) {
         const { viewKey, collection, params } = routingState;
+        const restful = window.parseRestfulPath ? window.parseRestfulPath() : {};
         let segments = [];
 
         // Always start with the collection segment, if it's not the default view
         if (viewKey !== 'collections' && collection) {
             segments.push({
                 label: collection,
-                url: `/collection/${encodeURIComponent(collection)}/search/files`,
+                url: `/collections/${encodeURIComponent(collection)}/files`,
                 icon: 'fa-solid fa-database'
             });
         }
@@ -85,7 +86,7 @@ window.Breadcrumbs = {
             case 'file':
                 segments.push({
                     label: 'Files',
-                    url: `/collection/${encodeURIComponent(collection)}/search/files`,
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
                     icon: 'fa-solid fa-file-code'
                 });
                 segments.push({
@@ -96,27 +97,43 @@ window.Breadcrumbs = {
                 break;
             case 'function':
                 segments.push({
-                    label: 'Functions',
-                    url: `/collection/${encodeURIComponent(collection)}/search/functions`,
-                    icon: 'fa-solid fa-code'
+                    label: 'Files',
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    icon: 'fa-solid fa-file-code'
                 });
+                if (params.get('md5')) {
+                    segments.push({
+                        label: params.get('md5').substring(0, 12) + '…',
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}`,
+                        icon: 'fa-solid fa-fingerprint'
+                    });
+                }
                 segments.push({
-                    label: params.get('md5') ? `${params.get('md5').substring(0, 8)}@${params.get('address')}` : 'Details',
+                    label: params.get('address') ? `Func @${params.get('address')}` : 'Details',
                     url: window.location.pathname,
-                    icon: 'fa-solid fa-fingerprint'
+                    icon: 'fa-solid fa-code'
                 });
                 break;
             case 'function_features':
                 segments.push({
-                    label: 'Functions',
-                    url: `/collection/${encodeURIComponent(collection)}/search/functions`,
-                    icon: 'fa-solid fa-code'
+                    label: 'Files',
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    icon: 'fa-solid fa-file-code'
                 });
-                segments.push({
-                    label: params.get('md5') ? `${params.get('md5').substring(0, 8)}@${params.get('address')}` : 'Details',
-                    url: `/collection/${encodeURIComponent(collection)}/function/${encodeURIComponent(params.get('md5'))}/${encodeURIComponent(params.get('address'))}`,
-                    icon: 'fa-solid fa-fingerprint'
-                });
+                if (params.get('md5')) {
+                    segments.push({
+                        label: params.get('md5').substring(0, 12) + '…',
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}`,
+                        icon: 'fa-solid fa-fingerprint'
+                    });
+                }
+                if (params.get('md5') && params.get('address')) {
+                    segments.push({
+                        label: `Func @${params.get('address')}`,
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}/functions/${encodeURIComponent(params.get('address'))}`,
+                        icon: 'fa-solid fa-code'
+                    });
+                }
                 segments.push({
                     label: `Features`,
                     url: window.location.pathname,
@@ -124,8 +141,32 @@ window.Breadcrumbs = {
                 });
                 break;
             case 'diff':
+                const sourceMd5 = restful.md5 || params.get('md5') || params.get('file_md5');
+                const sourceAddr = restful.address || params.get('address');
+                if (sourceMd5) {
+                    segments.push({
+                        label: sourceMd5.substring(0, 12) + '…',
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(sourceMd5)}`,
+                        icon: 'fa-solid fa-file-code'
+                    });
+                }
+                if (sourceMd5 && sourceAddr) {
+                    const funcLabel = window.currentFuncName && window.currentFuncId && window.currentFuncId.includes(sourceAddr) ? window.currentFuncName : `Func @${sourceAddr}`;
+                    segments.push({
+                        label: funcLabel,
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(sourceMd5)}/functions/${encodeURIComponent(sourceAddr)}`,
+                        icon: 'fa-solid fa-code'
+                    });
+                }
+                const targetColl = restful.coll_b || collection;
+                const targetMd5 = restful.md5_b;
+                const targetAddr = restful.addr_b;
+                let targetLabel = 'VS';
+                if (targetMd5 && targetAddr) {
+                    targetLabel = `VS ${targetMd5.substring(0, 8)}@${targetAddr}`;
+                }
                 segments.push({
-                    label: 'Diff',
+                    label: targetLabel,
                     url: window.location.pathname,
                     icon: 'fa-solid fa-right-left'
                 });
@@ -133,12 +174,12 @@ window.Breadcrumbs = {
             case 'call_graph':
                 segments.push({
                     label: 'Files',
-                    url: `/collection/${encodeURIComponent(collection)}/search/files`,
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
                     icon: 'fa-solid fa-file-code'
                 });
                 segments.push({
                     label: params.get('md5') ? (params.get('md5').substring(0, 12) + '…') : 'Details',
-                    url: `/collection/${encodeURIComponent(collection)}/file/${encodeURIComponent(params.get('md5'))}`,
+                    url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}`,
                     icon: 'fa-solid fa-fingerprint'
                 });
                 segments.push({
@@ -150,7 +191,7 @@ window.Breadcrumbs = {
             case 'feature':
                 segments.push({
                     label: 'Global Features',
-                    url: `/collection/${encodeURIComponent(collection)}/search/features-global`,
+                    url: `/collections/${encodeURIComponent(collection)}/features`,
                     icon: 'fa-solid fa-fingerprint'
                 });
                 segments.push({
@@ -161,18 +202,28 @@ window.Breadcrumbs = {
                 break;
             case 'bin_sim':
                 segments.push({
-                    label: 'Binary Similarity',
-                    url: `/collection/${encodeURIComponent(collection)}/search/binary-similarity`,
-                    icon: 'fa-solid fa-code-compare'
+                    label: 'Files',
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    icon: 'fa-solid fa-file-code'
                 });
-                const md5 = params.get('md5');
-                if (md5) {
+                const fmd5 = restful.md5 || params.get('md5');
+                if (fmd5) {
                     segments.push({
-                        label: md5.substring(0, 12) + '…',
-                        url: window.location.pathname,
+                        label: fmd5.substring(0, 12) + '…',
+                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(fmd5)}`,
                         icon: 'fa-solid fa-fingerprint'
                     });
                 }
+                const bMd5 = restful.md5_b;
+                let bLabel = 'VS';
+                if (bMd5) {
+                    bLabel = `VS ${bMd5.substring(0, 12)}…`;
+                }
+                segments.push({
+                    label: bLabel,
+                    url: window.location.pathname,
+                    icon: 'fa-solid fa-right-left'
+                });
                 break;
         }
         return segments;

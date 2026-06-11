@@ -491,8 +491,9 @@ if (!document.getElementById('jobs-style')) {
 
 // Auto-refresh when in jobs view
 setInterval(() => {
-    const [path] = (window.location.hash || '').split('?');
-    if (path === '#jobs') {
+    const restful = (typeof parseRestfulPath === 'function') ? parseRestfulPath() : null;
+    const isJobsView = (restful && restful.view === 'jobs') || window.location.pathname === '/jobs' || (window.location.hash && window.location.hash.split('?')[0] === '#jobs');
+    if (isJobsView) {
         const modal = document.getElementById('job-details-modal');
         const isModalOpen = modal && modal.style.display !== 'none';
         

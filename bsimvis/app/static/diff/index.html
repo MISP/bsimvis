@@ -1002,10 +1002,20 @@
             let id1 = urlParams.get('id1');
             let id2 = urlParams.get('id2');
             
-            // Try RESTful path parsing /collection/COLL_A/function/MD5_A/ADDR_A/vs/collection/COLL_B/MD5_B/ADDR_B
             const path = window.location.pathname;
             const parts = path.split('/').filter(Boolean);
-            if (parts[0] === 'collection' && parts[2] === 'function') {
+            const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+
+            if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
+                const collA = decodeURIComponent(parts[1]);
+                const md5A = decodeURIComponent(parts[3]);
+                const addrA = decodeURIComponent(parts[5]);
+                const collB = decodeURIComponent(parts[7]);
+                const md5B = decodeURIComponent(parts[8]);
+                const addrB = decodeURIComponent(parts[9]);
+                id1 = `${collA}:func:${md5A}:${addrA}`;
+                id2 = `${collB}:func:${md5B}:${addrB}`;
+            } else if (hasCol && parts[2] === 'function') {
                 if (parts.length >= 9 && parts[5] === 'vs') {
                     const collA = decodeURIComponent(parts[1]);
                     const md5A = decodeURIComponent(parts[3]);
@@ -1180,13 +1190,47 @@
         document.getElementById('meta-container').addEventListener('click', (e) => {
             if (e.target.closest('#swap-btn')) {
                 const urlParams = new URLSearchParams(window.location.search);
-                const id1 = urlParams.get('id1');
-                const id2 = urlParams.get('id2');
+                let id1 = urlParams.get('id1');
+                let id2 = urlParams.get('id2');
+
+                const path = window.location.pathname;
+                const parts = path.split('/').filter(Boolean);
+                const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+                
+                if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[5]);
+                    const collB = decodeURIComponent(parts[7]);
+                    const md5B = decodeURIComponent(parts[8]);
+                    const addrB = decodeURIComponent(parts[9]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
+                } else if (hasCol && parts[2] === 'function' && parts[5] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[4]);
+                    const collB = decodeURIComponent(parts[6]);
+                    const md5B = decodeURIComponent(parts[7]);
+                    const addrB = decodeURIComponent(parts[8]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
+                }
+
                 if (id1 && id2) {
-                    urlParams.set('id1', id2);
-                    urlParams.set('id2', id1);
-                    window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
-                    fetchData();
+                    if (urlParams.has('id1') && urlParams.has('id2')) {
+                        urlParams.set('id1', id2);
+                        urlParams.set('id2', id1);
+                        window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
+                        fetchData();
+                    } else {
+                        const newUrl = buildDiffUrl(id2, id1);
+                        if (window.parent && window.parent !== window && window.parent.Nav && window.parent.Nav.openPath) {
+                            window.parent.Nav.openPath(newUrl);
+                        } else {
+                            window.location.href = newUrl;
+                        }
+                    }
                 }
             }
         });

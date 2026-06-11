@@ -52,7 +52,23 @@ window.Breadcrumbs = {
                 });
                 break;
             case 'function-similarity':
+                segments.push({
+                    label: 'Functions',
+                    url: `/collections/${encodeURIComponent(collection)}/functions`,
+                    icon: 'fa-solid fa-code'
+                });
+                segments.push({
+                    label: route ? route.title : 'Similarities',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-code-compare'
+                });
+                break;
             case 'binary-similarity':
+                segments.push({
+                    label: 'Files',
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    icon: 'fa-solid fa-file-code'
+                });
                 segments.push({
                     label: route ? route.title : 'Similarities',
                     url: window.location.pathname + window.location.search,
@@ -60,7 +76,23 @@ window.Breadcrumbs = {
                 });
                 break;
             case 'clusters':
+                segments.push({
+                    label: 'Functions',
+                    url: `/collections/${encodeURIComponent(collection)}/functions`,
+                    icon: 'fa-solid fa-code'
+                });
+                segments.push({
+                    label: route ? route.title : 'Clusters',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-bullseye'
+                });
+                break;
             case 'bin-clusters':
+                segments.push({
+                    label: 'Files',
+                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    icon: 'fa-solid fa-file-code'
+                });
                 segments.push({
                     label: route ? route.title : 'Clusters',
                     url: window.location.pathname + window.location.search,

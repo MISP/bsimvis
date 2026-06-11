@@ -63,6 +63,8 @@ window.CallGraphView = {
                     if (detailsData && detailsData.file) {
                         const file = detailsData.file;
                         const fileName = file.file_name || file.file_names?.[0] || 'Unknown Binary';
+                        window.filenameCache = window.filenameCache || {};
+                        window.filenameCache[file_md5] = fileName;
                         
                         // Update breadcrumb item span dynamically
                         const items = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
@@ -73,21 +75,23 @@ window.CallGraphView = {
                             }
                         }
 
-                        const renderRow = (icon, label, value, color) => {
+                        const renderRow = (icon, label, value, color, clickable = false, clickHandler = null) => {
                             if (!value) return '';
                             const valStr = Array.isArray(value) ? value.join(', ') : String(value);
+                            const style = clickable ? `color:${color || 'var(--accent)'}; font-family:'JetBrains Mono', monospace; word-break:break-all; cursor:pointer; font-weight:bold;` : `color:${color || '#eee'}; font-family:'JetBrains Mono', monospace; word-break:break-all;`;
+                            const clickAttr = clickHandler ? `onclick="${clickHandler}"` : '';
                             return `
                                 <div style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem; border-bottom:1px solid rgba(255,255,255,0.03); padding-bottom:8px;">
                                     <span style="color:var(--dim); font-size:0.72rem; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
                                         <i class="${icon}" style="width:14px; text-align:center;"></i> ${label}
                                     </span>
-                                    <span style="color:${color || '#eee'}; font-family:'JetBrains Mono', monospace; word-break:break-all;">${valStr}</span>
+                                    <span style="${style}" ${clickAttr}>${valStr}</span>
                                 </div>
                             `;
                         };
                         
                         let metaHtml = '';
-                        metaHtml += renderRow('fa-solid fa-file-signature', 'Filename', fileName);
+                        metaHtml += renderRow('fa-solid fa-file-signature', 'Filename', fileName, 'var(--accent)', true, `const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${file_md5}', '${fileName.replace(/'/g, "\\\\'")}', event); }`);
                         metaHtml += renderRow('fa-solid fa-microchip', 'Architecture', file.language_id || file.language, '#ae81ff');
                         metaHtml += renderRow('fa-solid fa-list-ol', 'Functions', file.function_count, '#a6e22e');
                         metaHtml += renderRow('fa-solid fa-shield', 'AV Type', file.avtype);

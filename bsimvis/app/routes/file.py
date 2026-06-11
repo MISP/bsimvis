@@ -258,9 +258,23 @@ def finalize_batch_upload():
 
     group_id = job_service.create_group(pipeline_ids, enqueue=False)
 
-    master_tasks = [group_id]
+    # 1. Clear old results in parallel before rebuilding
+    clear_tasks = [
+        (JobType.CLEAR_CLUSTER.value, {"collection": collection, "algo": algo}),
+    ]
+    if not skip_sim:
+        clear_tasks.append(
+            (JobType.CLEAR_BIN_SIM.value, {"collection": collection, "algo": algo})
+        )
+        clear_tasks.append(
+            (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
+        )
 
-    # After the group finishes, we do clustering:
+    clear_group_id = job_service.create_group(clear_tasks, enqueue=False)
+
+    master_tasks = [group_id, clear_group_id]
+
+    # After the clears, we do clustering:
     master_tasks.append(
         (
             JobType.CLUSTER_FUNCTIONS.value,
@@ -270,9 +284,6 @@ def finalize_batch_upload():
 
     # After clustering, we do binary similarity:
     if not skip_sim:
-        master_tasks.append(
-            (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
-        )
         build_payload = {
             "collection": collection,
             "algo": algo,

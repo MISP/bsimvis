@@ -406,20 +406,23 @@ class BinSimService:
                     assigned_a.update(pool_a)
                     assigned_b.update(pool_b)
 
+                    num_matched = min(count_a, count_b)
+                    num_total = count_a + count_b
+
                     sum_weighted_cohesion_sim += (
-                        cohesion * s_rarity * match_ratio * cluster_feat
+                        2.0 * num_matched * cohesion * s_rarity * cluster_feat
                     )
-                    sum_weights_sim += s_rarity * cluster_feat
+                    sum_weights_sim += num_total * s_rarity * cluster_feat
 
                     sum_weighted_cohesion_col += (
-                        cohesion * c_rarity * match_ratio * cluster_feat
+                        2.0 * num_matched * cohesion * c_rarity * cluster_feat
                     )
-                    sum_weights_col += c_rarity * cluster_feat
+                    sum_weights_col += num_total * c_rarity * cluster_feat
 
                     sum_weighted_cohesion_unweighted += (
-                        cohesion * match_ratio * cluster_feat
+                        2.0 * num_matched * cohesion * cluster_feat
                     )
-                    sum_weights_unweighted += 1.0 * cluster_feat
+                    sum_weights_unweighted += num_total * cluster_feat
 
             # Unique/Unmatched functions logic (includes clustered and unclustered unmatched functions)
             all_funcs_a_total = binary_fids[m_a]

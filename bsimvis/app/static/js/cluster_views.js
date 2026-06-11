@@ -617,14 +617,14 @@ class ClusterHierarchy extends D3BaseLayout {
                     } else if (typeof showFunctionCodeById === 'function') {
                         showFunctionCodeById(d.data.id, d.data.name, '', event);
                     } else {
-                        const url = `/collection/${col}/search/functions?q=${encodeURIComponent(d.data.name)}`;
+                        const url = `/collection/${col}/functions?q=${encodeURIComponent(d.data.name)}`;
                         Nav.openPath(url, event);
                     }
                     return;
                 }
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
-                    const url = `/collection/${col}/search/functions?cluster_uuid=${uuid}`;
+                    const url = `/collection/${col}/functions?cluster_uuid=${uuid}`;
                     Nav.openPath(url, event);
                 }
             })
@@ -997,7 +997,7 @@ class ClusterHierarchy extends D3BaseLayout {
                 binNodesMerge
                     .on("click", (event, d) => {
                         const col = getCollectionFromHash();
-                        const url = `/collection/${encodeURIComponent(col)}/search/files?q=${encodeURIComponent(d.name)}`;
+                        const url = `/collection/${encodeURIComponent(col)}/files?q=${encodeURIComponent(d.name)}`;
                         Nav.openPath(url, event, { title: 'Files: ' + d.name, type: 'files' });
                     })
                     .on("mouseover", function(event, d) {
@@ -1108,7 +1108,7 @@ class ClusterHierarchy extends D3BaseLayout {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = `/collection/${encodeURIComponent(col)}/search/functions?cluster_uuid=${uuid}`;
+            const url = `/collection/${encodeURIComponent(col)}/functions?cluster_uuid=${uuid}`;
             Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
         };
     }
@@ -2125,7 +2125,7 @@ class ClusterPacking {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = `/collection/${encodeURIComponent(col)}/search/functions?cluster_uuid=${uuid}`;
+            const url = `/collection/${encodeURIComponent(col)}/functions?cluster_uuid=${uuid}`;
             Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
         };
     }

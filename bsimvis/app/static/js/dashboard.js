@@ -728,7 +728,7 @@ function updateUI(viewKey, collection, params, route) {
             if (!el) return;
             const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
 
-            let url = `/collections/${encodeURIComponent(col)}/search/${targetView}`;
+            let url = `/collections/${encodeURIComponent(col)}/${targetView}`;
             if (targetView === 'collections') {
                 url = `/collections`;
             } else if (targetView === 'jobs') {
@@ -743,6 +743,14 @@ function updateUI(viewKey, collection, params, route) {
                 url = `/collections/${encodeURIComponent(col)}/features`;
             } else if (targetView === 'upload') {
                 url = `/collections/${encodeURIComponent(col)}/upload`;
+            } else if (targetView === 'function-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
+            } else if (targetView === 'binary-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/files/similarities`;
+            } else if (targetView === 'clusters') {
+                url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
+            } else if (targetView === 'bin-clusters') {
+                url = `/collections/${encodeURIComponent(col)}/files/clusters`;
             }
 
             if (saved) {
@@ -2157,13 +2165,13 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     } else if (viewKey === 'features-global') {
         url = `/collections/${col}/features`;
     } else if (viewKey === 'clusters') {
-        url = `/collections/${col}/search/clusters`;
+        url = `/collections/${col}/functions/clusters`;
     } else if (viewKey === 'bin-clusters') {
-        url = `/collections/${col}/search/bin-clusters`;
+        url = `/collections/${col}/files/clusters`;
     } else if (viewKey === 'binary-similarity') {
-        url = `/collections/${col}/search/binary-similarity`;
+        url = `/collections/${col}/files/similarities`;
     } else if (viewKey === 'function-similarity') {
-        url = `/collections/${col}/search/function-similarity`;
+        url = `/collections/${col}/functions/similarities`;
     } else if (viewKey === 'upload') {
         url = `/collections/${col}/upload`;
     } else if (viewKey === 'collections') {
@@ -2245,7 +2253,7 @@ const UIParams = {
     cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
-    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? true : localStorage.getItem('useFloatingWindows') === 'true'
+    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true'
 };
 window.UIParams = UIParams;
 
@@ -2602,7 +2610,7 @@ function renderClusters(items) {
                     <a href="/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
                         <i class="fa-solid fa-code"></i>
                     </a>
-                    <a href="/collections/${encodeURIComponent(collection)}/search/function-similarity?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/search/function-similarity?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
+                    <a href="/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
                         <i class="fa-solid fa-code-compare"></i>
                     </a>
                 </div>

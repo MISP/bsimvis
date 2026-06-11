@@ -51,7 +51,7 @@ function renderUploadView(params) {
                             </div>
                             <div class="form-group">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
-                                <input type="number" id="upload-min-func-len" value="10" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
                         </div>
 

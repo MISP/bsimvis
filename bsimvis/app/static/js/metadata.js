@@ -341,7 +341,7 @@ function seeSimilar(fullId, e) {
     const md5 = parts[2];
     const addr = parts[3];
     
-    const url = `/collection/${encodeURIComponent(col)}/search/function-similarity?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
+    const url = `/collection/${encodeURIComponent(col)}/functions/similarities?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
 
     Nav.openPath(url, e, { title: `Similar to: ${addr}`, type: 'function-similarity' });
 }
@@ -501,3 +501,7 @@ function renderFileMetadata(container, m, fullId, options = {}) {
     }
     return cardHtml;
 }
+
+window.seeSimilar = seeSimilar;
+window.navigateToFeatures = navigateToFeatures;
+

@@ -55,7 +55,7 @@ window.EntityRenderer = {
                 className: 'btn-sim-action',
                 icon: 'fa-solid fa-code-compare',
                 tooltip: 'See Similar Functions',
-                onClick: `event.stopPropagation(); Nav.openPath('/collection/${collection}/search/function-similarity?md5=${file_md5}&address=${entry}&algo=unweighted_cosine', event)`,
+                onClick: `event.stopPropagation(); Nav.openPath('/collection/${collection}/functions/similarities?md5=${file_md5}&address=${entry}&algo=unweighted_cosine', event)`,
                 style: 'padding:0; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;'
             });
 

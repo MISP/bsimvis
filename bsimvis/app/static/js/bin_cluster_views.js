@@ -507,16 +507,16 @@ class BinClusterHierarchy {
                 const col = getCurrentCollection();
                 if (d.data.is_member) {
                     if (d.data.file_md5) {
-                        const url = `/collection/${encodeURIComponent(col)}/search/binary-similarity?md5_filter=${encodeURIComponent(d.data.file_md5)}`;
+                        const url = `/collection/${encodeURIComponent(col)}/files/similarities?md5_filter=${encodeURIComponent(d.data.file_md5)}`;
                         Nav.openPath(url, e, { title: `Sim: ${d.data.file_md5}`, type: 'binary-similarity' });
                     } else {
-                        const url = `/collection/${encodeURIComponent(col)}/search/files?q=${encodeURIComponent(d.data.name)}`;
+                        const url = `/collection/${encodeURIComponent(col)}/files?q=${encodeURIComponent(d.data.name)}`;
                         Nav.openPath(url, e, { title: `Files: ${d.data.name}`, type: 'files' });
                     }
                     return;
                 }
                 if (d.data.uuid && d.data.uuid !== 'root') {
-                    const url = `/collection/${encodeURIComponent(col)}/search/files?bin_cluster_uuid=${encodeURIComponent(d.data.uuid)}`;
+                    const url = `/collection/${encodeURIComponent(col)}/files?bin_cluster_uuid=${encodeURIComponent(d.data.uuid)}`;
                     Nav.openPath(url, e, { title: `Cluster Files`, type: 'files' });
                 }
             })
@@ -1375,7 +1375,7 @@ class BinClusterPacking {
                 if (d.data.is_member) {
                     if (d.data.file_md5) {
                         const col = getCurrentCollection();
-                        const url = `/collection/${encodeURIComponent(col)}/search/binary-similarity?md5_filter=${encodeURIComponent(d.data.file_md5)}`;
+                        const url = `/collection/${encodeURIComponent(col)}/files/similarities?md5_filter=${encodeURIComponent(d.data.file_md5)}`;
                         Nav.openPath(url, event, { title: `Sim: ${d.data.file_md5}`, type: 'binary-similarity' });
                     }
                     event.stopPropagation();

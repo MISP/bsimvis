@@ -7,8 +7,18 @@ function createNav(view, collection, params = {}) {
     let pathSegments = [];
     if (view === 'upload') {
         pathSegments = ['upload'];
+    } else if (view === 'function-similarity') {
+        pathSegments = ['functions', 'similarities'];
+    } else if (view === 'binary-similarity') {
+        pathSegments = ['files', 'similarities'];
+    } else if (view === 'clusters') {
+        pathSegments = ['functions', 'clusters'];
+    } else if (view === 'bin-clusters') {
+        pathSegments = ['files', 'clusters'];
+    } else if (view === 'features-global') {
+        pathSegments = ['features'];
     } else {
-        pathSegments = ['search', view];
+        pathSegments = [view];
     }
     
     // Convert params object to path segments if possible,

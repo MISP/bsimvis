@@ -67,7 +67,11 @@ window.UI = {
                 if (view === 'files') return `/collections/${encodeURIComponent(collection)}/files`;
                 if (view === 'functions') return `/collections/${encodeURIComponent(collection)}/functions`;
                 if (view === 'features-global') return `/collections/${encodeURIComponent(collection)}/features`;
-                return `/collections/${encodeURIComponent(collection)}/search/${view}`;
+                if (view === 'function-similarity') return `/collections/${encodeURIComponent(collection)}/functions/similarities`;
+                if (view === 'binary-similarity') return `/collections/${encodeURIComponent(collection)}/files/similarities`;
+                if (view === 'clusters') return `/collections/${encodeURIComponent(collection)}/functions/clusters`;
+                if (view === 'bin-clusters') return `/collections/${encodeURIComponent(collection)}/files/clusters`;
+                return `/collections/${encodeURIComponent(collection)}/${view}`;
             };
 
             const isActive = (view) => {

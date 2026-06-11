@@ -82,6 +82,10 @@ function parseRestfulPath() {
         } else if (p2 === 'files' || p2 === 'file') {
             if (parts.length === 3) {
                 params.view = 'files';
+            } else if (parts[3] === 'similarities') {
+                params.view = 'binary-similarity';
+            } else if (parts[3] === 'clusters') {
+                params.view = 'bin-clusters';
             } else if (parts.length >= 4) {
                 if (parts[4] === 'vs') {
                     // File diff: /collections/{coll}/files/{md5}/vs/{coll_b}/{md5_b}
@@ -122,6 +126,10 @@ function parseRestfulPath() {
         } else if (p2 === 'functions' || p2 === 'function') {
             if (parts.length === 3) {
                 params.view = 'functions';
+            } else if (parts[3] === 'similarities') {
+                params.view = 'function-similarity';
+            } else if (parts[3] === 'clusters') {
+                params.view = 'clusters';
             } else if (parts.length >= 4) {
                 if (parts[4] && parts[5] === 'vs') {
                     params.view = 'diff';
@@ -146,8 +154,6 @@ function parseRestfulPath() {
                 params.view = 'feature';
                 params.hash = parts[3];
             }
-        } else if (p2 === 'search' && parts[3]) {
-            params.view = parts[3];
         } else if (p2 === 'bin_sim' && parts[3]) {
             params.view = 'bin_sim';
             params.md5 = parts[3];

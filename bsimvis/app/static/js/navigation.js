@@ -20,7 +20,18 @@ window.Nav = {
             mapped = ['features'];
         } else if (mapped[0] === 'search' && mapped[1] === 'batches') {
             mapped = ['batches'];
-        } else if (mapped[0] === 'call_graph' && mapped[1]) {
+        } else if (mapped[0] === 'search' && mapped[1] === 'function-similarity') {
+            mapped = ['functions', 'similarities'];
+        } else if (mapped[0] === 'search' && mapped[1] === 'binary-similarity') {
+            mapped = ['files', 'similarities'];
+        } else if (mapped[0] === 'search' && mapped[1] === 'clusters') {
+            mapped = ['functions', 'clusters'];
+        } else if (mapped[0] === 'search' && mapped[1] === 'bin-clusters') {
+            mapped = ['files', 'clusters'];
+        } else if (mapped[0] === 'search') {
+            mapped = [mapped[1]];
+        }
+ else if (mapped[0] === 'call_graph' && mapped[1]) {
             mapped = ['files', mapped[1], 'functions'];
         } else if (mapped[0] === 'file' && mapped[1]) {
             mapped = ['files', mapped[1]];
@@ -67,23 +78,31 @@ window.Nav = {
         // Normalize URL on the fly to support the new plural hierarchical RESTful structure
         let targetPath = path;
         if (typeof path === 'string' && (path.startsWith('/collection/') || path.startsWith('/collections/'))) {
-            const pathParts = path.split('?')[0].split('/').filter(Boolean);
-            const query = path.split('?')[1] ? ('?' + path.split('?')[1]) : '';
+            // Strip fragment (#...) before splitting so # is not encoded as %23 in path segments
+            const hashIdx = path.indexOf('#');
+            const fragment = hashIdx !== -1 ? path.slice(hashIdx) : '';
+            const pathNoFrag = hashIdx !== -1 ? path.slice(0, hashIdx) : path;
+            const pathParts = pathNoFrag.split('?')[0].split('/').filter(Boolean);
+            const query = pathNoFrag.split('?')[1] ? ('?' + pathNoFrag.split('?')[1]) : '';
             const coll = pathParts[1];
             const p2 = pathParts[2];
             
             if (p2 === 'files' || p2 === 'file') {
-                if (pathParts[4] === 'functions' || pathParts[4] === 'function') {
+                if (pathParts[3] === 'similarities') {
+                    targetPath = `/collections/${encodeURIComponent(coll)}/files/similarities${query}`;
+                } else if (pathParts[3] === 'clusters') {
+                    targetPath = `/collections/${encodeURIComponent(coll)}/files/clusters${query}`;
+                } else if (pathParts[4] === 'functions' || pathParts[4] === 'function') {
                     if (pathParts[6] === 'vs') {
                         // Function diff: /collections/{coll}/files/{md5}/functions/{addr}/vs/{coll_b}/{md5_b}/{addr_b}
                         targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[5])}/vs/${encodeURIComponent(pathParts[7])}/${encodeURIComponent(pathParts[8])}/${encodeURIComponent(pathParts[9])}${query}`;
                     } else if (pathParts[5]) {
                         if (pathParts[6] === 'features') {
                             // Function features: /collections/{coll}/files/{md5}/functions/{addr}/features
-                            targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[5])}/features${query}`;
+                            targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[5])}/features${query}${fragment}`;
                         } else {
                             // Function detail: /collections/{coll}/files/{md5}/functions/{addr}
-                            targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[5])}${query}`;
+                            targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[5])}${query}${fragment}`;
                         }
                     } else {
                         // Call graph: /collections/{coll}/files/{md5}/functions
@@ -100,14 +119,18 @@ window.Nav = {
                     targetPath = `/collections/${encodeURIComponent(coll)}/files${query}`;
                 }
             } else if (p2 === 'function' || p2 === 'functions') {
-                if (pathParts[5] === 'vs') {
+                if (pathParts[3] === 'similarities') {
+                    targetPath = `/collections/${encodeURIComponent(coll)}/functions/similarities${query}`;
+                } else if (pathParts[3] === 'clusters') {
+                    targetPath = `/collections/${encodeURIComponent(coll)}/functions/clusters${query}`;
+                } else if (pathParts[5] === 'vs') {
                     // /collection/{coll}/function/{md5_a}/{addr_a}/vs/{coll_b}/{md5_b}/{addr_b}
                     targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[4])}/vs/${encodeURIComponent(pathParts[6])}/${encodeURIComponent(pathParts[7])}/${encodeURIComponent(pathParts[8])}${query}`;
                 } else if (pathParts[3] && pathParts[4]) {
                     if (pathParts[5] === 'features') {
-                        targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[4])}/features${query}`;
+                        targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[4])}/features${query}${fragment}`;
                     } else {
-                        targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[4])}${query}`;
+                        targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${encodeURIComponent(pathParts[4])}${query}${fragment}`;
                     }
                 } else if (pathParts[3]) {
                     targetPath = `/collections/${encodeURIComponent(coll)}/files/${encodeURIComponent(pathParts[3])}/functions/${query}`;
@@ -132,13 +155,13 @@ window.Nav = {
                 } else if (pathParts[3] === 'batches') {
                     targetPath = `/collections/${encodeURIComponent(coll)}/batches${query}`;
                 } else if (pathParts[3] === 'clusters') {
-                    targetPath = `/collections/${encodeURIComponent(coll)}/search/clusters${query}`;
+                    targetPath = `/collections/${encodeURIComponent(coll)}/functions/clusters${query}`;
                 } else if (pathParts[3] === 'bin-clusters') {
-                    targetPath = `/collections/${encodeURIComponent(coll)}/search/bin-clusters${query}`;
+                    targetPath = `/collections/${encodeURIComponent(coll)}/files/clusters${query}`;
                 } else if (pathParts[3] === 'binary-similarity') {
-                    targetPath = `/collections/${encodeURIComponent(coll)}/search/binary-similarity${query}`;
+                    targetPath = `/collections/${encodeURIComponent(coll)}/files/similarities${query}`;
                 } else if (pathParts[3] === 'function-similarity') {
-                    targetPath = `/collections/${encodeURIComponent(coll)}/search/function-similarity${query}`;
+                    targetPath = `/collections/${encodeURIComponent(coll)}/functions/similarities${query}`;
                 }
             } else if (p2) {
                 targetPath = `/collections/${encodeURIComponent(coll)}/${p2}${query}`;
@@ -149,7 +172,7 @@ window.Nav = {
 
         // Window Manager integration (only if enabled in UI settings)
         const uiParams = window.UIParams || (window.parent && window.parent.UIParams) || {};
-        const useFloating = uiParams.useFloatingWindows !== false; // Default to true
+        const useFloating = uiParams.useFloatingWindows !== false; // Default to false
 
         if (useFloating) {
             if (typeof windowManager !== 'undefined' && options.title) {

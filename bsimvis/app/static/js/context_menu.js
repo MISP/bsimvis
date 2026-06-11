@@ -317,7 +317,7 @@
                 <i class="fa-solid fa-sitemap" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Call Graph</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/search/function-similarity?md5=${norm.md5}', event, { title: 'Function Similarities', type: 'function-similarity' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/functions/similarities?md5=${norm.md5}', event, { title: 'Function Similarities', type: 'function-similarity' })">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
             </div>`;
@@ -342,7 +342,7 @@
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/search/functions?cluster_uuid=${norm.uuid}', event, { title: 'Cluster Functions', type: 'functions' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/functions?cluster_uuid=${norm.uuid}', event, { title: 'Cluster Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
@@ -352,7 +352,7 @@
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/search/files?bin_cluster_uuid=${norm.uuid}', event, { title: 'Cluster Files', type: 'files' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/files?bin_cluster_uuid=${norm.uuid}', event, { title: 'Cluster Files', type: 'files' })">
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;

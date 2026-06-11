@@ -61,7 +61,7 @@ window.UI = {
 
             const buildNavUrl = (view) => {
                 if (view === 'collections') return '/collections';
-                if (view === 'jobs') return '/jobs';
+                if (view === 'jobs') return `/jobs?collection=${encodeURIComponent(collection)}`;
                 if (view === 'upload') return `/collections/${encodeURIComponent(collection)}/upload`;
                 if (view === 'batches') return `/collections/${encodeURIComponent(collection)}/batches`;
                 if (view === 'files') return `/collections/${encodeURIComponent(collection)}/files`;

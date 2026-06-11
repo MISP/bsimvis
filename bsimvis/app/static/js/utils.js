@@ -181,7 +181,12 @@ function getRoutingState() {
     const restful = parseRestfulPath();
     const params = new URLSearchParams(window.location.search);
     const viewKey = restful.view || params.get('view') || (window.location.hash ? window.location.hash.substring(1).split('?')[0] : 'dashboard');
-    const collection = restful.collection || params.get('collection') || 'main';
+    
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+    const collection = (hasColInPath ? restful.collection : null) || params.get('collection') || 'main';
+
 
     // Bridge restful params to search params for backward compatibility
     if (restful.md5 && !params.has('md5')) params.set('md5', restful.md5);
@@ -198,8 +203,12 @@ function getRoutingState() {
 window.getRoutingState = getRoutingState;
 
 function getCollectionFromHash() {
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+
     const pathParams = parseRestfulPath();
-    if (pathParams.collection) return pathParams.collection;
+    if (hasColInPath && pathParams.collection) return pathParams.collection;
 
     const searchParams = new URLSearchParams(window.location.search);
     if (searchParams.has('collection')) return searchParams.get('collection');

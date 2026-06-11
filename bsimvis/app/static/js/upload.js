@@ -174,7 +174,12 @@ function clearUploadList() {
     selectedFiles = [];
     updateFileList();
     const progContainer = document.getElementById('upload-progress-container');
-    if (progContainer) progContainer.style.display = 'none';
+    if (progContainer) {
+        progContainer.style.display = 'none';
+        // Remove go-to-collection footer so it doesn't persist into a new session
+        const goBtn = document.getElementById('go-to-collection-btn');
+        if (goBtn) goBtn.closest('div[style*="border-top"]')?.remove();
+    }
     const startBtn = document.getElementById('start-upload-btn');
     if (startBtn) {
         startBtn.disabled = false;
@@ -337,6 +342,24 @@ async function startBatchUpload() {
     if (globalSpinner) globalSpinner.style.display = 'none';
     
     document.getElementById('start-upload-btn').innerHTML = '<i class="fa-solid fa-check"></i> Finished';
+
+    // Show "Go to Collection" button once upload is done
+    const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
+    const progressContainer = document.getElementById('upload-progress-container');
+    if (progressContainer && !document.getElementById('go-to-collection-btn')) {
+        const goBtn = document.createElement('div');
+        goBtn.style.cssText = 'margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;';
+        goBtn.innerHTML = `
+            <span style="font-size: 0.8rem; color: var(--subtle);">
+                <i class="fa-solid fa-layer-group" style="margin-right: 6px;"></i>
+                Uploaded to <b style="color: var(--text);">${collection}</b>
+            </span>
+            <button id="go-to-collection-btn" onclick="Nav.openPath('${collectionUrl}')" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-arrow-right"></i> Go to Collection
+            </button>
+        `;
+        progressContainer.appendChild(goBtn);
+    }
 }
 
 async function populateUploadCollectionDropdown(currentCollection) {

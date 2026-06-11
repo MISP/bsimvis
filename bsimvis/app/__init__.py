@@ -106,9 +106,11 @@ def create_app():
 
     @app.route("/<path:path>")
     def serve_static(path):
-        # Handle specific index.html files for sub-apps
-        if path.endswith('/'):
-            return send_from_directory(app.static_folder, os.path.join(path, 'index.html'))
-        return send_from_directory(app.static_folder, path)
+        from werkzeug.exceptions import NotFound
+        try:
+            return send_from_directory(app.static_folder, path)
+        except NotFound:
+            # SPA fallback: unknown paths are handled by the frontend router
+            return send_from_directory(app.static_folder, "index.html")
 
     return app

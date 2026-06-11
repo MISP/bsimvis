@@ -168,6 +168,7 @@ class BinSimService:
 
         binary_cluster_maps = {}
         cluster_binary_count_job = defaultdict(int)
+        binary_fids = {}
 
         binary_func_counts = {}
         for i, md5 in enumerate(binaries):
@@ -182,6 +183,7 @@ class BinSimService:
                 )
                 for fid in raw_ids
             ]
+            binary_fids[md5] = set(fids)
 
             # Map of cid -> set of function IDs for this binary
             b_cluster_map = defaultdict(set)
@@ -253,6 +255,32 @@ class BinSimService:
                         "cohesion_score": 0.0,
                         "cluster_name": f"Cluster {cid}",
                     }
+
+        # 3b. Load function metadata (for bsim_features_count of unclustered/unmatched functions)
+        func_meta_cache = {}
+        all_unique_fids = set()
+        for fids_set in binary_fids.values():
+            all_unique_fids.update(fids_set)
+
+        if all_unique_fids:
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id, f"[*] Loading metadata for {len(all_unique_fids)} functions..."
+                )
+            fids_list = list(all_unique_fids)
+            pipe = r.pipeline()
+            for fid in fids_list:
+                pipe.json().get(f"{fid}:meta", "$")
+            meta_results = pipe.execute()
+            for fid, res in zip(fids_list, meta_results):
+                if res:
+                    m = res[0] if isinstance(res, list) else res
+                    if isinstance(m, str):
+                        try:
+                            m = json.loads(m)
+                        except ValueError:
+                            pass
+                    func_meta_cache[fid] = m if isinstance(m, dict) else {}
 
         # 4. Generate Pairs
         pairs = []
@@ -393,119 +421,160 @@ class BinSimService:
                     )
                     sum_weights_unweighted += 1.0 * cluster_feat
 
-            # Unique clusters logic (grouping unassigned funcs by their tightest cluster)
-            all_funcs_a = set()
-            for funcs in cmap_a.values():
-                all_funcs_a.update(funcs)
+            # Unique/Unmatched functions logic (includes clustered and unclustered unmatched functions)
+            all_funcs_a_total = binary_fids[m_a]
+            all_funcs_b_total = binary_fids[m_b]
 
-            all_funcs_b = set()
-            for funcs in cmap_b.values():
-                all_funcs_b.update(funcs)
-
-            unassigned_a = all_funcs_a - assigned_a
-            unassigned_b = all_funcs_b - assigned_b
+            unassigned_a = all_funcs_a_total - assigned_a
+            unassigned_b = all_funcs_b_total - assigned_b
 
             unique_to_a = []
             unclustered_a = []
             if unassigned_a:
-                grouped_a = defaultdict(list)
-                for fid in unassigned_a:
+                cmap_a_funcs = set()
+                for funcs in cmap_a.values():
+                    cmap_a_funcs.update(funcs)
+                unclustered_a_set = unassigned_a - cmap_a_funcs
+                unclustered_a = list(unclustered_a_set)
+
+                for fid in sorted(list(unassigned_a)):
                     cids = []
                     for cid, funcs in cmap_a.items():
                         if fid in funcs:
                             cids.append(cid)
 
-                    if cids:
+                    is_clustered = len(cids) > 0
+                    if is_clustered:
                         best_cid = max(
                             cids,
                             key=lambda c: float(
                                 cluster_meta.get(c, {}).get("cohesion_score", 0.0)
                             ),
                         )
-                        grouped_a[best_cid].append(fid)
+                        f_features = float(
+                            cluster_meta.get(best_cid, {}).get("avg_features", 1.0)
+                        )
+                        if f_features <= 0:
+                            f_features = 1.0
+
+                        s_rarity = get_pair_sim_rarity(best_cid)
+                        c_rarity = get_col_rarity(best_cid)
+
+                        cluster_name = cluster_meta.get(best_cid, {}).get(
+                            "cluster_name", str(best_cid)
+                        )
+                        cluster_uuid = cluster_meta.get(best_cid, {}).get(
+                            "cluster_uuid", ""
+                        )
+                        cohesion = float(
+                            cluster_meta.get(best_cid, {}).get("cohesion_score", 0.0)
+                        )
                     else:
-                        unclustered_a.append(fid)
+                        best_cid = ""
+                        cluster_uuid = ""
+                        cluster_name = "Unclustered"
+                        cohesion = 0.0
 
-                for cid, funcs in grouped_a.items():
-                    cluster_feat = float(
-                        cluster_meta.get(cid, {}).get("avg_features", 1.0)
-                    )
-                    if cluster_feat <= 0:
-                        cluster_feat = 1.0
+                        f_features = float(
+                            func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                        )
+                        if f_features <= 0:
+                            f_features = 1.0
 
-                    s_rarity = get_pair_sim_rarity(cid)
-                    c_rarity = get_col_rarity(cid)
+                        s_rarity = 1.0 / math.log(1 + 1 + 1)
+                        c_rarity = 1.0 / math.log(1 + 1 + 1)
+
                     unique_to_a.append(
                         {
-                            "cluster_id": cid,
-                            "cluster_uuid": cluster_meta.get(cid, {}).get(
-                                "cluster_uuid", ""
-                            ),
-                            "cluster_name": cluster_meta.get(cid, {}).get(
-                                "cluster_name", str(cid)
-                            ),
-                            "cohesion": float(
-                                cluster_meta.get(cid, {}).get("cohesion_score", 0.0)
-                            ),
+                            "func_id": fid,
+                            "funcs": [fid],
+                            "is_clustered": is_clustered,
+                            "cluster_id": best_cid,
+                            "cluster_uuid": cluster_uuid,
+                            "cluster_name": cluster_name,
+                            "cohesion": cohesion,
                             "sim_rarity": s_rarity,
                             "collection_rarity": c_rarity,
-                            "avg_features": cluster_feat,
-                            "funcs": funcs,
+                            "avg_features": f_features,
                         }
                     )
-                    sum_weights_sim += s_rarity * cluster_feat
-                    sum_weights_col += c_rarity * cluster_feat
-                    sum_weights_unweighted += 1.0 * cluster_feat
+                    sum_weights_sim += s_rarity * f_features
+                    sum_weights_col += c_rarity * f_features
+                    sum_weights_unweighted += 1.0 * f_features
 
             unique_to_b = []
             unclustered_b = []
             if unassigned_b:
-                grouped_b = defaultdict(list)
-                for fid in unassigned_b:
+                cmap_b_funcs = set()
+                for funcs in cmap_b.values():
+                    cmap_b_funcs.update(funcs)
+                unclustered_b_set = unassigned_b - cmap_b_funcs
+                unclustered_b = list(unclustered_b_set)
+
+                for fid in sorted(list(unassigned_b)):
                     cids = []
                     for cid, funcs in cmap_b.items():
                         if fid in funcs:
                             cids.append(cid)
-                    if cids:
+
+                    is_clustered = len(cids) > 0
+                    if is_clustered:
                         best_cid = max(
                             cids,
                             key=lambda c: float(
                                 cluster_meta.get(c, {}).get("cohesion_score", 0.0)
                             ),
                         )
-                        grouped_b[best_cid].append(fid)
-                    else:
-                        unclustered_b.append(fid)
-                for cid, funcs in grouped_b.items():
-                    cluster_feat = float(
-                        cluster_meta.get(cid, {}).get("avg_features", 1.0)
-                    )
-                    if cluster_feat <= 0:
-                        cluster_feat = 1.0
+                        f_features = float(
+                            cluster_meta.get(best_cid, {}).get("avg_features", 1.0)
+                        )
+                        if f_features <= 0:
+                            f_features = 1.0
 
-                    s_rarity = get_pair_sim_rarity(cid)
-                    c_rarity = get_col_rarity(cid)
+                        s_rarity = get_pair_sim_rarity(best_cid)
+                        c_rarity = get_col_rarity(best_cid)
+
+                        cluster_name = cluster_meta.get(best_cid, {}).get(
+                            "cluster_name", str(best_cid)
+                        )
+                        cluster_uuid = cluster_meta.get(best_cid, {}).get(
+                            "cluster_uuid", ""
+                        )
+                        cohesion = float(
+                            cluster_meta.get(best_cid, {}).get("cohesion_score", 0.0)
+                        )
+                    else:
+                        best_cid = ""
+                        cluster_uuid = ""
+                        cluster_name = "Unclustered"
+                        cohesion = 0.0
+
+                        f_features = float(
+                            func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                        )
+                        if f_features <= 0:
+                            f_features = 1.0
+
+                        s_rarity = 1.0 / math.log(1 + 1 + 1)
+                        c_rarity = 1.0 / math.log(1 + 1 + 1)
+
                     unique_to_b.append(
                         {
-                            "cluster_id": cid,
-                            "cluster_uuid": cluster_meta.get(cid, {}).get(
-                                "cluster_uuid", ""
-                            ),
-                            "cluster_name": cluster_meta.get(cid, {}).get(
-                                "cluster_name", str(cid)
-                            ),
-                            "cohesion": float(
-                                cluster_meta.get(cid, {}).get("cohesion_score", 0.0)
-                            ),
+                            "func_id": fid,
+                            "funcs": [fid],
+                            "is_clustered": is_clustered,
+                            "cluster_id": best_cid,
+                            "cluster_uuid": cluster_uuid,
+                            "cluster_name": cluster_name,
+                            "cohesion": cohesion,
                             "sim_rarity": s_rarity,
                             "collection_rarity": c_rarity,
-                            "avg_features": cluster_feat,
-                            "funcs": funcs,
+                            "avg_features": f_features,
                         }
                     )
-                    sum_weights_sim += s_rarity * cluster_feat
-                    sum_weights_col += c_rarity * cluster_feat
-                    sum_weights_unweighted += 1.0 * cluster_feat
+                    sum_weights_sim += s_rarity * f_features
+                    sum_weights_col += c_rarity * f_features
+                    sum_weights_unweighted += 1.0 * f_features
 
             score_sim_weighted = (
                 sum_weighted_cohesion_sim / sum_weights_sim
@@ -523,8 +592,8 @@ class BinSimService:
                 else 0.0
             )
 
-            cov_a = len(assigned_a) / len(all_funcs_a) if all_funcs_a else 0.0
-            cov_b = len(assigned_b) / len(all_funcs_b) if all_funcs_b else 0.0
+            cov_a = len(assigned_a) / len(all_funcs_a_total) if all_funcs_a_total else 0.0
+            cov_b = len(assigned_b) / len(all_funcs_b_total) if all_funcs_b_total else 0.0
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
             pair_scores[(m_a, m_b)] = score_collection_weighted

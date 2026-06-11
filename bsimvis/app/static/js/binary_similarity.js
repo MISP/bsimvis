@@ -117,7 +117,7 @@ function renderBinarySimilarityView(params) {
                 <div class="resizable-card" style="display:flex; flex-direction:column; height:350px; min-height:200px; overflow:hidden; flex-shrink:0;">
                     <div style="display:flex; gap:20px; flex:1; overflow:hidden;">
                         <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                            <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unique to Binary A</h3>
+                            <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unmatched to Binary A</h3>
                             <div style="flex:1; overflow:auto;">
                                 <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
@@ -129,7 +129,7 @@ function renderBinarySimilarityView(params) {
                         </div>
                         
                         <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                            <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unique to Binary B</h3>
+                            <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unmatched to Binary B</h3>
                             <div style="flex:1; overflow:auto;">
                                 <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
@@ -222,6 +222,21 @@ function initResizableCards() {
             throw new Error(errMsg);
         }
         const data = await res.json();
+        
+        window.filenameCache = window.filenameCache || {};
+        if (data.file_metadata_a) window.filenameCache[md5a] = data.file_metadata_a.file_name || 'unknown';
+        if (data.file_metadata_b) window.filenameCache[md5b] = data.file_metadata_b.file_name || 'unknown';
+
+        // Dynamically update breadcrumbs with actual file names
+        const nameA = window.filenameCache[md5a];
+        const nameB = window.filenameCache[md5b];
+        const breadcrumbItems = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
+        if (breadcrumbItems.length >= 4) {
+            const sourceSpan = breadcrumbItems[2].querySelector('span');
+            if (sourceSpan) sourceSpan.innerText = nameA;
+            const vsSpan = breadcrumbItems[3].querySelector('span');
+            if (vsSpan) vsSpan.innerText = `VS ${nameB}`;
+        }
         
         // Render Summary
         const scoreVal = document.getElementById('bin-sim-score-val');
@@ -489,16 +504,16 @@ function renderBinaryDiffSankey(data) {
 
         let nodeA_unique, nodeC_uniqueA, nodeC_uniqueB, nodeB_unique;
         if (totalUniqueA > 0) {
-            nodeA_unique = getNode('simplified_a_unique', `A Unique (${totalUniqueA} ${metricSuffix})`, '#f92672');
+            nodeA_unique = getNode('simplified_a_unique', `A Unmatched (${totalUniqueA} ${metricSuffix})`, '#f92672');
             nodeA_unique.alignOverride = 0;
-            nodeC_uniqueA = getNode('simplified_c_uniqueA', `Unique to A (${sortedUniqueA.length})`, '#f92672');
+            nodeC_uniqueA = getNode('simplified_c_uniqueA', `Unmatched to A (${sortedUniqueA.length})`, '#f92672');
             nodeC_uniqueA.alignOverride = 1;
             links.push({ source: nodeA_unique.index, target: nodeC_uniqueA.index, value: totalUniqueA });
         }
         if (totalUniqueB > 0) {
-            nodeC_uniqueB = getNode('simplified_c_uniqueB', `Unique to B (${sortedUniqueB.length})`, '#66d9ef');
+            nodeC_uniqueB = getNode('simplified_c_uniqueB', `Unmatched to B (${sortedUniqueB.length})`, '#66d9ef');
             nodeC_uniqueB.alignOverride = 1;
-            nodeB_unique = getNode('simplified_b_unique', `B Unique (${totalUniqueB} ${metricSuffix})`, '#66d9ef');
+            nodeB_unique = getNode('simplified_b_unique', `B Unmatched (${totalUniqueB} ${metricSuffix})`, '#66d9ef');
             nodeB_unique.alignOverride = 2;
             links.push({ source: nodeC_uniqueB.index, target: nodeB_unique.index, value: totalUniqueB });
         }
@@ -534,39 +549,43 @@ function renderBinaryDiffSankey(data) {
             }
         });
         
-        // 2. Unique to A Clusters
+        // 2. Unmatched to A Functions
         sortedUniqueA.forEach(u => {
-            const cNode = getNode('cluster_' + u.cluster_uuid, u.cluster_name, '#f92672');
-            cNode.cluster_uuid = u.cluster_uuid;
-            cNode.cluster_name = u.cluster_name;
-            cNode.size = u.funcs.length;
+            const targetNodeId = u.is_clustered ? ('cluster_' + u.cluster_uuid) : 'unclustered_a_group';
+            const targetNodeName = u.is_clustered ? u.cluster_name : 'Unclustered';
+            const cNode = getNode(targetNodeId, targetNodeName, '#f92672');
+            cNode.cluster_uuid = u.is_clustered ? u.cluster_uuid : '';
+            cNode.cluster_name = targetNodeName;
+            cNode.size = (cNode.size || 0) + u.funcs.length;
             cNode.stability = 1.0;
             cNode.cohesion = u.cohesion || 0;
             cNode.avg_features = u.avg_features || 0;
             
             if (u.funcs && u.funcs.length > 0) {
                 const fNames = u.funcs.map(fa => getFuncDisplayName(fa));
-                const fNodeId = 'funcgroup_a_' + u.cluster_uuid;
-                funcParentMap.set(fNodeId, u.cluster_uuid);
+                const fNodeId = 'funcgroup_a_' + (u.is_clustered ? u.cluster_uuid : u.func_id);
+                funcParentMap.set(fNodeId, u.is_clustered ? u.cluster_uuid : 'unclustered_a_group');
                 const fNode = getNode(fNodeId, fNames, '#f92672', u.funcs);
                 links.push({ source: fNode.index, target: cNode.index, value: sumFuncsValue(u.funcs) });
             }
         });
         
-        // 3. Unique to B Clusters
+        // 3. Unmatched to B Functions
         sortedUniqueB.forEach(u => {
-            const cNode = getNode('cluster_' + u.cluster_uuid, u.cluster_name, '#66d9ef');
-            cNode.cluster_uuid = u.cluster_uuid;
-            cNode.cluster_name = u.cluster_name;
-            cNode.size = u.funcs.length;
+            const targetNodeId = u.is_clustered ? ('cluster_' + u.cluster_uuid) : 'unclustered_b_group';
+            const targetNodeName = u.is_clustered ? u.cluster_name : 'Unclustered';
+            const cNode = getNode(targetNodeId, targetNodeName, '#66d9ef');
+            cNode.cluster_uuid = u.is_clustered ? u.cluster_uuid : '';
+            cNode.cluster_name = targetNodeName;
+            cNode.size = (cNode.size || 0) + u.funcs.length;
             cNode.stability = 1.0;
             cNode.cohesion = u.cohesion || 0;
             cNode.avg_features = u.avg_features || 0;
             
             if (u.funcs && u.funcs.length > 0) {
                 const fNames = u.funcs.map(fb => getFuncDisplayName(fb));
-                const fNodeId = 'funcgroup_b_' + u.cluster_uuid;
-                funcParentMap.set(fNodeId, u.cluster_uuid);
+                const fNodeId = 'funcgroup_b_' + (u.is_clustered ? u.cluster_uuid : u.func_id);
+                funcParentMap.set(fNodeId, u.is_clustered ? u.cluster_uuid : 'unclustered_b_group');
                 const fNode = getNode(fNodeId, fNames, '#66d9ef', u.funcs);
                 links.push({ source: cNode.index, target: fNode.index, value: sumFuncsValue(u.funcs) });
             }
@@ -969,6 +988,19 @@ function renderBinSimTables(isFilterChange = false) {
     if (!binSimDataCache || !binSimDataCache.diff) return;
     const data = binSimDataCache;
 
+    if (data.diff.unique_to_a) {
+        data.diff.unique_to_a.forEach(u => {
+            const meta = data.functions_metadata ? data.functions_metadata[u.func_id] : null;
+            u.func_name = meta && meta.name ? meta.name : ('sub_' + u.func_id.split(':').pop());
+        });
+    }
+    if (data.diff.unique_to_b) {
+        data.diff.unique_to_b.forEach(u => {
+            const meta = data.functions_metadata ? data.functions_metadata[u.func_id] : null;
+            u.func_name = meta && meta.name ? meta.name : ('sub_' + u.func_id.split(':').pop());
+        });
+    }
+
     const renderFuncBadge = (fid) => {
         const parts = fid.split(':');
         const entry = parts.pop();
@@ -1121,62 +1153,33 @@ function renderBinSimTables(isFilterChange = false) {
         if (thead && !isFilterChange) {
             thead.innerHTML = `
                 <tr>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Avg Feat <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'count')">Functions <small>${getSortIcon(stateKey, 'count')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'cohesion')">Cohesion <small>${getSortIcon(stateKey, 'cohesion')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
                     <th></th>
                     <th>${filterHtml(prefix, 'feat')}</th>
-                    <th>${filterHtml(prefix, 'c')}</th>
-                    <th>${filterHtml(prefix, 'coh')}</th>
                 </tr>
             `;
-            restoreFilters(prefix, ['feat', 'c', 'coh']);
+            restoreFilters(prefix, ['feat']);
         }
 
         let items = applyFilters(itemsRaw || [], prefix);
         items = sortItems(items, state);
         
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No unique clusters</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
             return;
         }
         tbody.innerHTML = items.map(u => {
-            const cleanName = u.cluster_name.replace(/'/g, "\\'");
-            const escUuid = u.cluster_uuid;
-            const size = u.funcs.length;
-            const cohesion = u.cohesion || 0;
             const avgFeat = u.avg_features || 0;
             return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
                 <td style="padding:10px;">
-                    <div class="clickable" style="font-weight:bold; color:var(--accent);"
-                         onmouseenter="if(window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) { window.parent.showClusterTableTooltipFromIframe(window.name, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}, event); } else if(window.showClusterTableTooltip) { window.showClusterTableTooltip(event, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}); }"
-                         onmousemove="if(window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) { window.parent.moveClusterTableTooltipFromIframe(window.name, event); } else if(window.moveClusterTableTooltip) { window.moveClusterTableTooltip(event); }"
-                         onmouseleave="if(window.parent && window.parent.hideClusterTableTooltipFromIframe && window.parent !== window) { window.parent.hideClusterTableTooltipFromIframe(); } else if(window.hideClusterTableTooltip) { window.hideClusterTableTooltip(); }"
-                         onclick="openClusterView('${escUuid}', '${cleanName}', event)">
-                         ${u.cluster_name}
-                    </div>
-                    <div class="mono dim" style="font-size:0.65rem;">UUID: ${u.cluster_uuid}</div>
+                    ${renderFuncBadge(u.func_id)}
                 </td>
                 <td style="padding:10px; text-align:center;">
-                    <div class="mono dim">${(u.avg_features || 0).toFixed(1)}</div>
-                </td>
-                <td style="padding:10px; text-align:center;">
-                    <div style="margin-bottom:4px; font-weight:bold;">${u.funcs.length}</div>
-                    <div style="display:flex; flex-wrap:wrap; justify-content:center; max-height:60px; overflow-y:auto;">
-                        ${u.funcs.map(renderFuncBadge).join('')}
-                    </div>
-                </td>
-                <td style="padding:10px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:40px;">
-                            <div style="height:100%; background:var(--info); width:${(u.cohesion * 100).toFixed(0)}%"></div>
-                        </div>
-                        <span class="dim">${u.cohesion.toFixed(2)}</span>
-                    </div>
+                    <div class="mono dim">${avgFeat.toFixed(0)}</div>
                 </td>
             </tr>
             `;
@@ -1330,10 +1333,10 @@ function renderBinSimPairs(items) {
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.file_name_a || 'Unknown'}</b>
+                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collection}', '${item.md5_a}', '${safeNameA}', event)">${item.file_name_a || 'Unknown'}</b>
                         </div>
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${item.file_name_b || 'Unknown'}</b>
+                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collection}', '${item.md5_b}', '${safeNameB}', event)">${item.file_name_b || 'Unknown'}</b>
                         </div>
                     </div>
                 </td>

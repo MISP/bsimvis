@@ -2104,6 +2104,53 @@ body.in-iframe #module-view-container {
     border-color: #f92672;
 }
 
+/* UI Button Action overrides to restore colors */
+.ui-button.btn-diff-action {
+    background-color: rgba(253, 151, 31, 0.15);
+    color: #fd971f;
+    border: 1px solid rgba(253, 151, 31, 0.3);
+}
+.ui-button.btn-diff-action:hover {
+    background-color: rgba(253, 151, 31, 0.25);
+    border-color: #fd971f;
+}
+.ui-button.btn-diff-action.active {
+    background-color: #fd971f;
+    color: #000;
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(253, 151, 31, 0.5);
+}
+
+.ui-button.btn-sim-action {
+    background-color: rgba(174, 129, 255, 0.15);
+    color: var(--info);
+    border: 1px solid rgba(174, 129, 255, 0.3);
+}
+.ui-button.btn-sim-action:hover {
+    background-color: rgba(174, 129, 255, 0.25);
+    border-color: var(--info);
+}
+
+.ui-button.btn-code-action {
+    background-color: rgba(102, 217, 239, 0.15);
+    color: #66d9ef;
+    border: 1px solid rgba(102, 217, 239, 0.3);
+}
+.ui-button.btn-code-action:hover {
+    background-color: rgba(102, 217, 239, 0.25);
+    border-color: #66d9ef;
+}
+
+.ui-button.btn-feat-action {
+    background-color: rgba(166, 226, 46, 0.15);
+    color: var(--success);
+    border: 1px solid rgba(166, 226, 46, 0.3);
+}
+.ui-button.btn-feat-action:hover {
+    background-color: rgba(166, 226, 46, 0.25);
+    border-color: var(--success);
+}
+
 
 .clickable-count {
     color: var(--accent);

@@ -138,11 +138,11 @@ window.DiffView = {
                     </div>
                 </div>
 
-                <div id="bsim-scroll" style="display:none; flex:1; overflow:hidden; position:relative;">
+                <div id="bsim-scroll" style="display:none; flex:1; overflow-y:auto; overflow-x:hidden; position:relative;">
                     <div id="bsim-vheight" style="position:absolute; width:1px; top:0; left:0; z-index:-1;"></div>
-                    <div id="bsim-sticky" style="display:flex; height:100%; width:100%;">
+                    <div id="bsim-sticky" style="display:flex; height:100%; width:100%; position:sticky; top:0;">
                         <div style="flex:1; position:relative; display:flex; flex-direction:column; overflow:hidden;">
-                            <div class="diff-pane" style="height:100%; overflow:auto;">
+                            <div class="diff-pane" style="height:100%; overflow-x:auto; overflow-y:hidden;">
                                 <div id="bsim-left-content" class="bsim-vcontent c-code-container" style="position:relative;"></div>
                             </div>
                             <button class="floating-copy-btn" title="Copy left code with colors" onclick="copyDiffCode('l', this)">
@@ -150,7 +150,7 @@ window.DiffView = {
                             </button>
                         </div>
                         <div style="flex:1; position:relative; display:flex; flex-direction:column; overflow:hidden; border-left:1px solid #3e3d32;">
-                            <div class="diff-pane" style="height:100%; overflow:auto;">
+                            <div class="diff-pane" style="height:100%; overflow-x:auto; overflow-y:hidden;">
                                 <div id="bsim-right-content" class="bsim-vcontent c-code-container" style="position:relative;"></div>
                             </div>
                             <button class="floating-copy-btn" title="Copy right code with colors" onclick="copyDiffCode('r', this)">

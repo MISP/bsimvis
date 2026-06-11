@@ -343,6 +343,22 @@ async function startBatchUpload() {
     
     document.getElementById('start-upload-btn').innerHTML = '<i class="fa-solid fa-check"></i> Finished';
 
+    // Update the URL and Navbar to the new collection context
+    const uploadUrl = `/collections/${encodeURIComponent(collection)}/upload`;
+    history.pushState(null, '', uploadUrl);
+    if (typeof updateNavbarLinks === 'function') {
+        updateNavbarLinks(collection);
+    }
+    // Update breadcrumbs
+    if (window.Breadcrumbs && typeof getRoutingState === 'function' && typeof routes !== 'undefined') {
+        const routingState = getRoutingState();
+        const segments = window.Breadcrumbs.generate(routingState, routes['upload']);
+        window.Breadcrumbs.render(segments);
+    }
+    // Sync the context data attribute so refreshData doesn't re-render
+    const uploadView = document.getElementById('upload-view-container');
+    if (uploadView) uploadView.dataset.context = collection;
+
     // Show "Go to Collection" button once upload is done
     const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
     const progressContainer = document.getElementById('upload-progress-container');

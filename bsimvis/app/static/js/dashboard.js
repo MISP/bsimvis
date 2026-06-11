@@ -566,7 +566,7 @@ async function refreshData(appendArg = false, force = false) {
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
-    updateUI(viewKey, collection, params, route);
+    updateUI(viewKey, collection, params, route, force);
 
     const isGraphView = params.get('view') === 'graph' || params.get('view') === 'hierarchy' || params.get('view') === 'packing';
     if ((isGraphView && (viewKey === 'function-similarity' || viewKey === 'binary-similarity' || viewKey === 'clusters')) || !route.api) {
@@ -667,7 +667,79 @@ async function refreshData(appendArg = false, force = false) {
     }
 }
 
-function updateUI(viewKey, collection, params, route) {
+function updateNavbarLinks(col) {
+    if (!col) return;
+    
+    const updateNavLink = (id, targetView) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
+
+        let url = `/collections/${encodeURIComponent(col)}/${targetView}`;
+        if (targetView === 'collections') {
+            url = `/collections`;
+        } else if (targetView === 'jobs') {
+            url = `/jobs?collection=${encodeURIComponent(col)}`;
+        } else if (targetView === 'files') {
+            url = `/collections/${encodeURIComponent(col)}/files`;
+        } else if (targetView === 'functions') {
+            url = `/collections/${encodeURIComponent(col)}/functions`;
+        } else if (targetView === 'batches') {
+            url = `/collections/${encodeURIComponent(col)}/batches`;
+        } else if (targetView === 'features-global') {
+            url = `/collections/${encodeURIComponent(col)}/features`;
+        } else if (targetView === 'upload') {
+            url = `/collections/${encodeURIComponent(col)}/upload`;
+        } else if (targetView === 'function-similarity') {
+            url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
+        } else if (targetView === 'binary-similarity') {
+            url = `/collections/${encodeURIComponent(col)}/files/similarities`;
+        } else if (targetView === 'clusters') {
+            url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
+        } else if (targetView === 'bin-clusters') {
+            url = `/collections/${encodeURIComponent(col)}/files/clusters`;
+        }
+
+        if (saved) {
+            const savedParams = new URLSearchParams(saved);
+            if (targetView !== 'jobs') {
+                savedParams.delete('collection'); // Already in path
+                if (savedParams.toString()) url += `?${savedParams.toString()}`;
+            } else {
+                savedParams.set('collection', col);
+                url = `/jobs?${savedParams.toString()}`;
+            }
+        }
+        el.href = url;
+
+        // Intercept click for SPA navigation
+        el.onclick = (e) => {
+            if (e.ctrlKey || e.metaKey) return;
+            e.preventDefault();
+            const currentState = getRoutingState();
+            if (currentState.viewKey === targetView) {
+                clearFilters();
+            } else {
+                Nav.openPath(url, e);
+            }
+        };
+    };
+
+    updateNavLink('nav-collections', 'collections');
+    updateNavLink('nav-batches', 'batches');
+    updateNavLink('nav-files', 'files');
+    updateNavLink('nav-functions', 'functions');
+    updateNavLink('nav-features-global', 'features-global');
+    updateNavLink('nav-function-similarity', 'function-similarity');
+    updateNavLink('nav-clusters', 'clusters');
+    updateNavLink('nav-bin-clusters', 'bin-clusters');
+    updateNavLink('nav-binary-similarity', 'binary-similarity');
+    updateNavLink('nav-upload', 'upload');
+    updateNavLink('nav-jobs', 'jobs');
+}
+window.updateNavbarLinks = updateNavbarLinks;
+
+function updateUI(viewKey, collection, params, route, force = false) {
     showDashboardActions();
     const routingState = getRoutingState();
     if (window.Breadcrumbs) {
@@ -724,9 +796,18 @@ function updateUI(viewKey, collection, params, route) {
         if (tableWrap) tableWrap.style.display = 'none';
         if (tableBodyWrap) tableBodyWrap.style.display = 'none';
         if (pag) pag.style.display = 'none';
-        document.getElementById('upload-view-container').style.display = 'block';
-        if (typeof renderUploadView === 'function') renderUploadView(params);
-    } else if (viewKey === 'binary-similarity') {
+        
+        const uploadView = document.getElementById('upload-view-container');
+        const isAlreadyVisible = uploadView.style.display === 'block';
+        const currentContext = uploadView.dataset.context;
+        uploadView.style.display = 'block';
+
+        if ((!isAlreadyVisible || force || currentContext !== collection) && typeof renderUploadView === 'function') {
+            uploadView.dataset.context = collection;
+            renderUploadView(params);
+        }
+    }
+ else if (viewKey === 'binary-similarity') {
         document.getElementById('header-top-actions').style.display = 'flex';
     } else {
         document.getElementById('header-top-actions').style.display = 'flex';
@@ -759,71 +840,7 @@ function updateUI(viewKey, collection, params, route) {
     }
 
     if (col) {
-        const updateNavLink = (id, targetView) => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
-
-            let url = `/collections/${encodeURIComponent(col)}/${targetView}`;
-            if (targetView === 'collections') {
-                url = `/collections`;
-            } else if (targetView === 'jobs') {
-                url = `/jobs?collection=${encodeURIComponent(col)}`;
-            } else if (targetView === 'files') {
-                url = `/collections/${encodeURIComponent(col)}/files`;
-            } else if (targetView === 'functions') {
-                url = `/collections/${encodeURIComponent(col)}/functions`;
-            } else if (targetView === 'batches') {
-                url = `/collections/${encodeURIComponent(col)}/batches`;
-            } else if (targetView === 'features-global') {
-                url = `/collections/${encodeURIComponent(col)}/features`;
-            } else if (targetView === 'upload') {
-                url = `/collections/${encodeURIComponent(col)}/upload`;
-            } else if (targetView === 'function-similarity') {
-                url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
-            } else if (targetView === 'binary-similarity') {
-                url = `/collections/${encodeURIComponent(col)}/files/similarities`;
-            } else if (targetView === 'clusters') {
-                url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
-            } else if (targetView === 'bin-clusters') {
-                url = `/collections/${encodeURIComponent(col)}/files/clusters`;
-            }
-
-            if (saved) {
-                const savedParams = new URLSearchParams(saved);
-                if (targetView !== 'jobs') {
-                    savedParams.delete('collection'); // Already in path
-                    if (savedParams.toString()) url += `?${savedParams.toString()}`;
-                } else {
-                    savedParams.set('collection', col);
-                    url = `/jobs?${savedParams.toString()}`;
-                }
-            }
-            el.href = url;
-
-            // Intercept click for SPA navigation
-            el.onclick = (e) => {
-                if (e.ctrlKey || e.metaKey) return;
-                e.preventDefault();
-                const currentState = getRoutingState();
-                if (currentState.viewKey === targetView) {
-                    clearFilters();
-                } else {
-                    Nav.openPath(url, e);
-                }
-            };
-        };
-
-        updateNavLink('nav-collections', 'collections');
-        updateNavLink('nav-batches', 'batches');
-        updateNavLink('nav-files', 'files');
-        updateNavLink('nav-functions', 'functions');
-        updateNavLink('nav-features-global', 'features-global');
-        updateNavLink('nav-function-similarity', 'function-similarity');
-        updateNavLink('nav-clusters', 'clusters');
-        updateNavLink('nav-bin-clusters', 'bin-clusters');
-        updateNavLink('nav-binary-similarity', 'binary-similarity');
-        updateNavLink('nav-jobs', 'jobs');
+        updateNavbarLinks(col);
     }
 
     if (viewKey === 'function-similarity' && params.get('view') === 'graph') {

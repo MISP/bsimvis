@@ -10,6 +10,79 @@
     --hover: #2d2d2d;
 }
 
+/* ── Breadcrumb ───────────────────────────────────────────── */
+#breadcrumbs-container {
+    background: transparent;
+    border-bottom: none;
+    padding: 0 0 15px 0;
+    margin: 0;
+}
+
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0;
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 500;
+}
+
+.breadcrumb-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--subtle);
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 6px;
+    transition: color 0.15s ease, background-color 0.15s ease;
+    white-space: nowrap;
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.breadcrumb-item i {
+    font-size: 0.9rem;
+    color: var(--subtle);
+    transition: color 0.15s ease;
+}
+
+a.breadcrumb-item:hover {
+    color: var(--accent);
+    background-color: rgba(102, 217, 239, 0.08);
+}
+
+a.breadcrumb-item:hover i {
+    color: var(--accent);
+}
+
+.breadcrumb-item.current {
+    color: var(--text);
+    font-weight: 600;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: default;
+    max-width: 400px;
+}
+
+.breadcrumb-item.current i {
+    color: var(--accent);
+}
+
+.breadcrumb-sep {
+    color: var(--subtle);
+    opacity: 0.5;
+    font-size: 0.7rem;
+    padding: 0 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+/* ── End Breadcrumb ──────────────────────────────────────── */
+
 body {
     background-color: #121212;
     color: #f8f8f2;
@@ -1968,6 +2041,26 @@ table td {
     user-select: none;
 }
 
+/* Iframe / WindowManager Overrides */
+body.in-iframe {
+    padding: 0;
+}
+body.in-iframe #sidebar-container,
+body.in-iframe header,
+body.in-iframe aside.sidebar,
+body.in-iframe #view-header {
+    display: none !important;
+}
+body.in-iframe main {
+    padding: 0 !important;
+}
+body.in-iframe #dashboard-view-container {
+    height: 100vh;
+}
+body.in-iframe #module-view-container {
+    height: 100vh;
+}
+
 .ui-button:hover {
     background: var(--hover);
     border-color: var(--accent);
@@ -2023,3 +2116,5 @@ table td {
     text-decoration: underline;
     cursor: pointer;
 }
+
+

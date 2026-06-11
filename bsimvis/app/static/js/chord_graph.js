@@ -257,19 +257,11 @@ class ChordGraph {
                 const n2 = nodes[d.target.index];
                 // Navigate to binary similarity diff view
                 const { collection } = getRoutingState();
-                const diffUrl = Nav.buildUIUrl(collection, ['diff', `${n1.md5}/${n2.md5}`]);
+                const diffUrl = `/collection/${encodeURIComponent(collection)}/file/${encodeURIComponent(n1.md5)}/vs/${encodeURIComponent(collection)}/${encodeURIComponent(n2.md5)}`;
                 const safeNameA = (n1.name || n1.md5.substring(0,8)).replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 const safeNameB = (n2.name || n2.md5.substring(0,8)).replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 
-                if (event.ctrlKey || event.metaKey) {
-                    window.open(diffUrl, '_blank');
-                } else if (typeof windowManager !== 'undefined') {
-                    windowManager.createWindow(`Bin Diff: ${safeNameA} vs ${safeNameB}`, diffUrl, { type: 'diff' });
-                } else if (window.parent && window.parent.windowManager) {
-                    window.parent.windowManager.createWindow(`Bin Diff: ${safeNameA} vs ${safeNameB}`, diffUrl, { type: 'diff' });
-                } else {
-                    window.location.href = diffUrl;
-                }
+                Nav.openPath(diffUrl, event, { title: `Bin Diff: ${safeNameA} vs ${safeNameB}`, type: 'bin_sim' });
             });
     }
 

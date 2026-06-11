@@ -27,6 +27,11 @@ window.Nav = {
      * @param {string} [options.type] - Window type for windowManager (e.g., 'diff').
      */
     openPath: function(path, event, options = {}) {
+        if (window.parent && window.parent !== window && window.parent.Nav && window.parent.Nav.openPath) {
+            window.parent.Nav.openPath(path, event, options);
+            return;
+        }
+
         if (event) {
             if (typeof event.stopPropagation === 'function') {
                 event.stopPropagation();
@@ -47,30 +52,30 @@ window.Nav = {
 
         if (useFloating) {
             if (typeof windowManager !== 'undefined' && options.title) {
-                windowManager.createWindow(options.title, path, { type: options.type || 'default' });
-                return;
-            }
-
-            // Fallback for parent window manager (if in iframe)
-            if (window.parent && window.parent.windowManager && options.title) {
-                window.parent.windowManager.createWindow(options.title, path, { type: options.type || 'default' });
+                // If it's a relative path starting with /static/, we can often strip that
+                // Or if it's a SPA path, we might want to load it in the iframe
+                windowManager.createWindow(options.title, path, options);
+                if (event && typeof event.preventDefault === 'function') {
+                    event.preventDefault();
+                }
                 return;
             }
         }
 
-        // Default navigation
+        // Default SPA navigation
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+
+        // Handle path navigation
         if (path.startsWith('#')) {
-            // Legacy hash support
+            // Legacy hash navigation
             window.location.hash = path;
         } else {
-            // RESTful path: Check if we are in the main dashboard and should do SPA navigation
-            const parts = path.split('?')[0].split('/').filter(Boolean);
-            const isCollectionDashboard = parts[0] === 'collection' && (parts.length === 2 || parts.length === 3 || (parts[2] === 'search' && parts.length === 4));
-            const isGlobalDashboard = path === '/' || path === '/collections' || path === '/jobs' || path === '/upload';
+            // Check if it's an internal path (relative or same origin)
+            const isInternal = path.startsWith('/') || path.startsWith(window.location.origin);
             
-            const isDashboardPath = isGlobalDashboard || isCollectionDashboard;
-
-            if (isDashboardPath && typeof window.refreshData === 'function') {
+            if (isInternal && typeof window.refreshData === 'function') {
                 history.pushState(null, '', path);
                 window.refreshData();
             } else {
@@ -79,3 +84,10 @@ window.Nav = {
         }
     },
 };
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', () => {
+    if (typeof window.refreshData === 'function') {
+        window.refreshData();
+    }
+});

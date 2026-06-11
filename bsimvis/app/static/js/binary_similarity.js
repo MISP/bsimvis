@@ -43,8 +43,17 @@ function handleIframeMouseLeave(event) {
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
     const collection = params.get('collection') || 'main';
-    const md5a = params.get('md5_a');
-    const md5b = params.get('md5_b');
+    let md5a = params.get('md5_a');
+    let md5b = params.get('md5_b');
+
+    // Parse new RESTful URL: /collection/{coll}/file/{md5_a}/vs/{coll_b}/{md5_b}
+    if (!md5a || !md5b) {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        if (parts[0] === 'collection' && parts[2] === 'file' && parts[4] === 'vs') {
+            md5a = md5a || decodeURIComponent(parts[3]);
+            md5b = md5b || decodeURIComponent(parts[6]);
+        }
+    }
     
     // Set up layout: Header (Selection/Summary) + Body (Sankey / Tables)
     let html = `
@@ -202,7 +211,14 @@ function initResizableCards() {
     
     try {
         const res = await fetch(`/api/bin_sim/diff?collection=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`);
-        if (!res.ok) throw new Error("Failed to fetch diff");
+        if (!res.ok) {
+            let errMsg = "Failed to fetch similarity comparison";
+            try {
+                const errData = await res.json();
+                if (errData && errData.message) errMsg = errData.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+        }
         const data = await res.json();
         
         // Render Summary
@@ -230,8 +246,16 @@ function initResizableCards() {
         
     } catch(err) {
         console.error(err);
-        const scoreVal = document.getElementById('bin-sim-score-val');
-        if (scoreVal) scoreVal.innerHTML = `<span style="color:var(--danger); font-size:0.8rem;">ERR</span>`;
+        if (resultsEl) {
+            resultsEl.style.display = 'flex';
+            resultsEl.innerHTML = `
+                <div style="text-align:center; padding:50px; color:var(--dim); font-size:1.1rem; flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:15px; min-height:300px;">
+                    <i class="fa-solid fa-triangle-exclamation" style="color:#f92672; font-size:3rem;"></i>
+                    <div style="font-weight:bold; color:var(--text);">${err.message}</div>
+                    <div style="font-size:0.85rem; opacity:0.7; max-width:400px; line-height:1.4;">This comparison has not been pre-calculated. You may need to trigger a collection rebuild or run the binary similarity analysis.</div>
+                </div>
+            `;
+        }
     }
 }
 
@@ -1284,10 +1308,10 @@ function renderBinSimPairs(items) {
         let tagsB = Array.isArray(item.file_tags_b) ? item.file_tags_b : [];
         let userTagsB = Array.isArray(item.file_user_tags_b) ? item.file_user_tags_b : [];
         
-        const diffUrl = `/static/bin_sim/index.html?collection=${collection}&md5_a=${item.md5_a}&md5_b=${item.md5_b}`;
+        const diffUrl = `/collection/${collection}/file/${item.md5_a}/vs/${collection}/${item.md5_b}`;
         const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'diff' });`;
+        const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' });`;
 
         html += `
             <tr class="sim-row">
@@ -1360,13 +1384,15 @@ if (typeof window.showFunctionCodeById === 'undefined') {
             if (window.getSelection && window.getSelection().toString().trim()) {
                 return;
             }
-            const url = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
-            if (e && (e.ctrlKey || e.metaKey)) {
-                window.open(url, '_blank');
-                return;
-            }
-            if (typeof windowManager !== 'undefined') {
-                windowManager.createWindow(`Code: ${name}`, url, { type: 'code' });
+            const parts = id.split(':');
+            const col = parts[0] || 'main';
+            const md5 = parts[2];
+            const addr = parts[3];
+            const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;
+            
+            const Nav = window.Nav || (window.parent && window.parent.Nav);
+            if (Nav) {
+                Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
             } else {
                 window.open(url, '_blank');
             }

@@ -178,7 +178,7 @@ function updateLayout() {
         aiPanel.style.right = '0';
         totalOffset += AI_WIDTH;
     } else {
-        aiPanel.style.right = -(AI_WIDTH + 50) + 'px';
+        if (aiPanel) aiPanel.style.right = -(AI_WIDTH + 50) + 'px';
     }
     
     // Notes is to the left of AI
@@ -186,7 +186,7 @@ function updateLayout() {
         notesPanel.style.right = (isAIOpen ? AI_WIDTH : 0) + 'px';
         totalOffset += NOTES_WIDTH;
     } else {
-        notesPanel.style.right = -(NOTES_WIDTH + 50) + 'px';
+        if (notesPanel) notesPanel.style.right = -(NOTES_WIDTH + 50) + 'px';
     }
     
     document.body.style.paddingRight = totalOffset + 'px';
@@ -196,9 +196,14 @@ function updateLayout() {
     if (handleContainer) {
         handleContainer.style.right = totalOffset + 'px';
         
-        // Hide handles in dashboard view if both collapsed
-        const isDashboard = !!document.getElementById('nav-collections');
-        if (isDashboard && !isNotesOpen && !isAIOpen) {
+        // Hide handles if collapsed and not in file/function view
+        let inFuncOrFileView = false;
+        if (typeof window.parseRestfulPath === 'function') {
+            const restful = window.parseRestfulPath();
+            inFuncOrFileView = (restful.view === 'function' || restful.view === 'file');
+        }
+        
+        if (!inFuncOrFileView && !isNotesOpen && !isAIOpen) {
             handleContainer.style.opacity = '0';
             handleContainer.style.pointerEvents = 'none';
         } else {
@@ -208,8 +213,10 @@ function updateLayout() {
     }
     
     // Update handle active states
-    document.getElementById('notes-panel-handle').classList.toggle('active', isNotesOpen);
-    document.getElementById('ai-panel-handle').classList.toggle('active', isAIOpen);
+    const notesHandle = document.getElementById('notes-panel-handle');
+    const aiHandle = document.getElementById('ai-panel-handle');
+    if (notesHandle) notesHandle.classList.toggle('active', isNotesOpen);
+    if (aiHandle) aiHandle.classList.toggle('active', isAIOpen);
 }
 
 function toggleNotesPanel() { if (isNotesOpen) closeNotesPanel(); else openNotesPanel(); }
@@ -731,3 +738,26 @@ window.saveMessageAsNote = saveMessageAsNote;
 window.toggleContentExpand = toggleContentExpand;
 window.showNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
 window.showFileNotePanel = function(id, e) { if (typeof showFileNotes === 'function') showFileNotes(id); };
+
+// Connect layout updates with SPA navigation
+document.addEventListener('DOMContentLoaded', () => {
+    if (typeof window.refreshData === 'function') {
+        const origRefresh = window.refreshData;
+        window.refreshData = async function(...args) {
+            // Check view and collapse panels if navigating away from function/file views
+            let inFuncOrFileView = false;
+            if (typeof window.parseRestfulPath === 'function') {
+                const restful = window.parseRestfulPath();
+                inFuncOrFileView = (restful.view === 'function' || restful.view === 'file');
+            }
+            if (!inFuncOrFileView) {
+                isNotesOpen = false;
+                isAIOpen = false;
+            }
+            const res = await origRefresh.apply(this, args);
+            updateLayout();
+            return res;
+        };
+    }
+    updateLayout();
+});

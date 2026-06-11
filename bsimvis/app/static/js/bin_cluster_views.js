@@ -42,7 +42,7 @@ function getBinHierarchyTooltip() {
                     const members = d.data.runtime_members || [];
                     const file = members[idx];
                     if (file && file.file_id) {
-                        const url = `/static/bin_sim/index.html?collection=${encodeURIComponent(getCurrentCollection())}&md5_a=${encodeURIComponent(file.file_md5)}`;
+                        const url = `/collection/${encodeURIComponent(getCurrentCollection())}/file/${encodeURIComponent(file.file_md5)}`;
                         Nav.openPath(url, event, { title: `File: ${file.file_name || file.file_md5}`, type: 'file' });
                     }
                 }
@@ -497,14 +497,17 @@ class BinClusterHierarchy {
                 const col = getCurrentCollection();
                 if (d.data.is_member) {
                     if (d.data.file_md5) {
-                        Nav.openPath(`#files/sim?collection=${col}&md5=${d.data.file_md5}`, e);
+                        const url = `/collection/${encodeURIComponent(col)}/search/binary-similarity?md5_filter=${encodeURIComponent(d.data.file_md5)}`;
+                        Nav.openPath(url, e, { title: `Sim: ${d.data.file_md5}`, type: 'binary-similarity' });
                     } else {
-                        Nav.openPath(`#files?collection=${col}&q=${encodeURIComponent(d.data.name)}`, e);
+                        const url = `/collection/${encodeURIComponent(col)}/search/files?q=${encodeURIComponent(d.data.name)}`;
+                        Nav.openPath(url, e, { title: `Files: ${d.data.name}`, type: 'files' });
                     }
                     return;
                 }
                 if (d.data.uuid && d.data.uuid !== 'root') {
-                    Nav.openPath(`#files?collection=${col}&bin_cluster_uuid=${d.data.uuid}`, e);
+                    const url = `/collection/${encodeURIComponent(col)}/search/files?bin_cluster_uuid=${encodeURIComponent(d.data.uuid)}`;
+                    Nav.openPath(url, e, { title: `Cluster Files`, type: 'files' });
                 }
             })
             .on("mouseenter", (e, d) => {
@@ -1361,15 +1364,8 @@ class BinClusterPacking {
                 if (d.data.is_member) {
                     if (d.data.file_md5) {
                         const col = getCurrentCollection();
-                        const url = `/collection/${encodeURIComponent(col)}/bin_sim/${encodeURIComponent(d.data.file_md5)}`;
-                        if (typeof navigate === 'function') {
-                            const p = new URLSearchParams();
-                            p.set('md5', d.data.file_md5);
-                            // We don't have a dashboard view for single bin_sim detail yet, so use openPath
-                            Nav.openPath(url, event, { title: `Sim: ${d.data.file_md5}`, type: 'bin_sim' });
-                        } else {
-                            window.location.href = url;
-                        }
+                        const url = `/collection/${encodeURIComponent(col)}/search/binary-similarity?md5_filter=${encodeURIComponent(d.data.file_md5)}`;
+                        Nav.openPath(url, event, { title: `Sim: ${d.data.file_md5}`, type: 'binary-similarity' });
                     }
                     event.stopPropagation();
                     return;

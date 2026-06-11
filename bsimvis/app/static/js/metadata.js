@@ -110,7 +110,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
 
     if (options.showCodeLink) {
         headerActionsHtml += `
-            <a class="btn-code-compact" href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" title="Open Code" 
+            <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const parts = '${fullId}'.split(':'); const url = '/collection/' + encodeURIComponent(parts[0] || 'main') + '/function/' + encodeURIComponent(parts[2]) + '/' + encodeURIComponent(parts[3]); Nav.openPath(url, event, { title: 'Code: ' + parts[3], type: 'function' });" title="Open Code" 
                style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: rgba(102, 217, 239, 0.1); color: var(--accent); border: 1px solid rgba(102, 217, 239, 0.3);">
                <i class="fa-solid fa-code"></i>
             </a>`;
@@ -131,7 +131,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
         const valueColor = (key.includes('address') || key.includes('md5') || key.includes('id') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
         
         if (key === 'bsim_features_count') {
-            valueDisplay = `${val} <button class="btn-icon" onclick="if (window.parent && typeof window.parent.showFeaturePanel === 'function') { window.parent.showFeaturePanel('${fullId}', event); } else if (typeof window.showFeaturePanel === 'function') { window.showFeaturePanel('${fullId}', event); } else { window.location.href = '/function/features/index.html?id=' + encodeURIComponent('${fullId}'); }" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
+            valueDisplay = `${val} <button class="btn-icon" onclick="navigateToFeatures('${fullId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
         }
 
         return `<div class="meta-row" title="${labelText}">
@@ -327,17 +327,7 @@ function navigateToFeatures(id, e) {
     const addr = parts[3];
     const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}/features`;
 
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
-    if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
-        window.parent.showFeaturePanel(id, e);
-    } else if (typeof window.showFeaturePanel === 'function') {
-        window.showFeaturePanel(id, e);
-    } else {
-        window.location.href = url;
-    }
+    Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
 }
 
 function seeSimilar(fullId, e) {
@@ -351,23 +341,9 @@ function seeSimilar(fullId, e) {
     const md5 = parts[2];
     const addr = parts[3];
     
-    const url = `/collection/${encodeURIComponent(col)}/search/similarity?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
+    const url = `/collection/${encodeURIComponent(col)}/search/function-similarity?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
 
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
-
-    if (window.parent && window.parent !== window && typeof window.parent.navigate === 'function') {
-        const params = new URLSearchParams();
-        params.set('md5', md5);
-        params.set('address', addr);
-        params.set('algo', 'unweighted_cosine');
-        window.parent.navigate('function-similarity', params, col);
-    } else {
-        // Standalone view: redirect to main dashboard with restful path
-        window.location.href = url;
-    }
+    Nav.openPath(url, e, { title: `Similar to: ${addr}`, type: 'function-similarity' });
 }
 
 function toggleSection(headerEl) {

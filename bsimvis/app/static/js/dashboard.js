@@ -341,9 +341,91 @@ function clearFilters() {
     }
 }
 
+window.ModuleLoader = {
+    currentModule: null,
+
+    async loadView(viewName, params) {
+        console.log(`Loading view: ${viewName}`, params);
+        
+        const dashboardContainer = document.getElementById('dashboard-view-container');
+        const moduleContainer = document.getElementById('module-view-container');
+        
+        if (dashboardContainer) dashboardContainer.style.display = 'none';
+        if (moduleContainer) {
+            moduleContainer.style.display = 'flex';
+            moduleContainer.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100%; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading View...</div>';
+        }
+
+        if (this.currentModule && typeof this.currentModule.destroy === 'function') {
+            this.currentModule.destroy();
+        }
+
+        const moduleMap = {
+            'function': window.FunctionView,
+            'file': window.FileView,
+            'diff': window.DiffView,
+            'call_graph': window.CallGraphView,
+            'feature': window.FeatureView,
+            'function_features': window.FunctionFeaturesView,
+            'bin_sim': { init: (p) => { if(window.renderBinarySimilarityView) {
+                const searchParams = new URLSearchParams();
+                for(let k in p) if(p[k] !== undefined) searchParams.set(k, p[k]);
+                moduleContainer.innerHTML = '<div id="binary-similarity-container" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>';
+                window.renderBinarySimilarityView(searchParams, 'binary-similarity-container');
+            } } }
+        };
+
+        const module = moduleMap[viewName];
+        if (module && typeof module.init === 'function') {
+            this.currentModule = module;
+            try {
+                await module.init(params, 'module-view-container');
+            } catch (err) {
+                console.error(`Failed to init module ${viewName}:`, err);
+                if (moduleContainer) moduleContainer.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading view: ${err.message}</div>`;
+            }
+        } else {
+            console.error(`Module not found or invalid: ${viewName}`);
+            if (moduleContainer) moduleContainer.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> View module "${viewName}" not found.</div>`;
+        }
+    },
+
+    showDashboard() {
+        if (this.currentModule && typeof this.currentModule.destroy === 'function') {
+            this.currentModule.destroy();
+        }
+        this.currentModule = null;
+
+        const dashboardContainer = document.getElementById('dashboard-view-container');
+        const moduleContainer = document.getElementById('module-view-container');
+        
+        if (moduleContainer) {
+            moduleContainer.style.display = 'none';
+            moduleContainer.innerHTML = '';
+        }
+        if (dashboardContainer) dashboardContainer.style.display = 'flex';
+    }
+};
+
 async function refreshData(appendArg = false, force = false) {
     const append = (appendArg === true);
     const { viewKey, collection, params } = getRoutingState();
+    
+    // Check if we should load a module view
+    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features'].includes(viewKey)) {
+        const stateParams = Object.fromEntries(params);
+        stateParams.collection = collection;
+        stateParams.view = viewKey;
+        if (window.Breadcrumbs) {
+            const segments = window.Breadcrumbs.generate({ viewKey, collection, params }, null);
+            window.Breadcrumbs.render(segments);
+        }
+        await ModuleLoader.loadView(viewKey, stateParams);
+        return;
+    }
+
+    ModuleLoader.showDashboard();
+
     const route = routes[viewKey];
     if (!route) return;
 
@@ -524,6 +606,12 @@ async function refreshData(appendArg = false, force = false) {
 }
 
 function updateUI(viewKey, collection, params, route) {
+    const routingState = getRoutingState();
+    if (window.Breadcrumbs) {
+        const segments = window.Breadcrumbs.generate(routingState, route);
+        window.Breadcrumbs.render(segments);
+    }
+
     const path = viewKey;
     const pathChanged = (viewKey !== lastViewPath);
     lastViewPath = viewKey;
@@ -1874,11 +1962,13 @@ function renderTopCorrelations(items, clustersMap = {}) {
 function showDiffPanel(force = false) {
     if (!force && diffSelection.length < 2) return;
 
-    let url = '/diff/index.html';
+    let url = '/collection/main/diff';
     let label = 'Function Comparison';
 
     if (diffSelection.length === 2) {
-        url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
+        const id1 = diffSelection[0].id;
+        const id2 = diffSelection[1].id;
+        url = buildDiffUrl(id1, id2);
         label = `Diff: ${diffSelection[0].name} vs ${diffSelection[1].name}`;
 
         // Reset queue after opening
@@ -1887,29 +1977,25 @@ function showDiffPanel(force = false) {
         saveDiffQueue();
     }
 
-    windowManager.createWindow(label, url, { type: 'diff' });
+    Nav.openPath(url, null, { title: label, type: 'diff' });
 }
 
 function openDiffDirectly(id1, name1, id2, name2, e) {
-    const p1 = id1.split(':');
-    const col = p1[0];
-    const url = `/collection/${encodeURIComponent(col)}/diff/${encodeURIComponent(normalizeFuncId(id1))}/${encodeURIComponent(normalizeFuncId(id2))}`;
+    const url = buildDiffUrl(id1, id2);
     Nav.openPath(url, e, { title: `Diff: ${name1} vs ${name2}`, type: 'diff' });
 }
 
 function showDiffView() {
-    let url = '/diff/index.html';
+    let url = '/collection/main/diff';
     if (diffSelection.length === 2) {
-        const p1 = diffSelection[0].id.split(':');
-        const col = p1[0];
-        url = `/collection/${encodeURIComponent(col)}/diff/${encodeURIComponent(diffSelection[0].id)}/${encodeURIComponent(diffSelection[1].id)}`;
+        url = buildDiffUrl(diffSelection[0].id, diffSelection[1].id);
 
         // Reset queue after opening in new window
         diffSelection = [];
         updateDiffQueueUI();
         saveDiffQueue();
     }
-    window.open(url, '_blank');
+    Nav.openPath(url, null, { title: 'Function Comparison', type: 'diff' });
 }
 
 function showFunctionCodeById(id, name, lineHash = '', e) {
@@ -2810,13 +2896,7 @@ function showTokenContextMenu(e) {
         if (item) {
             const h = item.dataset.hash;
             const c = item.dataset.col;
-            const url = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
-
-            if (me.ctrlKey || me.metaKey) {
-                window.open(url, '_blank');
-            } else {
-                showGlobalFeaturePanel(h, c);
-            }
+            showGlobalFeaturePanel(h, c, me);
         }
         closeMenu();
     };

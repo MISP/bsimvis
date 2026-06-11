@@ -11,300 +11,218 @@
         crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link rel="stylesheet" href="/css/style.css">
     <link rel="stylesheet" href="/css/logo.css">
-    <script src="/js/navigation.js"></script>
-    <script src="/js/ui_components.js"></script>
-    <script src="/js/tags.js"></script>
-    <script src="/js/notes.js"></script>
+    <script src="/js/navigation.js?v=3"></script>
+    <script src="/js/ui_components.js?v=3"></script>
+    <script src="/js/tags.js?v=3"></script>
+    <script src="/js/notes.js?v=3"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5"></script>
-    <script src="/js/diff_queue.js"></script>
-    <script src="/js/previews.js"></script>
+    <script src="/js/diff_queue.js?v=7"></script>
+    <script src="/js/previews.js?v=3"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
-    <script src="/js/d3_layouts.js"></script>
+    <script src="/js/d3_layouts.js?v=3"></script>
     <script src="https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
     <link rel="stylesheet" href="/css/dashboard.css">
-    <script src="/js/utils.js"></script>
-    <script src="/js/entity_renderer.js"></script>
-    <script src="/js/code_renderer.js"></script>
-    <script src="/js/metadata.js"></script>
-    <script src="/js/table_renderers.js"></script>
-    <script src="/js/similarity_graph.js"></script>
-    <script src="/js/cluster_views.js"></script>
-    <script src="/js/bin_cluster_views.js"></script>
-    <script src="/js/call_graph.js"></script>
-    <script src="/js/binary_similarity.js"></script>
-    <script src="/js/chord_graph.js"></script>
-    <script src="/js/window_manager.js"></script>
-    <script src="/js/upload.js"></script>
-    <script src="/js/context_menu.js"></script>
-    <script src="/js/dashboard.js"></script>
-    <script src="/js/jobs.js"></script>
-    <script src="/js/table_selection.js"></script>
+    <script src="/js/utils.js?v=7"></script>
+    <script src="/js/entity_renderer.js?v=3"></script>
+    <script src="/js/code_renderer.js?v=3"></script>
+    <script src="/js/metadata.js?v=3"></script>
+    <script src="/js/table_renderers.js?v=3"></script>
+    <script src="/js/similarity_graph.js?v=3"></script>
+    <script src="/js/cluster_views.js?v=3"></script>
+    <script src="/js/bin_cluster_views.js?v=3"></script>
+    <script src="/js/call_graph.js?v=3"></script>
+    <script src="/js/binary_similarity.js?v=7"></script>
+    <script src="/js/chord_graph.js?v=7"></script>
+    <script src="/js/window_manager.js?v=3"></script>
+    <script src="/js/upload.js?v=3"></script>
+    <script src="/js/context_menu.js?v=7"></script>
+    <script src="/js/dashboard.js?v=3"></script>
+    <script src="/js/breadcrumbs.js?v=3"></script>
+    <script src="/js/jobs.js?v=3"></script>
+    <script src="/js/table_selection.js?v=3"></script>
+    
+    <!-- View Modules -->
+    <script src="/js/views/function_view.js?v=3"></script>
+    <script src="/js/views/file_view.js?v=3"></script>
+    <script src="/js/views/diff_view.js?v=7"></script>
+    <script src="/js/views/call_graph_view.js?v=3"></script>
+    <script src="/js/views/feature_view.js?v=3"></script>
+    <script src="/js/views/function_features_view.js?v=3"></script>
 </head>
 
 <body>
 
     <div id="sidebar-container"></div>
 
-    <main>
-        <div class="header">
-            <div class="header-top">
-                <div style="display:flex; align-items:center; gap:15px;">
-                    <div style="display:flex; align-items:center; gap:10px;">
-                        <h1 id="view-title" style="margin:0">Dashboard</h1>
-                        <span id="view-collection-badge" class="badge"
-                            style="display:none; font-size:0.8rem; background:var(--card-bg); color:var(--accent); border:1px solid var(--border);"></span>
-                    </div>
-                    <span id="view-total" class="badge"
-                        style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
-                    <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
-                </div>
-                <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
-                    <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-                    <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-
-                    <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
-                        title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
-                        <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
-                    </button>
-
-                    <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
-                        <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
-                    </button>
-
-                    <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
-                        <i class="fa-solid fa-trash-can"></i> Clear
-                    </button>
-                    <div class="view-history-container" style="position:relative;">
-                        <button id="view-history-btn" class="top-action-btn" title="View Search History">
-                            <i class="fa-solid fa-clock-rotate-left"></i> History
-                        </button>
-                        <div id="view-history-dropdown" class="history-dropdown view-history-dropdown"
-                            style="display:none;"></div>
-                    </div>
-                    <div class="export-dropdown-container" id="export-dropdown-container"
-                        style="position:relative; display:none;">
-                        <button id="export-btn" class="top-action-btn" title="Export Results"
-                            onclick="toggleExportDropdown(event)">
-                            <i class="fa-solid fa-download" style="color:var(--accent);"></i>
-                        </button>
-                        <div id="export-dropdown" class="history-dropdown view-history-dropdown"
-                            style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
-                            <div class="history-dropdown-title" style="color:var(--accent);">Export Options</div>
-                            <a href="#"
-                                onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();"
-                                class="history-item"
-                                style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
-                                <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as
-                                CSV
-                            </a>
-                            <a href="#"
-                                onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();"
-                                class="history-item"
-                                style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
-                                <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as
-                                JSON
-                            </a>
+    <main id="main-content">
+        <div id="breadcrumbs-container"></div>
+        <div id="dashboard-view-container" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+            <div class="header">
+                <div class="header-top">
+                    <div style="display:flex; align-items:center; gap:15px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <h1 id="view-title" style="margin:0">Dashboard</h1>
+                            <span id="view-collection-badge" class="badge"
+                                style="display:none; font-size:0.8rem; background:var(--card-bg); color:var(--accent); border:1px solid var(--border);"></span>
                         </div>
+                        <span id="view-total" class="badge"
+                            style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
+                        <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation" style="color:#ffab2e; display:none; cursor:help; font-size: 0.9rem;" title="Pool Truncated"></i>
+                        <i id="limit-warn-icon" class="fa-solid fa-circle-info" style="color:#60a5fa; display:none; cursor:help; font-size: 0.9rem;" title="Result Limit Reached"></i>
+                        <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
                     </div>
-                    <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
-                        title="Toggle Filters">
-                        <i class="fa-solid fa-filter"></i> Filters
-                    </button>
-                    <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
-                        title="Toggle Search Area">
-                        <i class="fa-solid fa-magnifying-glass"></i> Search
-                    </button>
-                    <button onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
-                        <i class="fa-solid fa-gear"></i>
+                    <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
+                        <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+                        <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+
+                        <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
+                            title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
+                            <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
+                        </button>
+
+                        <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
+                            <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
+                        </button>
+
+                        <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
+                            <i class="fa-solid fa-trash-can"></i> Clear
+                        </button>
+                        <div class="view-history-container" style="position:relative;">
+                            <button id="view-history-btn" class="top-action-btn" title="View Search History">
+                                <i class="fa-solid fa-clock-rotate-left"></i> History
+                            </button>
+                            <div id="view-history-dropdown" class="history-dropdown view-history-dropdown"
+                                style="display:none;"></div>
+                        </div>
+                        <div class="export-dropdown-container" id="export-dropdown-container"
+                            style="position:relative; display:none;">
+                            <button id="export-btn" class="top-action-btn" title="Export Results"
+                                onclick="toggleExportDropdown(event)">
+                                <i class="fa-solid fa-download" style="color:var(--accent);"></i>
+                            </button>
+                            <div id="export-dropdown" class="history-dropdown view-history-dropdown"
+                                style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
+                                <div class="history-dropdown-title" style="color:var(--accent);">Export Options</div>
+                                <a href="#"
+                                    onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();"
+                                    class="history-item"
+                                    style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                    <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as
+                                    CSV
+                                </a>
+                                <a href="#"
+                                    onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();"
+                                    class="history-item"
+                                    style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                    <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as
+                                    JSON
+                                </a>
+                            </div>
+                        </div>
+                        <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
+                            title="Toggle Filters">
+                            <i class="fa-solid fa-filter"></i> Filters
+                        </button>
+                        <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
+                            title="Toggle Search Area">
+                            <i class="fa-solid fa-magnifying-glass"></i> Search
+                        </button>
+                        <button onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
+                            <i class="fa-solid fa-gear"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="search-area"></div>
+            </div>
+
+            <!-- UI Settings Panel -->
+            <div id="ui-settings-panel"
+                style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h3 style="margin:0; font-size:1rem; color:var(--accent);">UI Settings</h3>
+                    <button onclick="toggleUISettings()"
+                        style="background:none; border:none; color:var(--dim); cursor:pointer;"><i
+                            class="fa-solid fa-times"></i></button>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
+                    <input type="checkbox" id="param-color-tags" onchange="updateUIParams()">
+                    <label style="font-size:0.8rem;">Color by Tags</label>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
+                    <input type="checkbox" id="param-include-headers" onchange="updateUIParams()">
+                    <label style="font-size:0.8rem;">Include Headers in Copy</label>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
+                    <input type="checkbox" id="param-use-floating-windows" onchange="updateUIParams()">
+                    <label style="font-size:0.8rem;">Use Floating Windows</label>
+                </div>
+
+                <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                    <button onclick="resetColumnWidths()" class="settings-panel-btn">
+                        <i class="fa-solid fa-arrows-left-right"></i> Reset Column Widths
                     </button>
                 </div>
             </div>
-            <div id="search-area"></div>
+
+            <div id="grid-container" style="flex:1; display:flex; flex-direction:column; overflow:hidden; position:relative;">
+                <div id="grid-header" style="flex-shrink:0;"></div>
+                <div id="grid-body" style="flex:1; overflow:hidden; display:flex; flex-direction:column; position:relative;">
+                    
+                    <div id="table-wrap" class="table-container">
+                        <div class="table-header-wrap">
+                            <table id="data-table-header">
+                                <colgroup id="table-colgroup-header"></colgroup>
+                                <thead id="table-head"></thead>
+                            </table>
+                        </div>
+                        <div id="table-body-wrap" class="table-body-wrap">
+                            <table id="data-table">
+                                <colgroup id="table-colgroup"></colgroup>
+                                <tbody id="table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="loader" style="display:none;">
+                        <i class="fa-solid fa-arrows-rotate fa-spin"></i> Loading...
+                    </div>
+
+                    <div id="graph-view-container" style="display: none; flex: 1; flex-direction: column; position: relative; min-height: 500px;">
+                        <div id="bk-similarity-plot" style="flex: 1; width: 100%; height: 100%;"></div>
+                        <div id="graph-loading-overlay">
+                            <div class="spinner-graph"></div>
+                            <div class="graph-loading-content">
+                                <span id="graph-loading-text"></span>
+                                <span id="graph-stream-info"></span>
+                            </div>
+                            <button id="graph-stop-btn" class="top-action-btn danger-btn" style="display:none; pointer-events: auto; margin-left: 10px; font-size: 0.75rem; padding: 4px 8px;">Stop</button>
+                        </div>
+                    </div>
+
+                    <div id="hierarchy-view-container" style="display: none; flex: 1; min-height: 500px; position: relative;"></div>
+                    <div id="packing-view-container" style="display: none; flex: 1; min-height: 500px; position: relative;"></div>
+                    <div id="chord-view-container" style="display: none; flex: 1; min-height: 500px; position: relative;"></div>
+                    <div id="upload-view-container" style="display: none; flex: 1; flex-direction: column; overflow: hidden;"></div>
+                    <div id="binary-density-view-container" style="display: none;"></div>
+
+                </div>
+                <div id="grid-footer" style="flex-shrink:0;">
+                    <div id="pagination-container"></div>
+                </div>
+            </div>
         </div>
 
-        <!-- UI Settings Panel -->
-        <div id="ui-settings-panel"
-            style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                <h3 style="margin:0; font-size:1rem; color:var(--accent);">UI Settings</h3>
-                <button onclick="toggleUISettings()"
-                    style="background:none; border:none; color:var(--dim); cursor:pointer;"><i
-                        class="fa-solid fa-times"></i></button>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
-                <input type="checkbox" id="param-color-tags" onchange="updateUIParams()">
-                <label style="font-size:0.8rem;">Color by Tags</label>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
-                <input type="checkbox" id="param-include-headers" onchange="updateUIParams()">
-                <label style="font-size:0.8rem;">Include Headers in Copy</label>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
-                <input type="checkbox" id="param-use-floating-windows" onchange="updateUIParams()">
-                <label style="font-size:0.8rem;">Use Floating Windows</label>
-            </div>
-
-            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
-                <button onclick="resetColumnWidths()" class="settings-panel-btn">
-                    <i class="fa-solid fa-arrows-left-right"></i> Reset Column Widths
-                </button>
-            </div>
-        </div>
-
-
-        <div class="table-container" id="table-view-container" style="display: flex; flex-direction: column;">
-            <div id="table-wrap" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
-                <div class="table-header-wrap">
-                    <table id="data-table-header" style="table-layout:fixed; width:100%;">
-                        <colgroup id="table-colgroup-header"></colgroup>
-                        <thead id="table-head"></thead>
-                    </table>
-                </div>
-                <div class="table-body-wrap" id="table-body-wrap">
-                    <table id="data-table" style="table-layout:fixed; width:100%;">
-                        <colgroup id="table-colgroup"></colgroup>
-                        <tbody id="table-body"></tbody>
-                    </table>
-                    <div id="pagination-container" class="load-more-container"></div>
-                </div>
-            </div>
-            <div id="loader">Loading...</div>
-
-            <div id="graph-view-container"
-                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#121212; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
-                <div id="graph-loading-overlay">
-                    <div class="spinner-graph"></div>
-                    <div class="graph-loading-content">
-                        <div id="graph-loading-text">Initializing Map...</div>
-                        <div id="graph-stream-info"></div>
-                    </div>
-                </div>
-                <div class="graph-settings"
-                    style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.8); padding:10px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:10px; backdrop-filter:blur(5px); width: 150px;">
-                    <div class="graph-setting-item" style="align-items: center;">
-                        <label style="margin-bottom: 5px;">Profile</label>
-                        <div class="view-toggle" id="profile-toggle"
-                            style="margin-left: 0; width: 100%; box-sizing: border-box; justify-content: space-around;">
-                            <button class="view-btn active" onclick="window.graphInstance.applyProfile('default')"
-                                data-profile="default" title="Default View">Def</button>
-                            <button class="view-btn" onclick="window.graphInstance.applyProfile('func_tags')"
-                                data-profile="func_tags" title="Func Tags View">Func</button>
-                            <button class="view-btn" onclick="window.graphInstance.applyProfile('sim_tags')"
-                                data-profile="sim_tags" title="Sim Tags View">Sim</button>
-                        </div>
-                    </div>
-                    <div class="graph-setting-item">
-                        <label>Show Label</label>
-                        <select id="graph-show-label" onchange="window.graphInstance.refreshColors()">
-                            <option value="none">None</option>
-                            <option value="func_name">Function Name</option>
-                            <option value="file_name">File Name</option>
-                            <option value="func_tag">Function Tag</option>
-                            <option value="file_tag">File Tag</option>
-                        </select>
-                    </div>
-
-                    <div id="graph-more-options-toggle"
-                        style="cursor:pointer; font-size:0.75rem; color:var(--accent); text-align:center; padding-top:5px; border-top:1px solid var(--border);"
-                        onclick="const extra = document.getElementById('graph-extra-settings'); extra.style.display = extra.style.display === 'none' ? 'flex' : 'none'; this.innerText = extra.style.display === 'none' ? 'More options ▾' : 'Fewer options ▴';">
-                        More options ▾
-                    </div>
-
-                    <div id="graph-extra-settings" style="display:none; flex-direction:column; gap:10px;">
-                        <div class="graph-setting-item">
-                            <label>Binary</label>
-                            <select id="graph-color-binary" onchange="window.graphInstance.refreshColors()">
-                                <option value="binary">Default</option>
-                                <option value="file_tag">File Tag</option>
-                            </select>
-                        </div>
-                        <div class="graph-setting-item">
-                            <label>Function</label>
-                            <select id="graph-color-function" onchange="window.graphInstance.refreshColors()">
-                                <option value="binary">Default</option>
-                                <option value="func_tag">Function Tag</option>
-                                <option value="file_tag">File Tag</option>
-                            </select>
-                        </div>
-                        <div class="graph-setting-item">
-                            <label>Similarity</label>
-                            <select id="graph-color-sim" onchange="window.graphInstance.refreshColors()">
-                                <option value="gradient">Gradient Default</option>
-                                <option value="sim_tag">Sim Tag</option>
-                                <option value="func_tag">Gradient Func Tag</option>
-                                <option value="file_tag">Gradient File Tag</option>
-                            </select>
-                        </div>
-                        <div class="graph-setting-item">
-                            <label>Tension</label>
-                            <input type="range" id="graph-bundle-tension" min="0" max="1" step="0.05" value="0.85"
-                                style="width:100%" oninput="window.graphInstance.refreshColors()">
-                        </div>
-                        <div class="graph-setting-item">
-                            <label>Link Width</label>
-                            <input type="range" id="graph-link-width" min="0.1" max="5" step="0.1" value="1.0"
-                                style="width:100%" oninput="window.graphInstance.refreshColors()">
-                        </div>
-                        <div class="graph-setting-item" style="flex-direction:row; align-items:center; gap:8px;">
-                            <input type="checkbox" id="graph-scale-width" checked
-                                onchange="window.graphInstance.refreshColors()">
-                            <label style="margin-bottom:0">Scale by Score</label>
-                        </div>
-                    </div>
-                </div>
-                <div id="bk-similarity-plot" style="width:100%; height:100%;"></div>
-                <div class="graph-controls">
-
-                    <button id="graph-stop-btn" class="btn-graph stop" style="display:none">Stop Load</button>
-                </div>
-            </div>
-
-            <div id="hierarchy-view-container"
-                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
-            </div>
-
-            <div id="packing-view-container"
-                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
-            </div>
-
-            <div id="upload-view-container"
-                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow-y:auto; margin: 10px; position:relative; padding: 30px;">
-            </div>
-
-            <div id="binary-similarity-container"
-                style="display:none; flex: 1; flex-direction:column; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow-y:auto; margin: 10px; position:relative;">
-            </div>
-
-            <div id="chord-view-container"
-                style="display:none; flex: 1; min-height: 400px; border:1px solid var(--border); background:#0d0f14; border-radius:4px; overflow:hidden; margin: 10px; position:relative;">
-            </div>
-
+        <div id="module-view-container" style="display: none; flex: 1; flex-direction: column; overflow: hidden; height: 100%;">
+            <!-- Dynamic view modules injected here -->
         </div>
     </main>
 
-    <!-- Extracted script block 1 -->
-
-    <div id="code-preview-tooltip"></div>
-    <div id="token-tooltip"></div>
-    <div id="diff-preview-tooltip"></div>
-    <div id="hierarchy-tooltip"
-        style="position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;">
-    </div>
-
-
-    <div id="window-tray"></div>
-    <div id="notification-container"
-        style="position: fixed; bottom: 60px; right: 20px; z-index: 100000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;">
-    </div>
-
-
-    <!-- Extracted script block 2 -->
-    <div id="job-details-modal" class="modal-overlay" style="display:none;">
-        <div class="modal-content" style="max-width: 800px; width: 90%;">
+    <div id="job-details-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
             <div class="modal-header">
-                <h3 id="job-modal-title">Job Details</h3>
-                <button class="close-btn" onclick="closeJobModal()">&times;</button>
+                <h3 id="job-modal-title">Processing Jobs</h3>
+                <span class="close" onclick="closeJobModal()">&times;</span>
             </div>
             <div id="job-modal-body" class="modal-body"></div>
             <div class="modal-footer">

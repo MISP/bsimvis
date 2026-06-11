@@ -24,6 +24,26 @@ function normalizeFuncId(id) {
     return id;
 }
 
+function buildDiffUrl(id1, id2) {
+    const n1 = normalizeFuncId(id1);
+    const n2 = normalizeFuncId(id2);
+    if (!n1 || !n2) return '/collection/main/function/x/x/vs/collection/main/x/x';
+    const p1 = n1.split(':');
+    const p2 = n2.split(':');
+    if (p1.length < 4 || p2.length < 4) return '/collection/main/function/x/x/vs/collection/main/x/x';
+    const collA = p1[0] || 'main';
+    const md5A = p1[2];
+    const addrA = p1[3];
+    const collB = p2[0] || 'main';
+    const md5B = p2[2];
+    const addrB = p2[3];
+    return `/collection/${encodeURIComponent(collA)}/function/${encodeURIComponent(md5A)}/${encodeURIComponent(addrA)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}/${encodeURIComponent(addrB)}`;
+}
+
+function buildFileDiffUrl(collA, md5A, collB, md5B) {
+    return `/collection/${encodeURIComponent(collA)}/file/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
+}
+
 function getParentEvent(e) {
     if (window.parent && window.parent !== window && window.frameElement) {
         const rect = window.frameElement.getBoundingClientRect();
@@ -128,23 +148,17 @@ function addToFileDiff(id, name, event) {
         const itemB = fileDiffSelection[1];
         const md5a = itemA.id.split(':').pop();
         const md5b = itemB.id.split(':').pop();
+        const collA = itemA.id.split(':')[0] || 'main';
+        const collB = itemB.id.split(':')[0] || 'main';
         
         fileDiffSelection = [];
         saveFileDiffQueue();
         updateFileDiffQueueUI();
         
-        const url = `/static/bin_sim/index.html?collection=${collection}&md5_a=${md5a}&md5_b=${md5b}`;
+        const url = buildFileDiffUrl(collA, md5a, collB, md5b);
         const title = `Binary Diff: ${itemA.name} vs ${itemB.name}`;
 
-        if (event && (event.ctrlKey || event.metaKey)) {
-            window.open(url, '_blank');
-        } else if (window.windowManager) {
-            window.windowManager.createWindow(title, url, { type: 'diff' });
-        } else if (window.parent && window.parent.windowManager) {
-            window.parent.windowManager.createWindow(title, url, { type: 'diff' });
-        } else {
-            window.open(url, '_blank');
-        }
+        Nav.openPath(url, event, { title, type: 'bin_sim' });
     }
 }
 
@@ -177,7 +191,7 @@ function updateDiffQueueUI() {
                     <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
                 </span>`;
         } else {
-            const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff()" style="background:#000; color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
+            const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff(event)" style="background:#000; color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
             status.innerHTML = `
                 <span class="badge diff-queue-badge" style="background:var(--success); color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(166,226,46,0.4);">
                     <span>±</span> 2/2 Ready: ${queue[0].name} vs ${queue[1].name}
@@ -285,20 +299,14 @@ function updateFileDiffQueueUI() {
 
 }
 
-function openStandaloneDiff() {
+function openStandaloneDiff(e) {
     try {
         const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
         if (queue.length < 2) return;
-        const url = `/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`;
+        const url = buildDiffUrl(queue[0].id, queue[1].id);
         const title = `Diff: ${queue[0].name} vs ${queue[1].name}`;
         
-        if (window.windowManager) {
-            window.windowManager.createWindow(title, url, { type: 'diff' });
-        } else if (window.parent && window.parent.windowManager) {
-            window.parent.windowManager.createWindow(title, url, { type: 'diff' });
-        } else {
-            window.open(url, '_blank');
-        }
+        Nav.openPath(url, e, { title: title, type: 'diff' });
         clearDiffSelection();
     } catch(e) {}
 }

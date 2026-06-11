@@ -133,6 +133,9 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
         if (key === 'bsim_features_count') {
             valueDisplay = `${val} <button class="btn-icon" onclick="navigateToFeatures('${fullId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
         }
+        if (key === 'file_name') {
+            valueDisplay = `<b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${val.replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${val.replace(/'/g, "\\'")}', type: 'file'}); }">${val}</b>`;
+        }
 
         return `<div class="meta-row" title="${labelText}">
             <span class="meta-label">${prefix}${labelText}</span>
@@ -220,7 +223,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
             <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); color: #ddd; margin-top: 6px;">
                 <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;">
                     <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${fileMd5}</span>
-                    <span><b style="font-size: 1rem; color: #aaa; font-family: 'Inter', sans-serif;">${m['file_name'] || 'N/A'}</b></span>
+                    <span><b style="font-size: 1rem; color: var(--accent); font-family: 'Inter', sans-serif; cursor: pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${(m['file_name'] || '').replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${(m['file_name'] || '').replace(/'/g, "\\'")}', type: 'file'}); }">${m['file_name'] || 'N/A'}</b></span>
                     <div style="display: flex; align-items: center; overflow: hidden; margin-left: 5px;">
                         ${fileTagsHtml}
                     </div>
@@ -465,7 +468,7 @@ function renderFileMetadata(container, m, fullId, options = {}) {
                      oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)"
                      style="display: flex; align-items: center; flex: 1;">
                     <i class="fa-solid fa-file" style="margin-right: 8px; color: var(--accent);"></i>
-                    <span class="meta-func-name">${fileName}</span>
+                    <span class="meta-func-name"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${fileName.replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${fileName.replace(/'/g, "\\'")}', type: 'file'}); }">${fileName}</b></span>
                     
                     <div class="meta-header-addr mono" style="margin-left: 10px; color: var(--accent); font-size: 0.8rem; opacity: 0.8;">
                         # ${fileMd5}

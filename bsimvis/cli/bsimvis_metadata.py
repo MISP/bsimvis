@@ -55,10 +55,7 @@ def run_metadata(host, port, args):
         sys.exit(1)
 
     api_url = f"http://{host}:{port}/api/file/metadata/propagate"
-    payload = {
-        "collection": args.collection,
-        "updates": updates
-    }
+    payload = {"collection": args.collection, "updates": updates}
 
     try:
         print(f"[*] Submitting updates for {len(updates)} files to {api_url}...")

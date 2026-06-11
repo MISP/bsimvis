@@ -29,7 +29,9 @@ class MetadataService:
             return True
 
         total_files = len(updates)
-        logging.info(f"[*] Starting metadata propagation for {total_files} files in collection '{collection}'...")
+        logging.info(
+            f"[*] Starting metadata propagation for {total_files} files in collection '{collection}'..."
+        )
 
         # Check active algorithms directly using exists (O(1) operations) to avoid scanning millions of keys
         algos = set()
@@ -46,7 +48,9 @@ class MetadataService:
             if job_service and job_id:
                 pct = int((idx_file) / total_files * 100)
                 job_service.update_progress(
-                    job_id, pct, f"Propagating metadata for file {md5} ({idx_file+1}/{total_files})"
+                    job_id,
+                    pct,
+                    f"Propagating metadata for file {md5} ({idx_file+1}/{total_files})",
                 )
 
             file_base_id = f"{collection}:file:{md5}"
@@ -55,10 +59,14 @@ class MetadataService:
             # 1. Fetch current file metadata
             old_meta_raw = r.json().get(file_meta_key, "$")
             if not old_meta_raw:
-                logging.warning(f"[-] File metadata not found for {md5} in collection '{collection}'")
+                logging.warning(
+                    f"[-] File metadata not found for {md5} in collection '{collection}'"
+                )
                 continue
 
-            old_meta = old_meta_raw[0] if isinstance(old_meta_raw, list) else old_meta_raw
+            old_meta = (
+                old_meta_raw[0] if isinstance(old_meta_raw, list) else old_meta_raw
+            )
             if isinstance(old_meta, str):
                 old_meta = json.loads(old_meta)
 
@@ -140,11 +148,15 @@ class MetadataService:
             ]
 
             fields_to_propagate = [
-                f for f in changed_fields if f in file_config and "func" in file_config[f]
+                f
+                for f in changed_fields
+                if f in file_config and "func" in file_config[f]
             ]
 
             if func_ids and fields_to_propagate:
-                logging.info(f"[*] Propagating {fields_to_propagate} to {len(func_ids)} functions of {md5}")
+                logging.info(
+                    f"[*] Propagating {fields_to_propagate} to {len(func_ids)} functions of {md5}"
+                )
                 chunk_size = 500
                 for i in range(0, len(func_ids), chunk_size):
                     chunk = func_ids[i : i + chunk_size]
@@ -159,7 +171,9 @@ class MetadataService:
                     for func_id, fmeta_raw in zip(chunk, meta_results):
                         if not fmeta_raw:
                             continue
-                        old_fmeta = fmeta_raw[0] if isinstance(fmeta_raw, list) else fmeta_raw
+                        old_fmeta = (
+                            fmeta_raw[0] if isinstance(fmeta_raw, list) else fmeta_raw
+                        )
                         if isinstance(old_fmeta, str):
                             old_fmeta = json.loads(old_fmeta)
 
@@ -172,11 +186,34 @@ class MetadataService:
                             if old_val != new_val:
                                 f_changed.append(f)
                                 if f in NUM_FIELDS:
-                                    _unindex_num(write_pipe, collection, "func", f, func_id)
-                                    _index_num(write_pipe, collection, "func", f, new_val, func_id)
+                                    _unindex_num(
+                                        write_pipe, collection, "func", f, func_id
+                                    )
+                                    _index_num(
+                                        write_pipe,
+                                        collection,
+                                        "func",
+                                        f,
+                                        new_val,
+                                        func_id,
+                                    )
                                 else:
-                                    _unindex_tag(write_pipe, collection, "func", f, old_val, func_id)
-                                    _index_tag(write_pipe, collection, "func", f, new_val, func_id)
+                                    _unindex_tag(
+                                        write_pipe,
+                                        collection,
+                                        "func",
+                                        f,
+                                        old_val,
+                                        func_id,
+                                    )
+                                    _index_tag(
+                                        write_pipe,
+                                        collection,
+                                        "func",
+                                        f,
+                                        new_val,
+                                        func_id,
+                                    )
 
                         if f_changed:
                             write_pipe.json().set(f"{func_id}:meta", "$", new_fmeta)
@@ -200,7 +237,9 @@ class MetadataService:
 
         # 9. Recalculate affected binary clusters exactly once per cluster
         if affected_clusters_to_recalculate:
-            logging.info(f"[*] Recalculating statistics for {len(affected_clusters_to_recalculate)} affected binary clusters...")
+            logging.info(
+                f"[*] Recalculating statistics for {len(affected_clusters_to_recalculate)} affected binary clusters..."
+            )
             for algo, cid in affected_clusters_to_recalculate:
                 meta_key = f"{collection}:bin_cluster:{algo}:{cid}:meta"
                 if not r.exists(meta_key):
@@ -247,9 +286,7 @@ class MetadataService:
                         names.append(m["file_name"])
                     if m.get("yara"):
                         yara_list.extend(
-                            m["yara"]
-                            if isinstance(m["yara"], list)
-                            else [m["yara"]]
+                            m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
                         )
                     if m.get("avtype"):
                         avtype_list.extend(
@@ -265,9 +302,7 @@ class MetadataService:
                         )
                     if m.get("cc_ip"):
                         ccip_list.extend(
-                            m["cc_ip"]
-                            if isinstance(m["cc_ip"], list)
-                            else [m["cc_ip"]]
+                            m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
                         )
 
                 def build_freq(items):

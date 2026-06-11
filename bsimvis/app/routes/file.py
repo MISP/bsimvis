@@ -214,7 +214,9 @@ def upload_raw_binary():
             )
 
         if "file_metadata_extra" in request.args:
-            analysis_payload["file_metadata_extra"] = json.loads(request.args.get("file_metadata_extra"))
+            analysis_payload["file_metadata_extra"] = json.loads(
+                request.args.get("file_metadata_extra")
+            )
 
         # Trigger Pipeline: Analysis -> Indexing -> Similarity
         pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
@@ -303,9 +305,7 @@ def finalize_batch_upload():
         }
         if min_cohesion is not None:
             cluster_payload["min_cohesion"] = min_cohesion
-        master_tasks.append(
-            (JobType.CLUSTER_BINARIES.value, cluster_payload)
-        )
+        master_tasks.append((JobType.CLUSTER_BINARIES.value, cluster_payload))
 
     # Enrich features must be the absolute last job to run:
     master_tasks.append(
@@ -336,17 +336,14 @@ def update_file_metadata(file_md5):
         if not metadata:
             return {"error": "Missing metadata to update"}, 400
 
-        payload = {
-            "collection": collection,
-            "updates": {file_md5: metadata}
-        }
+        payload = {"collection": collection, "updates": {file_md5: metadata}}
 
         job_id = job_service.create_job(JobType.PROPAGATE_METADATA, payload)
 
         return {
             "status": "processing",
             "job_id": job_id,
-            "message": "Metadata propagation job enqueued."
+            "message": "Metadata propagation job enqueued.",
         }
 
     except Exception as e:
@@ -366,20 +363,16 @@ def bulk_propagate_metadata():
         if not updates:
             return {"error": "Missing updates mapping"}, 400
 
-        payload = {
-            "collection": collection,
-            "updates": updates
-        }
+        payload = {"collection": collection, "updates": updates}
 
         job_id = job_service.create_job(JobType.PROPAGATE_METADATA, payload)
 
         return {
             "status": "processing",
             "job_id": job_id,
-            "message": "Bulk metadata propagation job enqueued."
+            "message": "Bulk metadata propagation job enqueued.",
         }
 
     except Exception as e:
         logging.error(f"Failed bulk metadata propagation: {e}")
         return {"error": str(e)}, 500
-

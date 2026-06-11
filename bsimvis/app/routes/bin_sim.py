@@ -148,9 +148,17 @@ def get_bin_sim():
     file_meta_res = pipe.execute()
 
     if file_meta_res[0]:
-        diff_data["file_metadata_a"] = file_meta_res[0][0] if isinstance(file_meta_res[0], list) else file_meta_res[0]
+        diff_data["file_metadata_a"] = (
+            file_meta_res[0][0]
+            if isinstance(file_meta_res[0], list)
+            else file_meta_res[0]
+        )
     if file_meta_res[1]:
-        diff_data["file_metadata_b"] = file_meta_res[1][0] if isinstance(file_meta_res[1], list) else file_meta_res[1]
+        diff_data["file_metadata_b"] = (
+            file_meta_res[1][0]
+            if isinstance(file_meta_res[1], list)
+            else file_meta_res[1]
+        )
 
     # Retrieve metadata from pipeline
     fids = list(fids)

@@ -5,7 +5,11 @@ import hashlib
 import os
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import query_ids, parse_timestamp, normalize_tags
+from bsimvis.app.services.index_service import (
+    query_ids,
+    parse_timestamp,
+    normalize_tags,
+)
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -447,9 +451,7 @@ def similarity_search():
                                     if val_lower in bucket_str.lower():
                                         matching_buckets.append(bucket_str)
                             except Exception as e:
-                                logging.warning(
-                                    f"SSCAN failed for {registry_key}: {e}"
-                                )
+                                logging.warning(f"SSCAN failed for {registry_key}: {e}")
                                 pass
 
                         if matching_buckets:
@@ -465,21 +467,13 @@ def similarity_search():
                             else:
                                 if len(matching_buckets) == 1:
                                     targets = [
-                                        (
-                                            t.decode()
-                                            if isinstance(t, bytes)
-                                            else str(t)
-                                        )
+                                        (t.decode() if isinstance(t, bytes) else str(t))
                                         for t in r.smembers(matching_buckets[0])
                                     ]
                                 else:
                                     # Use SUNION for multiple buckets
                                     targets = [
-                                        (
-                                            t.decode()
-                                            if isinstance(t, bytes)
-                                            else str(t)
-                                        )
+                                        (t.decode() if isinstance(t, bytes) else str(t))
                                         for t in r.sunion(*matching_buckets)
                                     ]
 
@@ -520,13 +514,9 @@ def similarity_search():
                         for t in targets:
                             # Clean target ID to remove redundant collection:type prefixes
                             clean_t = t
-                            if l_name == "function" and t.startswith(
-                                f"{col}:func:"
-                            ):
+                            if l_name == "function" and t.startswith(f"{col}:func:"):
                                 clean_t = t[len(f"{col}:func:") :]
-                            elif l_name == "binary" and t.startswith(
-                                f"{col}:file:"
-                            ):
+                            elif l_name == "binary" and t.startswith(f"{col}:file:"):
                                 clean_t = t[len(f"{col}:file:") :]
 
                             clean_targets.append(clean_t)
@@ -604,9 +594,7 @@ def similarity_search():
                 path = []
                 for lvl in ["sim", "func", "file"]:
                     if lvl in targets:
-                        path.append(
-                            (lvl, resolve_target_field(source_lvl, lvl, field))
-                        )
+                        path.append((lvl, resolve_target_field(source_lvl, lvl, field)))
                 return [path] if path else []
 
             # Core Filters — fully config-driven
@@ -847,9 +835,7 @@ def similarity_search():
 
             if cross_binary_val is not None:
                 cb_bool = cross_binary_val.lower() == "true"
-                cb_key = (
-                    f"{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
-                )
+                cb_key = f"{col}:sim:is_cross_binary:{'true' if cb_bool else 'false'}"
                 if r.exists(cb_key):
                     groups_raw.append(
                         {
@@ -1157,9 +1143,7 @@ def similarity_search():
                     "score": sim_score,
                     "feat_count": int(feat_count),
                     "sid": sid,
-                    "entry_date": parse_timestamp(
-                        s_data["sim_doc"].get("entry_date")
-                    ),
+                    "entry_date": parse_timestamp(s_data["sim_doc"].get("entry_date")),
                     "meta1": {
                         "file_md5": m1.get("file_md5"),
                         "file_name": m1.get("file_name"),

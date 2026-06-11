@@ -237,7 +237,11 @@ def list_bin_clusters():
                 keywords = [k for k in q.split() if k]
                 match = True
                 for kw in keywords:
-                    yara_values = [item.get("value", "").lower() for item in m.get("yara_distribution", []) if item.get("value")]
+                    yara_values = [
+                        item.get("value", "").lower()
+                        for item in m.get("yara_distribution", [])
+                        if item.get("value")
+                    ]
                     search_targets = [cid, cuuid, cname] + yara_values
                     if not any(kw in v.lower() for v in search_targets):
                         match = False
@@ -250,7 +254,11 @@ def list_bin_clusters():
             if cluster_uuid_q and cluster_uuid_q not in cuuid.lower():
                 continue
             if cluster_name_q:
-                yara_values = [item.get("value", "").lower() for item in m.get("yara_distribution", []) if item.get("value")]
+                yara_values = [
+                    item.get("value", "").lower()
+                    for item in m.get("yara_distribution", [])
+                    if item.get("value")
+                ]
                 search_targets = [cname.lower()] + yara_values
                 if not any(cluster_name_q in v for v in search_targets):
                     continue
@@ -323,13 +331,21 @@ def list_bin_clusters():
 
         reverse = sort_order == "desc"
         if sort_by == "stability":
-            matched_results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("avg_stability", 0.0), reverse=reverse
+            )
         elif sort_by == "count":
-            matched_results.sort(key=lambda x: x.get("member_count", 0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("member_count", 0), reverse=reverse
+            )
         elif sort_by == "cohesion":
-            matched_results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("cohesion_score", 0), reverse=reverse
+            )
         else:
-            matched_results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: str(x.get("cluster_id", "")), reverse=reverse
+            )
 
         total = len(matched_results)
         page_metas = matched_results[offset : offset + limit]
@@ -436,9 +452,7 @@ def list_bin_clusters():
             cluster_res["direct_members"] = [
                 {
                     "id": mid,
-                    "name": member_meta_map.get(mid, {}).get(
-                        "file_name", "Unknown"
-                    ),
+                    "name": member_meta_map.get(mid, {}).get("file_name", "Unknown"),
                     "file_md5": member_meta_map.get(mid, {}).get("file_md5", ""),
                     "language_id": member_meta_map.get(mid, {}).get(
                         "language_id", "Unknown"
@@ -569,7 +583,13 @@ def list_bin_cluster_members():
         m = meta[0] if isinstance(meta, list) and meta else {}
         results.append({"id": page[i], "meta": m})
 
-    return {"cluster_id": cluster_id, "total": total, "offset": offset, "limit": limit, "results": results}
+    return {
+        "cluster_id": cluster_id,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "results": results,
+    }
 
 
 def get_bin_cluster_files():

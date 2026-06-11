@@ -3,6 +3,7 @@ from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.function_service import fetch_function_data
 import logging
 
+
 def get_code_for_llm(func_id):
     """Helper to fetch raw code for a function ID."""
     try:
@@ -32,7 +33,7 @@ def get_code_for_llm(func_id):
             tokens = source.get("c_tokens", [])
             if not tokens:
                 return None, "No tokens or lines found"
-            
+
             # Group tokens by line
             max_line = max(t["line"] for t in tokens)
             lines = [[] for _ in range(max_line + 1)]
@@ -41,10 +42,11 @@ def get_code_for_llm(func_id):
             code = "\n".join(["".join(line_tokens) for line_tokens in lines])
 
         func_name = meta.get("function_name", "unknown") if meta else "unknown"
-        
+
         return {"code": code, "func_name": func_name}, None
     except Exception as e:
         return None, str(e)
+
 
 def summarize():
     data = request.json
@@ -66,21 +68,24 @@ def summarize():
     @stream_with_context
     def generate():
         logging.info("Starting LLM stream generator...")
-        for chunk in llm_service.stream_summarize_function(func_name or "unknown", code, custom_prompt):
+        for chunk in llm_service.stream_summarize_function(
+            func_name or "unknown", code, custom_prompt
+        ):
             logging.info(f"Yielding chunk to response: {len(chunk)} chars")
             yield chunk
         logging.info("LLM stream generator finished.")
 
-    resp = Response(generate(), mimetype='text/plain')
-    resp.headers['X-Accel-Buffering'] = 'no'
+    resp = Response(generate(), mimetype="text/plain")
+    resp.headers["X-Accel-Buffering"] = "no"
     return resp
+
 
 def chat():
     data = request.json
     messages = data.get("messages", [])
     if not messages:
         return {"error": "Missing messages"}, 400
-        
+
     @stream_with_context
     def generate():
         logging.info("Starting LLM chat stream generator...")
@@ -89,8 +94,8 @@ def chat():
             yield chunk
         logging.info("LLM chat stream generator finished.")
 
-    resp = Response(generate(), mimetype='text/plain')
-    resp.headers['X-Accel-Buffering'] = 'no'
+    resp = Response(generate(), mimetype="text/plain")
+    resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
 
@@ -125,7 +130,9 @@ def summarize_file():
 
     # Fetch cluster membership and metadata
     cluster_ids_raw = r.smembers(f"{collection}:file:{md5}:bin_clusters")
-    cluster_ids = [c.decode() if isinstance(c, bytes) else c for c in (cluster_ids_raw or [])]
+    cluster_ids = [
+        c.decode() if isinstance(c, bytes) else c for c in (cluster_ids_raw or [])
+    ]
 
     algo = "unweighted_cosine"
     min_cohesion = float(config_service.get("clustering.min_cohesion", 0.5))
@@ -157,32 +164,39 @@ def summarize_file():
         "avtype": _to_set(file_meta.get("avtype")),
         "filetype": _to_set(file_meta.get("filetype")),
         "ccip": _to_set(file_meta.get("cc_ip")),
-        "filename": _to_set(file_meta.get("file_names")) | _to_set(file_meta.get("file_name")),
+        "filename": _to_set(file_meta.get("file_names"))
+        | _to_set(file_meta.get("file_name")),
     }
 
     for cm in clusters:
         cohesion_pct = round((cm.get("cohesion_score") or 0) * 100)
         dist_map = {
-            "yara_distribution": "yara", "avtype_distribution": "avtype",
-            "filetype_distribution": "filetype", "ccip_distribution": "ccip",
+            "yara_distribution": "yara",
+            "avtype_distribution": "avtype",
+            "filetype_distribution": "filetype",
+            "ccip_distribution": "ccip",
             "filename_distribution": "filename",
         }
         for dist_key, meta_key in dist_map.items():
-            for item in (cm.get(dist_key) or []):
+            for item in cm.get(dist_key) or []:
                 val = item.get("value")
                 if not val or val in existing[meta_key]:
                     continue
-                if val not in inferred_meta[meta_key] or inferred_meta[meta_key][val]["percent"] < cohesion_pct:
+                if (
+                    val not in inferred_meta[meta_key]
+                    or inferred_meta[meta_key][val]["percent"] < cohesion_pct
+                ):
                     inferred_meta[meta_key][val] = {"percent": cohesion_pct}
 
     @stream_with_context
     def generate():
         logging.info(f"Starting LLM file summary stream for {file_id}...")
-        for chunk in llm_service.stream_summarize_file(file_meta, clusters, inferred_meta):
+        for chunk in llm_service.stream_summarize_file(
+            file_meta, clusters, inferred_meta
+        ):
             yield chunk
         logging.info("LLM file summary stream finished.")
 
-    resp = Response(generate(), mimetype='text/plain')
-    resp.headers['X-Accel-Buffering'] = 'no'
+    resp = Response(generate(), mimetype="text/plain")
+    resp.headers["X-Accel-Buffering"] = "no"
     return resp
-

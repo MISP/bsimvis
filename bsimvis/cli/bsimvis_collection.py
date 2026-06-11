@@ -11,10 +11,14 @@ def run_collection(host, port, args):
 
     if args.action == "delete":
         # Interactive confirmation prompt to prevent accidental deletions
-        print(f"⚠️  WARNING: You are about to permanently delete all data for collection '{coll}'.")
+        print(
+            f"⚠️  WARNING: You are about to permanently delete all data for collection '{coll}'."
+        )
         print("This action is destructive and cannot be undone.")
         try:
-            confirm = input(f"Are you sure you want to proceed? [y/N]: ").strip().lower()
+            confirm = (
+                input(f"Are you sure you want to proceed? [y/N]: ").strip().lower()
+            )
         except KeyboardInterrupt:
             print("\n[*] Aborted.")
             sys.exit(0)
@@ -41,4 +45,3 @@ def run_collection(host, port, args):
             print(f"[+] Success! Job ID: {res.get('job_id')}")
         except Exception as e:
             print(f"[!] Clean collection failed: {e}")
-

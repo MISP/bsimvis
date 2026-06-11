@@ -107,6 +107,7 @@ def create_app():
     @app.route("/<path:path>")
     def serve_static(path):
         from werkzeug.exceptions import NotFound
+
         try:
             return send_from_directory(app.static_folder, path)
         except NotFound:

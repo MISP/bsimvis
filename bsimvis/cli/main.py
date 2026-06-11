@@ -455,7 +455,7 @@ def main():
         metavar="FILE",
         help="Config file",
     )
-    
+
     upload_parser.add_argument(
         "--metadata",
         metavar="FILE",
@@ -558,7 +558,10 @@ def main():
         "propagate", help="Propagate metadata from a CSV file"
     )
     metadata_propagate.add_argument(
-        "-m", "--metadata", required=True, help="Path to pipe-delimited metadata CSV file"
+        "-m",
+        "--metadata",
+        required=True,
+        help="Path to pipe-delimited metadata CSV file",
     )
     metadata_propagate.add_argument(
         "-c", "--collection", required=True, help="Target collection name"
@@ -634,7 +637,6 @@ def main():
             bsimvis_collection.run_collection(g_host, int(g_port), args)
         elif args.subcommand == "metadata":
             bsimvis_metadata.run_metadata(g_host, int(g_port), args)
-
 
     except Exception as e:
         import traceback

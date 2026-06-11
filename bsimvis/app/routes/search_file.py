@@ -4,7 +4,11 @@ import re
 
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import query_ids, parse_timestamp, normalize_tags
+from bsimvis.app.services.index_service import (
+    query_ids,
+    parse_timestamp,
+    normalize_tags,
+)
 
 DEFAULT_LIMIT = 100
 
@@ -141,7 +145,7 @@ def search_files():
         results = pipe.execute()
         files_list = []
         unique_cluster_ids = set()
-        
+
         # First pass: collect results and unique cluster IDs
         raw_files_data = []
         for i, doc_id in enumerate(paged_ids):
@@ -158,7 +162,9 @@ def search_files():
 
             data["function_count"] = func_count
             data["file_id"] = doc_id
-            cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
+            cluster_ids = (
+                list(cluster_res) if isinstance(cluster_res, (list, set)) else []
+            )
             data["bin_clusters"] = cluster_ids
             for cid in cluster_ids:
                 unique_cluster_ids.add(cid)
@@ -167,9 +173,9 @@ def search_files():
 
         # Second pass: fetch cluster metadata
         cluster_meta_map = {}
-        min_cohesion = float(request.args.get("min_cohesion", 0.95)) # Default to 0.95
+        min_cohesion = float(request.args.get("min_cohesion", 0.95))  # Default to 0.95
         if unique_cluster_ids:
-            algo = "unweighted_cosine" # Assuming default algo
+            algo = "unweighted_cosine"  # Assuming default algo
             c_pipe = r.pipeline()
             c_list = list(unique_cluster_ids)
             for cid in c_list:
@@ -179,7 +185,7 @@ def search_files():
                 cm = (res[0] if isinstance(res, list) and res else res) or {}
                 if isinstance(cm, str):
                     cm = json.loads(cm)
-                
+
                 # Apply cohesion filter
                 if (cm.get("cohesion_score") or 0) >= min_cohesion:
                     cluster_meta_map[cid] = cm
@@ -188,7 +194,7 @@ def search_files():
         for data in raw_files_data:
             # Map IDs to metadata
             # We don't map it here anymore, we send the map separately
-            
+
             normalize_tags(data)
             # Ensure dates are Unix timestamps
             for date_field in ["entry_date", "file_date"]:
@@ -223,7 +229,6 @@ def search_files():
     except Exception as e:
         logging.error(f"Error in search_files: {e}", exc_info=True)
         return {"error": str(e)}, 500
-
 
 
 def get_true_total_files(r, collection):
@@ -284,10 +289,26 @@ def query_files_advanced(r, collection, filters):
                     q_matches.update(get_field_matches(f_name, val))
             candidates &= q_matches
         elif field in [
-            "file_name", "file_md5", "language_id", "batch_uuid", "bin_cluster_name", 
-            "bin_cluster_uuid", "first_seen", "last_seen", "filetype", "avtype", "yara", 
-            "cc_ip", "file_names", "inferred_yara", "inferred_avtype", "inferred_filetype", 
-            "inferred_ccip", "inferred_filename", "inferred_md5", "note_owners"
+            "file_name",
+            "file_md5",
+            "language_id",
+            "batch_uuid",
+            "bin_cluster_name",
+            "bin_cluster_uuid",
+            "first_seen",
+            "last_seen",
+            "filetype",
+            "avtype",
+            "yara",
+            "cc_ip",
+            "file_names",
+            "inferred_yara",
+            "inferred_avtype",
+            "inferred_filetype",
+            "inferred_ccip",
+            "inferred_filename",
+            "inferred_md5",
+            "note_owners",
         ]:
             candidates &= get_field_matches(field, val)
 
@@ -310,7 +331,7 @@ def query_files_advanced(r, collection, filters):
 
                 zset_key = f"{collection}:idx:file:{zset_field}"
                 is_min = field.startswith("min_")
-                
+
                 # We need to find the intersection of current candidates and the range
                 # Redis doesn't have a direct "ZSET range intersect SET" but we can fetch the IDs
                 if is_min:
@@ -344,36 +365,40 @@ def query_files_advanced(r, collection, filters):
         candidates -= get_field_matches("user_tags", t)
 
     return candidates
+
+
 def get_file_details(collection, file_md5):
     try:
         r = get_redis()
         file_id = f"{collection}:file:{file_md5}"
-        
+
         # 1. Fetch full JSON, function counts, and cluster assignments
         pipe = r.pipeline()
         pipe.json().get(f"{file_id}:meta", "$")
         pipe.scard(f"{collection}:idx:file:functions:{file_md5}")
         pipe.smembers(f"{file_id}:bin_clusters")
         results = pipe.execute()
-        
+
         res = results[0]
         func_count = results[1]
         cluster_res = results[2]
-        
+
         if not res:
             return {"error": "File not found"}, 404
-            
+
         data = res[0] if isinstance(res, list) else res
         if isinstance(data, str):
             data = json.loads(data)
-            
+
         data["function_count"] = func_count
         data["file_id"] = file_id
         cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
-        
+
         # Ensure array fields are set to actual arrays instead of strings, etc.
-        data["bin_clusters"] = [c.decode() if isinstance(c, bytes) else str(c) for c in cluster_ids]
-        
+        data["bin_clusters"] = [
+            c.decode() if isinstance(c, bytes) else str(c) for c in cluster_ids
+        ]
+
         # 2. Fetch cluster metadata
         cluster_meta_map = {}
         if cluster_ids:
@@ -388,35 +413,44 @@ def get_file_details(collection, file_md5):
                 if isinstance(cm, str):
                     cm = json.loads(cm)
                 cluster_meta_map[cid] = cm
-                
+
         # 3. Compute inferred metadata (server-side)
         from bsimvis.app.services.config_service import config_service
-        min_cohesion = float(request.args.get("min_cohesion", config_service.get("clustering.min_cohesion", 0.5)))
-        
+
+        min_cohesion = float(
+            request.args.get(
+                "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+            )
+        )
+
         inferred_meta = {
             "yara": {},
             "avtype": {},
             "filetype": {},
             "ccip": {},
             "filename": {},
-            "md5": {}
+            "md5": {},
         }
-        
+
         # Collect existing values to exclude
         def to_list(v):
-            if not v: return []
-            if isinstance(v, list): return v
+            if not v:
+                return []
+            if isinstance(v, list):
+                return v
             return [v]
-            
+
         existing = {
             "yara": set(to_list(data.get("yara"))),
             "avtype": set(to_list(data.get("avtype"))),
             "filetype": set(to_list(data.get("filetype"))),
             "ccip": set(to_list(data.get("cc_ip"))),
-            "filename": set(to_list(data.get("file_names")) + to_list(data.get("file_name"))),
-            "md5": set(to_list(data.get("file_md5")))
+            "filename": set(
+                to_list(data.get("file_names")) + to_list(data.get("file_name"))
+            ),
+            "md5": set(to_list(data.get("file_md5"))),
         }
-        
+
         for cid, cm in cluster_meta_map.items():
             cohesion_score = cm.get("cohesion_score") or 0
             if cohesion_score >= min_cohesion:
@@ -427,34 +461,38 @@ def get_file_details(collection, file_md5):
                     "filetype_distribution": "filetype",
                     "ccip_distribution": "ccip",
                     "filename_distribution": "filename",
-                    "md5_distribution": "md5"
+                    "md5_distribution": "md5",
                 }
                 for dist_key, meta_key in mapping.items():
                     dist = cm.get(dist_key) or []
                     for item in dist:
                         val = item.get("value")
-                        if not val: continue
-                        
+                        if not val:
+                            continue
+
                         # Exclude if already in binary's own metadata
                         if val in existing[meta_key]:
                             continue
 
-                        if val not in inferred_meta[meta_key] or inferred_meta[meta_key][val]["percent"] < cohesion_pct:
+                        if (
+                            val not in inferred_meta[meta_key]
+                            or inferred_meta[meta_key][val]["percent"] < cohesion_pct
+                        ):
                             inferred_meta[meta_key][val] = {
                                 "percent": cohesion_pct,
-                                "cluster_uuid": cm.get("cluster_uuid")
+                                "cluster_uuid": cm.get("cluster_uuid"),
                             }
-                            
+
         normalize_tags(data)
         for date_field in ["entry_date", "file_date"]:
             if date_field in data:
                 data[date_field] = parse_timestamp(data[date_field])
-                
+
         return {
             "file": data,
             "bin_cluster_map": cluster_meta_map,
             "inferred_meta": inferred_meta,
-            "collection": collection
+            "collection": collection,
         }
     except Exception as e:
         logging.error(f"Error in get_file_details: {e}", exc_info=True)

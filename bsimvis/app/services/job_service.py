@@ -36,7 +36,6 @@ class JobType(Enum):
     PROPAGATE_METADATA = "propagate_metadata"
 
 
-
 class JobService:
     def __init__(self):
         self.r = get_queue_redis()

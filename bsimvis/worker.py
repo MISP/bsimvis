@@ -239,7 +239,9 @@ class Worker:
                             extra = json.loads(extra)
                         analysis_data.setdefault("file_metadata", {}).update(extra)
                         if "file_name" in extra:
-                            analysis_data["file_metadata"]["file_name"] = extra["file_name"]
+                            analysis_data["file_metadata"]["file_name"] = extra[
+                                "file_name"
+                            ]
 
                     file_id = f"{collection}:file:{real_md5}:data"
                     self.r_data.set(file_id, json.dumps(analysis_data))
@@ -613,7 +615,6 @@ class Worker:
             )
 
         return False
-
 
 
 if __name__ == "__main__":

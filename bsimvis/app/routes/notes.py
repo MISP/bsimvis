@@ -96,6 +96,7 @@ def get_notes():
 
 # --- File notes ---
 
+
 def add_file_note():
     """
     Adds a note to a file.
@@ -168,4 +169,3 @@ def get_file_notes():
 
     notes = note_service.get_file_notes(collection, file_id)
     return {"status": "success", "notes": notes}
-

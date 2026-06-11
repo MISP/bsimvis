@@ -157,14 +157,14 @@ class BinClusterService:
         cols = []
         data = []
         for i, j, d in edges:
-            if d < 1.0: # Only real similarity edges
+            if d < 1.0:  # Only real similarity edges
                 rows.extend([i, j])
                 cols.extend([j, i])
                 data.extend([1, 1])
 
         adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
         n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
-        
+
         comp_to_nodes = {}
         for i, comp_id in enumerate(labels):
             if comp_id not in comp_to_nodes:
@@ -188,22 +188,26 @@ class BinClusterService:
         global_root_id = num_nodes
         next_cluster_id = num_nodes + 1
         comp_roots = []
-        
+
         start_fit = time.time()
-        
+
         for comp_id, comp_nodes in comp_to_nodes.items():
             size = len(comp_nodes)
             if size < min_cluster_size:
                 for node in comp_nodes:
                     comp_roots.append((node, 1))
                 continue
-                
-            sub_id_to_global = {i: global_idx for i, global_idx in enumerate(comp_nodes)}
-            global_to_sub_id = {global_idx: i for i, global_idx in enumerate(comp_nodes)}
-            
+
+            sub_id_to_global = {
+                i: global_idx for i, global_idx in enumerate(comp_nodes)
+            }
+            global_to_sub_id = {
+                global_idx: i for i, global_idx in enumerate(comp_nodes)
+            }
+
             if size >= 5000:
                 from scipy.sparse.linalg import svds
-                
+
                 rows_sp, cols_sp, data_sp = [], [], []
                 if comp_id in comp_to_edges:
                     for u, v, d in comp_to_edges[comp_id]:
@@ -213,15 +217,17 @@ class BinClusterService:
                         rows_sp.extend([ui, vi])
                         cols_sp.extend([vi, ui])
                         data_sp.extend([sim, sim])
-                
-                comp_matrix = sp.csr_matrix((data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32)
+
+                comp_matrix = sp.csr_matrix(
+                    (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
+                )
                 comp_matrix.setdiag(1.0)
-                
+
                 k = min(50, size - 1)
                 u, s, vt = svds(comp_matrix, k=k)
                 embeddings = u @ np.diag(np.sqrt(s))
                 del comp_matrix, rows_sp, cols_sp, data_sp
-                
+
                 clusterer = hdbscan.HDBSCAN(
                     min_cluster_size=min(min_cluster_size, size),
                     min_samples=min(min_samples, size),
@@ -234,14 +240,14 @@ class BinClusterService:
             else:
                 sub_dist = np.ones((size, size), dtype=np.float32)
                 np.fill_diagonal(sub_dist, 0)
-                
+
                 if comp_id in comp_to_edges:
                     for u, v, d in comp_to_edges[comp_id]:
                         ui = global_to_sub_id[u]
                         vi = global_to_sub_id[v]
                         sub_dist[ui, vi] = d
                         sub_dist[vi, ui] = d
-                        
+
                 clusterer = hdbscan.HDBSCAN(
                     min_cluster_size=min(min_cluster_size, size),
                     min_samples=min(min_samples, size),
@@ -251,54 +257,58 @@ class BinClusterService:
                     gen_min_span_tree=True,
                 )
                 clusterer.fit(sub_dist.astype(np.float64))
-            
+
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
                 for node in comp_nodes:
                     comp_roots.append((node, 1))
                 continue
-                
+
             sub_internal_to_global = {}
             # Ensure local root maps to a single global internal ID
-            local_root_sub = local_tree_df['parent'].min()
-            
+            local_root_sub = local_tree_df["parent"].min()
+
             for _, row in local_tree_df.iterrows():
-                parent = int(row['parent'])
-                child = int(row['child'])
-                
+                parent = int(row["parent"])
+                child = int(row["child"])
+
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
                     next_cluster_id += 1
-                    
-                if child < size: # Leaf
+
+                if child < size:  # Leaf
                     global_child = sub_id_to_global[child]
-                else: # Internal
+                else:  # Internal
                     if child not in sub_internal_to_global:
                         sub_internal_to_global[child] = next_cluster_id
                         next_cluster_id += 1
                     global_child = sub_internal_to_global[child]
-                    
-                global_tree_rows.append({
-                    'parent': sub_internal_to_global[parent],
-                    'child': global_child,
-                    'lambda_val': float(row['lambda_val']),
-                    'child_size': int(row['child_size'])
-                })
-                
+
+                global_tree_rows.append(
+                    {
+                        "parent": sub_internal_to_global[parent],
+                        "child": global_child,
+                        "lambda_val": float(row["lambda_val"]),
+                        "child_size": int(row["child_size"]),
+                    }
+                )
+
             comp_roots.append((sub_internal_to_global[local_root_sub], size))
-            
+
         # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
         for comp_root, size in comp_roots:
-            global_tree_rows.append({
-                'parent': global_root_id,
-                'child': comp_root,
-                'lambda_val': 1.0,
-                'child_size': size
-            })
-            
+            global_tree_rows.append(
+                {
+                    "parent": global_root_id,
+                    "child": comp_root,
+                    "lambda_val": 1.0,
+                    "child_size": size,
+                }
+            )
+
         tree_df = pd.DataFrame(global_tree_rows)
         fit_time = time.time() - start_fit
-        
+
         msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
         logging.info(f"[+] {msg}")
         if job_service and job_id:
@@ -542,7 +552,7 @@ class BinClusterService:
                 if isinstance(m, str):
                     m = json.loads(m)
                 all_member_meta[file_id] = m
-            
+
             if i % 1000 == 0:
                 logging.info(f"[*] Fetched meta for {i}/{total_members} files...")
 
@@ -551,7 +561,7 @@ class BinClusterService:
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
-            
+
         adj_sim = {i: {} for i in range(num_nodes)}
         for u, v, d in edges:
             sim = 1.0 - d
@@ -579,27 +589,48 @@ class BinClusterService:
                     names_list.extend(m["file_names"])
                 elif m.get("file_name"):
                     names_list.append(m["file_name"])
-                
+
                 if m.get("file_md5"):
                     md5s_list.append(m["file_md5"])
 
                 if m.get("yara"):
-                    yara_list.extend(m["yara"] if isinstance(m["yara"], list) else [m["yara"]])
+                    yara_list.extend(
+                        m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
+                    )
                 if m.get("avtype"):
-                    avtype_list.extend(m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]])
+                    avtype_list.extend(
+                        m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]]
+                    )
                 if m.get("filetype"):
-                    filetype_list.extend(m["filetype"] if isinstance(m["filetype"], list) else [m["filetype"]])
+                    filetype_list.extend(
+                        m["filetype"]
+                        if isinstance(m["filetype"], list)
+                        else [m["filetype"]]
+                    )
                 if m.get("cc_ip"):
-                    ccip_list.extend(m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]])
+                    ccip_list.extend(
+                        m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
+                    )
 
             default_name = (
                 Counter(names_list).most_common(1)[0][0]
                 if names_list
                 else f"Binary Cluster {label}"
             )
-            
+
             def build_freq(items):
-                return [{"value": k, "count": v, "percent": round((v / len(members)) * 100)} for k, v in Counter(items).most_common(5)] if items else []
+                return (
+                    [
+                        {
+                            "value": k,
+                            "count": v,
+                            "percent": round((v / len(members)) * 100),
+                        }
+                        for k, v in Counter(items).most_common(5)
+                    ]
+                    if items
+                    else []
+                )
 
             yara_freq = build_freq(yara_list)
             avtype_freq = build_freq(avtype_list)
@@ -684,7 +715,7 @@ class BinClusterService:
                     "filetype_distribution": "inferred_filetype",
                     "ccip_distribution": "inferred_ccip",
                     "filename_distribution": "inferred_filename",
-                    "md5_distribution": "inferred_md5"
+                    "md5_distribution": "inferred_md5",
                 }
                 for dist_key, meta_key in inferred_mapping.items():
                     dist = meta.get(dist_key) or []
@@ -786,7 +817,7 @@ class BinClusterService:
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_name")
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_uuid")
         self._clear_indexes_via_registry(collection, "file", "bin_cluster_id")
-        
+
         # Clear inferred metadata indexes
         self._clear_indexes_via_registry(collection, "file", "inferred_yara")
         self._clear_indexes_via_registry(collection, "file", "inferred_avtype")

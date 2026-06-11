@@ -17,7 +17,7 @@ class NoteService:
             parts = resolved_id.split(":")
             if len(parts) >= 5:
                 resolved_id = f"{parts[1]}:func:{parts[3]}:{parts[4]}"
-        
+
         if resolved_id.endswith(":meta"):
             return resolved_id
         return f"{resolved_id}:meta"
@@ -34,7 +34,7 @@ class NoteService:
             "id": str(uuid.uuid4()),
             "text": text,
             "owner": owner,
-            "timestamp": int(time.time() * 1000)
+            "timestamp": int(time.time() * 1000),
         }
 
         try:
@@ -43,9 +43,9 @@ class NoteService:
             if not doc_raw:
                 logging.error(f"NoteService: Document {doc_id} not found.")
                 return None
-            
+
             doc = doc_raw[0] if isinstance(doc_raw, list) else doc_raw
-            
+
             # 2. Update Notes
             notes = doc.get("notes", [])
             if not isinstance(notes, list):
@@ -58,11 +58,11 @@ class NoteService:
             owners = doc.get("note_owners", [])
             if not isinstance(owners, list):
                 owners = []
-            
+
             if owner not in owners:
                 owners.append(owner)
                 r.json().set(doc_id, "$.note_owners", owners)
-                
+
                 # 4. Update Secondary Index for 'note_owners'
                 # Standard Bucket: {col}:idx:func:note_owners:{owner}
                 indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
@@ -82,7 +82,7 @@ class NoteService:
         """Updates an existing note's text."""
         r = self.r
         doc_id = self._resolve_func_id(collection, func_id)
-        
+
         try:
             notes = r.json().get(doc_id, "$.notes")[0]
             for note in notes:
@@ -104,7 +104,7 @@ class NoteService:
         try:
             notes = r.json().get(doc_id, "$.notes")[0]
             new_notes = [n for n in notes if n["id"] != note_id]
-            
+
             if len(new_notes) == len(notes):
                 return False
 
@@ -117,7 +117,7 @@ class NoteService:
             removed_owners = old_owners - remaining_owners
 
             r.json().set(doc_id, "$.note_owners", list(remaining_owners))
-            
+
             indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
             for owner in removed_owners:
                 index_key = f"{collection}:idx:func:note_owners:{owner.lower()}"
@@ -158,7 +158,7 @@ class NoteService:
             "id": str(uuid.uuid4()),
             "text": text,
             "owner": owner,
-            "timestamp": int(time.time() * 1000)
+            "timestamp": int(time.time() * 1000),
         }
 
         try:
@@ -257,4 +257,3 @@ class NoteService:
 
 
 note_service = NoteService()
-

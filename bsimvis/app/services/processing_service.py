@@ -48,11 +48,13 @@ class ProcessingService:
         coll_file_meta["type"] = "file"
         coll_file_meta["file_id"] = file_base_id
         coll_file_meta["function_count"] = num_functions
-        
+
         # Calculate total bsim features
         total_features = 0
         for f in data.get("functions", []):
-            total_features += f.get("function_metadata", {}).get("bsim_features_count", 0)
+            total_features += f.get("function_metadata", {}).get(
+                "bsim_features_count", 0
+            )
         coll_file_meta["bsim_features_count"] = total_features
 
         pipe = self.r.pipeline()
@@ -155,13 +157,21 @@ class ProcessingService:
             # --- Extract parts ---
             func_meta = dict(func_data.get("function_metadata", {}))
             func_meta["collection"] = collection
-            
+
             # Copy file-level metadata to function metadata
-            fields_to_copy = ["first_seen", "last_seen", "filetype", "avtype", "yara", "cc_ip", "file_names"]
+            fields_to_copy = [
+                "first_seen",
+                "last_seen",
+                "filetype",
+                "avtype",
+                "yara",
+                "cc_ip",
+                "file_names",
+            ]
             for f in fields_to_copy:
                 if f in file_meta:
                     func_meta[f] = file_meta[f]
-            
+
             func_features = func_data.get("function_features", {})
             func_source = func_data.get("function_source", {})
 
@@ -231,7 +241,9 @@ class ProcessingService:
         r = self.r
         logging.info(f"[*] Starting full deletion of collection: {collection}")
         if job_service and job_id:
-            job_service.add_log(job_id, f"Starting full deletion of collection: {collection}")
+            job_service.add_log(
+                job_id, f"Starting full deletion of collection: {collection}"
+            )
 
         # 1. Find all batch UUIDs associated with this collection
         batch_uuids = set()
@@ -250,9 +262,13 @@ class ProcessingService:
                 break
 
         total_batches = len(batch_uuids)
-        logging.info(f"[*] Found {total_batches} batches associated with collection {collection}")
+        logging.info(
+            f"[*] Found {total_batches} batches associated with collection {collection}"
+        )
         if job_service and job_id:
-            job_service.add_log(job_id, f"Found {total_batches} batches to update/remove.")
+            job_service.add_log(
+                job_id, f"Found {total_batches} batches to update/remove."
+            )
 
         # 2. Update global batch metadata
         pipe = r.pipeline()
@@ -265,13 +281,14 @@ class ProcessingService:
                 meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
                 if isinstance(meta, str):
                     import json
+
                     meta = json.loads(meta)
-                
+
                 # Remove collection from collections dict
                 collections = meta.get("collections", {})
                 if collection in collections:
                     del collections[collection]
-                
+
                 if not collections:
                     # No other collections use this batch -> delete global batch and remove from global set
                     pipe.delete(global_batch_key)
@@ -280,7 +297,7 @@ class ProcessingService:
                     # Save updated collections dict
                     meta["collections"] = collections
                     pipe.json().set(global_batch_key, "$", meta)
-            
+
             if len(pipe) > 1000:
                 pipe.execute()
         pipe.execute()
@@ -296,10 +313,13 @@ class ProcessingService:
         # 3. Clean up Milvus collection if enabled
         try:
             from bsimvis.app.services.milvus_service import milvus_service
+
             if milvus_service.enabled:
                 logging.info(f"[*] Dropping Milvus collection: {collection}")
                 if job_service and job_id:
-                    job_service.add_log(job_id, f"Dropping Milvus collection: {collection}")
+                    job_service.add_log(
+                        job_id, f"Dropping Milvus collection: {collection}"
+                    )
                 milvus_service.drop_collection(collection)
         except Exception as e:
             logging.error(f"[!] Error dropping Milvus collection: {e}")
@@ -312,7 +332,10 @@ class ProcessingService:
         # 4. Find and delete all collection-specific keys (chunked to prevent freeze)
         logging.info(f"[*] Scanning and deleting keys matching '{collection}:*'...")
         if job_service and job_id:
-            job_service.add_log(job_id, f"Scanning and deleting all database keys matching '{collection}:*'...")
+            job_service.add_log(
+                job_id,
+                f"Scanning and deleting all database keys matching '{collection}:*'...",
+            )
 
         cursor = 0
         deleted_count = 0
@@ -322,7 +345,7 @@ class ProcessingService:
             if keys:
                 pipe.delete(*keys)
                 deleted_count += len(keys)
-                
+
                 # Periodic execution to avoid huge memory/network payloads
                 if len(pipe) >= 1000:
                     pipe.execute()
@@ -334,7 +357,10 @@ class ProcessingService:
 
         logging.info(f"[+] Deleted {deleted_count} keys for collection {collection}")
         if job_service and job_id:
-            job_service.add_log(job_id, f"Completed database keys cleanup. Deleted {deleted_count} keys.")
+            job_service.add_log(
+                job_id,
+                f"Completed database keys cleanup. Deleted {deleted_count} keys.",
+            )
             job_service.update_progress(job_id, 80)
 
         # 5. Clean up remaining global collection registries
@@ -343,7 +369,9 @@ class ProcessingService:
         r.delete(f"global:collection:{collection}:meta")
 
         if job_service and job_id:
-            job_service.add_log(job_id, f"Collection {collection} deleted successfully.")
+            job_service.add_log(
+                job_id, f"Collection {collection} deleted successfully."
+            )
             job_service.update_progress(job_id, 100)
 
         return True
@@ -351,14 +379,16 @@ class ProcessingService:
     def clean_collection(self, collection, job_service=None, job_id=None):
         """Cleans up temporary raw and JSON upload keys in a collection to save space."""
         r = self.r
-        logging.info(f"[*] Starting cleanup of temporary keys for collection: {collection}")
+        logging.info(
+            f"[*] Starting cleanup of temporary keys for collection: {collection}"
+        )
         if job_service and job_id:
-            job_service.add_log(job_id, f"Starting cleanup of temporary keys for collection: {collection}")
+            job_service.add_log(
+                job_id,
+                f"Starting cleanup of temporary keys for collection: {collection}",
+            )
 
-        patterns = [
-            f"{collection}:file:*:data",
-            f"{collection}:file:*:raw"
-        ]
+        patterns = [f"{collection}:file:*:data", f"{collection}:file:*:raw"]
 
         pipe = r.pipeline()
         total_deleted = 0
@@ -373,17 +403,19 @@ class ProcessingService:
                     if len(pipe) >= 1000:
                         pipe.execute()
                         if job_service and job_id:
-                            job_service.add_log(job_id, f"Deleted {total_deleted} temporary keys...")
+                            job_service.add_log(
+                                job_id, f"Deleted {total_deleted} temporary keys..."
+                            )
                 if cursor == 0:
                     break
-        
+
         pipe.execute()
 
-        logging.info(f"[+] Wiped {total_deleted} temporary upload keys for collection {collection}")
+        logging.info(
+            f"[+] Wiped {total_deleted} temporary upload keys for collection {collection}"
+        )
         if job_service and job_id:
             job_service.add_log(job_id, f"Wiped {total_deleted} temporary upload keys.")
             job_service.update_progress(job_id, 100)
 
         return True
-
-

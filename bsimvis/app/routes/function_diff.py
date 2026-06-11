@@ -8,7 +8,6 @@ from bsimvis.app.services.index_service import parse_timestamp
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
 from bsimvis.app.services.node_service import get_enriched_nodes
 
-
 # fetch_function_data and get_feature_map are now in function_service.py
 
 

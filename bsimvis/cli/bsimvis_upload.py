@@ -151,11 +151,17 @@ def upload_bsim_data(data, args, config):
             except Exception as e:
                 is_duplicate = False
                 err_msg = ""
-                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                if (
+                    isinstance(e, requests.exceptions.HTTPError)
+                    and e.response is not None
+                ):
                     try:
                         err_json = e.response.json()
                         err_msg = err_json.get("error") or err_json.get("message") or ""
-                        if e.response.status_code == 400 and "already exists" in err_msg:
+                        if (
+                            e.response.status_code == 400
+                            and "already exists" in err_msg
+                        ):
                             logging.warning(f"[!] Skipped: {file_md5} - {err_msg}")
                             is_duplicate = True
                     except Exception:
@@ -163,7 +169,9 @@ def upload_bsim_data(data, args, config):
 
                 if not is_duplicate:
                     err_suffix = f" (Details: {err_msg})" if err_msg else ""
-                    logging.error(f"[!] API Submission failed for {api_url}: {e}{err_suffix}")
+                    logging.error(
+                        f"[!] API Submission failed for {api_url}: {e}{err_suffix}"
+                    )
 
     return pipeline_details
 
@@ -288,11 +296,17 @@ def _perform_raw_upload(raw_bytes, file_name, args):
             except Exception as e:
                 is_duplicate = False
                 err_msg = ""
-                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                if (
+                    isinstance(e, requests.exceptions.HTTPError)
+                    and e.response is not None
+                ):
                     try:
                         err_json = e.response.json()
                         err_msg = err_json.get("error") or err_json.get("message") or ""
-                        if e.response.status_code == 400 and "already exists" in err_msg:
+                        if (
+                            e.response.status_code == 400
+                            and "already exists" in err_msg
+                        ):
                             logging.warning(f"[!] Skipped: {file_name} - {err_msg}")
                             is_duplicate = True
                     except Exception:
@@ -418,7 +432,9 @@ def main(args):
                     if names:
                         extra["file_name"] = names[0]
                     args.metadata_dict[hash_val] = extra
-            logging.info(f"[i] Parsed metadata for {len(args.metadata_dict)} hashes from {args.metadata}")
+            logging.info(
+                f"[i] Parsed metadata for {len(args.metadata_dict)} hashes from {args.metadata}"
+            )
         except Exception as e:
             logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
 

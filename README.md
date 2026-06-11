@@ -21,7 +21,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Call graph navigation (callers and callees)
 
 ### Clustering
-- HDBSCAN-based binary family clustering
+- HDBSCAN-based binary family clustering and interactive file dendrogram visualization
 - Cluster search view with dendrogram and packing diagram
 - Stability and parent cluster filtering
 
@@ -35,6 +35,10 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Tag management for files, functions, and similarities
 - Quick preview tooltips for clusters and diffs
 - Table selection and copy across all views
+
+### Analyst Notes & AI Insights
+- Analyst notes system for files and functions
+- Local LLM assistant for file and function summaries
 
 ### API
 - REST API with Swagger documentation
@@ -205,23 +209,51 @@ For now clustering is a manual job to run after ingesting all binaries.
 uv run bsimvis cluster build -c <collection_name>
 ```
 
+## Binary similarity management
+
+```bash
+# Build binary similarities
+uv run bsimvis binsim build -c <collection_name>
+```
+
+## Collection management
+
+```bash
+# Wipe and delete a collection completely
+uv run bsimvis collection delete -c <collection_name>
+
+# Clean up temporary raw/JSON upload keys in a collection
+uv run bsimvis collection clean -c <collection_name>
+```
+
+## Metadata propagation
+
+```bash
+# Propagate metadata from a pipe-delimited CSV file
+uv run bsimvis metadata propagate -m <metadata_csv_path> -c <collection_name>
+```
+
 ## Full CLI reference
 
 ```
-usage: bsimvis [-h] [-H HOST] {features,index,sim,job,worker,upload} ...
+usage: bsimvis [-h] [-H HOST] {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata} ...
 
 Unified BSimVis CLI
 
 positional arguments:
-  {features,index,sim,job,worker,upload}
+  {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata}
     features            BSim Feature management (Indexing)
     index               Index health and statistics
     sim                 Similarity management
+    cluster             Unsupervised clustering management
+    binsim              Binary-level similarity management
     job                 Job & Pipeline management
     worker              Worker management
     upload              Upload binaries to redis/kvrocks
+    collection          Collection management
+    metadata            Metadata management and propagation
 
 options:
   -h, --help            show this help message and exit
-  -H, --host HOST       API host:port (default: localhost:5000)
+  -H, --host HOST       API host:port (default: localhost:5000, or from .env, or from bsimvis_config.toml)
 ```

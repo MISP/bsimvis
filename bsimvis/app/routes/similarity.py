@@ -3,6 +3,7 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.similarity_service import SimilarityService
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_service import normalize_tags
 
 job_service = JobService()
 similarity_service = SimilarityService()
@@ -52,6 +53,7 @@ def list_similarities():
                 d = doc[0] if isinstance(doc, list) else doc
                 sid_key = sim_keys[i]
                 d["sid"] = sid_key.decode() if isinstance(sid_key, bytes) else sid_key
+                normalize_tags(d)
                 results.append(d)
 
     return {"total": total, "offset": offset, "limit": limit, "results": results}
@@ -89,19 +91,36 @@ def build_similarity():
     collection = data.get("collection", "main")
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
-    algo = data.get("algo", "unweighted_cosine")
+
+    from bsimvis.app.services.config_service import config_service
+
+    algo = data.get("algo")
+    if algo is None:
+        algo = config_service.get("similarity.algo", "unweighted_cosine")
 
     if not md5 and not batch_uuid and not data.get("all"):
         return {"error": "md5, batch, or all required"}, 400
+
+    min_score = data.get("min_score")
+    if min_score is None:
+        min_score = config_service.get("similarity.min_score", 0.95)
+
+    top_k = data.get("top_k")
+    if top_k is None:
+        top_k = config_service.get("similarity.top_k", 20)
+
+    min_features = data.get("min_features")
+    if min_features is None:
+        min_features = config_service.get("similarity.min_features", 0)
 
     payload = {
         "collection": collection,
         "md5": md5,
         "batch_uuid": batch_uuid,
         "algo": algo,
-        "min_score": data.get("min_score", 0.95),
-        "top_k": data.get("top_k", 20),
-        "min_features": data.get("min_features", 0),
+        "min_score": min_score,
+        "top_k": top_k,
+        "min_features": min_features,
         "all": data.get("all", False),
     }
 
@@ -128,10 +147,27 @@ def rebuild_similarity():
     collection = data.get("collection", "main")
     md5 = data.get("md5")
     batch_uuid = data.get("batch")
-    algo = data.get("algo", "unweighted_cosine")
+
+    from bsimvis.app.services.config_service import config_service
+
+    algo = data.get("algo")
+    if algo is None:
+        algo = config_service.get("similarity.algo", "unweighted_cosine")
 
     if not md5 and not batch_uuid and not data.get("all"):
         return {"error": "md5, batch, or all required"}, 400
+
+    min_score = data.get("min_score")
+    if min_score is None:
+        min_score = config_service.get("similarity.min_score", 0.95)
+
+    top_k = data.get("top_k")
+    if top_k is None:
+        top_k = config_service.get("similarity.top_k", 20)
+
+    min_features = data.get("min_features")
+    if min_features is None:
+        min_features = config_service.get("similarity.min_features", 0)
 
     tasks = [
         (
@@ -151,9 +187,9 @@ def rebuild_similarity():
                 "md5": md5,
                 "batch_uuid": batch_uuid,
                 "algo": algo,
-                "min_score": data.get("min_score", 0.95),
-                "top_k": data.get("top_k", 20),
-                "min_features": data.get("min_features", 0),
+                "min_score": min_score,
+                "top_k": top_k,
+                "min_features": min_features,
                 "all": data.get("all", False),
             },
         ),

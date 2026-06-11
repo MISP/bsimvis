@@ -6,16 +6,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BSim Aligned Diff</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/entity_renderer.js"></script>
     <script src="/js/code_renderer.js"></script>
     <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
+    <script src="/js/notes.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="/js/diff_queue.js"></script>
+    <script src="/js/context_menu.js"></script>
     <script src="/js/previews.js"></script>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
-    <script src="/js/cluster_views.js"></script>
     <style>
         #selection-tool {
             display: none;
@@ -231,12 +237,13 @@
 </head>
 
 <body>
+    <div id="sidebar-container"></div>
+    <main style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+        <div id="meta-container">
+            <!-- Injected via JS -->
+        </div>
 
-    <div id="meta-container">
-        <!-- Injected via JS -->
-    </div>
-
-    <div id="similarity-bar">
+        <div id="similarity-bar">
         <div class="sim-info" style="display:flex; width:100%; justify-content:space-between;">
             <div style="display:flex; align-items:center; gap:10px;">
                 <span class="sim-label">Similarity:</span>
@@ -343,16 +350,21 @@
     </div>
 
     <div id="bsim-tooltip"></div>
+    </main>
+
+    <div id="diff-preview-tooltip"></div>
+    <div id="code-preview-tooltip"></div>
 
     <script>
         // Sync UI settings from parent if available
-        let UIParams = { cohesionThreshold: 0.5, colorByTag: false };
+        let UIParams = { cohesionThreshold: 0.95, colorByTag: false, useFloatingWindows: false };
         if (window.parent && window.parent.UIParams) {
             UIParams = window.parent.UIParams;
         } else {
             UIParams = {
-                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
-                colorByTag: localStorage.getItem('colorByTag') === 'true'
+                cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
+                colorByTag: localStorage.getItem('colorByTag') === 'true',
+                useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true'
             };
         }
 
@@ -969,7 +981,7 @@
             if (window.currentSimId1 && window.currentSimId2) {
                 const simId = `${window.currentSimId1}|${window.currentSimId2}|${algo}`;
                 const tagsData = window.currentSimTags || { tags: [], user_tags: [] };
-                document.getElementById('similarity-tags-container').innerHTML = renderTagEditor('similarity', simId, tagsData.tags, tagsData.user_tags);
+                document.getElementById('similarity-tags-container').innerHTML = EntityRenderer.renderTag('similarity', simId, tagsData.tags, tagsData.user_tags);
             }
 
             if (score === null || score === undefined) {
@@ -984,9 +996,40 @@
         }
 
         async function fetchData() {
+            const restful = parseRestfulPath();
             const urlParams = new URLSearchParams(window.location.search);
+            
             let id1 = urlParams.get('id1');
             let id2 = urlParams.get('id2');
+            
+            const path = window.location.pathname;
+            const parts = path.split('/').filter(Boolean);
+            const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+
+            if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
+                const collA = decodeURIComponent(parts[1]);
+                const md5A = decodeURIComponent(parts[3]);
+                const addrA = decodeURIComponent(parts[5]);
+                const collB = decodeURIComponent(parts[7]);
+                const md5B = decodeURIComponent(parts[8]);
+                const addrB = decodeURIComponent(parts[9]);
+                id1 = `${collA}:func:${md5A}:${addrA}`;
+                id2 = `${collB}:func:${md5B}:${addrB}`;
+            } else if (hasCol && parts[2] === 'function') {
+                if (parts.length >= 9 && parts[5] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[4]);
+                    const collB = decodeURIComponent(parts[6]);
+                    const md5B = decodeURIComponent(parts[7]);
+                    const addrB = decodeURIComponent(parts[8]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
+                } else if (parts.length >= 5) {
+                    id1 = id1 || decodeURIComponent(parts[3]);
+                    id2 = id2 || decodeURIComponent(parts[4]);
+                }
+            }
 
             const loader = document.getElementById('loader');
             const scrollContainer = document.getElementById('bsim-scroll');
@@ -1147,18 +1190,55 @@
         document.getElementById('meta-container').addEventListener('click', (e) => {
             if (e.target.closest('#swap-btn')) {
                 const urlParams = new URLSearchParams(window.location.search);
-                const id1 = urlParams.get('id1');
-                const id2 = urlParams.get('id2');
+                let id1 = urlParams.get('id1');
+                let id2 = urlParams.get('id2');
+
+                const path = window.location.pathname;
+                const parts = path.split('/').filter(Boolean);
+                const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+                
+                if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[5]);
+                    const collB = decodeURIComponent(parts[7]);
+                    const md5B = decodeURIComponent(parts[8]);
+                    const addrB = decodeURIComponent(parts[9]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
+                } else if (hasCol && parts[2] === 'function' && parts[5] === 'vs') {
+                    const collA = decodeURIComponent(parts[1]);
+                    const md5A = decodeURIComponent(parts[3]);
+                    const addrA = decodeURIComponent(parts[4]);
+                    const collB = decodeURIComponent(parts[6]);
+                    const md5B = decodeURIComponent(parts[7]);
+                    const addrB = decodeURIComponent(parts[8]);
+                    id1 = `${collA}:func:${md5A}:${addrA}`;
+                    id2 = `${collB}:func:${md5B}:${addrB}`;
+                }
+
                 if (id1 && id2) {
-                    urlParams.set('id1', id2);
-                    urlParams.set('id2', id1);
-                    window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
-                    fetchData();
+                    if (urlParams.has('id1') && urlParams.has('id2')) {
+                        urlParams.set('id1', id2);
+                        urlParams.set('id2', id1);
+                        window.history.replaceState({}, '', `${window.location.pathname}?${urlParams.toString()}`);
+                        fetchData();
+                    } else {
+                        const newUrl = buildDiffUrl(id2, id1);
+                        if (window.parent && window.parent !== window && window.parent.Nav && window.parent.Nav.openPath) {
+                            window.parent.Nav.openPath(newUrl);
+                        } else {
+                            window.location.href = newUrl;
+                        }
+                    }
                 }
             }
         });
 
         // Start App
+        if (typeof UI !== 'undefined' && UI.Sidebar) {
+            UI.Sidebar.init('sidebar-container');
+        }
         fetchData();
 
     </script>

@@ -261,6 +261,44 @@ def wait_for_pipeline():
 
 
 # ---------------------------------------------------------------------------
+# Step 2b – Test duplicate upload (should fail)
+# ---------------------------------------------------------------------------
+def test_duplicate_upload():
+    if not file_md5:
+        return
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 2b – Test duplicate upload (should fail)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not os.path.isfile(TEST_BINARY):
+        return
+
+    with open(TEST_BINARY, "rb") as fh:
+        raw = fh.read()
+
+    file_name = os.path.basename(TEST_BINARY)
+    params = {
+        "collection": COLLECTION,
+        "file_name": file_name,
+        "batch_name": "API Test Batch",
+        "profile": "fast",
+        "min_func_len": 10,
+        "skip_sim": "false",
+    }
+
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params=params,
+        raw_body=raw,
+        headers={"Content-Type": "application/octet-stream"},
+        expected_ok=False,
+        label=f"POST /api/file/upload [Duplicate] (Expected 400)",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Step 3 – Resolve IDs needed by downstream tests
 # ---------------------------------------------------------------------------
 def resolve_ids():
@@ -626,34 +664,140 @@ def run_all_tests():
             params={"collection": COLLECTION, "cluster_uuid": cluster_uuid},
         )
 
-    # ── Similarity tag/untag ───────────────────────────────────────────────
-    # (only if we have two distinct functions with a similarity pair)
-    if func_id1 and func_id2 and func_id1 != func_id2:
-        print(_color("\n  [Similarity tagging]", BOLD))
+    # ── Binary Similarity ──────────────────────────────────────────────────
+    print(_color("\n  [Binary Similarity]", BOLD))
+    test_endpoint("GET", "/api/bin_sim/search", params={"collection": COLLECTION})
+    if file_md5:
         test_endpoint(
-            "POST",
-            "/api/similarity/tag",
+            "GET",
+            "/api/bin_sim/list",
+            params={"collection": COLLECTION, "md5": file_md5},
+        )
+
+    # ── Metadata Propagation ───────────────────────────────────────────────
+    print(_color("\n  [Metadata Propagation]", BOLD))
+    if file_md5:
+        patch_body = test_endpoint(
+            "PATCH",
+            f"/api/file/{file_md5}/metadata",
             data={
                 "collection": COLLECTION,
-                "id1": func_id1,
-                "id2": func_id2,
-                "tag": "sim_test",
+                "metadata": {
+                    "yara": ["test_yara_rule_propagate"],
+                    "avtype": ["test_avtype_propagate"],
+                    "file_names": ["propagated_test_name.exe"]
+                }
             },
-            label="POST /api/similarity/tag",
-            expected_ok=False,
+            label=f"PATCH /api/file/{file_md5}/metadata"
         )
-        test_endpoint(
+        if patch_body and "job_id" in patch_body:
+            job_id = patch_body["job_id"]
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                    if resp.status_code == 200:
+                        job = resp.json()
+                        status = str(job.get("status", "unknown")).lower()
+                        if status in ("completed", "failed", "cancelled"):
+                            print(f"     propagation job status={status}")
+                            break
+                except Exception as e:
+                    vprint(f"     Poll propagation error: {e}")
+                time.sleep(2)
+
+            test_endpoint(
+                "GET",
+                "/api/file/search",
+                params={"collection": COLLECTION, "yara": "test_yara_rule_propagate"},
+                label="GET /api/file/search (by propagated yara)"
+            )
+
+        bulk_body = test_endpoint(
             "POST",
-            "/api/similarity/untag",
+            "/api/file/metadata/propagate",
             data={
                 "collection": COLLECTION,
-                "id1": func_id1,
-                "id2": func_id2,
-                "tag": "sim_test",
+                "updates": {
+                    file_md5: {
+                        "yara": ["bulk_yara_rule_propagate"],
+                        "avtype": ["bulk_avtype_propagate"],
+                    }
+                }
             },
-            label="POST /api/similarity/untag",
-            expected_ok=False,
+            label="POST /api/file/metadata/propagate"
         )
+        if bulk_body and "job_id" in bulk_body:
+            job_id = bulk_body["job_id"]
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                try:
+                    resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                    if resp.status_code == 200:
+                        job = resp.json()
+                        status = str(job.get("status", "unknown")).lower()
+                        if status in ("completed", "failed", "cancelled"):
+                            print(f"     bulk propagation job status={status}")
+                            break
+                except Exception as e:
+                    vprint(f"     Poll bulk propagation error: {e}")
+                time.sleep(2)
+
+            test_endpoint(
+                "GET",
+                "/api/file/search",
+                params={"collection": COLLECTION, "yara": "bulk_yara_rule_propagate"},
+                label="GET /api/file/search (by bulk propagated yara)"
+            )
+
+    # ── Collection Clean ───────────────────────────────────────────────────
+    print(_color("\n  [Collection Clean]", BOLD))
+    clean_body = test_endpoint(
+        "POST",
+        "/api/collection/clean",
+        data={"collection": COLLECTION},
+        label="POST /api/collection/clean",
+    )
+    if clean_body and "job_id" in clean_body:
+        job_id = clean_body["job_id"]
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            try:
+                resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                if resp.status_code == 200:
+                    job = resp.json()
+                    status = str(job.get("status", "unknown")).lower()
+                    if status in ("completed", "failed", "cancelled"):
+                        print(f"     clean status={status}")
+                        break
+            except Exception as e:
+                vprint(f"     Poll clean error: {e}")
+            time.sleep(2)
+
+    # ── Collection Delete ──────────────────────────────────────────────────
+    print(_color("\n  [Collection Delete]", BOLD))
+    delete_body = test_endpoint(
+        "POST",
+        "/api/collection/delete",
+        data={"collection": COLLECTION},
+        label="POST /api/collection/delete",
+    )
+    if delete_body and "job_id" in delete_body:
+        job_id = delete_body["job_id"]
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            try:
+                resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
+                if resp.status_code == 200:
+                    job = resp.json()
+                    status = str(job.get("status", "unknown")).lower()
+                    if status in ("completed", "failed", "cancelled"):
+                        print(f"     deletion status={status}")
+                        break
+            except Exception as e:
+                vprint(f"     Poll deletion error: {e}")
+            time.sleep(2)
+
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +844,7 @@ if __name__ == "__main__":
     uploaded = upload_and_start()
     if uploaded:
         wait_for_pipeline()
+        test_duplicate_upload()
 
     resolve_ids()
     run_all_tests()

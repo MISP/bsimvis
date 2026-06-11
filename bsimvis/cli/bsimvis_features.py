@@ -102,6 +102,3 @@ def run_features(host, port, args):
             print(f"[+] Success! Job ID: {resp.json().get('job_id')}")
         except Exception as e:
             print(f"[!] Clear failed: {e}")
-
-    elif args.action == "reindex":
-        print("[!] Reindex (secondary indexing) not yet exposed via Job API.")

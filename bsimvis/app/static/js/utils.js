@@ -40,112 +40,248 @@ function formatDate(iso) {
         iso = parseInt(iso, 10);
     }
     const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
     return d.toLocaleString();
 }
+window.formatDate = formatDate;
 
 function copyToClipboard(text, btn) {
     navigator.clipboard.writeText(text).then(() => {
-        const originalHtml = btn.innerHTML;
-        btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-        setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-    }).catch(err => console.error('Failed to copy', err));
+        if (btn) {
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-check"></i>';
+            btn.classList.add('success');
+            setTimeout(() => {
+                btn.innerHTML = originalIcon;
+                btn.classList.remove('success');
+            }, 2000);
+        }
+    });
 }
+window.copyToClipboard = copyToClipboard;
 
-function formatSigComponent(ns, ret, name, params) {
-    let truncatedNs = ns;
-    if (ns) {
-        const parts = ns.split('::');
-        if (parts.length > 3) {
-            truncatedNs = `${parts[0]}::${parts[1]}...${parts[parts.length - 1]}`;
-        } else if (ns.length > 20) {
-            truncatedNs = ns.substring(0, 8) + "..." + ns.substring(ns.length - 8);
+function getMd5Color(md5) {
+    if (!md5) return 'var(--accent)';
+    // Generate a consistent color from MD5
+    let hash = 0;
+    for (let i = 0; i < md5.length; i++) {
+        hash = md5.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+    const hex = "00000".substring(0, 6 - c.length) + c;
+
+    let r = parseInt(hex.substring(0, 2), 16);
+    let g = parseInt(hex.substring(2, 4), 16);
+    let b = parseInt(hex.substring(4, 6), 16);
+
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    if (brightness < 60) {
+        r = Math.min(255, r + 80);
+        g = Math.min(255, g + 80);
+        b = Math.min(255, b + 80);
+    }
+
+    return `rgb(${r}, ${g}, ${b})`;
+}
+window.getMd5Color = getMd5Color;
+
+/**
+ * Parses the current RESTful URL path to extract context like collection, entity type, and IDs.
+ */
+function parseRestfulPath() {
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const params = {
+        collection: 'main',
+        view: 'dashboard',
+        md5: null,
+        address: null,
+        hash: null,
+        coll_b: null,
+        md5_b: null,
+        addr_b: null,
+        id1: null,
+        id2: null
+    };
+
+    const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+
+    if (hasCol && parts.length >= 2) {
+        params.collection = parts[1];
+
+        const p2 = parts[2];
+        if (!p2) {
+            params.view = 'files';
+        } else if (p2 === 'batches') {
+            params.view = 'batches';
+        } else if (p2 === 'files' || p2 === 'file') {
+            if (parts.length === 3) {
+                params.view = 'files';
+            } else if (parts[3] === 'similarities') {
+                params.view = 'binary-similarity';
+            } else if (parts[3] === 'clusters') {
+                params.view = 'bin-clusters';
+            } else if (parts.length >= 4) {
+                if (parts[4] === 'vs') {
+                    // File diff: /collections/{coll}/files/{md5}/vs/{coll_b}/{md5_b}
+                    params.view = 'bin_sim';
+                    params.md5 = parts[3];
+                    params.coll_b = parts[5];
+                    params.md5_b = parts[6];
+                } else {
+                    params.md5 = parts[3];
+                    if (parts.length === 4) {
+                        params.view = 'file';
+                    } else if (parts[4] === 'functions' || parts[4] === 'function') {
+                        if (parts.length === 5) {
+                            params.view = 'call_graph';
+                        } else if (parts.length >= 6) {
+                            params.address = parts[5];
+                            if (parts.length === 6) {
+                                params.view = 'function';
+                            } else if (parts[6] === 'vs') {
+                                // Function diff: /collections/{coll}/files/{md5}/functions/{addr}/vs/{coll_b}/{md5_b}/{addr_b}
+                                params.view = 'diff';
+                                params.coll_b = parts[7];
+                                params.md5_b = parts[8];
+                                params.addr_b = parts[9];
+                                params.id1 = `${params.collection}:func:${params.md5}:${params.address}`;
+                                params.id2 = `${params.coll_b}:func:${params.md5_b}:${params.addr_b}`;
+                            } else if (parts[6] === 'features') {
+                                params.view = 'function_features';
+                            }
+                        }
+                    } else if (parts[4] === 'vs') {
+                        params.view = 'bin_sim';
+                        params.coll_b = parts[5];
+                        params.md5_b = parts[6];
+                    }
+                }
+            }
+        } else if (p2 === 'functions' || p2 === 'function') {
+            if (parts.length === 3) {
+                params.view = 'functions';
+            } else if (parts[3] === 'similarities') {
+                params.view = 'function-similarity';
+            } else if (parts[3] === 'clusters') {
+                params.view = 'clusters';
+            } else if (parts.length >= 4) {
+                if (parts[4] && parts[5] === 'vs') {
+                    params.view = 'diff';
+                    if (parts.length >= 9) {
+                        params.id1 = `${params.collection}:func:${parts[3]}:${parts[4]}`;
+                        params.id2 = `${parts[6]}:func:${parts[7]}:${parts[8]}`;
+                    }
+                } else if (parts[3] && parts[4]) {
+                    params.view = 'function';
+                    params.md5 = parts[3];
+                    params.address = parts[4];
+                    if (parts[5] === 'features') params.view = 'function_features';
+                } else if (parts[3]) {
+                    params.view = 'function';
+                    params.md5 = parts[3];
+                }
+            }
+        } else if (p2 === 'features' || p2 === 'feature') {
+            if (parts.length === 3) {
+                params.view = 'features-global';
+            } else if (parts.length >= 4) {
+                params.view = 'feature';
+                params.hash = parts[3];
+            }
+        } else if (p2 === 'bin_sim' && parts[3]) {
+            params.view = 'bin_sim';
+            params.md5 = parts[3];
+        } else if (p2 === 'diff') {
+            params.view = 'diff';
+        } else if (p2) {
+            params.view = p2;
+        }
+    } else if (parts[0] === 'jobs') {
+        params.view = 'jobs';
+    } else if (parts[0] === 'upload') {
+        params.view = 'upload';
+    } else if (parts[0] === 'collections' || parts.length === 0) {
+        params.view = 'collections';
+    }
+
+    return params;
+}
+window.parseRestfulPath = parseRestfulPath;
+
+/**
+ * Gets the current routing state from the URL.
+ */
+function getRoutingState() {
+    const restful = parseRestfulPath();
+    const params = new URLSearchParams(window.location.search);
+    const viewKey = restful.view || params.get('view') || (window.location.hash ? window.location.hash.substring(1).split('?')[0] : 'dashboard');
+    
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+    const collection = (hasColInPath ? restful.collection : null) || params.get('collection') || 'main';
+
+
+    // Bridge restful params to search params for backward compatibility
+    if (restful.md5 && !params.has('md5')) params.set('md5', restful.md5);
+    if (restful.md5 && !params.has('file_md5')) params.set('file_md5', restful.md5);
+    if (restful.md5 && !params.has('md5_a')) params.set('md5_a', restful.md5);
+    if (restful.md5_b && !params.has('md5_b')) params.set('md5_b', restful.md5_b);
+    if (restful.address && !params.has('address')) params.set('address', restful.address);
+    if (restful.hash && !params.has('hash_val')) params.set('hash_val', restful.hash);
+    if (restful.id1 && !params.has('id1')) params.set('id1', restful.id1);
+    if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
+
+    return { viewKey, collection, params, ...restful };
+}
+window.getRoutingState = getRoutingState;
+
+function getCollectionFromHash() {
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+
+    const pathParams = parseRestfulPath();
+    if (hasColInPath && pathParams.collection) return pathParams.collection;
+
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.has('collection')) return searchParams.get('collection');
+
+    const [hashPath, queryString] = (window.location.hash || '').split('?');
+    const params = new URLSearchParams(queryString);
+    if (params.has('collection')) return params.get('collection');
+    
+    if (window.opener) {
+        try {
+            if (window.opener.getCollectionFromHash) {
+                const pCol = window.opener.getCollectionFromHash();
+                if (pCol) return pCol;
+            }
+        } catch (e) {
+            // CORS might block access if same-origin is not met
         }
     }
-
-    let truncatedRet = ret;
-    if (ret && ret.length > 12) {
-        truncatedRet = ret.substring(0, 5) + "..." + ret.substring(ret.length - 4);
-    }
-
-    let truncatedParams = params || [];
-    if (params && params.length > 2) {
-        truncatedParams = [...params.slice(0, 2), "...", params[params.length - 1]];
-    }
-
-    const paramList = (params || []).map(p => (typeof p === 'object' && p !== null) ? (p.name || JSON.stringify(p)) : p);
-    const fullSig = `${ret ? ret + ' ' : ''}${ns ? ns + '::' : ''}${name}(${paramList.join(', ')})`;
-
-    return {
-        ns: truncatedNs,
-        ret: truncatedRet,
-        params: truncatedParams.map(p => (typeof p === 'object' && p !== null) ? (p.name || JSON.stringify(p)) : p),
-        fullSig: fullSig
-    };
-}
-
-function showToast(message, type = 'info') {
-    const container = document.getElementById('notification-container');
-    if (!container) {
-        console.warn('Notification container not found, falling back to console:', message);
-        return;
-    }
-
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type}`;
     
-    let icon = 'fa-info-circle';
-    if (type === 'success') icon = 'fa-check-circle';
-    if (type === 'error') icon = 'fa-exclamation-triangle';
-    if (type === 'warning') icon = 'fa-exclamation-circle';
-
-    toast.innerHTML = `
-        <i class="fa-solid ${icon}"></i>
-        <div class="toast-message">${message}</div>
-    `;
-
-    container.appendChild(toast);
-
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(20px)';
-        setTimeout(() => toast.remove(), 300);
-    }, 5000);
+    return 'main';
 }
+window.getCollectionFromHash = getCollectionFromHash;
 
-function showConfirm(message, onConfirm) {
-    const container = document.getElementById('notification-container');
-    if (!container) {
-        if (confirm(message)) onConfirm();
-        return;
-    }
-
-    const toast = document.createElement('div');
-    toast.className = 'toast toast-confirm';
-    toast.style.flexDirection = 'column';
-    toast.style.alignItems = 'flex-start';
-    toast.style.gap = '10px';
-
-    toast.innerHTML = `
-        <div style="display:flex; gap:10px; align-items:center;">
-            <i class="fa-solid fa-question-circle" style="color:var(--accent)"></i>
-            <div class="toast-message">${message}</div>
-        </div>
-        <div style="display:flex; gap:10px; width:100%; justify-content: flex-end;">
-            <button class="toast-btn toast-btn-cancel">Cancel</button>
-            <button class="toast-btn toast-btn-ok">Confirm</button>
-        </div>
-    `;
-
-    container.appendChild(toast);
-
-    toast.querySelector('.toast-btn-cancel').onclick = () => {
-        toast.remove();
-    };
-
-    toast.querySelector('.toast-btn-ok').onclick = () => {
-        onConfirm();
-        toast.remove();
-    };
+/**
+ * Formats a function signature into its components (namespace, return type, parameter types, and full string).
+ */
+function formatSigComponent(namespace, returnType, name, parameters = []) {
+    const ns = namespace || '';
+    const ret = returnType || 'void';
+    const params = (parameters || []).map(p => {
+        if (!p) return '...';
+        if (typeof p === 'object') return p.type || p.name || '...';
+        return p;
+    });
+    
+    const nsPrefix = ns ? `${ns}::` : '';
+    const paramsStr = params.join(', ');
+    const fullSig = `${ret} ${nsPrefix}${name}(${paramsStr})`;
+    
+    return { ns, ret, params, fullSig };
 }
+window.formatSigComponent = formatSigComponent;

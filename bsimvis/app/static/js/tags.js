@@ -1,5 +1,15 @@
+if (typeof window.getCurrentCollection !== 'function') {
+    window.getCurrentCollection = function() {
+        if (typeof getCollectionFromHash === 'function') {
+            return getCollectionFromHash();
+        }
+        return 'main';
+    };
+}
+
 let tagMetadata = {};
 window.tagMetadata = tagMetadata;
+
 if (typeof escapeHtml === 'undefined') {
     window.escapeHtml = function (value) {
         return String(value ?? '')
@@ -31,26 +41,37 @@ if (typeof safeCssColor === 'undefined') {
     };
 }
 
+let isFetchingTagMetadata = false;
+let tagFetchPromise = null;
 
 async function fetchTagMetadata(collection) {
     if (!collection) return;
-    try {
-        const res = await fetch(`/api/tags/metadata?collection=${collection}`);
-        if (res.ok) {
-            tagMetadata = await res.json();
+    if (isFetchingTagMetadata && tagFetchPromise) return tagFetchPromise;
+
+    isFetchingTagMetadata = true;
+    tagFetchPromise = (async () => {
+        try {
+            const res = await fetch(`/api/tags/metadata?collection=${collection}`);
+            if (res.ok) {
+                tagMetadata = await res.json();
+                window.tagMetadata = tagMetadata;
+            }
+            // Ensure bookmark and ignore have a default look if not set on server
+            if (!tagMetadata['bookmark']) {
+                tagMetadata['bookmark'] = { color: '#66d9ef', priority: 1000, count: 0 };
+            }
+            if (!tagMetadata['ignore']) {
+                tagMetadata['ignore'] = { color: '#f92672', priority: 900, count: 0 };
+            }
             window.tagMetadata = tagMetadata;
+        } catch (err) {
+            console.error("Failed to fetch tag metadata", err);
+        } finally {
+            isFetchingTagMetadata = false;
+            tagFetchPromise = null;
         }
-        // Ensure bookmark and ignore have a default look if not set on server
-        if (!tagMetadata['bookmark']) {
-            tagMetadata['bookmark'] = { color: '#66d9ef', priority: 1000, count: 0 };
-        }
-        if (!tagMetadata['ignore']) {
-            tagMetadata['ignore'] = { color: '#f92672', priority: 900, count: 0 };
-        }
-        window.tagMetadata = tagMetadata;
-    } catch (err) {
-        console.error("Failed to fetch tag metadata", err);
-    }
+    })();
+    return tagFetchPromise;
 }
 
 function getRawTagColor(analysisTags, userTags = []) {
@@ -87,7 +108,8 @@ function getRowTagColor(analysisTags, userTags = []) {
 
 function refreshAllRowColors() {
     const rows = document.querySelectorAll('tr.sim-row');
-    const [hashPath] = (window.location.hash || '#collections').split('?');
+    const view = typeof parseRestfulPath === 'function' ? parseRestfulPath().view : '';
+    const hash = window.location.hash || '';
     const isColorEnabled = typeof UIParams !== 'undefined' ? UIParams.colorByTag : (localStorage.getItem('sim-color-by-tag') === 'true');
 
     rows.forEach(tr => {
@@ -98,9 +120,9 @@ function refreshAllRowColors() {
 
         // Only collect tags from the PRIMARY editor of the row
         let selector = '.entity-tags-editor[data-etype="function"]';
-        if (hashPath === '#function-similarity') {
+        if (view === 'bin_sim' || view === 'function-similarity' || hash.includes('function-similarity')) {
             selector = '.sim-tags-editor[data-etype="similarity"]';
-        } else if (hashPath === '#files') {
+        } else if (view === 'files' || hash.includes('files')) {
             selector = '.entity-tags-editor[data-etype="file"]';
         }
 
@@ -350,7 +372,7 @@ window.handleTagContextMenu = (e, tag) => {
     setTimeout(() => document.addEventListener('mousedown', closeMenu), 10);
 };
 
-const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
+window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const isBookmarked = userTagsList.includes('bookmark');
     const isIgnored = userTagsList.includes('ignore');
     const editorClass = etype === 'similarity' ? 'sim-tags-editor' : 'entity-tags-editor';
@@ -401,55 +423,76 @@ const renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
         </div>
     `;
 };
-window.applyClusterFilter = (uuid) => {
+
+window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const hash = targetWindow.location.hash || '#collections';
-    const isSim = hash.startsWith('#function-similarity');
+    const { collection } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: 'main' };
+    const col = collection || 'main';
 
-    const targetHashPath = isSim ? '#function-similarity' : '#functions';
-    const inputId = isSim ? 'flt-sim-cluster' : 'flt-function-cluster';
-
-    let input = targetWindow.document.getElementById(inputId);
-    if (!input) {
-        const currentHash = targetWindow.location.hash || `#functions`;
-        const [path, query] = currentHash.split('?');
-        const params = new URLSearchParams(query || '');
-        params.set('cluster_uuid', uuid);
-
-        const currentParams = new URLSearchParams(targetWindow.location.hash.split('?')[1] || '');
-        if (currentParams.has('collection')) {
-            params.set('collection', currentParams.get('collection'));
-        }
-
-        targetWindow.location.hash = `${targetHashPath}?${params.toString()}`;
-    } else {
-        input.value = uuid;
-        if (isSim) {
-            if (targetWindow.applySimSearch) targetWindow.applySimSearch();
+    if (isBinary) {
+        const inputId = 'flt-file-cluster';
+        let input = targetWindow.document.getElementById(inputId);
+        if (input) {
+            input.value = uuid;
+            if (targetWindow.applyAdvancedFileSearch) {
+                targetWindow.applyAdvancedFileSearch();
+            }
         } else {
-            if (targetWindow.applyAdvancedFuncSearch) targetWindow.applyAdvancedFuncSearch();
+            const params = new URLSearchParams();
+            params.set('bin_cluster_uuid', uuid);
+            if (typeof targetWindow.navigate === 'function') {
+                targetWindow.navigate('files', params, col);
+            } else {
+                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/files?${params.toString()}`;
+            }
+        }
+    } else {
+        const isSim = targetWindow.location.pathname.includes('/similarity') || targetWindow.location.pathname.includes('/vs/');
+        const viewKey = isSim ? 'function-similarity' : 'functions';
+        const inputId = isSim ? 'flt-sim-cluster' : 'flt-func-cluster';
+        
+        let input = targetWindow.document.getElementById(inputId);
+        if (input) {
+            input.value = uuid;
+            if (isSim) {
+                if (targetWindow.applySimSearch) targetWindow.applySimSearch();
+            } else {
+                if (targetWindow.applyAdvancedFuncSearch) targetWindow.applyAdvancedFuncSearch();
+            }
+        } else {
+            const params = new URLSearchParams();
+            params.set('cluster_uuid', uuid);
+            if (typeof targetWindow.navigate === 'function') {
+                targetWindow.navigate(viewKey, params, col);
+            } else {
+                const searchPath = isSim ? 'search/function-similarity' : 'functions';
+                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/${searchPath}?${params.toString()}`;
+            }
         }
     }
 };
 
-window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features) {
+window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function') {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    if (typeof targetWindow.showClusterTableTooltip === 'function') {
-        let adjustedEvent = event;
-        if (targetWindow !== window) {
-            let iframeId = 'code-frame';
-            if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-            const iframe = targetWindow.document.getElementById(iframeId);
-            if (iframe) {
-                const rect = iframe.getBoundingClientRect();
-                adjustedEvent = {
-                    clientX: event.clientX + rect.left,
-                    clientY: event.clientY + rect.top,
-                    target: event.target
-                };
-            }
+    let adjustedEvent = event;
+    if (targetWindow !== window) {
+        let iframeId = 'code-frame';
+        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
+        const iframe = targetWindow.document.getElementById(iframeId);
+        if (iframe) {
+            const rect = iframe.getBoundingClientRect();
+            adjustedEvent = {
+                clientX: event.clientX + rect.left,
+                clientY: event.clientY + rect.top,
+                target: event.target
+            };
         }
-        targetWindow.showClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features);
+    }
+    
+    if (clusterType === 'file' && typeof targetWindow.showBinClusterTableTooltip === 'function') {
+        targetWindow.showBinClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null);
+    } else if (typeof targetWindow.showClusterTableTooltip === 'function') {
+        targetWindow.showClusterTableTooltip(adjustedEvent, uuid, name, size, stability, cohesion, avg_features, null, clusterType);
     }
 };
 
@@ -458,15 +501,23 @@ window.hideClusterCardTooltip = function(event) {
     if (typeof targetWindow.hideClusterTableTooltip === 'function') {
         targetWindow.hideClusterTableTooltip(event);
     }
+    if (typeof targetWindow.hideBinClusterTableTooltip === 'function') {
+        targetWindow.hideBinClusterTableTooltip(event);
+    }
     const el = targetWindow.document.getElementById('hierarchy-tooltip');
     if (el) el.style.display = 'none';
+    const binEl = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+    if (binEl) binEl.style.display = 'none';
 };
 
 window.moveClusterCardTooltip = function(e) {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     const tooltip = targetWindow.document.getElementById('hierarchy-tooltip');
-    if (!tooltip || tooltip.style.display !== 'block') return;
-
+    const binTooltip = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+    const activeTooltip = (tooltip && tooltip.style.display === 'block') ? tooltip : ((binTooltip && binTooltip.style.display === 'block') ? binTooltip : null);
+    
+    if (!activeTooltip) return;
+    
     if (targetWindow !== window) {
         let iframeId = 'code-frame';
         if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
@@ -477,8 +528,10 @@ window.moveClusterCardTooltip = function(e) {
                 clientX: e.clientX + rect.left,
                 clientY: e.clientY + rect.top
             };
-            if (typeof targetWindow.moveClusterTableTooltip === 'function') {
+            if (activeTooltip === tooltip && typeof targetWindow.moveClusterTableTooltip === 'function') {
                 targetWindow.moveClusterTableTooltip(adjustedEvent);
+            } else if (activeTooltip === binTooltip && typeof targetWindow.moveBinClusterTableTooltip === 'function') {
+                targetWindow.moveBinClusterTableTooltip(adjustedEvent);
             }
             return;
         }
@@ -489,8 +542,8 @@ window.moveClusterCardTooltip = function(e) {
         const overflow = container.querySelector('.cluster-overflow-box');
         const isOverflowVisible = overflow && window.getComputedStyle(overflow).display !== 'none';
         const boxRect = (isOverflowVisible && overflow) ? overflow.getBoundingClientRect() : container.getBoundingClientRect();
-        const tooltipRect = tooltip.getBoundingClientRect();
-
+        const tooltipRect = activeTooltip.getBoundingClientRect();
+        
         let x = boxRect.right + 15;
         let y = boxRect.top;
 
@@ -500,42 +553,58 @@ window.moveClusterCardTooltip = function(e) {
         if (y + tooltipRect.height > window.innerHeight) {
             y = Math.max(10, window.innerHeight - tooltipRect.height - 15);
         }
-
-        tooltip.style.left = x + 'px';
-        tooltip.style.top = y + 'px';
+        
+        activeTooltip.style.left = x + 'px';
+        activeTooltip.style.top = y + 'px';
     }
 };
 
-window.renderClusterCards = (clusters) => {
+window.renderClusterCards = (clusters, isBinary = false) => {
     if (!clusters || clusters.length === 0) return '';
-
+    
     const threshold = typeof UIParams !== 'undefined' ? UIParams.cohesionThreshold : 0.5;
     const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= threshold);
     if (validClusters.length === 0) return '';
 
     const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;
         const score = (c.cohesion_score || 0).toFixed(2);
         const uuid = c.cluster_uuid;
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
         const color = `hsl(${hue}, 100%, 65%)`;
-
+        
+        let displayName = name;
+        if (isBinary) {
+            let extra = '';
+            if (c.yara_distribution && c.yara_distribution.length > 0) {
+                extra = `${c.yara_distribution[0].value} (${c.yara_distribution[0].percent}%)`;
+            } else if (c.avtype_distribution && c.avtype_distribution.length > 0) {
+                extra = `${c.avtype_distribution[0].value} (${c.avtype_distribution[0].percent}%)`;
+            }
+            if (extra) {
+                displayName = `${extra}`;
+            }
+        }
+        
+        const maxWidth = isBinary ? '160px' : '80px';
         const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
+        const clusterType = isBinary ? 'file' : 'function';
 
         return `
         <span class="${cardClass}"
-              onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${c.member_count || 0}, ${c.cluster_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})"
+              onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
-              onclick="applyClusterFilter(${escapeAttr(jsString(uuid))})"
+              onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
               style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <circle cx="12" cy="12" r="4"></circle>
             </svg>
-            <span style="max-width:80px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(name)}</span>
+            <span style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
             <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
         </span>`;
     };
@@ -739,9 +808,7 @@ function attachAutocomplete(input, level, field, onSelect) {
 
 
     const showSuggestions = async (filter = '') => {
-        const hashParts = window.location.hash.split('?');
-        const params = new URLSearchParams(hashParts[1] || "");
-        const col = params.get('collection') || 'main';
+        const col = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
 
         try {
             const res = await fetch(`/api/search/autocomplete?collection=${col}&level=${level}&field=${field}&q=${encodeURIComponent(filter)}&limit=50`);
@@ -931,7 +998,7 @@ async function confirmAddTag(etype, eid, tag, container) {
     const colStr = params.get('collection');
     // If not in query, try parsing from eid (e.g. main:function:md5:addr -> main)
     const colParts = eid ? eid.split(':') : [];
-    const col = colStr || (colParts.length > 2 ? colParts[0] : 'main');
+    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : (colParts.length > 2 ? colParts[0] : 'main'));
 
     let targets = [{ etype, eid, container }];
     const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
@@ -1059,7 +1126,7 @@ async function removeTag(event, etype, eid, tag) {
     const colStr = params.get('collection');
     // If not in query, try parsing from eid (e.g. main:function:md5:addr -> main)
     const colParts = eid ? eid.split(':') : [];
-    const col = colStr || (colParts.length > 2 ? colParts[0] : 'main');
+    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : (colParts.length > 2 ? colParts[0] : 'main'));
 
     let targets = [{ etype, eid }];
     const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
@@ -1185,6 +1252,14 @@ window.addEventListener('message', (event) => {
 
     const { action, tag, targets } = msg;
     if (!tag || !targets || !targets.length) return;
+
+    // If we encounter a new tag, refresh metadata to get its color/priority
+    if (action === 'add' && !tagMetadata[tag]) {
+        if (typeof fetchTagMetadata === 'function') {
+            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            fetchTagMetadata(col);
+        }
+    }
 
     targets.forEach(({ etype, eid }) => {
         const editors = Array.from(document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`));

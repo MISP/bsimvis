@@ -10,42 +10,69 @@
     let previewTimer = null;
     let activePreviewId = null;
     let lastTriggerElement = null;
+    let isHidingTooltips = false;
 
     window.previewTips = window.previewTips || {};
     window.previewCollection = window.previewCollection || '';
 
     // --- Global Tooltip Management ---
-    window.hideAllTooltips = function() {
-        if (previewTimer) clearTimeout(previewTimer);
-        
-        const tooltipIds = [
-            'code-preview-tooltip',
-            'token-tooltip',
-            'diff-preview-tooltip',
-            'hierarchy-tooltip',
-            'binary-preview-tooltip',
-            'tag-tooltip',
-            'graph-context-menu'
-        ];
+    window.hideAllTooltips = function(skipContextMenu = false) {
+        if (isHidingTooltips) return;
+        isHidingTooltips = true;
 
-        tooltipIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.style.display = 'none';
-                el.classList.remove('showing');
+        try {
+            // If a context menu is open, don't let hover events hide it or other things
+            // unless we are specifically opening a NEW context menu (skipContextMenu = true)
+            const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+            if (isMenuOpen && !skipContextMenu) return;
+
+            if (previewTimer) clearTimeout(previewTimer);
+
+            const tooltipIds = [
+                'code-preview-tooltip',
+                'token-tooltip',
+                'diff-preview-tooltip',
+                'hierarchy-tooltip',
+                'bin-hierarchy-tooltip',
+                'binary-preview-tooltip',
+                'tag-tooltip',
+                'graph-context-menu'
+            ];
+
+            tooltipIds.forEach(id => {
+                if (skipContextMenu && id === 'graph-context-menu') return;
+                const el = document.getElementById(id);
+                if (el) {
+                    el.style.display = 'none';
+                    el.classList.remove('showing');
+                }
+            });
+
+            if (window.hierarchyInstance && typeof window.hierarchyInstance.hideTooltip === 'function') {
+                window.hierarchyInstance.hideTooltip();
             }
-        });
 
-        if (window.hierarchyInstance && typeof window.hierarchyInstance.hideTooltip === 'function') {
-            window.hierarchyInstance.hideTooltip();
-        }
-        
-        if (typeof window.closeGraphContextMenu === 'function') {
-            window.closeGraphContextMenu();
-        }
+            if (window.packingInstance && typeof window.packingInstance.hideTooltip === 'function') {
+                window.packingInstance.hideTooltip();
+            }
 
-        activePreviewId = null;
-        lastTriggerElement = null;
+            if (window.binHierarchyInstance && typeof window.binHierarchyInstance.hideTooltip === 'function') {
+                window.binHierarchyInstance.hideTooltip();
+            }
+
+            if (window.binPackingInstance && typeof window.binPackingInstance.hideTooltip === 'function') {
+                window.binPackingInstance.hideTooltip();
+            }
+
+            if (!skipContextMenu && typeof window.closeGraphContextMenu === 'function') {
+                window.closeGraphContextMenu();
+            }
+
+            activePreviewId = null;
+            lastTriggerElement = null;
+        } finally {
+            isHidingTooltips = false;
+        }
     };
 
     function setTrigger(e) {
@@ -168,17 +195,24 @@
         });
     };
 
-    window.hideCodePreview = function (e) {
+    window.hideCodePreview = function (e, skipContextMenu = false) {
         if (previewTimer) clearTimeout(previewTimer);
         const tooltip = getCodeTooltip();
         if (e && e.relatedTarget && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+
+        if (window.hideAllTooltips) {
+            window.hideAllTooltips(skipContextMenu);
+        }
+
         activePreviewId = null;
         lastTriggerElement = null;
     };
 
     window.showCodePreview = async function (id, name, addr, bin, v_size, e, extra = 0, file_name = '') {
+        const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+        if (isMenuOpen) return;
         if (!id) return;
         setTrigger(e);
         const tooltip = getCodeTooltip();
@@ -381,30 +415,40 @@
         
         const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
         const hierTooltip = targetWindow.document.getElementById('hierarchy-tooltip');
+        const binHierTooltip = targetWindow.document.getElementById('bin-hierarchy-tooltip');
 
         const isCodeActive = codeTooltip && (codeTooltip.style.display === 'flex' || codeTooltip.classList.contains('showing'));
         const isDiffActive = diffTooltip && (diffTooltip.style.display === 'flex' || diffTooltip.classList.contains('showing'));
         const isHierActive = hierTooltip && hierTooltip.style.display === 'block';
+        const isBinHierActive = binHierTooltip && binHierTooltip.style.display === 'block';
 
-        if (isCodeActive || isDiffActive || isHierActive) {
+        if (isCodeActive || isDiffActive || isHierActive || isBinHierActive) {
             e.preventDefault();
             e.stopPropagation();
             
-            if (isHierActive) {
+            if (isHierActive || isBinHierActive) {
+                const activeTooltip = isHierActive ? hierTooltip : binHierTooltip;
                 if (e.ctrlKey) {
-                    const codeScrollEl = hierTooltip.querySelector('#hier-snippet-container .c-code-container');
+                    const codeScrollEl = activeTooltip.querySelector(isHierActive ? '#hier-snippet-container .c-code-container' : '#bin-hier-snippet-container');
                     if (codeScrollEl) {
                         codeScrollEl.scrollTop += e.deltaY;
-                        if (targetWindow.hierarchyInstance) {
+                        if (isHierActive && targetWindow.hierarchyInstance) {
                             targetWindow.hierarchyInstance._codeScrollTop = codeScrollEl.scrollTop;
                         }
                     }
                     return;
                 }
 
-                const activeInstance = (targetWindow.hierarchyInstance && targetWindow.hierarchyInstance._activeD)
-                    ? targetWindow.hierarchyInstance
-                    : ((targetWindow.packingInstance && targetWindow.packingInstance._activeD) ? targetWindow.packingInstance : null);
+                let activeInstance = null;
+                if (isHierActive) {
+                    activeInstance = (targetWindow.hierarchyInstance && targetWindow.hierarchyInstance._activeD)
+                        ? targetWindow.hierarchyInstance
+                        : ((targetWindow.packingInstance && targetWindow.packingInstance._activeD) ? targetWindow.packingInstance : null);
+                } else {
+                    activeInstance = (targetWindow.binHierarchyInstance && targetWindow.binHierarchyInstance._activeD)
+                        ? targetWindow.binHierarchyInstance
+                        : ((targetWindow.binPackingInstance && targetWindow.binPackingInstance._activeD) ? targetWindow.binPackingInstance : null);
+                }
 
                 if (activeInstance && activeInstance._activeD) {
                     const d = activeInstance._activeD;
@@ -414,7 +458,7 @@
 
                     if (d.data.scrollOffset === undefined) d.data.scrollOffset = 0;
                     d.data.scrollOffset = Math.max(0, Math.min(members.length - 1, d.data.scrollOffset + delta));
-                    activeInstance.renderTooltip(hierTooltip, d);
+                    activeInstance.renderTooltip(activeTooltip, d);
                 }
                 return;
             }
@@ -487,7 +531,9 @@
         }
     });
 
-    window.showBinaryPreview = function (md5, fileName, count, language, tags, e, fileTags = [], fileUserTags = []) {
+    window.showBinaryPreview = function (md5, fileName, count, language, tags, e, fileTags = [], fileUserTags = [], extraMeta = {}) {
+        const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+        if (isMenuOpen) return;
         setTrigger(e);
         const tooltip = getBinaryTooltip();
         
@@ -520,6 +566,46 @@
             </div>`;
         }
 
+        const formatMeta = (val) => {
+            if (!val) return null;
+            if (Array.isArray(val)) {
+                if (val.length === 0) return null;
+                return val.join(', ');
+            }
+            return String(val);
+        };
+
+        const avtype = formatMeta(extraMeta.avtype);
+        const filetype = formatMeta(extraMeta.filetype);
+        const yara = formatMeta(extraMeta.yara) || formatMeta(extraMeta.yara_matches);
+        const cc_ip = formatMeta(extraMeta.cc_ip) || formatMeta(extraMeta.ips);
+        
+        let extraFieldsHtml = '';
+        if (avtype) {
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-shield" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>AV Type</span>
+                <span class="mono" style="color: #eee; font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
+            </div>`;
+        }
+        if (filetype) {
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-file-code" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>File Type</span>
+                <span class="mono" style="color: #eee; font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
+            </div>`;
+        }
+        if (yara) {
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-biohazard" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Yara</span>
+                <span class="mono" style="color: var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${yara}">${yara}</span>
+            </div>`;
+        }
+        if (cc_ip) {
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-network-wired" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>CC IPs</span>
+                <span class="mono" style="color: var(--info, #60a5fa); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cc_ip}">${cc_ip}</span>
+            </div>`;
+        }
+
         tooltip.innerHTML = `
         <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px rgba(0,0,0,0.9); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
             <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 8px; color: #fff; display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
@@ -540,6 +626,7 @@
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-globe" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Language</span>
                     <span class="mono" style="color: #ae81ff; font-family: 'JetBrains Mono', 'Consolas', monospace;">${language}</span>
                 </div>
+                ${extraFieldsHtml}
             </div>
             ${tagsHtml}
         </div>`;
@@ -548,10 +635,15 @@
         window.moveCodePreview(e);
     };
 
-    window.hideBinaryPreview = function () {
+    window.hideBinaryPreview = function (skipContextMenu = false) {
         const tooltip = getBinaryTooltip();
         tooltip.style.display = 'none';
         tooltip.classList.remove('showing');
+
+        if (window.hideAllTooltips) {
+            window.hideAllTooltips(skipContextMenu);
+        }
+
         lastTriggerElement = null;
     };
 

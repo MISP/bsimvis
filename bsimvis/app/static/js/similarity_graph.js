@@ -169,7 +169,11 @@ class SimilarityGraph {
                                 tags: n.meta.tags || [],
                                 user_tags: n.meta.user_tags || [],
                                 file_tags: n.meta.file_tags || [],
-                                file_user_tags: n.meta.file_user_tags || []
+                                file_user_tags: n.meta.file_user_tags || [],
+                                yara: n.meta.yara || n.meta.yara_matches,
+                                avtype: n.meta.avtype,
+                                filetype: n.meta.filetype,
+                                cc_ip: n.meta.cc_ip || n.meta.ips
                             };
                             this.nodes_map.set(n.id, node_obj);
                             this.unique_nodes.push(node_obj);
@@ -235,32 +239,6 @@ class SimilarityGraph {
         const colorSimBy = document.getElementById('graph-color-sim')?.value || 'gradient';
         const linkWidthFactor = parseFloat(document.getElementById('graph-link-width')?.value || 1.0);
         const shouldScaleWidth = document.getElementById('graph-scale-width')?.checked ?? true;
-
-        const getMd5Color = (md5) => {
-            if (!md5) return "#888888";
-            // Use the first 6 chars of MD5 as a hex color, but ensure it's not too dark for the black background
-            // We'll use a simple deterministic approach: use md5 to pick from a large stable palette or hash to RGB
-            let hash = 0;
-            for (let i = 0; i < md5.length; i++) {
-                hash = md5.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
-            const hex = "00000".substring(0, 6 - c.length) + c;
-
-            // Brighten if too dark (HSL approach or simple component boost)
-            let r = parseInt(hex.substring(0, 2), 16);
-            let g = parseInt(hex.substring(2, 4), 16);
-            let b = parseInt(hex.substring(4, 6), 16);
-
-            const brightness = (r * 299 + g * 587 + b * 114) / 1000;
-            if (brightness < 60) {
-                r = Math.min(255, r + 80);
-                g = Math.min(255, g + 80);
-                b = Math.min(255, b + 80);
-            }
-
-            return `rgb(${r}, ${g}, ${b})`;
-        };
 
         const getNodeColor = (n, mode) => {
             const defaultColor = getMd5Color(n.md5);
@@ -450,7 +428,13 @@ class SimilarityGraph {
                 language: nodes[0].language_id,
                 tags: Array.from(new Set(nodes.flatMap(n => n.tags || []))).join(', '),
                 file_tags: nodes[0].file_tags || [],
-                file_user_tags: nodes[0].file_user_tags || []
+                file_user_tags: nodes[0].file_user_tags || [],
+                extraMeta: {
+                    yara: nodes[0].yara,
+                    avtype: nodes[0].avtype,
+                    filetype: nodes[0].filetype,
+                    cc_ip: nodes[0].cc_ip
+                }
             };
         });
 
@@ -464,7 +448,7 @@ class SimilarityGraph {
             .on("mouseover", (event, d) => {
                 if (window.graphContextMenuOpen) return;
                 const e = { clientX: event.clientX, clientY: event.clientY };
-                if (window.showBinaryPreview) window.showBinaryPreview(d.md5, d.file_name, d.count, d.language, d.tags, e, d.file_tags, d.file_user_tags);
+                if (window.showBinaryPreview) window.showBinaryPreview(d.md5, d.file_name, d.count, d.language, d.tags, e, d.file_tags, d.file_user_tags, d.extraMeta);
                 d3.select(event.currentTarget).attr("fill-opacity", 0.6);
             })
             .on("mouseout", (event, d) => {
@@ -719,7 +703,7 @@ class SimilarityGraph {
 
         // Re-run the updateSources logic but focused on color updates if possible.
         // For simplicity and since D3 is fast enough for 500 nodes, we just call updateSources with current params.
-        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+        const params = (typeof getRoutingState === 'function') ? getRoutingState().params : new URLSearchParams(window.location.search);
         this.updateSources(params);
 
         if (typeof window.saveGraphSettings === 'function') {

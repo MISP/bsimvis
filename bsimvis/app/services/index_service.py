@@ -4,7 +4,7 @@ Secondary index service for BSimVis.
 Key naming conventions:
   {coll}:idx:{level}:{field}:{value}  -> SET  of doc IDs  (TAG / exact match)
   {coll}:idx:{level}:{field}          -> ZSET of doc IDs  (NUMERIC)
-  {coll}:file_funcs:{md5}             -> SET  of func IDs (file->function relationship)
+  {coll}:idx:file:functions:{md5}     -> SET  of func IDs (file->function relationship)
 
 Field lists (FILE_TAG_FIELDS etc.) are derived from index_config.INDEX_FIELDS.
 To change which fields are indexed and at which levels, edit index_config.py.
@@ -12,6 +12,26 @@ To change which fields are indexed and at which levels, edit index_config.py.
 
 import json
 import datetime
+
+
+def normalize_tags(data, tag_fields=None):
+    """
+    Ensures that specified tag fields in a dictionary are normalized to lists of strings.
+    Handles legacy comma-separated strings and missing fields.
+    """
+    if tag_fields is None:
+        tag_fields = ["tags", "user_tags"]
+
+    for field in tag_fields:
+        val = data.get(field)
+        if isinstance(val, str):
+            data[field] = [t.strip() for t in val.split(",")] if val else []
+        elif val is None:
+            data[field] = []
+        elif not isinstance(val, list):
+            data[field] = []
+
+    return data
 
 
 def parse_timestamp(val):
@@ -49,12 +69,16 @@ def parse_timestamp(val):
 # ---------------------------------------------------------------------------
 # Field lists — derived from IndexConfig (edit index_config.py to change)
 # ---------------------------------------------------------------------------
-from bsimvis.app.services.index_config import get_native_fields, get_propagated_fields
+from bsimvis.app.services.index_config import (
+    get_native_fields,
+    get_propagated_fields,
+    get_fields_targeting_level,
+)
 
-FILE_TAG_FIELDS = get_native_fields("file", is_num=False)
-FUNC_TAG_FIELDS = get_native_fields("func", is_num=False)
-FILE_NUM_FIELDS = get_native_fields("file", is_num=True)
-FUNC_NUM_FIELDS = get_native_fields("func", is_num=True)
+FILE_TAG_FIELDS = get_fields_targeting_level("file", is_num=False)
+FUNC_TAG_FIELDS = get_fields_targeting_level("func", is_num=False)
+FILE_NUM_FIELDS = get_fields_targeting_level("file", is_num=True)
+FUNC_NUM_FIELDS = get_fields_targeting_level("func", is_num=True)
 FEATURE_TAG_FIELDS = get_native_fields("feature", is_num=False)
 FEATURE_NUM_FIELDS = get_native_fields("feature", is_num=True)
 

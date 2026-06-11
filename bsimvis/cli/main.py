@@ -13,6 +13,9 @@ from bsimvis.cli import (
     bsimvis_job,
     bsimvis_worker,
     bsimvis_cluster,
+    bsimvis_binsim,
+    bsimvis_collection,
+    bsimvis_metadata,
 )
 
 
@@ -84,14 +87,6 @@ def main():
     )
     feat_clear.add_argument("--md5", help="Clear functions for a specific file")
 
-    # features reindex
-    feat_reindex = features_actions.add_parser(
-        "reindex", help="Rebuild secondary indexes from JSON meta"
-    )
-    feat_reindex.add_argument(
-        "-c", "--collection", required=True, help="Collection name"
-    )
-
     # --- INDEX (Stats & Health) ---
     index_parser = subparsers.add_parser("index", help="Index health and statistics")
     index_actions = index_parser.add_subparsers(dest="action", required=True)
@@ -129,22 +124,30 @@ def main():
         )
 
         if action in ["build", "rebuild"]:
+            from bsimvis.app.services.config_service import config_service
+
             # Set default for build/rebuild if not provided
-            dp.set_defaults(algo="unweighted_cosine")
+            dp.set_defaults(
+                algo=config_service.get("similarity.algo", "unweighted_cosine")
+            )
             dp.add_argument(
                 "-k",
                 "--top-k",
                 type=int,
-                default=1000,
+                default=config_service.get("similarity.top_k", 1000),
                 help="Top K matches per function",
             )
-            dp.add_argument("--min-score", type=float, default=0)
+            dp.add_argument(
+                "--min-score",
+                type=float,
+                default=config_service.get("similarity.min_score", 0.0),
+            )
             dp.add_argument(
                 "--min-feature",
                 "--min-features",
                 dest="min_features",
                 type=int,
-                default=0,
+                default=config_service.get("similarity.min_features", 0),
                 help="Minimum number of features",
             )
             dp.add_argument("--delay", type=float, default=0.0)
@@ -185,11 +188,19 @@ def main():
         default=5,
         help="Minimum cluster size (default: 5)",
     )
+    from bsimvis.app.services.config_service import config_service
+
     c_build.add_argument(
-        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+        "--min-samples",
+        type=int,
+        help="Min samples for HDBSCAN core points",
+        default=config_service.get("clustering.min_samples", 1),
     )
     c_build.add_argument(
-        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+        "--epsilon",
+        type=float,
+        help="HDBSCAN epsilon threshold",
+        default=config_service.get("clustering.epsilon", 0.1),
     )
     c_build.add_argument(
         "--leaf-method", action="store_true", help="Use 'leaf' selection method"
@@ -218,14 +229,20 @@ def main():
     c_rebuild.add_argument(
         "--min-cluster-size",
         type=int,
-        default=5,
-        help="Minimum cluster size (default: 5)",
+        default=config_service.get("clustering.min_cluster_size", 2),
+        help="Minimum cluster size",
     )
     c_rebuild.add_argument(
-        "--min-samples", type=int, help="Min samples for HDBSCAN core points"
+        "--min-samples",
+        type=int,
+        help="Min samples for HDBSCAN core points",
+        default=config_service.get("clustering.min_samples", 1),
     )
     c_rebuild.add_argument(
-        "--epsilon", type=float, default=0.0, help="HDBSCAN epsilon threshold"
+        "--epsilon",
+        type=float,
+        help="HDBSCAN epsilon threshold",
+        default=config_service.get("clustering.epsilon", 0.1),
     )
     c_rebuild.add_argument(
         "--leaf-method", action="store_true", help="Use 'leaf' selection method"
@@ -263,6 +280,55 @@ def main():
     )
     c_list.add_argument("--limit", type=int, default=100)
     c_list.add_argument("--offset", type=int, default=0)
+
+    # --- BINSIM ---
+    binsim_parser = subparsers.add_parser(
+        "binsim", help="Binary-level similarity management"
+    )
+    binsim_actions = binsim_parser.add_subparsers(dest="action", required=True)
+
+    # binsim build
+    bs_build = binsim_actions.add_parser("build", help="Build binary similarities")
+    bs_build.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_build.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_build.add_argument("--md5-a", help="First binary MD5 (optional)")
+    bs_build.add_argument("--md5-b", help="Second binary MD5 (optional)")
+    bs_build.add_argument(
+        "--min-cohesion", type=float, default=0.0, help="Min cohesion"
+    )
+
+    # binsim rebuild
+    bs_rebuild = binsim_actions.add_parser(
+        "rebuild", help="Clear and build binary similarities"
+    )
+    bs_rebuild.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_rebuild.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_rebuild.add_argument("--md5-a", help="First binary MD5 (optional)")
+    bs_rebuild.add_argument("--md5-b", help="Second binary MD5 (optional)")
+    bs_rebuild.add_argument(
+        "--min-cohesion", type=float, default=0.0, help="Min cohesion"
+    )
+
+    # binsim clear
+    bs_clear = binsim_actions.add_parser("clear", help="Clear binary similarities")
+    bs_clear.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_clear.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_clear.add_argument("--md5", help="Target specific MD5")
+
+    # binsim list
+    bs_list = binsim_actions.add_parser("list", help="List similar binaries")
+    bs_list.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_list.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_list.add_argument("--md5", required=True, help="Target specific MD5")
+    bs_list.add_argument("--limit", type=int, default=20)
+    bs_list.add_argument("--offset", type=int, default=0)
+
+    # binsim diff
+    bs_diff = binsim_actions.add_parser("diff", help="Get binary similarity diff")
+    bs_diff.add_argument("-c", "--collection", required=True, help="Collection name")
+    bs_diff.add_argument("--algo", default="unweighted_cosine", help="Algorithm")
+    bs_diff.add_argument("--md5-a", required=True, help="First binary MD5")
+    bs_diff.add_argument("--md5-b", required=True, help="Second binary MD5")
 
     # sim list
     sim_list = sim_actions.add_parser("list", help="List similarity builds")
@@ -389,6 +455,12 @@ def main():
         metavar="FILE",
         help="Config file",
     )
+    
+    upload_parser.add_argument(
+        "--metadata",
+        metavar="FILE",
+        help="Path to a metadata CSV file to enrich uploaded binaries",
+    )
 
     decomp_args = upload_parser.add_argument_group("Decompilation options")
     decomp_args.add_argument(
@@ -456,6 +528,42 @@ def main():
         help="Skip building similarities after upload",
     )
 
+    # --- COLLECTION ---
+    collection_parser = subparsers.add_parser(
+        "collection", help="Collection management"
+    )
+    collection_actions = collection_parser.add_subparsers(dest="action", required=True)
+
+    collection_delete = collection_actions.add_parser(
+        "delete", help="Wipe and delete a collection completely"
+    )
+    collection_delete.add_argument(
+        "-c", "--collection", required=True, help="Collection name to delete"
+    )
+
+    collection_clean = collection_actions.add_parser(
+        "clean", help="Clean up temporary raw/JSON upload keys in a collection"
+    )
+    collection_clean.add_argument(
+        "-c", "--collection", required=True, help="Collection name to clean"
+    )
+
+    # --- METADATA ---
+    metadata_parser = subparsers.add_parser(
+        "metadata", help="Metadata management and propagation"
+    )
+    metadata_actions = metadata_parser.add_subparsers(dest="action", required=True)
+
+    metadata_propagate = metadata_actions.add_parser(
+        "propagate", help="Propagate metadata from a CSV file"
+    )
+    metadata_propagate.add_argument(
+        "-m", "--metadata", required=True, help="Path to pipe-delimited metadata CSV file"
+    )
+    metadata_propagate.add_argument(
+        "-c", "--collection", required=True, help="Target collection name"
+    )
+
     # Parse and Resolve Host
     args = parser.parse_args()
 
@@ -505,6 +613,7 @@ def main():
                 bsimvis_index.run_index_status(g_host, int(g_port), args)
             elif args.action == "reg":
                 bsimvis_index.run_index_reg(g_host, int(g_port), args)
+
         elif args.subcommand == "sim":
             bsimvis_sim.run_sim(g_host, int(g_port), args)
         elif args.subcommand == "upload":
@@ -519,6 +628,13 @@ def main():
             bsimvis_worker.run_worker(g_host, int(g_port), args)
         elif args.subcommand == "cluster":
             bsimvis_cluster.run_cluster(g_host, int(g_port), args)
+        elif args.subcommand == "binsim":
+            bsimvis_binsim.run_binsim(g_host, int(g_port), args)
+        elif args.subcommand == "collection":
+            bsimvis_collection.run_collection(g_host, int(g_port), args)
+        elif args.subcommand == "metadata":
+            bsimvis_metadata.run_metadata(g_host, int(g_port), args)
+
 
     except Exception as e:
         import traceback

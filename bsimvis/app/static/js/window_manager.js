@@ -39,8 +39,16 @@ class WindowManager {
         winEl.className = 'floating-window';
         winEl.id = id;
 
-        const width = options.width || 800;
-        const height = options.height || 500;
+        let defaultWidth = 800;
+        let defaultHeight = 500;
+        
+        if (type === 'diff' || type === 'features' || type === 'global-feature' || type === 'file' || type === 'bin_sim') {
+            defaultWidth = Math.min(1200, window.innerWidth - 100);
+            defaultHeight = Math.min(750, window.innerHeight - 100);
+        }
+        
+        const width = options.width || defaultWidth;
+        const height = options.height || defaultHeight;
         
         // Stagger windows
         const offset = this.windows.length * 30;
@@ -246,14 +254,12 @@ class WindowManager {
     }
 
     focusWindow(win) {
-        if (this.activeWindow === win && !win.isSticky) return;
+        if (this.activeWindow === win) return;
         this.activeWindow = win;
         
         this.zIndexBase += 10;
         
-        // Sticky windows get an even higher boost
-        const zIndex = win.isSticky ? (this.zIndexBase + 5000) : this.zIndexBase;
-        win.el.style.zIndex = zIndex;
+        win.el.style.zIndex = this.zIndexBase;
         
         this.windows.forEach(w => {
             w.el.classList.remove('active');

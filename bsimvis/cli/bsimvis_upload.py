@@ -1,8 +1,9 @@
-import tomllib, json, uuid
+import tomllib, json, uuid, csv, hashlib
 
-import time, logging, argparse, os, tempfile
+import time, logging, argparse, os, tempfile, zipfile
 from pathlib import Path
 from collections import Counter
+from typing import Optional
 import concurrent.futures, threading
 
 from tqdm import tqdm
@@ -12,10 +13,38 @@ from bsimvis.app.services.ghidra_service import ghidra_service
 
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
-import time
-import uuid
-import datetime
-import logging
+
+
+def archive_ghidra_project(gpr_path: Path) -> Optional[str]:
+    """
+    Bundles a .gpr file and its associated .rep directory into a zip for remote analysis.
+    """
+    rep_dir = gpr_path.with_suffix(".rep")
+    if not rep_dir.exists():
+        logging.error(f"[!] Associated .rep directory not found for {gpr_path.name}")
+        return None
+
+    # Create temp zip
+    fd, tmp_zip = tempfile.mkstemp(suffix=".gpr.zip")
+    os.close(fd)
+
+    try:
+        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+            # Add .gpr
+            zipf.write(gpr_path, gpr_path.name)
+            # Add .rep content
+            for root, dirs, files in os.walk(rep_dir):
+                for file in files:
+                    full_path = Path(root) / file
+                    # arcname should be <project>.rep/...
+                    arcname = full_path.relative_to(gpr_path.parent)
+                    zipf.write(full_path, arcname)
+        return tmp_zip
+    except Exception as e:
+        logging.error(f"[!] Failed to archive Ghidra project: {e}")
+        if os.path.exists(tmp_zip):
+            os.remove(tmp_zip)
+        return None
 
 
 def upload_bsim_data(data, args, config):
@@ -25,10 +54,16 @@ def upload_bsim_data(data, args, config):
     """
     if not data or not data.get("functions"):
         logging.warning("[!] No data to upload.")
-        return
+        return []
 
     file_meta = data.get("file_metadata", {})
     file_md5 = file_meta.get("file_md5", "unknown_md5")
+
+    if getattr(args, "metadata_dict", None) and file_md5 in args.metadata_dict:
+        extra_meta = args.metadata_dict[file_md5]
+        data.setdefault("file_metadata", {}).update(extra_meta)
+        if "file_name" in extra_meta:
+            data["file_metadata"]["file_name"] = extra_meta["file_name"]
 
     # Ensure collection is at the root for the API
     collections = args.collections if args.collections else ["main"]
@@ -62,10 +97,16 @@ def upload_bsim_data(data, args, config):
         except Exception as e:
             logging.error(f"[!] Failed to save JSON to {target_file}: {e}")
 
+    pipeline_details = []
     # We trigger the API for each collection
     for collection in collections:
         # Prepare the payload for the API
-        payload = {"collection": collection, "file_md5": file_md5, **data}
+        payload = {
+            "collection": collection,
+            "file_md5": file_md5,
+            "enqueue": False,
+            **data,
+        }
 
         if getattr(args, "top_k", None) is not None:
             payload["top_k"] = args.top_k
@@ -95,46 +136,113 @@ def upload_bsim_data(data, args, config):
                 resp.raise_for_status()
 
                 result = resp.json()
+                pipeline_id = result.get("pipeline_id")
                 logging.info(
-                    f"[+] Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {pipeline_id}"
                 )
+                if pipeline_id:
+                    pipeline_details.append(
+                        {
+                            "host": api_host,
+                            "collection": collection,
+                            "pipeline_id": pipeline_id,
+                        }
+                    )
             except Exception as e:
-                logging.error(f"[!] API Submission failed for {api_url}: {e}")
+                is_duplicate = False
+                err_msg = ""
+                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                    try:
+                        err_json = e.response.json()
+                        err_msg = err_json.get("error") or err_json.get("message") or ""
+                        if e.response.status_code == 400 and "already exists" in err_msg:
+                            logging.warning(f"[!] Skipped: {file_md5} - {err_msg}")
+                            is_duplicate = True
+                    except Exception:
+                        err_msg = e.response.text[:200]
+
+                if not is_duplicate:
+                    err_suffix = f" (Details: {err_msg})" if err_msg else ""
+                    logging.error(f"[!] API Submission failed for {api_url}: {e}{err_suffix}")
+
+    return pipeline_details
 
 
 def upload_raw_binary(target_path, args):
     """
-    Uploads a raw binary file to the server for analysis.
+    Uploads a raw binary file or a Ghidra project to the server for analysis.
     """
     target_path = Path(target_path).resolve()
     if not target_path.exists():
         logging.error(f"[!] Target path does not exist: {target_path}")
-        return 0
+        return 0, []
 
+    is_gpr = target_path.suffix == ".gpr"
+
+    if is_gpr:
+        logging.info(
+            f"[*] Archiving Ghidra project {target_path.name} for remote analysis..."
+        )
+        archive_path = archive_ghidra_project(target_path)
+        if not archive_path:
+            return 0, []
+        try:
+            with open(archive_path, "rb") as f:
+                raw_bytes = f.read()
+            # Override file_name for the API
+            file_name = target_path.name + ".zip"
+            return _perform_raw_upload(raw_bytes, file_name, args)
+        finally:
+            if os.path.exists(archive_path):
+                os.remove(archive_path)
+
+    if not target_path.is_file():
+        logging.error(f"[!] Target path is not a file: {target_path}")
+        return 0, []
+
+    try:
+        with open(target_path, "rb") as f:
+            raw_bytes = f.read()
+
+        if not raw_bytes:
+            logging.warning(f"[!] File {target_path.name} is empty. Skipping upload.")
+            return 0, []
+
+        return _perform_raw_upload(raw_bytes, target_path.name, args)
+    except Exception as e:
+        logging.error(f"[!] Failed to read {target_path}: {e}")
+        return 0, []
+
+
+def _perform_raw_upload(raw_bytes, file_name, args):
     hosts = getattr(args, "hosts", [])
     if not hosts:
         hosts = [getattr(args, "host", "localhost:5000")]
 
     collections = args.collections if args.collections else ["main"]
 
-    try:
-        with open(target_path, "rb") as f:
-            raw_bytes = f.read()
-    except Exception as e:
-        logging.error(f"[!] Failed to read {target_path}: {e}")
-        return 0
-
     success = True
+    pipeline_details = []
     for collection in collections:
         for api_host in hosts:
             params = {
                 "collection": collection,
-                "file_name": target_path.name,
+                "file_name": file_name,
                 "batch_uuid": args.batch_uuid,
                 "batch_name": args.batch_name,
                 "profile": args.profile,
                 "min_func_len": args.min_func_len,
+                "enqueue": "false",
             }
+
+            if getattr(args, "metadata_dict", None):
+                file_md5 = hashlib.md5(raw_bytes).hexdigest()
+                extra_meta = args.metadata_dict.get(file_md5)
+                if extra_meta:
+                    params["file_metadata_extra"] = json.dumps(extra_meta)
+                    if "file_name" in extra_meta:
+                        params["file_name"] = extra_meta["file_name"]
+
             # Ghidra Import options
             if getattr(args, "processor", None) is not None:
                 params["processor"] = args.processor
@@ -159,53 +267,77 @@ def upload_raw_binary(target_path, args):
 
             api_url = f"http://{api_host}/api/file/upload"
             try:
-                logging.info(
-                    f"[*] Uploading raw binary {target_path.name} to {api_url}..."
-                )
+                logging.info(f"[*] Uploading {file_name} to {api_url}...")
                 resp = requests.post(
                     api_url, params=params, data=raw_bytes, timeout=600
                 )
                 resp.raise_for_status()
                 result = resp.json()
+                pipeline_id = result.get("pipeline_id")
                 logging.info(
-                    f"[+] Raw Upload Success on {api_host}! Pipeline ID: {result.get('pipeline_id')}"
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {pipeline_id}"
                 )
+                if pipeline_id:
+                    pipeline_details.append(
+                        {
+                            "host": api_host,
+                            "collection": collection,
+                            "pipeline_id": pipeline_id,
+                        }
+                    )
             except Exception as e:
-                logging.error(f"[!] Raw Upload failed for {api_url}: {e}")
+                is_duplicate = False
+                err_msg = ""
+                if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+                    try:
+                        err_json = e.response.json()
+                        err_msg = err_json.get("error") or err_json.get("message") or ""
+                        if e.response.status_code == 400 and "already exists" in err_msg:
+                            logging.warning(f"[!] Skipped: {file_name} - {err_msg}")
+                            is_duplicate = True
+                    except Exception:
+                        err_msg = e.response.text[:200]
+
+                if not is_duplicate:
+                    err_suffix = f" (Details: {err_msg})" if err_msg else ""
+                    logging.error(f"[!] Upload failed for {api_url}: {e}{err_suffix}")
                 success = False
 
-    return 1 if success else 0
+    return (1 if success else 0), pipeline_details
 
 
-def process_target(target, args, config, batch_order) -> int:
+def process_target(target, args, config, batch_order) -> tuple[int, list]:
     target_path = Path(target).resolve()
 
-    # CASE 1: Existing Ghidra Project OR Local Analysis forced
-    if target_path.suffix == ".gpr" or getattr(args, "local_analysis", False):
+    # CASE 1: Local Analysis forced
+    if getattr(args, "local_analysis", False):
         try:
             t0 = time.time()
             options = vars(args).copy()
             options["batch_order"] = batch_order
 
+            pipeline_details = []
             if target_path.suffix == ".gpr":
                 all_data = ghidra_service.analyze_project(target_path, options)
                 for data in all_data:
-                    upload_bsim_data(data, args, config)
+                    details = upload_bsim_data(data, args, config)
+                    pipeline_details.extend(details)
             else:
                 data = ghidra_service.analyze_file(target_path, options)
-                upload_bsim_data(data, args, config)
+                details = upload_bsim_data(data, args, config)
+                pipeline_details.extend(details)
 
             t_total = time.time() - t0
             logging.info(
                 f"[+] Local processing finished for {target_path.name} in {t_total:.3f}s"
             )
-            return 1
+            return 1, pipeline_details
         except Exception as e:
             logging.error(f"[!] Local processing failed for {target_path.name}: {e}")
             import traceback
 
             logging.error(traceback.format_exc())
-            return 0
+            return 0, []
 
     # CASE 2: Raw Binary - Remote Analysis
     else:
@@ -238,11 +370,6 @@ def main(args):
 
     # Check if we need local Ghidra
     needs_local_ghidra = getattr(args, "local_analysis", False)
-    if not needs_local_ghidra:
-        for target in args.targets:
-            if Path(target).suffix == ".gpr":
-                needs_local_ghidra = True
-                break
 
     if needs_local_ghidra:
         ghidra_service.ensure_launcher(
@@ -251,9 +378,7 @@ def main(args):
             jvm_args=args.jvm_args,
         )
     else:
-        logging.info(
-            "[i] Remote analysis selected or no .gpr files. Skipping local Ghidra JVM start."
-        )
+        logging.info("[i] Remote analysis selected. Skipping local Ghidra JVM start.")
 
     logging.info(f"[i] Loading config {args.config}")
     config = load_config(args.config)
@@ -263,6 +388,39 @@ def main(args):
 
     if not args.batch_uuid:
         args.batch_uuid = str(uuid.uuid4())
+
+    args.metadata_dict = {}
+    if getattr(args, "metadata", None):
+        try:
+            with open(args.metadata, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f, delimiter="|")
+                reader.fieldnames = [n.strip() for n in reader.fieldnames]
+                for row in reader:
+                    hash_val = row.get("HASH", "").strip()
+                    if not hash_val:
+                        continue
+
+                    def parse_list(val):
+                        if not val or val.strip() == "-":
+                            return []
+                        return [v.strip() for v in val.split(",")]
+
+                    names = parse_list(row.get("names", ""))
+                    extra = {
+                        "first_seen": parse_list(row.get("first_seen", "")),
+                        "last_seen": parse_list(row.get("last_seen", "")),
+                        "filetype": parse_list(row.get("filetype", "")),
+                        "avtype": parse_list(row.get("avtype", "")),
+                        "yara": parse_list(row.get("yara", "")),
+                        "file_names": names,
+                        "cc_ip": parse_list(row.get("CC ip", "")),
+                    }
+                    if names:
+                        extra["file_name"] = names[0]
+                    args.metadata_dict[hash_val] = extra
+            logging.info(f"[i] Parsed metadata for {len(args.metadata_dict)} hashes from {args.metadata}")
+        except Exception as e:
+            logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
 
     logging.info(f"[i] Processing targets using profile: {args.profile}")
     print(
@@ -281,6 +439,7 @@ def main(args):
 
         success_count = 0
         total = len(args.targets)
+        pipeline_details = []
 
         # Progress bar setup
         # unit="bin" makes it say "10bin/s"
@@ -290,9 +449,10 @@ def main(args):
             for future in concurrent.futures.as_completed(future_to_target):
                 target_name = future_to_target[future]
                 try:
-                    result = future.result()
+                    result, p_details = future.result()
                     if result == 1:
                         success_count += 1
+                        pipeline_details.extend(p_details)
                 except Exception as e:
                     # tqdm.write ensures the progress bar stays at the bottom
                     # while the error message is printed above it
@@ -302,6 +462,42 @@ def main(args):
 
         rate = (success_count / total * 100) if total > 0 else 0
         print(f"[i] Success rate : {rate:.2f}% ({success_count}/{total})")
+
+        if pipeline_details:
+            # Group pipeline IDs by (host, collection)
+            groups = {}
+            for detail in pipeline_details:
+                key = (detail["host"], detail["collection"])
+                if key not in groups:
+                    groups[key] = []
+                groups[key].append(detail["pipeline_id"])
+
+            print(
+                f"[i] Grouping and finalizing batch uploads for {len(groups)} host/collection pairs..."
+            )
+
+            for (host, collection), pipeline_ids in groups.items():
+                api_url = f"http://{host}/api/file/upload/batch_finalize"
+                payload = {
+                    "pipeline_ids": pipeline_ids,
+                    "batch_uuid": args.batch_uuid,
+                    "collection": collection,
+                    "algo": getattr(args, "algo", "unweighted_cosine")
+                    or "unweighted_cosine",
+                    "skip_sim": getattr(args, "skip_sim", False),
+                }
+                try:
+                    logging.info(
+                        f"[*] Calling batch finalize on {host} (collection: {collection})..."
+                    )
+                    resp = requests.post(api_url, json=payload, timeout=300)
+                    resp.raise_for_status()
+                    result = resp.json()
+                    print(
+                        f"[+] Batch finalize success on {host}! Master Pipeline ID: {result.get('master_pipeline_id')}"
+                    )
+                except Exception as e:
+                    logging.error(f"[!] Batch finalize failed for {api_url}: {e}")
 
 
 def load_config(path=DEFAULT_CONFIG_NAME):
@@ -382,6 +578,12 @@ def cli_main():
         default=DEFAULT_CONFIG_NAME,
         metavar="FILE",
         help="Config file",
+    )
+
+    parser.add_argument(
+        "--metadata",
+        metavar="FILE",
+        help="Path to a metadata CSV file to enrich uploaded binaries",
     )
 
     decomp_args = parser.add_argument_group("Decompilation options")

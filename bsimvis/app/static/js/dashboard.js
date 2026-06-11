@@ -1,6 +1,7 @@
 // Main Dashboard Controller for BSimVis
 
 const windowManager = new WindowManager();
+window.windowManager = windowManager;
 
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
@@ -14,7 +15,7 @@ function handleFilterKey(e, searchFn) {
     if (e.key === 'Enter') {
         e.preventDefault();
         if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-        
+
         // Capture focus and selection before searching
         currentFocusId = e.target.id;
         try {
@@ -27,7 +28,7 @@ function handleFilterKey(e, searchFn) {
             preservedSelection.start = 0;
             preservedSelection.end = 0;
         }
-        
+
         searchFn();
     }
 }
@@ -37,7 +38,7 @@ function getSavedColumnWidth(path, label) {
     try {
         const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
         return saved[path] ? saved[path][label] : null;
-    } catch(e) { return null; }
+    } catch (e) { return null; }
 }
 
 function saveColumnWidth(path, label, width) {
@@ -46,16 +47,16 @@ function saveColumnWidth(path, label, width) {
         if (!saved[path]) saved[path] = {};
         saved[path][label] = width;
         localStorage.setItem('columnWidths', JSON.stringify(saved));
-    } catch(e) {}
+    } catch (e) { }
 }
 
 function resetColumnWidths() {
-    const [hashPath] = (window.location.hash || '#collections').split('?');
+    const { viewKey } = getRoutingState();
     try {
         const saved = JSON.parse(localStorage.getItem('columnWidths') || '{}');
-        delete saved[hashPath];
+        delete saved[viewKey];
         localStorage.setItem('columnWidths', JSON.stringify(saved));
-    } catch(e) {}
+    } catch (e) { }
     refreshData(false, true);
 }
 
@@ -75,12 +76,12 @@ function initColumnResize(th, path, label) {
     resizer.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         startX = e.clientX;
         startWidth = th.getBoundingClientRect().width;
-        
+
         document.body.classList.add('resizing');
-        
+
         // Disable pointer events on iframes during resize
         document.querySelectorAll('iframe').forEach(ifrm => {
             ifrm.style.pointerEvents = 'none';
@@ -114,11 +115,11 @@ function initColumnResize(th, path, label) {
 // ------------------------------------
 
 let currentOffset = 0;
-const DEFAULT_PAGE_LIMIT = 50;
+const DEFAULT_PAGE_LIMIT = 100;
 const DEFAULT_GRAPH_LIMIT = 500;
 const PAGE_SIZE = DEFAULT_PAGE_LIMIT;
 let isEndOfResults = false;
-let lastHashPath = '';
+let lastPathName = '';
 let lastViewPath = '';
 let lastSimilarityQuery = null; // Track filters to detect view switching
 let simSearchRequested = false; // Set to true when user explicitly triggers a search
@@ -134,6 +135,9 @@ function toggleSidebar() {
 
     // Trigger window resize for D3 plots
     setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
+
+    // Update header buttons visibility immediately
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
 }
 
 function toggleHeader() {
@@ -165,57 +169,55 @@ function toggleFilters() {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
 }
 
-function getCollectionFromHash() {
-    const [hashPath, queryString] = (window.location.hash || '').split('?');
-    const params = new URLSearchParams(queryString);
-    return params.get('collection') || 'main';
-}
-
 const routes = {
-    '#collections': {
+    'collections': {
         title: 'Collections',
         api: '/api/collection/search',
-        headers: ['Name', 'Files', 'Functions', 'Last Updated', 'Actions'],
+        headers: ['Name', 'Batches', 'Files', 'Functions', 'Last Updated', 'Actions'],
         renderer: renderCollections
     },
-    '#batches': {
+    'batches': {
         title: 'Batches',
         api: '/api/batch/search',
         headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Actions'],
         renderer: renderBatches
     },
-    '#files': {
+    'files': {
         title: 'Files',
         api: '/api/file/search',
         headers: [
-            { label: 'Filename', width: '25%' },
-            { label: 'MD5 / Arch', width: '15%' },
-            { label: 'Batch UUID', width: '15%' },
-            { label: 'Funcs', width: '15%', sort: 'function_count' },
-            { label: 'Entry Date', width: '12%', sort: 'entry_date' },
-            { label: 'Tags', width: '18%' }
+            { label: 'Filename', width: '17%' },
+            { label: 'MD5 / Arch', width: '11%' },
+            { label: 'Metadata', width: '14%' },
+            { label: 'Batch UUID', width: '9%' },
+            { label: 'Funcs', width: '7%', sort: 'function_count' },
+            { label: 'Notes', width: '3%' },
+            { label: 'Clusters', width: '12%' },
+            { label: 'Entry Date', width: '8%', sort: 'entry_date' },
+            { label: 'Tags', width: '16%' }
         ],
         renderer: renderFiles
     },
-    '#functions': {
+    'functions': {
         title: 'Functions',
         api: '/api/function/search',
         headers: [
             { label: 'Function', width: '20%' },
             { label: 'Address', width: '8%', sort: 'entrypoint_address' },
-            { label: 'Function Tags', width: '12%' },
+            { label: 'Function Tags', width: '10%' },
             { label: 'Clusters', width: '10%' },
             { label: 'Feat', width: '5%', sort: 'bsim_features_count' },
+            { label: 'Notes', width: '3%' },
             { label: 'File Name', width: '10%', sort: 'file_name' },
             { label: 'MD5', width: '5%', sort: 'file_md5' },
-            { label: 'File Tags', width: '12%' },
+            { label: 'File Tags', width: '11%' },
             { label: 'Language', width: '5%', sort: 'language_id' },
             { label: 'Date', width: '8%', sort: 'entry_date' },
             { label: 'Actions', width: '5%' }
         ],
         renderer: renderFunctions
     },
-    '#features-global': {
+    'features-global': {
         title: 'Global Feature Index',
         api: '/api/feature/search',
         headers: [
@@ -229,7 +231,7 @@ const routes = {
         ],
         renderer: renderGlobalFeatures
     },
-    '#function-similarity': {
+    'function-similarity': {
         title: 'Function similarities',
         api: '/api/similarity/search',
         headers: [
@@ -239,42 +241,66 @@ const routes = {
             { label: 'Function Tags', width: '10%' },
             { label: 'Clusters', width: '10%' },
             { label: 'Feat', sort: 'feat_count', width: '5%' },
+            { label: 'Notes', width: '3%' },
             { label: 'File Name', width: '9%' },
             { label: 'MD5', width: '5%' },
             { label: 'File Tags', width: '10%' },
             { label: 'Language', width: '5%' },
-            { label: 'Date', sort: 'entry_date', width: '15%' }
+            { label: 'Date', sort: 'entry_date', width: '12%' }
         ],
         renderer: renderTopCorrelations
     },
-    '#clusters': {
+    'clusters': {
         title: 'Function Clusters',
         api: '/api/cluster/list',
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
             { label: 'Name', sort: 'cluster_name', width: '25%' },
-            { label: 'Functions', sort: 'count', width: '8%' },
+            { label: 'Functions', sort: 'count', width: '12%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Avg Feat', sort: 'features', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
-            { label: 'Created', width: '15%' },
-            { label: 'Actions', width: '18%' }
+            { label: 'Created', width: '11%' },
+            { label: 'Sample Functions', width: '18%' }
         ],
         renderer: renderClusters
     },
-    '#upload': {
+    'upload': {
         title: 'Upload Binaries',
         api: null,
         headers: [],
         renderer: null
     },
-    '#file-call-graph': {
-        title: 'File Call Graph',
-        api: null,
-        headers: [],
-        renderer: null
+    'binary-similarity': {
+        title: 'Binary Similarity',
+        api: '/api/bin_sim/search',
+        headers: [
+            { label: 'Score', width: '10%', sort: 'score' },
+            { label: 'Binary Pair', width: '20%' },
+            { label: 'MD5', width: '15%' },
+            { label: 'Arch', width: '8%', sort: 'architecture' },
+            { label: 'Funcs', width: '8%', sort: 'functions_count' },
+            { label: 'Coverage', width: '12%', sort: 'coverage' },
+            { label: 'Shared Clusters', width: '7%', sort: 'shared_clusters' },
+            { label: 'Tags', width: '20%' },
+        ],
+        renderer: renderBinSimPairs
     },
-    '#jobs': {
+    'bin-clusters': {
+        title: 'Binary Clusters',
+        api: '/api/bin_cluster/list',
+        headers: [
+            { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
+            { label: 'Name', sort: 'cluster_name', width: '25%' },
+            { label: 'Binaries', sort: 'count', width: '12%' },
+            { label: 'Stability', sort: 'stability', width: '8%' },
+            { label: 'Cohesion', sort: 'cohesion', width: '8%' },
+            { label: 'Created', width: '11%' },
+            { label: 'Sample Binaries', width: '18%' }
+        ],
+        renderer: renderBinClusters
+    },
+    'jobs': {
         title: 'Background Jobs',
         api: '/api/jobs',
         headers: [
@@ -292,66 +318,217 @@ const routes = {
 };
 
 function clearFilters() {
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
     const newParams = new URLSearchParams();
 
     // Preserved context keys
-    const preserved = ['collection', 'algo', 'view'];
+    const preserved = ['algo', 'view'];
     preserved.forEach(k => {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
 
+    // Set default cohesion threshold
+    newParams.set('min_cohesion', '0.95');
+
     currentOffset = 0;
     isEndOfResults = false;
-    const newHash = hashPath + (newParams.toString() ? '?' + newParams.toString() : '');
     window.isClearingFilters = true;
-    window.location.hash = newHash;
+    navigate(viewKey, newParams);
+
     // Re-apply sim view defaults when clearing within the sim view
-    if (hashPath === '#function-similarity') {
-        const [hp, qs] = (window.location.hash || '').split('?');
-        applySimViewDefaults(hp, qs);
+    if (viewKey === 'function-similarity') {
+        applySimViewDefaults(viewKey, newParams.toString());
     }
+}
+
+window.ModuleLoader = {
+    currentModule: null,
+
+    async loadView(viewName, params) {
+
+
+        const dashboardContainer = document.getElementById('dashboard-view-container');
+        const moduleContainer = document.getElementById('module-view-container');
+
+        if (dashboardContainer) dashboardContainer.style.display = 'none';
+        if (moduleContainer) {
+            moduleContainer.style.display = 'flex';
+            moduleContainer.innerHTML = '<div style="display:flex; justify-content:center; align-items:center; height:100%; color:var(--dim);"><i class="fa-solid fa-spinner fa-spin" style="margin-right:10px;"></i> Loading View...</div>';
+        }
+
+        if (this.currentModule && typeof this.currentModule.destroy === 'function') {
+            this.currentModule.destroy();
+        }
+
+        const moduleMap = {
+            'function': window.FunctionView,
+            'file': window.FileView,
+            'diff': window.DiffView,
+            'call_graph': window.CallGraphView,
+            'feature': window.FeatureView,
+            'function_features': window.FunctionFeaturesView,
+            'bin_sim': {
+                init: (p) => {
+                    if (window.renderBinarySimilarityView) {
+                        const searchParams = new URLSearchParams();
+                        for (let k in p) if (p[k] !== undefined) searchParams.set(k, p[k]);
+                        moduleContainer.innerHTML = '<div id="binary-similarity-container" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>';
+                        window.renderBinarySimilarityView(searchParams, 'binary-similarity-container');
+                    }
+                }
+            }
+        };
+
+        const module = moduleMap[viewName];
+        if (module && typeof module.init === 'function') {
+            this.currentModule = module;
+            try {
+                await module.init(params, 'module-view-container');
+            } catch (err) {
+                console.error(`Failed to init module ${viewName}:`, err);
+                if (moduleContainer) moduleContainer.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading view: ${err.message}</div>`;
+            }
+        } else {
+            console.error(`Module not found or invalid: ${viewName}`);
+            if (moduleContainer) moduleContainer.innerHTML = `<div style="padding:20px; color:#f92672;"><i class="fa-solid fa-triangle-exclamation"></i> View module "${viewName}" not found.</div>`;
+        }
+    },
+
+    showDashboard() {
+        if (this.currentModule && typeof this.currentModule.destroy === 'function') {
+            this.currentModule.destroy();
+        }
+        this.currentModule = null;
+
+        const dashboardContainer = document.getElementById('dashboard-view-container');
+        const moduleContainer = document.getElementById('module-view-container');
+
+        if (moduleContainer) {
+            moduleContainer.style.display = 'none';
+            moduleContainer.innerHTML = '';
+        }
+        if (dashboardContainer) dashboardContainer.style.display = 'flex';
+    }
+};
+
+function hideDashboardActions() {
+    const toHide = [
+        document.getElementById('search-settings-container'),
+        document.getElementById('header-clear-btn'),
+        document.getElementById('header-history-btn-container'),
+        document.getElementById('toggle-filters-btn'),
+        document.getElementById('collapse-header-btn'),
+        document.getElementById('header-settings-btn')
+    ];
+    toHide.forEach(el => {
+        if (el) el.style.display = 'none';
+    });
+    const settingsPanel = document.getElementById('ui-settings-panel');
+    if (settingsPanel) settingsPanel.style.display = 'none';
+}
+
+function showDashboardActions() {
+    const toShow = [
+        document.getElementById('header-clear-btn'),
+        document.getElementById('header-history-btn-container'),
+        document.getElementById('toggle-filters-btn'),
+        document.getElementById('collapse-header-btn'),
+        document.getElementById('header-settings-btn')
+    ];
+    toShow.forEach(el => {
+        if (el) el.style.display = '';
+    });
 }
 
 async function refreshData(appendArg = false, force = false) {
     const append = (appendArg === true);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const full_hash = hashPath + (queryString ? '?' + queryString : '');
-    const route = routes[hashPath];
+    const { viewKey, collection, params } = getRoutingState();
+
+
+    // Check if we should load a module view
+    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features'].includes(viewKey)) {
+        const stateParams = Object.fromEntries(params);
+        stateParams.collection = collection;
+        stateParams.view = viewKey;
+        if (window.Breadcrumbs) {
+            const segments = window.Breadcrumbs.generate({ viewKey, collection, params }, null);
+            window.Breadcrumbs.render(segments);
+        }
+        hideDashboardActions();
+        await ModuleLoader.loadView(viewKey, stateParams);
+        return;
+    }
+
+    ModuleLoader.showDashboard();
+
+    const route = routes[viewKey];
     if (!route) return;
 
-    populateCollectionDropdown();
+    // Set default parameters for search views if not present
+    if (viewKey === 'files') {
+        if (!params.has('min_cohesion')) {
+            params.set('min_cohesion', '0.95');
+        }
+    } else if (viewKey === 'functions') {
+        if (!params.has('min_cohesion')) {
+            params.set('min_cohesion', '0.95');
+        }
+    } else if (viewKey === 'function-similarity') {
+        if (!params.has('min_score')) {
+            params.set('min_score', '0.95');
+        }
+        if (!params.has('max_score')) {
+            params.set('max_score', '1.0');
+        }
+    }
 
-    const isSilent = (full_hash === lastHashPath && !force && !append);
+    updateNavVisibility(collection);
 
-    if (full_hash !== lastHashPath || !append) {
-        currentOffset = 0;
-        isEndOfResults = false;
+    const currentUrlPath = window.location.pathname + window.location.search;
+    const isSilent = (currentUrlPath === lastPathName && !force && !append);
+
+    if (currentUrlPath !== lastPathName || !append) {
         if (!isSilent) {
-            document.getElementById('table-body').innerHTML = '';
+            currentOffset = 0;
+            isEndOfResults = false;
+
+            // Only clear if switching view types, otherwise just show loader
+            if (viewKey !== lastViewPath) {
+                document.getElementById('table-body').innerHTML = '';
+            } else if (!append) {
+                // Dim the existing content during refresh instead of clearing
+                document.getElementById('table-body').style.opacity = '0.5';
+            }
             document.getElementById('loader').style.display = 'block';
         }
     }
-    lastHashPath = full_hash;
+    lastPathName = currentUrlPath;
 
-    const params = new URLSearchParams(queryString);
-    const collection = params.get('collection') || 'main';
+    if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
+        const viewMode = params.get('view') || 'table';
+        if (viewMode !== 'hierarchy' && viewMode !== 'packing') {
+            params.delete('show_parents');
+            params.delete('show_children');
+            params.delete('show_members');
+            params.delete('path_compression');
+            params.delete('show_binary_sankey');
+        }
+    }
 
     // Save search filters state (only if not collections view)
-    if (hashPath !== '#collections') {
-        localStorage.setItem(`savedFilters:${collection}:${hashPath}`, queryString || `collection=${collection}`);
-        addToHistory(hashPath, queryString);
+    if (viewKey !== 'collections') {
+        localStorage.setItem(`savedFilters:${collection}:${viewKey}`, params.toString() || `collection=${collection}`);
+        addToHistory(viewKey, params.toString());
     }
 
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
-    if (hashPath === '#functions' || hashPath === '#function-similarity' || hashPath === '#files') {
+    if (['functions', 'function-similarity', 'binary-similarity', 'files'].includes(viewKey)) {
         await fetchTagMetadata(collection);
     }
 
-    if (hashPath === '#function-similarity') {
+    if (viewKey === 'function-similarity') {
         // Caching strategy: Use cache ONLY for 'Load More' (append) or 'Switch View' (same query)
-        const queryParams = new URLSearchParams(queryString);
+        const queryParams = new URLSearchParams(window.location.search);
         queryParams.delete('offset');
         queryParams.delete('limit');
         queryParams.delete('view');
@@ -367,20 +544,43 @@ async function refreshData(appendArg = false, force = false) {
     }
 
     // Standard pagination for all search routes
-    const countLimit = params.get('limit') || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
-    params.set('offset', currentOffset);
-    params.set('limit', countLimit);
+    const countLimit = parseInt(params.get('limit')) || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+    if (isSilent && currentOffset > 0) {
+        params.set('offset', 0);
+        params.set('limit', currentOffset);
+    } else {
+        params.set('offset', currentOffset);
+        params.set('limit', countLimit);
+    }
+
+    // Ensure collection is in params for the API call
+    if (viewKey !== 'jobs') {
+        params.set('collection', collection);
+    } else {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('collection')) {
+            params.set('collection', urlParams.get('collection'));
+        } else {
+            params.delete('collection');
+        }
+    }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
-    updateUI(hashPath, params, route);
+    updateUI(viewKey, collection, params, route);
 
-    if (params.get('view') === 'graph' && hashPath === '#function-similarity' || !route.api) {
+    const isGraphView = params.get('view') === 'graph' || params.get('view') === 'hierarchy' || params.get('view') === 'packing';
+    if ((isGraphView && (viewKey === 'function-similarity' || viewKey === 'binary-similarity' || viewKey === 'clusters')) || !route.api) {
         document.getElementById('loader').style.display = 'none';
         return;
     }
 
     try {
         const response = await fetch(apiUrl);
+        if (!response.ok) {
+            const text = await response.text();
+            console.error(`API Error for ${apiUrl}: ${response.status} ${response.statusText}\n${text.substring(0, 500)}`);
+            throw new Error(`API Error ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
 
         // Extract the list of items based on the API response structure
@@ -397,7 +597,7 @@ async function refreshData(appendArg = false, force = false) {
             totalEl.style.display = 'inline-block';
 
             if (poolIcon) {
-                if (data.pool_truncated && (hashPath === '#function-similarity' || hashPath === '#functions')) {
+                if (data.pool_truncated && (viewKey === 'function-similarity' || viewKey === 'functions')) {
                     document.getElementById('pool-warn-icon').style.display = 'inline-block';
                     document.getElementById('pool-warn-icon').title = `⚠️ Pool Truncated to first ${data.pool_limit || '---'} matches. Results may be incomplete.`;
                     if (poolInput) poolInput.style.borderColor = '#ffab2e';
@@ -409,7 +609,7 @@ async function refreshData(appendArg = false, force = false) {
 
             if (limitIcon) {
                 const currentLimit = parseInt(params.get('limit')) || DEFAULT_PAGE_LIMIT;
-                if (total >= currentLimit && (hashPath === '#function-similarity' || hashPath === '#functions')) {
+                if (total >= currentLimit && (viewKey === 'function-similarity' || viewKey === 'functions')) {
                     limitIcon.style.display = 'inline-block';
                     limitIcon.title = `ℹ️ Result Limit Reached (${currentLimit.toLocaleString()}). Not all pairs are shown.`;
                     if (limitInput) limitInput.style.borderColor = '#60a5fa';
@@ -426,12 +626,31 @@ async function refreshData(appendArg = false, force = false) {
         if (items.length === 0 && !append) {
             tbody.innerHTML = '<tr><td colspan="100" style="text-align:center; padding:40px;">No data found</td></tr>';
         } else {
-            const html = route.renderer(items);
+            // Pass clusters map for views that use it
+            let clustersMap = undefined;
+            if (viewKey === 'functions' || viewKey === 'function-similarity') {
+                clustersMap = data.clusters || {};
+            } else if (viewKey === 'files') {
+                clustersMap = data.bin_cluster_map || {};
+            }
+
+            const html = clustersMap !== undefined ? route.renderer(items, clustersMap) : route.renderer(items);
             if (html) tbody.insertAdjacentHTML('beforeend', html);
         }
 
-        currentOffset += (items.length || 0);
+        let count = items.length;
+        if (viewKey === 'jobs') {
+            const jobIds = new Set(items.map(item => item.id));
+            count = items.filter(item => !item.parent_id || !jobIds.has(item.parent_id)).length;
+        }
+
+        if (append) {
+            currentOffset += count;
+        } else {
+            currentOffset = count;
+        }
         isEndOfResults = currentOffset >= total;
+
 
         // Update total display with "Shown / Total" format
         if (totalEl) {
@@ -439,76 +658,93 @@ async function refreshData(appendArg = false, force = false) {
             totalEl.innerText = `${currentOffset.toLocaleString()} / ${total.toLocaleString()}`;
         }
 
-        renderPagination(hashPath);
+        renderPagination(viewKey);
     } catch (err) {
         console.error(err);
     } finally {
         document.getElementById('loader').style.display = 'none';
+        document.getElementById('table-body').style.opacity = '1';
     }
 }
 
-function updateUI(path, params, route) {
-    const pathChanged = (path !== lastViewPath);
-    lastViewPath = path;
-    const col = params.get('collection');
+function updateUI(viewKey, collection, params, route) {
+    showDashboardActions();
+    const routingState = getRoutingState();
+    if (window.Breadcrumbs) {
+        const segments = window.Breadcrumbs.generate(routingState, route);
+        window.Breadcrumbs.render(segments);
+    }
+
+    const path = viewKey;
+    const pathChanged = (viewKey !== lastViewPath);
+    lastViewPath = viewKey;
+    const col = collection;
+
+    // Common Elements
+    const gview = document.getElementById('graph-view-container');
+    const hview = document.getElementById('hierarchy-view-container');
+    const pview = document.getElementById('packing-view-container');
+    const pag = document.getElementById('pagination-container');
+    const settingsEl = document.getElementById('search-settings-container');
+    const chordView = document.getElementById('chord-view-container');
+    const tableWrap = document.getElementById('table-wrap');
+    const tableBodyWrap = document.getElementById('table-body-wrap');
+    const searchArea = document.getElementById('search-area');
 
     // Reset all special view containers and stop active processes
-    document.getElementById('graph-view-container').style.display = 'none';
-    document.getElementById('hierarchy-view-container').style.display = 'none';
-    if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
+    if (gview) gview.style.display = 'none';
+    if (hview) hview.style.display = 'none';
+    if (pview) pview.style.display = 'none';
     if (document.getElementById('call-graph-view-container')) document.getElementById('call-graph-view-container').style.display = 'none';
     if (document.getElementById('upload-view-container')) document.getElementById('upload-view-container').style.display = 'none';
+    if (document.getElementById('binary-similarity-container')) document.getElementById('binary-similarity-container').style.display = 'none';
+    if (chordView) chordView.style.display = 'none';
+    if (document.getElementById('binary-density-view-container')) document.getElementById('binary-density-view-container').style.display = 'none';
+    if (searchArea) searchArea.style.display = 'flex'; // Default to visible, specific views might hide it
 
     // Clear all autocomplete dropdowns to prevent leftovers from previous navigation
     document.querySelectorAll('.tag-autocomplete-dropdown').forEach(el => el.remove());
 
-    const tableWrap = document.getElementById('table-wrap');
-    const tableBodyWrap = document.getElementById('table-body-wrap');
-    tableWrap.style.display = 'flex';
-    tableWrap.style.flex = '1';
+    if (tableWrap) {
+        tableWrap.style.display = 'flex';
+        tableWrap.style.flex = '1';
+    }
     if (tableBodyWrap) tableBodyWrap.style.display = '';
 
-    document.getElementById('pagination-container').style.display = 'block';
+    if (pag) pag.style.display = 'flex';
 
     if (window.graphInstance) window.graphInstance.stop();
     if (window.hierarchyInstance) window.hierarchyInstance.stop();
     if (window.packingInstance) window.packingInstance.stop();
     if (window.callGraphInstance) window.callGraphInstance.stop();
+    if (window.chordGraphInstance) window.chordGraphInstance.stop();
 
-    if (path === '#upload') {
-        tableWrap.style.display = 'none';
+
+    if (viewKey === 'upload') {
+        if (tableWrap) tableWrap.style.display = 'none';
         if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-        document.getElementById('pagination-container').style.display = 'none';
+        if (pag) pag.style.display = 'none';
         document.getElementById('upload-view-container').style.display = 'block';
         if (typeof renderUploadView === 'function') renderUploadView(params);
-    } else if (path === '#file-call-graph') {
-        tableWrap.style.display = 'none';
-        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-        document.getElementById('pagination-container').style.display = 'none';
+    } else if (viewKey === 'binary-similarity') {
+        document.getElementById('header-top-actions').style.display = 'flex';
+    } else {
+        document.getElementById('header-top-actions').style.display = 'flex';
     }
 
     // Sidebar
     document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
-    const navLink = document.getElementById('nav-' + path.substring(1));
+    const navLink = document.getElementById('nav-' + viewKey);
 
     if (navLink) navLink.classList.add('active');
 
     // Titles
     document.getElementById('view-title').innerText = route.title;
-    const badgeEl = document.getElementById('view-collection-badge');
-    if (badgeEl) {
-        if (col) {
-            badgeEl.style.display = 'inline-block';
-            badgeEl.innerText = `Collection: ${col}`;
-        } else {
-            badgeEl.style.display = 'none';
-        }
-    }
 
     // Side Collections Info
     const viewHistoryBtnContainer = document.querySelector('.view-history-container');
     if (viewHistoryBtnContainer) {
-        viewHistoryBtnContainer.style.display = path === '#collections' ? 'none' : 'block';
+        viewHistoryBtnContainer.style.display = viewKey === 'collections' ? 'none' : 'block';
     }
 
     // Toggle download buttons visibility
@@ -523,46 +759,74 @@ function updateUI(path, params, route) {
     }
 
     if (col) {
-        const updateNavLink = (id, hash) => {
+        const updateNavLink = (id, targetView) => {
             const el = document.getElementById(id);
             if (!el) return;
-            const saved = localStorage.getItem(`savedFilters:${col}:${hash}`);
+            const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
+
+            let url = `/collections/${encodeURIComponent(col)}/${targetView}`;
+            if (targetView === 'collections') {
+                url = `/collections`;
+            } else if (targetView === 'jobs') {
+                url = `/jobs?collection=${encodeURIComponent(col)}`;
+            } else if (targetView === 'files') {
+                url = `/collections/${encodeURIComponent(col)}/files`;
+            } else if (targetView === 'functions') {
+                url = `/collections/${encodeURIComponent(col)}/functions`;
+            } else if (targetView === 'batches') {
+                url = `/collections/${encodeURIComponent(col)}/batches`;
+            } else if (targetView === 'features-global') {
+                url = `/collections/${encodeURIComponent(col)}/features`;
+            } else if (targetView === 'upload') {
+                url = `/collections/${encodeURIComponent(col)}/upload`;
+            } else if (targetView === 'function-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
+            } else if (targetView === 'binary-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/files/similarities`;
+            } else if (targetView === 'clusters') {
+                url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
+            } else if (targetView === 'bin-clusters') {
+                url = `/collections/${encodeURIComponent(col)}/files/clusters`;
+            }
+
             if (saved) {
                 const savedParams = new URLSearchParams(saved);
-                savedParams.set('collection', col);
-                el.href = `${hash}?${savedParams.toString()}`;
-            } else {
-                el.href = `${hash}?collection=${col}`;
+                if (targetView !== 'jobs') {
+                    savedParams.delete('collection'); // Already in path
+                    if (savedParams.toString()) url += `?${savedParams.toString()}`;
+                } else {
+                    savedParams.set('collection', col);
+                    url = `/jobs?${savedParams.toString()}`;
+                }
             }
+            el.href = url;
+
+            // Intercept click for SPA navigation
+            el.onclick = (e) => {
+                if (e.ctrlKey || e.metaKey) return;
+                e.preventDefault();
+                const currentState = getRoutingState();
+                if (currentState.viewKey === targetView) {
+                    clearFilters();
+                } else {
+                    Nav.openPath(url, e);
+                }
+            };
         };
 
-        updateNavLink('nav-collections', '#collections');
-        updateNavLink('nav-batches', '#batches');
-        updateNavLink('nav-files', '#files');
-        updateNavLink('nav-functions', '#functions');
-        updateNavLink('nav-features-global', '#features-global');
-        updateNavLink('nav-function-similarity', '#function-similarity');
-        updateNavLink('nav-clusters', '#clusters');
-        updateNavLink('nav-jobs', '#jobs');
-        updateNavLink('nav-upload', '#upload');
-        
-        const fileMd5 = params.get('file_md5');
-        const cgNav = document.getElementById('nav-file-call-graph');
-        if (cgNav) {
-            const saved = localStorage.getItem(`savedFilters:${col}:#file-call-graph`);
-            if (saved) {
-                const savedParams = new URLSearchParams(saved);
-                savedParams.set('collection', col);
-                cgNav.href = `#file-call-graph?${savedParams.toString()}`;
-            } else {
-                let href = `#file-call-graph?collection=${col}`;
-                if (fileMd5) href += `&file_md5=${fileMd5}`;
-                cgNav.href = href;
-            }
-        }
+        updateNavLink('nav-collections', 'collections');
+        updateNavLink('nav-batches', 'batches');
+        updateNavLink('nav-files', 'files');
+        updateNavLink('nav-functions', 'functions');
+        updateNavLink('nav-features-global', 'features-global');
+        updateNavLink('nav-function-similarity', 'function-similarity');
+        updateNavLink('nav-clusters', 'clusters');
+        updateNavLink('nav-bin-clusters', 'bin-clusters');
+        updateNavLink('nav-binary-similarity', 'binary-similarity');
+        updateNavLink('nav-jobs', 'jobs');
     }
 
-    if (path === '#function-similarity' && params.get('view') === 'graph') {
+    if (viewKey === 'function-similarity' && params.get('view') === 'graph') {
         restoreGraphSettings();
     }
 
@@ -570,496 +834,586 @@ function updateUI(path, params, route) {
     const thead = document.getElementById('table-head');
     const dataTable = document.getElementById('data-table');
     const dataTableHeader = document.getElementById('data-table-header');
-    let headHtml = '<tr>';
-    
-    const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[path];
-    const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
-    const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
 
-    const tableLayout = hasWidths ? 'fixed' : 'auto';
-    if (dataTable) dataTable.style.tableLayout = tableLayout;
-    if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
-    route.headers.forEach(h => {
-        const label = typeof h === 'string' ? h : h.label;
-        const sortKey = typeof h === 'object' ? h.sort : null;
-        let width = typeof h === 'object' ? h.width : 'auto';
+    if (pathChanged) {
+        let headHtml = '<tr>';
 
-        // Apply saved width if exists
-        const savedWidth = getSavedColumnWidth(path, label);
-        if (savedWidth) width = savedWidth;
+        const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[viewKey];
+        const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
+        const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
 
-        let style = width !== 'auto' ? `style="width:${width}"` : '';
-        const resizerHtml = `<div class="resizer"></div>`;
+        const tableLayout = hasWidths ? 'fixed' : 'auto';
+        if (dataTable) dataTable.style.tableLayout = tableLayout;
+        if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
+        route.headers.forEach(h => {
+            const label = typeof h === 'string' ? h : h.label;
+            const sortKey = typeof h === 'object' ? h.sort : null;
+            let width = typeof h === 'object' ? h.width : 'auto';
 
-        if (sortKey) {
-            const currentSort = params.get('sort_by');
-            const currentOrder = params.get('sort_order') || 'desc';
-            const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-            headHtml += `<th ${style} class="sortable resizable-th" data-label="${label}" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small>${resizerHtml}</th>`;
-        } else {
-            headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
-        }
-    });
-    headHtml += '</tr>';
-    thead.innerHTML = headHtml;
+            // Apply saved width if exists
+            const savedWidth = getSavedColumnWidth(viewKey, label);
+            if (savedWidth) width = savedWidth;
 
-    // Reset UI settings and display containers to defaults for all views
-    const settingsEl = document.getElementById('search-settings-container');
-    settingsEl.style.display = 'none';
-    settingsEl.innerHTML = '';
-    if (path !== '#upload' && path !== '#file-call-graph') {
-        tableWrap.style.display = 'flex';
-        tableWrap.style.flex = '1';
-        if (tableBodyWrap) tableBodyWrap.style.display = '';
-        document.getElementById('pagination-container').style.display = 'block';
-    }
-    document.getElementById('graph-view-container').style.display = 'none';
-    document.getElementById('hierarchy-view-container').style.display = 'none';
-    if (document.getElementById('packing-view-container')) document.getElementById('packing-view-container').style.display = 'none';
+            let style = width !== 'auto' ? `style="width:${width}"` : '';
+            const resizerHtml = `<div class="resizer"></div>`;
 
-    if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global') {
-        const applyFn = path === '#function-similarity' ? 'applySimSearch' : (path === '#functions' ? 'applyAdvancedFuncSearch' : (path === '#files' ? 'applyAdvancedFileSearch' : (path === '#features-global' ? 'applyAdvancedFeatureSearch' : 'applyClusterSearch')));
-
-        let settingsHtml = '';
-        if (path === '#function-similarity' || path === '#functions' || path === '#files' || path === '#clusters' || path === '#features-global') {
-            settingsEl.style.display = 'flex';
-            const viewMode = params.get('view') || 'table';
-            const poolLimit = params.get('pool_limit') || '1000000';
-            const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
-
-            if (path === '#function-similarity') {
-                settingsHtml += `
-                    <div class="view-toggle">
-                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
-                        <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
-                    </div>`;
-            } else if (path === '#clusters') {
-                settingsHtml += `
-                    <div class="view-toggle">
-                        <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
-                        <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
-                        <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
-                    </div>`;
-            }
-
-            if (path === '#function-similarity' || path === '#functions') {
-                settingsHtml += `
-                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
-                    <div style="position:relative; display:inline-flex; align-items:center;">
-                        <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
-                            title="Max candidates to score / filter" 
-                            style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                            onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                        <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
-                    </div>`;
-            }
-
-            settingsHtml += `
-                <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
-                <div style="position:relative; display:inline-flex; align-items:center;">
-                    <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
-                        title="Max results to display (Output Limit)" 
-                        style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
-                        onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
-                    <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
-                </div>
-            `;
-            settingsEl.innerHTML = settingsHtml;
-        } else {
-            settingsEl.style.display = 'none';
-        }
-
-        const tableWrap = document.getElementById('table-wrap');
-        const tableBodyWrap = document.getElementById('table-body-wrap');
-        const tbody = document.getElementById('table-body');
-        const pag = document.getElementById('pagination-container');
-        const gview = document.getElementById('graph-view-container');
-
-        if (path === '#function-similarity') {
-            const viewMode = params.get('view') || 'table';
-            if (viewMode === 'graph') {
-                tableWrap.style.display = 'flex';
-                tableWrap.style.flex = 'none';
-                if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-                pag.style.display = 'none';
-                gview.style.display = 'flex';
-                console.log("updateUI: Loading Graph...");
-                loadGraphView(params);
+            if (sortKey) {
+                const currentSort = params.get('sort_by');
+                const currentOrder = params.get('sort_order') || 'desc';
+                const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
+                headHtml += `<th ${style} class="sortable resizable-th" data-label="${label}" onclick="toggleSort('${sortKey}')">${label} <small>${icon}</small>${resizerHtml}</th>`;
             } else {
+                headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
+            }
+        });
+        headHtml += '</tr>';
+        thead.innerHTML = headHtml;
+
+        // Reset UI settings and display containers to defaults for all views
+        if (settingsEl) {
+            settingsEl.style.display = 'none';
+            settingsEl.innerHTML = '';
+        }
+        if (viewKey !== 'upload') {
+            if (tableWrap) {
                 tableWrap.style.display = 'flex';
                 tableWrap.style.flex = '1';
+            }
+            if (tableBodyWrap) tableBodyWrap.style.display = '';
+            if (pag) pag.style.display = 'flex';
+        }
+        if (gview) gview.style.display = 'none';
+        if (hview) hview.style.display = 'none';
+        if (pview) pview.style.display = 'none';
+    } else {
+        // Surgical Sort Icon Update
+        const currentSort = params.get('sort_by');
+        const currentOrder = params.get('sort_order') || 'desc';
+        thead.querySelectorAll('th.sortable').forEach(th => {
+            const onclickStr = th.getAttribute('onclick') || '';
+            const match = onclickStr.match(/toggleSort\('([^']+)'\)/);
+            if (match) {
+                const sortKey = match[1];
+                const small = th.querySelector('small');
+                if (small) {
+                    small.innerText = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
+                }
+            }
+        });
+    }
+
+    if (pathChanged) {
+        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs') {
+            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : 'applyJobSearch'))))));
+
+            let settingsHtml = '';
+            settingsEl.style.display = 'flex';
+
+            if (path === 'jobs') {
+                settingsHtml += `
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="job-auto-refresh" ${localStorage.getItem('jobAutoRefresh') !== 'false' ? 'checked' : ''} onchange="localStorage.setItem('jobAutoRefresh', this.checked)" style="cursor:pointer; vertical-align:middle;">
+                        <label for="job-auto-refresh" style="font-size:0.75rem; color:var(--text); cursor:pointer; font-weight:bold;">Auto-Refresh</label>
+                    </div>`;
+            } else {
+                const viewMode = params.get('view') || 'table';
+                const poolLimit = params.get('pool_limit') || '1000000';
+                const countLimit = params.get('limit') || (viewMode === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+
+                if (path === 'function-similarity') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchSimView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchSimView('graph')">Graph</button>
+                        </div>`;
+                } else if (path === 'binary-similarity') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinSimView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'graph' ? 'active' : ''}" onclick="switchBinSimView('graph')">Graph</button>
+                        </div>`;
+                } else if (path === 'clusters') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchClusterView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
+                            <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
+                        </div>`;
+                } else if (path === 'bin-clusters') {
+                    settingsHtml += `
+                        <div class="view-toggle">
+                            <button class="view-btn ${viewMode === 'table' ? 'active' : ''}" onclick="switchBinClusterView('table')">Table</button>
+                            <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchBinClusterView('hierarchy')">Graph</button>
+                            <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchBinClusterView('packing')">Packing</button>
+                        </div>`;
+                }
+
+                if (path === 'function-similarity' || path === 'functions') {
+                    settingsHtml += `
+                        <span class="dim" style="font-size:0.65rem; margin-left:15px;">Pool Limit:</span>
+                        <div style="position:relative; display:inline-flex; align-items:center;">
+                            <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
+                                title="Max candidates to score / filter" 
+                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                                onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
+                            <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
+                        </div>`;
+                }
+
+                settingsHtml += `
+                    <span class="dim" style="font-size:0.65rem; margin-left:15px;">Limit:</span>
+                    <div style="position:relative; display:inline-flex; align-items:center;">
+                        <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
+                            title="Max results to display (Output Limit)" 
+                            style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                            onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
+                        <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
+                    </div>
+                `;
+            }
+            settingsEl.innerHTML = settingsHtml;
+
+            const p = new URLSearchParams(params);
+            let headHtml = thead.innerHTML; // Start with the <tr> built above
+
+            if (path === 'files' || path === 'functions' || path === 'function-similarity' || path === 'features-global') {
+                headHtml += `<tr class="filter-row">`;
+                if (path === 'features-global') {
+                    headHtml += `
+                        <th><input type="text" id="flt-feat-hash" placeholder="Hash..." value="${p.get('hash') || ''}" onfocus="attachAutocomplete(this, 'feature', 'hash', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <input type="text" id="flt-feat-type" placeholder="Type..." value="${p.get('type') || ''}" onfocus="attachAutocomplete(this, 'feature', 'type', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-feat-op" placeholder="Op..." value="${p.get('op') || ''}" onfocus="attachAutocomplete(this, 'feature', 'op', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            </div>
+                        </th>
+                        <th></th><th></th>
+                        <th>
+                            <div style="display:flex; align-items:center; gap:2px;">
+                                <input type="number" id="flt-feat-min-tf" placeholder="Min..." value="${p.get('min_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <span class="dim" style="font-size:0.6rem">-</span>
+                                <input type="number" id="flt-feat-max-tf" placeholder="Max..." value="${p.get('max_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            </div>
+                        </th>
+                        <th>
+                            <div style="display:flex; align-items:center; gap:2px;">
+                                <input type="number" id="flt-feat-min-freq" placeholder="Min..." value="${p.get('min_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <span class="dim" style="font-size:0.6rem">-</span>
+                                <input type="number" id="flt-feat-max-freq" placeholder="Max..." value="${p.get('max_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            </div>
+                        </th>
+                        <th></th>`;
+                } else if (path === 'files') {
+                    headHtml += `
+                        <th><input type="text" id="flt-file-name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <input type="text" id="flt-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            </div>
+                        </th>
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <input type="text" id="flt-file-yara" placeholder="Yara..." value="${p.get('yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${p.get('avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${p.get('cc_ip') || ''}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <hr style="margin: 2px 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);">
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
+                                    <input type="text" id="flt-file-inf-yara" placeholder="Inf.Yara" title="Inferred Yara" value="${p.get('inferred_yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                    <input type="text" id="flt-file-inf-avtype" placeholder="Inf.AV" title="Inferred AVType" value="${p.get('inferred_avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                </div>
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
+                                    <input type="text" id="flt-file-inf-type" placeholder="Inf.Type" title="Inferred Type" value="${p.get('inferred_filetype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_filetype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                    <input type="text" id="flt-file-inf-ccip" placeholder="Inf.IP" title="Inferred CC IP" value="${p.get('inferred_ccip') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_ccip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
+                                </div>
+                            </div>
+                        </th>
+                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${p.get('batch_uuid') || ''}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th>
+                            <div style="display:flex; align-items:center; gap:2px;">
+                                <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${p.get('min_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                <span class="dim" style="font-size:0.6rem">-</span>
+                                <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${p.get('max_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                            </div>
+                        </th>
+                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <div style="display:flex; align-items:center; gap:2px;">
+                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <span class="dim" style="font-size:0.6rem">-</span>
+                                    <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                </div>
+                            </div>
+                        </th>
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${p.get('min_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                                <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${p.get('max_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
+                            </div>
+                        </th>
+                        <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>`;
+                } else if (path === 'function-similarity' || path === 'functions') {
+                    if (path === 'function-similarity') {
+                        headHtml += `
+                            <th style="vertical-align: middle;">
+                                <div style="display:flex; align-items:center; gap:2px;">
+                                    <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                    <span class="dim" style="font-size:0.6rem">-</span>
+                                    <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                </div>
+                                <div class="tag-filter-container" id="tag-container-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })"></div>
+                            </th>`;
+                    }
+                    const nameVal = path === 'function-similarity' ? p.get('name') : p.get('function_name');
+                    headHtml += `
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                <input type="text" id="flt-func-name" placeholder="Name..." value="${nameVal || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                                <div style="display:flex; gap:2px;">
+                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                    <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${p.get('return_type') || p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
+                                </div>
+                            </div>
+                        </th>`;
+                    const addrVal = path === 'function-similarity' ? p.get('address') : p.get('entrypoint_address');
+                    headHtml += `<th><input type="text" id="flt-func-address" placeholder="Addr..." value="${addrVal || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th style="position:relative"><div class="tag-filter-container" id="tag-container-func"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                        <th>
+                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
+                            </div>
+                        </th>
+                        <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-func-note-owner" placeholder="Note Owner..." value="${p.get('note_owner') || ''}" onfocus="attachAutocomplete(this, 'func', 'note_owners', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
+                        <th style="position:relative"><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                        <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${p.get('language_id') || p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+                    if (path === 'function-similarity') {
+                        headHtml += `
+                            <th style="font-size: 0.65rem;">
+                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                                    <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
+                                    <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                                    <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
+                                </select>
+                                <div style="margin-top:4px;">
+                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                                        <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
+                                        <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
+                                        <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
+                                    </select>
+                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
+                                        <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
+                                        <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
+                                    </select>
+                                </div>
+                            </th>`;
+                    } else { headHtml += `<th></th><th></th>`; }
+                }
+                headHtml += `</tr>`;
+                thead.innerHTML = headHtml;
+
+                if (path === 'files') {
+                    loadFieldCardinalities(col, 'file', { 'file_name': 'flt-file-name', 'file_md5': 'flt-file-md5', 'language_id': 'flt-file-language', 'batch_uuid': 'flt-file-batch', 'bin_cluster_name': 'flt-file-cluster-name' });
+                } else {
+                    loadFieldCardinalities(col, 'func', { 'function_name': 'flt-func-name', 'file_name': 'flt-func-file_name', 'file_md5': 'flt-func-md5', 'return_type': 'flt-func-ret_type', 'language_id': 'flt-func-language', 'namespace': 'flt-func-namespace' });
+                }
+                if (path === 'features-global') {
+                    loadFieldCardinalities(col, 'feature', { 'hash': 'flt-feat-hash', 'type': 'flt-feat-type', 'op': 'flt-feat-op' });
+                }
+            } else if (path === 'clusters') {
+                if (dataTable) dataTable.style.tableLayout = 'fixed';
+                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
+                headHtml += `<tr class="filter-row">
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                    <th><input type="text" id="flt-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" title="Min Functions" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" max="1" title="Min Stability" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><input type="number" id="flt-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${p.get('func_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${p.get('func_addr') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+            } else if (path === 'jobs') {
+                if (dataTable) dataTable.style.tableLayout = 'fixed';
+                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
+                const statuses = ['', 'pending', 'running', 'completed', 'failed', 'cancelled'];
+                const statusOptions = statuses.map(s => { const label = s ? s.toUpperCase() : 'All Statuses'; return `<option value="${s}" ${p.get('status') === s ? 'selected' : ''}>${label}</option>`; }).join('');
+                const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
+                const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
+                headHtml += `<tr class="filter-row">
+                    <th></th><th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
+                    <th><select id="job-collection-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;"><option value="">All Collections</option></select></th>
+                    <th></th><th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
+                    <th></th><th></th><th></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+                fetch('/api/collection/search').then(res => res.json()).then(data => {
+                    const collections = data.collections || (Array.isArray(data) ? data : []);
+                    const select = document.getElementById('job-collection-filter');
+                    if (select) {
+                        const currentVal = p.get('collection') || '';
+                        select.innerHTML = `<option value="">All Collections</option>` + collections.map(c => `<option value="${c.name}" ${currentVal === c.name ? 'selected' : ''}>${c.name}</option>`).join('');
+                    }
+                });
+            } else if (path === 'binary-similarity') {
+                headHtml += `<tr class="filter-row">
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <select id="bsim-score-type" onchange="debouncedSearch(applyBinSimSearch)" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
+                                <option value="score" ${p.get('sort') === 'score' || !p.get('sort') ? 'selected' : ''}>Unweighted</option>
+                                <option value="score_sim_weighted" ${p.get('sort') === 'score_sim_weighted' ? 'selected' : ''}>Sim Weighted</option>
+                                <option value="score_collection_weighted" ${p.get('sort') === 'score_collection_weighted' ? 'selected' : ''}>Col Weighted</option>
+                            </select>
+                            <div style="display:flex; align-items:center; gap:2px;">
+                                <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${p.get('min_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${p.get('max_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
+                            </div>
+                        </div>
+                    </th>
+                    <th><input type="text" id="bsim-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th><input type="text" id="bsim-md5" placeholder="MD5..." value="${p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></th>
+                    <th><input type="text" id="bsim-arch" placeholder="Arch..." value="${p.get('arch') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box;"></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${p.get('min_funcs') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${p.get('max_funcs') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-cov" placeholder="Min..." step="0.1" min="0" max="1" value="${p.get('min_coverage') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-cov" placeholder="Max..." step="0.1" min="0" max="1" value="${p.get('max_coverage') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th><input type="number" id="bsim-min-shared" placeholder="Min..." min="0" value="${p.get('min_shared') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th style="position:relative"><div class="tag-filter-container" id="tag-container-bin-sim"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-sim', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+            } else if (path === 'bin-clusters') {
+                const nameType = p.get('cluster_name_type') || 'file';
+                if (dataTable) dataTable.style.tableLayout = 'fixed';
+                if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
+                headHtml += `<tr class="filter-row">
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${p.get('max_count') || ''}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
+                    <th><input type="number" id="flt-bin-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${p.get('max_cohesion') || ''}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
+                    <th></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+            }
+
+            // Graph/Hierarchy Container Visibility Logic
+            const viewMode = params.get('view') || 'table';
+
+            if ((path === 'function-similarity' || path === 'binary-similarity') && viewMode === 'graph') {
+                if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = 'none'; }
+                if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+                if (pag) pag.style.display = 'none';
+                if (path === 'function-similarity') { if (gview) gview.style.display = 'flex'; loadGraphView(params); }
+                else { if (chordView) chordView.style.display = 'flex'; loadChordView(params); }
+            } else if ((path === 'clusters' || path === 'bin-clusters') && (viewMode === 'hierarchy' || viewMode === 'packing')) {
+                if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = 'none'; }
+                if (tableBodyWrap) tableBodyWrap.style.display = 'none';
+                if (pag) pag.style.display = 'none';
+                if (viewMode === 'hierarchy') { if (hview) hview.style.display = 'flex'; if (pview) pview.style.display = 'none'; if (path === 'clusters') loadHierarchyView(params); else loadBinHierarchyView(params); }
+                else { if (hview) hview.style.display = 'none'; if (pview) pview.style.display = 'flex'; if (path === 'clusters') loadPackingView(params); else loadBinPackingView(params); }
+            } else {
+                if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = '1'; }
                 if (tableBodyWrap) tableBodyWrap.style.display = '';
-                pag.style.display = 'block';
-                gview.style.display = 'none';
+                if (pag) pag.style.display = 'flex';
+                if (gview) gview.style.display = 'none';
+                if (chordView) chordView.style.display = 'none';
+                if (hview) hview.style.display = 'none';
+                if (pview) pview.style.display = 'none';
+            }
+
+            // Search Bar building
+            if (searchArea) {
+                if (path === 'files') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i></div></div>`;
+                } else if (path === 'functions') {
+                    const fileMd5 = p.get('file_md5');
+                    const callGraphBtn = fileMd5 ? `<a class="btn-action" onclick="Nav.openPath('/collections/${encodeURIComponent(p.get('collection'))}/files/${encodeURIComponent(fileMd5)}/functions', event, { title: 'Call Graph: ${fileMd5}', type: 'call_graph' })" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; cursor:pointer;">View File Call Graph 🕸️</a>` : '';
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i></div>${callGraphBtn}</div></div>`;
+                } else if (path === 'features-global') {
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i></div></div></div>`;
+                } else if (path === 'function-similarity') {
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i></div></div></div>`;
+                } else if (path === 'clusters') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i></div></div>`;
+                } else if (path === 'bin-clusters') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="bin-cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinClusterSearch()" title="Search"></i></div></div>`;
+                } else if (path === 'binary-similarity') {
+                    searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="bsim-search-input" placeholder="Search similarities by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinSimSearch()" title="Search"></i></div></div></div>`;
+                } else { searchArea.innerHTML = ''; }
             }
         } else {
-            tableWrap.style.display = 'flex';
-            tableWrap.style.flex = '1';
-            if (tableBodyWrap) tableBodyWrap.style.display = '';
-            pag.style.display = 'block';
-            if (gview) gview.style.display = 'none';
+            if (settingsEl) settingsEl.style.display = 'none';
+        }
+    } else {
+        // Surgical UI State Syncing (when path haven't changed)
+        const p = new URLSearchParams(params);
+        const syncInput = (id, paramName) => { const el = document.getElementById(id); if (el) el.value = p.get(paramName) || ''; };
+        const syncSelect = (id, paramName, defaultVal = '') => { const el = document.getElementById(id); if (el) el.value = p.get(paramName) || defaultVal; };
+ 
+        // Sync main search bars
+        syncInput('file-search-input', 'q');
+        syncInput('func-search-input', 'q');
+        syncInput('feature-search-input', 'q');
+        syncInput('sim-search-input', 'q');
+        syncInput('cluster-search-input', 'q');
+        syncInput('bin-cluster-search-input', 'q');
+        syncInput('bsim-search-input', 'q');
+ 
+        // Sync view settings
+        syncInput('sim-pool-limit', 'pool_limit');
+        syncInput('sim-limit', 'limit');
+ 
+        // Sync filter inputs
+        if (path === 'files') {
+            syncInput('flt-file-name', 'file_name'); syncInput('flt-file-md5', 'file_md5'); syncInput('flt-file-language', 'language_id'); syncInput('flt-file-yara', 'yara'); syncInput('flt-file-avtype', 'avtype'); syncInput('flt-file-ccip', 'cc_ip');
+            syncInput('flt-file-inf-yara', 'inferred_yara'); syncInput('flt-file-inf-avtype', 'inferred_avtype'); syncInput('flt-file-inf-type', 'inferred_filetype'); syncInput('flt-file-inf-ccip', 'inferred_ccip');
+            syncInput('flt-file-batch', 'batch_uuid'); syncInput('flt-file-min-funcs', 'min_function_count'); syncInput('flt-file-max-funcs', 'max_function_count');
+            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
+            syncInput('flt-file-min-date', 'min_entry_date'); syncInput('flt-file-max-date', 'max_entry_date');
+        } else if (path === 'functions' || path === 'function-similarity') {
+            const prefix = path === 'function-similarity' ? 'sim-' : 'flt-func-';
+            const nameParam = path === 'function-similarity' ? 'name' : 'function_name';
+            const addrParam = path === 'function-similarity' ? 'address' : 'entrypoint_address';
+            if (path === 'function-similarity') { 
+                syncInput('sim-min-score', 'min_score'); 
+                syncInput('sim-max-score', 'max_score'); 
+                syncSelect('sim-algo', 'algo', 'unweighted_cosine'); 
+                syncSelect('sim-cross-binary', 'cross_binary', ''); 
+                syncSelect('sim-match-mode', 'match_mode', 'any'); 
+            }
+            syncInput('flt-func-name', nameParam); syncInput('flt-func-namespace', 'namespace'); syncInput('flt-func-ret_type', 'return_type'); syncInput('flt-func-address', addrParam);
+            syncInput('flt-func-cluster', 'cluster_uuid'); syncInput('flt-func-cluster-name', 'cluster_name'); syncInput('flt-func-min-cohesion', 'min_cohesion');
+            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name');
+            const md5Val = p.get('md5') || p.get('file_md5');
+            const md5El = document.getElementById('flt-func-md5'); if (md5El) md5El.value = md5Val || '';
+        } else if (path === 'features-global') {
+            syncInput('flt-feat-hash', 'hash'); syncInput('flt-feat-type', 'type'); syncInput('flt-feat-op', 'op');
+            syncInput('flt-feat-min-tf', 'min_tf_score'); syncInput('flt-feat-max-tf', 'max_tf_score'); syncInput('flt-feat-min-freq', 'min_frequency'); syncInput('flt-feat-max-freq', 'max_frequency');
+        } else if (path === 'clusters') {
+            syncInput('flt-cluster-uuid', 'cluster_uuid'); syncInput('flt-cluster-id', 'cluster_id'); syncInput('flt-cluster-name', 'cluster_name'); syncInput('flt-cluster-min-count', 'min_count'); syncInput('flt-cluster-min-stability', 'min_stability'); syncInput('flt-cluster-min-features', 'min_features'); syncInput('flt-cluster-min-cohesion', 'min_cohesion');
+            syncInput('flt-cluster-func-name', 'func_name'); syncInput('flt-cluster-func-addr', 'func_addr'); syncInput('flt-cluster-file-name', 'file_name');
+        } else if (path === 'bin-clusters') {
+            syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type', 'file');
+            syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion');
+            syncInput('flt-bin-cluster-file-name', 'file_name'); syncInput('flt-bin-cluster-file-md5', 'file_md5');
+        } else if (path === 'binary-similarity') {
+            syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
+            syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
+        } else if (path === 'jobs') {
+            syncSelect('job-type-filter', 'type'); syncSelect('job-collection-filter', 'collection'); syncSelect('job-status-filter', 'status');
         }
 
-        const p = new URLSearchParams(params);
-
-        if (path === '#files' || path === '#functions' || path === '#function-similarity' || path === '#features-global') {
-            headHtml += `<tr class="filter-row">`;
-
-            if (path === '#features-global') {
-                headHtml += `
-                    <th>
-                        <input type="text" id="flt-feat-hash" placeholder="Hash..." value="${p.get('hash') || ''}" onfocus="attachAutocomplete(this, 'feature', 'hash', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    </th>
-                    <th>
-                        <div style="display:flex; flex-direction:column; gap:4px;">
-                            <input type="text" id="flt-feat-type" placeholder="Type..." value="${p.get('type') || ''}" onfocus="attachAutocomplete(this, 'feature', 'type', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                            <input type="text" id="flt-feat-op" placeholder="Op..." value="${p.get('op') || ''}" onfocus="attachAutocomplete(this, 'feature', 'op', (val) => { this.value = val; applyAdvancedFeatureSearch(); })" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                        </div>
-                    </th>
-                    <th></th>
-                    <th></th>
-                    <th>
-                        <div style="display:flex; align-items:center; gap:2px;">
-                            <input type="number" id="flt-feat-min-tf" placeholder="Min..." value="${p.get('min_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                            <span class="dim" style="font-size:0.6rem">-</span>
-                            <input type="number" id="flt-feat-max-tf" placeholder="Max..." value="${p.get('max_tf_score') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                        </div>
-                    </th>
-                    <th>
-                        <div style="display:flex; align-items:center; gap:2px;">
-                            <input type="number" id="flt-feat-min-freq" placeholder="Min..." value="${p.get('min_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                            <span class="dim" style="font-size:0.6rem">-</span>
-                            <input type="number" id="flt-feat-max-freq" placeholder="Max..." value="${p.get('max_frequency') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                        </div>
-                    </th>
-                    <th></th>
-                `;
-            } else if (path === '#files') {
-                headHtml += `
-                    <th>
-                        <input type="text" id="flt-file-name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    </th>
-                    <th>
-                        <div style="display:flex; flex-direction:column; gap:4px;">
-                            <input type="text" id="flt-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                            <input type="text" id="flt-file-language" placeholder="Lang..." value="${p.get('language_id') || ''}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                        </div>
-                    </th>
-                    <th>
-                        <input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${p.get('batch_uuid') || ''}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    </th>
-                    <th>
-                        <div style="display:flex; align-items:center; gap:2px;">
-                            <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${p.get('min_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                            <span class="dim" style="font-size:0.6rem">-</span>
-                            <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${p.get('max_function_count') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                        </div>
-                    </th>
-                    <th>
-                        <div style="display:flex; flex-direction:column; gap:2px;">
-                            <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${p.get('min_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                            <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${p.get('max_entry_date') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                        </div>
-                    </th>
-                    <th style="position:relative">
-                        <div class="tag-filter-container" id="tag-container-file">
-                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
-                        </div>
-                    </th>`;
-            } else if (path === '#function-similarity' || path === '#functions') {
-                if (path === '#function-similarity') {
-                    headHtml += `
-                        <th style="vertical-align: middle;">
-                            <div style="display:flex; align-items:center; gap:2px;">
-                                <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                                <span class="dim" style="font-size:0.6rem">-</span>
-                                <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                            </div>
-                            <div class="tag-filter-container" id="tag-container-sim">
-                                <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'sim')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('sim', 'sim_tag', val); this.value=''; triggerTagSearch(); })">
-                            </div>
-                        </th>`;
-                }
-
-                // Common Fields (Function Name, Namespace, Return Type)
-                const nameVal = path === '#function-similarity' ? p.get('name') : p.get('function_name');
-                headHtml += `
-                    <th>
-                        <div style="display:flex; flex-direction:column; gap:4px;">
-                            <input type="text" id="flt-func-name" placeholder="Name..." value="${nameVal || ''}" onfocus="attachAutocomplete(this, 'func', 'function_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                            <div style="display:flex; gap:2px;">
-                                <input type="text" id="flt-func-namespace" placeholder="Namespace..." value="${p.get('namespace') || ''}" onfocus="attachAutocomplete(this, 'func', 'namespace', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                                <input type="text" id="flt-func-ret_type" placeholder="Return Type..." value="${p.get('return_type') || p.get('ret_type') || ''}" onfocus="attachAutocomplete(this, 'func', 'return_type', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.6rem; width: 50%; box-sizing: border-box;">
-                            </div>
-                        </div>
-                    </th>`;
-
-                // Address
-                const addrVal = path === '#function-similarity' ? p.get('address') : p.get('entrypoint_address');
-                headHtml += `
-                    <th>
-                        <input type="text" id="flt-func-address" placeholder="Addr..." value="${addrVal || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    </th>`;
-
-                // Tags, Clusters, Features, File Info
-                headHtml += `
-                    <th style="position:relative">
-                        <div class="tag-filter-container" id="tag-container-func">
-                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'func')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('func', 'func_tag', val); this.value=''; triggerTagSearch(); })">
-                        </div>
-                    </th>
-                    <th>
-                        <div style="display:flex; flex-direction:column; gap:2px;">
-                            <input type="text" id="flt-func-cluster" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                            <input type="text" id="flt-func-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'cluster_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
-                        </div>
-                    </th>
-                    <th><input type="number" id="flt-func-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-func-file_name" placeholder="Name..." value="${p.get('file_name') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_name', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-                    <th><input type="text" id="flt-func-md5" placeholder="MD5..." value="${p.get('file_md5') || p.get('md5') || ''}" onfocus="attachAutocomplete(this, 'func', 'file_md5', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="width: 100%; box-sizing: border-box;"></th>
-                    <th style="position:relative">
-                        <div class="tag-filter-container" id="tag-container-file">
-                            <input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })">
-                        </div>
-                    </th>
-                    <th><input type="text" id="flt-func-language" placeholder="Lang..." value="${p.get('language_id') || p.get('language') || ''}" onfocus="attachAutocomplete(this, 'func', 'language_id', (val) => { this.value = val; ${applyFn}(); })" onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
-
-                if (path === '#function-similarity') {
-                    headHtml += `
-                        <th style="font-size: 0.65rem;">
-                            <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
-                                <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
-                                <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
-                            </select>
-                            <div style="margin-top:4px;">
-                                <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
-                                    <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
-                                    <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
-                                    <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
-                                </select>
-                                <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
-                                    <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
-                                    <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
-                                </select>
-                            </div>
-                        </th>`;
-                } else {
-                    headHtml += `<th></th><th></th>`;
-                }
+        // Sync view mode buttons active state
+        const viewMode = params.get('view') || 'table';
+        document.querySelectorAll('.view-btn').forEach(btn => {
+            const onclickStr = btn.getAttribute('onclick') || '';
+            const btnModeMatch = onclickStr.match(/switch.*View\('([^']+)'\)/);
+            if (btnModeMatch) {
+                const btnMode = btnModeMatch[1];
+                btn.classList.toggle('active', btnMode === viewMode);
             }
+        });
 
-            headHtml += `</tr>`;
-            thead.innerHTML = headHtml;
+        // Trigger graph/hierarchy reload if needed when on same path but mode changed
+        if ((path === 'function-similarity' || path === 'binary-similarity') && viewMode === 'graph') {
+            if (tableBodyWrap && tableBodyWrap.style.display !== 'none') {
+                if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = 'none'; }
+                tableBodyWrap.style.display = 'none';
+                if (pag) pag.style.display = 'none';
+                if (path === 'function-similarity') { if (gview) gview.style.display = 'flex'; loadGraphView(params); }
+                else { if (chordView) chordView.style.display = 'flex'; loadChordView(params); }
+            }
+        } else if ((path === 'clusters' || path === 'bin-clusters') && (viewMode === 'hierarchy' || viewMode === 'packing')) {
+            if (tableBodyWrap && tableBodyWrap.style.display !== 'none') {
+                if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = 'none'; }
+                tableBodyWrap.style.display = 'none';
+                if (pag) pag.style.display = 'none';
+                if (viewMode === 'hierarchy') { if (hview) hview.style.display = 'flex'; if (pview) pview.style.display = 'none'; if (path === 'clusters') loadHierarchyView(params); else loadBinHierarchyView(params); }
+                else { if (hview) hview.style.display = 'none'; if (pview) pview.style.display = 'flex'; if (path === 'clusters') loadPackingView(params); else loadBinPackingView(params); }
+            }
+        } else if (path !== 'upload' && tableBodyWrap && tableBodyWrap.style.display === 'none') {
+            if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = '1'; }
+            tableBodyWrap.style.display = '';
+            if (pag) pag.style.display = 'flex';
+            if (gview) gview.style.display = 'none';
+            if (chordView) chordView.style.display = 'none';
+            if (hview) hview.style.display = 'none';
+            if (pview) pview.style.display = 'none';
+        }
+    }
 
-            // Re-inject tags
-            const tagFields = [
-                { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
-                { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
-                { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] }
-            ];
-            tagFields.forEach(col => {
-                col.fields.forEach(f => {
-                    const values = p.getAll(f);
-                    const isEx = f.startsWith('exclude_');
-                    const baseType = isEx ? f.substring(8) : f;
-                    values.forEach(v => {
-                        if (v) createTagCard(col.key, baseType, v, isEx);
-                    });
+    // Re-inject tags for all views that support them
+    setTimeout(() => {
+        // Always clear existing cards first to avoid duplicates when navigating same-view
+        ['sim', 'func', 'file', 'bin-sim'].forEach(key => {
+            const container = document.getElementById(`tag-container-${key}`);
+            if (container) container.querySelectorAll('.tag-filter-card').forEach(c => c.remove());
+        });
+        const tagSearchParams = new URLSearchParams(params);
+        const tagFields = [
+            { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
+            { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
+            { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] },
+            { key: 'bin-sim', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] }
+        ];
+        tagFields.forEach(col => {
+            col.fields.forEach(f => {
+                const values = tagSearchParams.getAll(f);
+                const isEx = f.startsWith('exclude_');
+                const baseType = isEx ? f.substring(8) : f;
+                values.forEach(v => {
+                    if (v) createTagCard(col.key, baseType, v, isEx);
                 });
             });
-
-            if (path === '#files') {
-                loadFieldCardinalities(col, 'file', {
-                    'file_name': 'flt-file-name',
-                    'file_md5': 'flt-file-md5',
-                    'language_id': 'flt-file-language',
-                    'batch_uuid': 'flt-file-batch'
-                });
-            } else {
-                loadFieldCardinalities(col, 'func', {
-                    'function_name': 'flt-func-name',
-                    'file_name': 'flt-func-file_name',
-                    'file_md5': 'flt-func-md5',
-                    'return_type': 'flt-func-ret_type',
-                    'language_id': 'flt-func-language',
-                    'namespace': 'flt-func-namespace'
-                });
-            }
-
-            if (path === '#features-global') {
-                loadFieldCardinalities(col, 'feature', {
-                    'hash': 'flt-feat-hash',
-                    'type': 'flt-feat-type',
-                    'op': 'flt-feat-op'
-                });
-            }
-        }
-    }
-    if (path === '#clusters') {
-        const p = new URLSearchParams(params);
-        if (dataTable) dataTable.style.tableLayout = 'fixed';
-        if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
-        headHtml += `<tr class="filter-row">
-            <th>
-                <div style="display:flex; flex-direction:column; gap:2px;">
-                    <input type="text" id="flt-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                    <input type="text" id="flt-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                </div>
-            </th>
-            <th>
-                <input type="text" id="flt-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-            </th>
-            <th><input type="number" id="flt-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" title="Min Functions" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th><input type="number" id="flt-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" max="1" title="Min Stability" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th><input type="number" id="flt-cluster-min-features" value="${p.get('min_features') || '0'}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th><input type="number" id="flt-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
-            <th></th>
-            <th><button onclick="applyClusterSearch()" style="width:100%; padding:2px; font-size:0.65rem; cursor:pointer">Search</button></th>
-        </tr>`;
-        thead.innerHTML = headHtml;
-    }
-
-    if (path === '#clusters') {
-        const viewMode = params.get('view') || 'table';
-        const tableWrap = document.getElementById('table-wrap');
-        const tableBodyWrap = document.getElementById('table-body-wrap');
-        const hview = document.getElementById('hierarchy-view-container');
-        const pview = document.getElementById('packing-view-container');
-        const pag = document.getElementById('pagination-container');
-
-        if (viewMode === 'hierarchy') {
-            tableWrap.style.display = 'flex';
-            tableWrap.style.flex = 'none';
-            if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-            pag.style.display = 'none';
-            hview.style.display = 'flex';
-            if (pview) pview.style.display = 'none';
-            loadHierarchyView(params);
-        } else if (viewMode === 'packing') {
-            tableWrap.style.display = 'flex';
-            tableWrap.style.flex = 'none';
-            if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-            pag.style.display = 'none';
-            hview.style.display = 'none';
-            if (pview) pview.style.display = 'flex';
-            loadPackingView(params);
-        } else {
-            tableWrap.style.display = 'flex';
-            tableWrap.style.flex = '1';
-            if (tableBodyWrap) tableBodyWrap.style.display = '';
-            pag.style.display = 'block';
-            hview.style.display = 'none';
-            if (pview) pview.style.display = 'none';
-        }
-    } else if (path === '#file-call-graph') {
-        const tableWrap = document.getElementById('table-wrap');
-        const tableBodyWrap = document.getElementById('table-body-wrap');
-        const pag = document.getElementById('pagination-container');
-        const cgview = document.getElementById('call-graph-view-container');
-
-        tableWrap.style.display = 'none';
-        if (tableBodyWrap) tableBodyWrap.style.display = 'none';
-        pag.style.display = 'none';
-        cgview.style.display = 'flex';
-        loadCallGraphView(params);
-    }
-
-    // Search Bar for Files
-    const searchArea = document.getElementById('search-area');
-    if (path === '#files') {
-        const p = new URLSearchParams(params);
-        searchArea.innerHTML = `<div class="filter-bar">
-            <div class="search-input-wrapper">
-                <input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)">
-                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i>
-            </div>
-        </div>`;
-
-    } else if (path === '#functions') {
-        const p = new URLSearchParams(params);
-        const fileMd5 = p.get('file_md5');
-        const callGraphBtn = fileMd5 ? `<a class="btn-action" href="#file-call-graph?collection=${p.get('collection')}&file_md5=${fileMd5}" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem;">View File Call Graph 🕸️</a>` : '';
-        
-        searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
-            <div style="display:flex; gap:10px; align-items:center;">
-                <div class="search-input-wrapper">
-                    <input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)">
-                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i>
-                </div>
-                ${callGraphBtn}
-            </div>
-        </div>`;
-    } else if (path === '#features-global' && !document.getElementById('feature-search-input')) {
-        const p = new URLSearchParams(params);
-        searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
-            <div style="display:flex; gap:10px; align-items:center;">
-                <div class="search-input-wrapper">
-                    <input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)">
-                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i>
-                </div>
-            </div>
-        </div>`;
-    } else if (path === '#function-similarity') {
-        const p = new URLSearchParams(params);
-        searchArea.innerHTML = `<div class="filter-bar" style="gap:20px">
-            <div style="display:flex; gap:10px; align-items:center;">
-                <div class="search-input-wrapper">
-                    <input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
-                    <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i>
-                </div>
-            </div>
-        </div>`;
-    } else if (path === '#clusters' && !document.getElementById('cluster-search-input')) {
-        const p = new URLSearchParams(params);
-        searchArea.innerHTML = `<div class="filter-bar">
-            <div class="search-input-wrapper">
-                <input type="text" id="cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)">
-                <i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyClusterSearch()" title="Search"></i>
-            </div>
-        </div>`;
-    } else if (path !== '#files' && path !== '#functions' && path !== '#features-global' && path !== '#clusters') {
-        searchArea.innerHTML = '';
-    }
+        });
+    }, 0);
 
     // Sync body colgroup from the header row's actual rendered widths.
     // We use requestAnimationFrame so the header table has laid out first.
-    const syncColgroups = () => {
-        const headerTable = document.getElementById('data-table-header');
-        const bodyColgroup = document.getElementById('table-colgroup');
-        if (!headerTable || !bodyColgroup) return;
+    if (pathChanged) {
+        const syncColgroups = () => {
+            const headerTable = document.getElementById('data-table-header');
+            const bodyColgroup = document.getElementById('table-colgroup');
+            if (!headerTable || !bodyColgroup) return;
 
-        const headerRow = thead.querySelector('tr:first-child');
-        if (!headerRow) return;
-        const ths = headerRow.querySelectorAll('th');
+            const headerRow = thead.querySelector('tr:first-child');
+            if (!headerRow) return;
+            const ths = headerRow.querySelectorAll('th');
 
-        // Also rebuild the header colgroup
-        const headerColgroup = document.getElementById('table-colgroup-header');
-        if (headerColgroup) {
-            headerColgroup.innerHTML = '';
-            ths.forEach(th => {
-                const col = document.createElement('col');
-                if (th.style.width) col.style.width = th.style.width;
-                headerColgroup.appendChild(col);
+            // Also rebuild the header colgroup
+            const headerColgroup = document.getElementById('table-colgroup-header');
+            if (headerColgroup) {
+                headerColgroup.innerHTML = '';
+                ths.forEach(th => {
+                    const col = document.createElement('col');
+                    if (th.style.width) col.style.width = th.style.width;
+                    headerColgroup.appendChild(col);
+                });
+            }
+
+            // Read actual rendered widths after layout and apply to body colgroup
+            requestAnimationFrame(() => {
+                bodyColgroup.innerHTML = '';
+                ths.forEach(th => {
+                    const col = document.createElement('col');
+                    col.style.width = th.getBoundingClientRect().width + 'px';
+                    bodyColgroup.appendChild(col);
+                });
             });
-        }
+        };
+        syncColgroups();
 
-        // Read actual rendered widths after layout and apply to body colgroup
-        requestAnimationFrame(() => {
-            bodyColgroup.innerHTML = '';
-            ths.forEach(th => {
-                const col = document.createElement('col');
-                col.style.width = th.getBoundingClientRect().width + 'px';
-                bodyColgroup.appendChild(col);
-            });
+        // Initialize resizers - MUST BE DONE AFTER ALL thead.innerHTML UPDATES
+        thead.querySelectorAll('.resizable-th').forEach(th => {
+            initColumnResize(th, path, th.dataset.label);
         });
-    };
-    syncColgroups();
-
-    // Initialize resizers - MUST BE DONE AFTER ALL thead.innerHTML UPDATES
-    thead.querySelectorAll('.resizable-th').forEach(th => {
-        initColumnResize(th, path, th.dataset.label);
-    });
+    }
 
     // Automatically focus the active search input ONLY when switching views
     const searchInput = searchArea.querySelector('input[type="text"]');
@@ -1091,14 +1445,13 @@ function updateUI(path, params, route) {
 
 function applySearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
-    if (hashPath === '#files') {
+    if (viewKey === 'files') {
         const val = document.getElementById('file-search').value;
         if (val) params.set('file_name', val);
         else params.delete('file_name');
-    } else if (hashPath === '#features-global') {
+    } else if (viewKey === 'features-global') {
         const val = document.getElementById('feature-search').value;
         if (val) params.set('hash', val);
         else params.delete('hash');
@@ -1110,11 +1463,11 @@ function applySearch() {
 
     currentOffset = 0;
     isEndOfResults = false;
-    window.location.hash = `${hashPath}?${params.toString()}`;
+    navigate(viewKey, params);
 }
 
 function toggleSort(key) {
-    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const { viewKey, params } = getRoutingState();
     const currentSort = params.get('sort_by');
     const currentOrder = params.get('sort_order') || 'desc';
 
@@ -1131,16 +1484,15 @@ function toggleSort(key) {
         params.set('sort_order', 'desc');
     }
     currentOffset = 0;
-    if (window.location.hash.startsWith('#function-similarity')) {
+    if (viewKey === 'function-similarity') {
         simSearchRequested = true;
     }
-    window.location.hash = `${window.location.hash.split('?')[0]}?${params.toString()}`;
+    navigate(viewKey, params);
 }
 
 function applyAdvancedFuncSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('func-search-input')?.value;
     params.set('q', globalQ || '');
@@ -1154,10 +1506,13 @@ function applyAdvancedFuncSearch() {
     const langFlt = document.getElementById('flt-func-language')?.value;
     const clusterFlt = document.getElementById('flt-func-cluster')?.value;
     const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
+    const minCohesionFlt = document.getElementById('flt-func-min-cohesion')?.value;
     const minFeatFlt = document.getElementById('flt-func-min-features')?.value;
+    const noteOwnerFlt = document.getElementById('flt-func-note-owner')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
+    params.set('min_cohesion', minCohesionFlt || '0.95');
 
     if (nameFlt) params.set('function_name', nameFlt); else params.delete('function_name');
     if (addressFlt) params.set('entrypoint_address', addressFlt); else params.delete('entrypoint_address');
@@ -1167,7 +1522,7 @@ function applyAdvancedFuncSearch() {
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
     if (langFlt) params.set('language_id', langFlt); else params.delete('language_id');
     if (minFeatFlt) params.set('min_features', minFeatFlt); else params.delete('min_features');
-
+    if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
     const poolLimit = document.getElementById('sim-pool-limit')?.value;
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('pool_limit', poolLimit || '1000000');
@@ -1195,14 +1550,20 @@ function applyAdvancedFuncSearch() {
 
     currentOffset = 0;
     isEndOfResults = false;
-    window.location.hash = `${hashPath}?${params.toString()}`;
+    navigate(viewKey, params);
 }
 
 function switchSimView(mode) {
-    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const { viewKey, params } = getRoutingState();
     params.set('view', mode);
     simSearchRequested = true;
-    window.location.hash = `#function-similarity?${params.toString()}`;
+    navigate(viewKey, params);
+}
+
+function switchBinSimView(mode) {
+    const { viewKey, params } = getRoutingState();
+    params.set('view', mode);
+    navigate(viewKey, params);
 }
 
 function loadGraphView(params) {
@@ -1214,10 +1575,18 @@ function loadGraphView(params) {
     window.graphInstance.fetch(params);
 }
 
+function loadChordView(params) {
+    document.getElementById('chord-view-container').style.display = 'flex';
+    if (!window.chordGraphInstance) {
+        window.chordGraphInstance = new ChordGraph('chord-view-container');
+    }
+    window.chordGraphInstance.fetch(params);
+}
+
+
 function applySimSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
     const minScore = document.getElementById('sim-min-score')?.value;
     const maxScore = document.getElementById('sim-max-score')?.value;
@@ -1250,10 +1619,12 @@ function applySimSearch() {
     const retTypeFlt = document.getElementById('flt-func-ret_type')?.value;
     const clusterFlt = document.getElementById('flt-func-cluster')?.value;
     const clusterNameFlt = document.getElementById('flt-func-cluster-name')?.value;
+    const minCohesionFlt = document.getElementById('flt-func-min-cohesion')?.value;
     const fileNameFlt = document.getElementById('flt-func-file_name')?.value;
 
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
+    params.set('min_cohesion', minCohesionFlt || '0.95');
 
     if (nameFlt) params.set('name', nameFlt); else params.delete('name');
     if (addressFlt) params.set('address', addressFlt); else params.delete('address');
@@ -1293,13 +1664,12 @@ function applySimSearch() {
     currentOffset = 0;
     isEndOfResults = false;
     simSearchRequested = true;
-    window.location.hash = `${hashPath}?${params.toString()}`;
+    navigate(viewKey, params);
 }
 
 function applyAdvancedFileSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('file-search-input')?.value;
     params.set('q', globalQ || '');
@@ -1312,6 +1682,17 @@ function applyAdvancedFileSearch() {
     const maxEntryFlt = document.getElementById('flt-file-max-date')?.value;
     const minFuncsFlt = document.getElementById('flt-file-min-funcs')?.value;
     const maxFuncsFlt = document.getElementById('flt-file-max-funcs')?.value;
+    const clusterUuidFlt = document.getElementById('flt-file-cluster')?.value;
+    const clusterNameFlt = document.getElementById('flt-file-cluster-name')?.value;
+    const minCohesionFlt = document.getElementById('flt-file-min-cohesion')?.value;
+    const maxCohesionFlt = document.getElementById('flt-file-max-cohesion')?.value;
+    const yaraFlt = document.getElementById('flt-file-yara')?.value;
+    const avtypeFlt = document.getElementById('flt-file-avtype')?.value;
+    const ccipFlt = document.getElementById('flt-file-ccip')?.value;
+    const infYaraFlt = document.getElementById('flt-file-inf-yara')?.value;
+    const infAvtypeFlt = document.getElementById('flt-file-inf-avtype')?.value;
+    const infTypeFlt = document.getElementById('flt-file-inf-type')?.value;
+    const infCcipFlt = document.getElementById('flt-file-inf-ccip')?.value;
 
     if (nameFlt) params.set('file_name', nameFlt); else params.delete('file_name');
     if (md5Flt) params.set('file_md5', md5Flt); else params.delete('file_md5');
@@ -1321,6 +1702,20 @@ function applyAdvancedFileSearch() {
     if (maxEntryFlt) params.set('max_entry_date', maxEntryFlt); else params.delete('max_entry_date');
     if (minFuncsFlt) params.set('min_function_count', minFuncsFlt); else params.delete('min_function_count');
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
+    if (clusterUuidFlt) params.set('bin_cluster_uuid', clusterUuidFlt); else params.delete('bin_cluster_uuid');
+    if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
+    params.set('min_cohesion', minCohesionFlt || '0.95');
+    if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
+    if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
+    if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
+    if (ccipFlt) params.set('cc_ip', ccipFlt); else params.delete('cc_ip');
+    if (infYaraFlt) params.set('inferred_yara', infYaraFlt); else params.delete('inferred_yara');
+    if (infAvtypeFlt) params.set('inferred_avtype', infAvtypeFlt); else params.delete('inferred_avtype');
+    if (infTypeFlt) params.set('inferred_filetype', infTypeFlt); else params.delete('inferred_filetype');
+    if (infCcipFlt) params.set('inferred_ccip', infCcipFlt); else params.delete('inferred_ccip');
+
+    const noteOwnerFlt = document.getElementById('flt-file-note-owner')?.value;
+    if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -1345,21 +1740,41 @@ function applyAdvancedFileSearch() {
 
     currentOffset = 0;
     isEndOfResults = false;
-    window.location.hash = `${hashPath}?${params.toString()}`;
+    navigate(viewKey, params);
 }
 
+function applyJobSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+
+    const collectionVal = document.getElementById('job-collection-filter')?.value;
+    const statusVal = document.getElementById('job-status-filter')?.value;
+    const typeVal = document.getElementById('job-type-filter')?.value;
+
+    if (collectionVal) params.set('collection', collectionVal); else params.delete('collection');
+    if (statusVal) params.set('status', statusVal); else params.delete('status');
+    if (typeVal) params.set('type', typeVal); else params.delete('type');
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+window.applyJobSearch = applyJobSearch;
+
+
 function triggerTagSearch() {
-    if (window.location.hash.startsWith('#function-similarity')) debouncedSearch(applySimSearch);
-    else if (window.location.hash.startsWith('#functions')) debouncedSearch(applyAdvancedFuncSearch);
-    else if (window.location.hash.startsWith('#files')) debouncedSearch(applyAdvancedFileSearch);
-    else if (window.location.hash.startsWith('#features-global')) debouncedSearch(applyAdvancedFeatureSearch);
-    else if (window.location.hash.startsWith('#clusters')) debouncedSearch(applyClusterSearch);
+    const { viewKey } = getRoutingState();
+    if (viewKey === 'function-similarity') debouncedSearch(applySimSearch);
+    else if (viewKey === 'binary-similarity') debouncedSearch(applyBinSimSearch);
+    else if (viewKey === 'functions') debouncedSearch(applyAdvancedFuncSearch);
+    else if (viewKey === 'files') debouncedSearch(applyAdvancedFileSearch);
+    else if (viewKey === 'features-global') debouncedSearch(applyAdvancedFeatureSearch);
+    else if (viewKey === 'clusters') debouncedSearch(applyClusterSearch);
 }
 
 function applyAdvancedFeatureSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('feature-search-input')?.value;
     params.set('q', globalQ || '');
@@ -1385,7 +1800,7 @@ function applyAdvancedFeatureSearch() {
 
     currentOffset = 0;
     isEndOfResults = false;
-    window.location.hash = `${hashPath}?${params.toString()}`;
+    navigate(viewKey, params);
 }
 
 function createTagCard(columnId, type, value, isExclude = false) {
@@ -1437,246 +1852,67 @@ function renderPagination(path) {
 }
 
 function copyToClipboard(text, btn) {
-    navigator.clipboard.writeText(text).then(() => {
-        const originalHtml = btn.innerHTML;
-        btn.innerHTML = '<span style="color:var(--success)">✓</span>';
-        setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
-    }).catch(err => console.error('Failed to copy', err));
+    let success = false;
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(text).then(() => {
+            if (btn) {
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+                setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+            }
+        }).catch(err => {
+            console.warn('navigator.clipboard.writeText failed, using fallback', err);
+            fallbackCopyToClipboard(text, btn);
+        });
+    } else {
+        fallbackCopyToClipboard(text, btn);
+    }
 }
 
-function renderCollections(data) {
-    if (!data.length) return '<tr><td colspan="5" style="text-align:center">No collections found.</td></tr>';
-
-    return data.map(col => `
-        <tr data-id="${col.name}">
-            <td><b style="color:var(--accent)">${col.name}</b></td>
-            <td class="mono">${col['total_files']}</td>
-            <td class="mono">${col['total_functions']}</td>
-            <td class="dim">${formatDate(col['last_updated'])}</td>
-            <td>
-                <div style="display: flex; gap: 15px;">
-                    <a class="btn-action" href="#upload?collection=${col.name}" style="color:var(--accent)">
-                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload
-                    </a>
-                    <span style="color:var(--border)">|</span>
-                    <a class="btn-action" href="#batches?collection=${col.name}">
-                        Browse Batches
-                    </a>
-                    <span style="color:var(--border)">|</span>
-                    <a class="btn-action" href="#files?collection=${col.name}" style="color:var(--success)">
-                        View All Files →
-                    </a>
-                </div>
-            </td>
-        </tr>
-    `).join('');
-}
-
-function renderBatches(data) {
-    return data.map(b => {
-        const col = b.collection || 'unknown';
-        return `
-        <tr data-id="${b['batch_uuid']}">
-            <td>
-                <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <b>${b.name || 'Unnamed'}</b>
-                    <button class="btn-copy" title="Copy Batch ID: ${b['batch_id']}" onclick="copyToClipboard('${b['batch_id']}', this)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
-                </div>
-            </td>
-            <td class="mono dim" style="font-size:0.7rem">${b['batch_uuid']}</td>
-            <td class="mono">${b['total_files']}</td>
-            <td class="mono">${b['total_functions']}</td>
-            <td class="dim">${formatDate(b['last_updated'] || b['created_at'])}</td>
-            <td><a class="btn-action" href="#files?collection=${col}&batch_uuid=${b['batch_uuid']}">View Files</a></td>
-        </tr>
-    `}).join('');
-}
-
-function renderFiles(data) {
-    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-    const col = params.get('collection');
-    return data.map(f => {
-        const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
-        const tags = f['tags'] || [];
-        const user_tags = f['user_tags'] || [];
-        const rowStyle = getRowTagColor(tags, user_tags);
-        const batchUuid = f['batch_uuid'] || '---';
-        const funcCount = f['function_count'] !== undefined ? f['function_count'] : 0;
-
-        return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${fileId}">
-            <td class="sim-cell">
-                <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <b style="color:var(--accent)">${f['file_name']}</b>
-                    <button class="btn-copy" title="Copy File ID: ${fileId}" onclick="copyToClipboard('${fileId}', this)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
-                </div>
-            </td>
-            <td class="sim-cell">
-                <div class="mono" style="font-size:0.7rem"># ${f['file_md5']}</div>
-                <div class="dim" style="font-size:0.65rem">${f['language_id']}</div>
-            </td>
-            <td class="sim-cell mono dim" style="font-size:0.7rem" title="${batchUuid}">
-                ${batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid}
-            </td>
-            <td class="sim-cell">
-                <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
-                    <span style="font-weight: bold; color: var(--text); min-width: 20px; text-align: right;">${funcCount}</span>
-                    <a class="btn-action" href="#functions?collection=${col}&file_md5=${f['file_md5']}" title="Functions" style="padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
-                        <i class="fa-solid fa-code" style="font-size:0.65rem;"></i>
-                    </a>
-                    <a class="btn-action" href="#file-call-graph?collection=${col}&file_md5=${f['file_md5']}" title="Call Graph" style="color: var(--accent); padding: 2px 5px; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; height: 18px; width: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);">
-                        <i class="fa-solid fa-network-wired" style="font-size:0.65rem;"></i>
-                    </a>
-                </div>
-            </td>
-            <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
-            <td>
-                ${renderTagEditor('file', fileId, tags, user_tags)}
-            </td>
-        </tr>
-    `;
-    }).join('');
-}
-
-function renderFunctions(data) {
-    return data.map(f => {
-        const name = f['function_name'] || 'Unknown';
-        const namespace = f['namespace'] || '';
-        const parameters = f['parameters'] || [];
-        const returnType = f['return_type'] || 'void';
-        const entry = f['entrypoint_address'] || '';
-        const tags = f['tags'] || [];
-        const user_tags = f['user_tags'] || [];
-        const fileName = f['file_name'] || '';
-        const file_md5 = f['file_md5'] || '';
-        const language = f['language_id'] || '---';
-        const featCount = f['bsim_features_count'] || 0;
-        const funcId = f['function_id'] || `${f.collection}:func:${file_md5}:${entry}`;
-
-        const safeName = (name || '').replace(/'/g, "\\'");
-        const fInfo = formatSigComponent(namespace, returnType, name, parameters);
-        const rowStyle = getRowTagColor(tags, user_tags);
-
-        return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${funcId}">
-            <td class="sim-cell">
-                <div style="display:flex; align-items:center; gap:8px; overflow:hidden;" title="${fInfo.fullSig}">
-                    <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                       onmouseenter="showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
-                       onmousemove="moveCodePreview(event)"
-                       onmouseleave="hideCodePreview(event)"
-                       onclick="showFunctionCodeById('${funcId}', '${safeName}', '', event)">
-                        ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                    </b>
-                    <div style="display:inline-flex; gap:4px; margin-left: 8px;">
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(funcId)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(funcId)}" 
-                                onmouseenter="onHoverDiffButton(event, '${funcId}', '${safeName}')"
-                                onmousemove="moveCodePreview(event)"
-                                onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${funcId}', '${safeName}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px;"><span>±</span></button>
-                        <a class="btn-sim-action" href="#function-similarity?collection=${f.collection || 'main'}&md5=${file_md5}&address=${entry}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
-                    </div>
-                </div>
-            </td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${entry}</span></td>
-            <td>${renderTagEditor('function', funcId, tags, user_tags)}</td>
-            <td class="cluster-cards-cell" data-clusters='${JSON.stringify(f['clusters'] || []).replace(/'/g, "&apos;")}'>${renderClusterCards(f['clusters'])}</td>
-            <td class="sim-cell" style="text-align:center;">
-
-                <div style="display:inline-flex; align-items:center; gap:6px;">
-                    <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
-                    <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
-                </div>
-            </td>
-            <td class="sim-cell"><div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}">${fileName}</div></td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${file_md5}"># ${file_md5}</span></td>
-            <td>${renderTagEditor('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
-            <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
-            <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
-            <td class="sim-cell"></td>
-        </tr>
-    `}).join('');
-}
-
-function renderGlobalFeatures(items) {
-    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-    const col = params.get('collection');
-    if (!items.length) return '<tr><td colspan="7" style="text-align:center">No features found.</td></tr>';
-
-    return items.map(f => {
-        const ctx = f.context || {};
-
-        let pcodeHtml = `
-            <div class="code-card">
-                <div class="code-card-line">
-                    <div class="code-card-text pcode-text">${ctx.pcode_full || 'N/A'}</div>
-                </div>
-            </div>`;
-
-        let cCodeHtml = '<span class="dim">N/A</span>';
-        if (ctx.c_code) {
-            const funcId = ctx.func_id || `${col}:func:${ctx.md5}:${ctx.addr}`;
-            const funcName = (ctx.name || ctx.addr);
-            const targetLinesStr = (ctx.line_idxs || []).map(l => l + 1).join(',');
-            const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';
-
-            const displayLine = (ctx.line_idxs && ctx.line_idxs.length > 0) ? ctx.line_idxs[0] + 1 : 1;
-            cCodeHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
-                     onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event)">
-                <div class="code-card-line">
-                    <div class="code-card-ln">${displayLine}</div>
-                    <div class="code-card-text">`;
-            ctx.c_code.forEach(t => {
-                const colorMap = {
-                    'variable': 'tok-variable', 'func_call': 'tok-func_call', 'type': 'tok-type',
-                    'keyword': 'tok-keyword', 'comment': 'tok-comment', 'string': 'tok-string', 'number': 'tok-number'
-                };
-                const cls = colorMap[t.type] || 'tok-default';
-                cCodeHtml += `<span class="${cls} feature-highlight" 
-                    data-hashes="${f.hash}" 
-                    data-type="${ctx.type || ''}" 
-                    data-op="${ctx.op || ''}" 
-                    data-tf="${Math.round(f.tf_score || 0)}"
-                    onmouseenter="showTokenTooltip(event)"
-                    onmouseleave="hideTokenTooltip()"
-                    onmousemove="moveCodePreview(event)">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
-            });
-            cCodeHtml += `</div></div></div>`;
+function fallbackCopyToClipboard(text, btn) {
+    try {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const success = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        if (success && btn) {
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+            setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
         }
-
-        return `
-        <tr data-id="${f.hash}">
-            <td>
-                <div style="display:inline-flex; align-items:center; gap:8px;">
-                    <code class="mono" style="color:var(--accent)">${f.hash}</code>
-                    <button class="btn-copy" title="Copy Feature ID: ${f['feature_id']}" onclick="copyToClipboard('${f['feature_id']}', this)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                    </button>
-                </div>
-            </td>
-            <td>
-                <div class="dim" style="font-size:0.65rem; font-weight:bold; color:var(--accent);">${ctx.type}</div>
-                <span class="badge" style="margin-top:2px; font-size:0.65rem;">${ctx.op}</span>
-            </td>
-            <td style="max-width:300px;">${pcodeHtml}</td>
-            <td style="max-width:350px;">${cCodeHtml}</td>
-            <td class="mono" style="color:var(--accent)">${f.tf_score !== undefined ? Math.round(f.tf_score) : '<span class="dim">-</span>'}</td>
-            <td class="mono">${f.frequency}</td>
-            <td>
-                <button class="btn-action" style="background:none; border:none; padding:0; font-size:0.8rem; text-align:left; color:var(--accent);"
-                    onclick="showGlobalFeaturePanel('${f.hash}', '${col}', event)">Analyze →</button>
-            </td>
-
-        </tr>
-    `}).join('');
+    } catch (err) {
+        console.error('Fallback copy failed', err);
+    }
 }
 
-function renderTopCorrelations(items) {
+/** Refreshes a single file row's note badge after a note add/remove from the file detail view. */
+function refreshFileRow(fileId) {
+    const { params, collection: currentCollection } = getRoutingState();
+    const collection = params.get('collection') || currentCollection || fileId.split(':')[0];
+    const md5 = fileId.split(':')[2];
+    if (!md5) return;
+    fetch(`/api/file/search?collection=${encodeURIComponent(collection)}&file_md5=${encodeURIComponent(md5)}&limit=1`)
+        .then(r => r.json())
+        .then(data => {
+            const f = (data.files || data.items || [])[0];
+            if (!f) return;
+            const row = document.querySelector(`tr[data-id="${fileId}"]`);
+            if (!row) return;
+            const noteCell = row.querySelector('.file-note-cell');
+            if (noteCell) noteCell.innerHTML = EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f });
+        })
+        .catch(() => { });
+}
+window.refreshFileRow = refreshFileRow;
+
+function renderTopCorrelations(items, clustersMap = {}) {
     if (!items || !items.length) return '<tr><td colspan="11" style="text-align:center; padding:40px;">No similarity pairs found in this collection.</td></tr>';
 
     return items.map(p => {
@@ -1703,56 +1939,50 @@ function renderTopCorrelations(items) {
         const rowStyle = getRowTagColor(tags, user_tags);
         const pairId = p.sid || `${p.id1}|${p.id2}|${p.algo}`;
 
+        const func1Data = {
+            ...p.meta1,
+            function_name: p.name1 || p.meta1?.function_name,
+            function_id: p.id1,
+            entrypoint_address: addr1,
+            collection: col
+        };
+        const func2Data = {
+            ...p.meta2,
+            function_name: p.name2 || p.meta2?.function_name,
+            function_id: p.id2,
+            entrypoint_address: addr2,
+            collection: col
+        };
+
+        const clusters1 = (p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+        const clusters2 = (p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+
         return `
-        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}">
+        <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
+            data-entity-data='${JSON.stringify(p).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
                     <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${name1}', '${p.id2}', '${name2}', ${p.score}, event)" 
+                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)" 
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${p.name1.replace(/'/g, "\\'")}', '${p.id2}', '${p.name2.replace(/'/g, "\\'")}', event)" 
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)" 
                         title="Run Aligned Diff" 
                         style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
                         <span>±</span>
                     </button>
                 </div>
-                ${renderTagEditor('similarity', pairId, tags, user_tags)}
+                ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
             </td>
-            <td>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f1.fullSig}">
-                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                           onmouseenter="showCodePreview('${p.id1}', '${name1}', '${addr1}', '${m1}', ${p.meta1?.bsim_features_count || 0}, event, 0, '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}')" 
-                           onmousemove="moveCodePreview(event)"
-                           onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id1}', '${name1}', '', event)">
-                            ${f1.ret ? `<span style="color:#ae81ff">${f1.ret}</span> ` : ''}${f1.ns ? `<span style="color:white; opacity:0.8">${f1.ns}::</span>` : ''}${p.name1 || '---'}<span style="color:white">(</span>${f1.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                        </b>
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id1)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(p.id1)}" 
-                                onmouseenter="onHoverDiffButton(event, '${p.id1}', '${name1}', '${p.id2}', ${p.score})"
-                                onmousemove="moveCodePreview(event)"
-                                onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${p.id1}', '${name1}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
-                        <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m1}&address=${addr1}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
+            <td style="min-width: 300px;">
+                <div style="display:flex; flex-direction:column; gap:8px; width: 100%;">
+                    <div style="min-height:24px; display:flex; align-items:center; width: 100%;">
+                        ${EntityRenderer.renderFunction(func1Data, { hideNote: true })}
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; overflow:hidden; min-height:24px;" title="${f2.fullSig}">
-                        <b style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                           onmouseenter="showCodePreview('${p.id2}', '${name2}', '${addr2}', '${m2}', ${p.meta2?.bsim_features_count || 0}, event, 0, '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}')" 
-                           onmousemove="moveCodePreview(event)"
-                           onmouseleave="hideCodePreview(event)"
-                           onclick="showFunctionCodeById('${p.id2}', '${name2}', '', event)">
-                            ${f2.ret ? `<span style="color:#ae81ff">${f2.ret}</span> ` : ''}${f2.ns ? `<span style="color:white; opacity:0.8">${f2.ns}::</span>` : ''}${p.name2 || '---'}<span style="color:white">(</span>${f2.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
-                        </b>
-                        <button class="btn-diff-action ${diffSelection.some(item => item.id === normalizeFuncId(p.id2)) ? 'active' : ''}" 
-                                data-func-id="${normalizeFuncId(p.id2)}" 
-                                onmouseenter="onHoverDiffButton(event, '${p.id2}', '${name2}', '${p.id1}', ${p.score})"
-                                onmousemove="moveCodePreview(event)"
-                                onmouseleave="hideDiffPreview(event)"
-                                onclick="addToDiff('${p.id2}', '${name2}')" title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px;"><span>±</span></button>
-                        <a class="btn-sim-action" href="#function-similarity?collection=${col}&md5=${m2}&address=${addr2}&algo=unweighted_cosine" title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; margin-left: 4px; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;"><i class="fa-solid fa-code-compare"></i></a>
+                    <div style="min-height:24px; display:flex; align-items:center; width: 100%;">
+                        ${EntityRenderer.renderFunction(func2Data, { hideNote: true })}
                     </div>
                 </div>
             </td>
@@ -1764,14 +1994,14 @@ function renderTopCorrelations(items) {
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('function', p.id1, p.meta1?.tags || [], p.meta1?.user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('function', p.id2, p.meta2?.tags || [], p.meta2?.user_tags || [])}</div>
                 </div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(p.meta1?.clusters || []).replace(/'/g, "&apos;")}'>${renderClusterCards(p.meta1?.clusters)}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(p.meta2?.clusters || []).replace(/'/g, "&apos;")}'>${renderClusterCards(p.meta2?.clusters)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters1).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters1)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters2).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters2)}</div>
                 </div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
@@ -1786,22 +2016,32 @@ function renderTopCorrelations(items) {
                     </div>
                 </div>
             </td>
-            <td class="sim-cell">
+            <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
+                        ${EntityRenderer.renderNoteButton(p.id1, p.meta1?.note_owners, { isTable: true, raw_data: p.meta1 })}
+                    </div>
+                    <div style="min-height:24px; display:flex; align-items:center; justify-content:center;">
+                        ${EntityRenderer.renderNoteButton(p.id2, p.meta2?.note_owners, { isTable: true, raw_data: p.meta2 })}
+                    </div>
                 </div>
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m1}"># ${m1}</span></div>
-                    <div style="min-height:24px; display:flex; align-items:center;"><span class="mono" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px;" title="${m2}"># ${m2}</span></div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m1}', '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta1?.file_name || ''}</b></div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m2}', '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta2?.file_name || ''}</b></div>
+                </div>
+            </td>
+            <td class="sim-cell">
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderMd5(m1)}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderMd5(m2)}</div>
                 </div>
             </td>
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${renderTagEditor('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -1823,11 +2063,13 @@ function renderTopCorrelations(items) {
 function showDiffPanel(force = false) {
     if (!force && diffSelection.length < 2) return;
 
-    let url = '/diff/index.html';
+    let url = '/collections/main/diff';
     let label = 'Function Comparison';
 
     if (diffSelection.length === 2) {
-        url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
+        const id1 = diffSelection[0].id;
+        const id2 = diffSelection[1].id;
+        url = buildDiffUrl(id1, id2);
         label = `Diff: ${diffSelection[0].name} vs ${diffSelection[1].name}`;
 
         // Reset queue after opening
@@ -1836,95 +2078,116 @@ function showDiffPanel(force = false) {
         saveDiffQueue();
     }
 
-    windowManager.createWindow(label, url, { type: 'diff' });
+    Nav.openPath(url, null, { title: label, type: 'diff' });
 }
 
 function openDiffDirectly(id1, name1, id2, name2, e) {
-    const url = `/diff/index.html?id1=${encodeURIComponent(normalizeFuncId(id1))}&id2=${encodeURIComponent(normalizeFuncId(id2))}`;
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
-
-    windowManager.createWindow(`Diff: ${name1} vs ${name2}`, url, { type: 'diff' });
+    const url = buildDiffUrl(id1, id2);
+    Nav.openPath(url, e, { title: `Diff: ${name1} vs ${name2}`, type: 'diff' });
 }
 
 function showDiffView() {
-    let url = '/diff/index.html';
+    let url = '/collections/main/diff';
     if (diffSelection.length === 2) {
-        url = `/diff/index.html?id1=${encodeURIComponent(diffSelection[0].id)}&id2=${encodeURIComponent(diffSelection[1].id)}`;
+        url = buildDiffUrl(diffSelection[0].id, diffSelection[1].id);
 
         // Reset queue after opening in new window
         diffSelection = [];
         updateDiffQueueUI();
         saveDiffQueue();
     }
-    window.open(url, '_blank');
+    Nav.openPath(url, null, { title: 'Function Comparison', type: 'diff' });
 }
 
 function showFunctionCodeById(id, name, lineHash = '', e) {
     if (window.getSelection && window.getSelection().toString().trim()) {
         return;
     }
-    const url = `/function/index.html?id=${encodeURIComponent(id)}${lineHash}`;
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
-
-    windowManager.createWindow(`Code: ${name}`, url, { type: 'code' });
+    const parts = id.split(':');
+    const col = parts[0];
+    const md5 = parts[2];
+    const addr = parts[3];
+    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}${lineHash}`;
+    Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
 }
 
 function seeSimilarFromCode() {
     const win = windowManager.activeWindow;
     if (!win || !win.iframe || !win.iframe.src) return;
-    
-    let url;
+
+    let col, md5, addr;
     try {
-        url = new URL(win.iframe.contentWindow.location.href);
-    } catch(e) {
-        url = new URL(win.iframe.src, window.location.origin);
+        const winContent = win.iframe.contentWindow;
+        if (winContent.parseRestfulPath) {
+            const restful = winContent.parseRestfulPath();
+            col = restful.collection;
+            md5 = restful.md5;
+            addr = restful.address;
+        }
+
+        if (!col || !md5 || !addr) {
+            const url = new URL(winContent.location.href);
+            const params = url.searchParams;
+            const id = params.get('id');
+            if (id) {
+                const parts = id.split(':');
+                col = parts[0];
+                md5 = parts[2];
+                addr = parts[3];
+            } else {
+                col = params.get('collection');
+                md5 = params.get('md5') || params.get('file_md5');
+                addr = params.get('address') || params.get('entrypoint_address');
+            }
+        }
+    } catch (e) {
+        const url = new URL(win.iframe.src, window.location.origin);
+        const params = url.searchParams;
+        const id = params.get('id');
+        if (id) {
+            const parts = id.split(':');
+            col = parts[0];
+            md5 = parts[2];
+            addr = parts[3];
+        }
     }
-    
-    const id = url.searchParams.get('id');
-    if (!id) return;
 
-    const parts = id.split(':');
-    if (parts.length < 4) return;
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
+    if (!col || !md5 || !addr) return;
 
-    window.location.hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+    const newParams = new URLSearchParams();
+    newParams.set('md5', md5);
+    newParams.set('address', addr);
+    newParams.set('algo', 'unweighted_cosine');
+
+    navigate('function-similarity', newParams, col);
     windowManager.closeWindow(win);
 }
 
-function showFeaturePanel(id, e) {
-    const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
 
-    const addr = id.split(':').pop();
-    windowManager.createWindow(`Features: ${addr}`, url, { type: 'features' });
+function showFileDetailsPanel(col, md5, name, e) {
+    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}`;
+    Nav.openPath(url, e, { title: `File: ${name}`, type: 'file' });
+}
+
+function showFeaturePanel(id, e) {
+    const parts = id.split(':');
+    const col = parts[0];
+    const md5 = parts[2];
+    const addr = parts[3];
+    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}/features`;
+    Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
 }
 
 function showGlobalFeaturePanel(hash, collection, e) {
-    const url = `/feature/index.html?hash=${encodeURIComponent(hash)}&collection=${encodeURIComponent(collection)}`;
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
-
-    windowManager.createWindow(`Feature Analysis: ${hash.substring(0, 12)}...`, url, { type: 'global-feature' });
+    const url = `/collections/${encodeURIComponent(collection)}/features/${encodeURIComponent(hash)}`;
+    Nav.openPath(url, e, { title: `Feature Analysis: ${hash.substring(0, 12)}...`, type: 'global-feature' });
 }
 
 // Old panel toggle functions removed as closing is handled by WindowManager
-function hideDiffPanel() {}
-function hideCodePanel() {}
-function hideFeaturePanel() {}
-function hideGlobalFeaturePanel() {}
+function hideDiffPanel() { }
+function hideCodePanel() { }
+function hideFeaturePanel() { }
+function hideGlobalFeaturePanel() { }
 
 function launchExternal(type) {
     const win = windowManager.activeWindow;
@@ -1938,8 +2201,67 @@ function applySimViewDefaults(hashPath, queryString) {
     return false;
 }
 
-window.addEventListener('hashchange', (e) => {
+// getRoutingState is now in utils.js
+
+function navigate(viewKey, queryParams = null, collection = null, replace = false) {
+    const currentParams = new URLSearchParams(window.location.search);
+    const restful = parseRestfulPath();
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+    const col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || 'main';
+    const params = queryParams || currentParams;
+
+
+    let url = `/collections/${col}/${viewKey}`;
+    if (viewKey === 'files') {
+        url = `/collections/${col}/files`;
+    } else if (viewKey === 'functions') {
+        url = `/collections/${col}/functions`;
+    } else if (viewKey === 'batches') {
+        url = `/collections/${col}/batches`;
+    } else if (viewKey === 'features-global') {
+        url = `/collections/${col}/features`;
+    } else if (viewKey === 'clusters') {
+        url = `/collections/${col}/functions/clusters`;
+    } else if (viewKey === 'bin-clusters') {
+        url = `/collections/${col}/files/clusters`;
+    } else if (viewKey === 'binary-similarity') {
+        url = `/collections/${col}/files/similarities`;
+    } else if (viewKey === 'function-similarity') {
+        url = `/collections/${col}/functions/similarities`;
+    } else if (viewKey === 'upload') {
+        url = `/collections/${col}/upload`;
+    } else if (viewKey === 'collections') {
+        url = `/collections`;
+    } else if (viewKey === 'jobs') {
+        url = `/jobs`;
+    }
+
+    // Clean up params as collection is in the path (except for jobs)
+    const cleanParams = new URLSearchParams(params);
+    if (viewKey !== 'jobs') {
+        cleanParams.delete('collection');
+    }
+
+    if (cleanParams.toString()) url += `?${cleanParams.toString()}`;
+
+    if (replace) {
+        history.replaceState(null, '', url);
+    } else {
+        history.pushState(null, '', url);
+    }
+
     // Ensure all tooltips are hidden when navigating/switching views
+    if (window.hideAllTooltips) {
+        window.hideAllTooltips();
+    }
+
+    refreshData();
+}
+
+window.addEventListener('popstate', (e) => {
+    // Ensure all tooltips are hidden
     if (window.hideAllTooltips) {
         window.hideAllTooltips();
     } else {
@@ -1958,30 +2280,40 @@ window.addEventListener('hashchange', (e) => {
         if (window.hierarchyInstance) window.hierarchyInstance.hideTooltip();
     }
 
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
-    const col = params.get('collection') || 'main';
+    const { viewKey, collection } = getRoutingState();
 
     if (window.isClearingFilters) {
         window.isClearingFilters = false;
-        localStorage.setItem(`savedFilters:${col}:${hashPath}`, queryString || `collection=${col}`);
+        const queryString = window.location.search;
+        localStorage.setItem(`savedFilters:${collection}:${viewKey}`, queryString || `collection=${collection}`);
     }
 
-    const [newHash] = (window.location.hash || '#collections').split('?');
-    const [oldHash] = (e.oldURL ? new URL(e.oldURL).hash : '').split('?');
-    // Apply defaults only when entering sim view from a different view
-    if (newHash === '#function-similarity' && oldHash !== '#function-similarity') {
-        const [hashPathPart, queryStringPart] = (window.location.hash || '').split('?');
-        if (applySimViewDefaults(hashPathPart, queryStringPart)) return;
-    }
+    // Update rebuild buttons state immediately
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
+
     refreshData();
+});
+
+// Deprecated hashchange listener for compatibility during transition
+window.addEventListener('hashchange', (e) => {
+    // If we have a hash, convert it to a restful path and navigate
+    if (window.location.hash) {
+        const [hashPath, queryString] = window.location.hash.split('?');
+        const viewKey = hashPath.substring(1);
+        const params = new URLSearchParams(queryString);
+        const col = params.get('collection') || 'main';
+
+        window.location.hash = ''; // Clear hash
+        navigate(viewKey, params, col);
+    }
 });
 
 // UI Settings
 const UIParams = {
-    cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.5,
+    cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
-    includeHeaders: localStorage.getItem('includeHeaders') === 'true'
+    includeHeaders: localStorage.getItem('includeHeaders') === 'true',
+    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true'
 };
 window.UIParams = UIParams;
 
@@ -1991,19 +2323,16 @@ function toggleUISettings() {
 }
 
 function updateUIParams() {
-    const prevThreshold = UIParams.cohesionThreshold;
     const prevColorByTag = UIParams.colorByTag;
 
-    UIParams.cohesionThreshold = parseFloat(document.getElementById('param-cohesion').value);
     UIParams.colorByTag = document.getElementById('param-color-tags').checked;
     UIParams.includeHeaders = document.getElementById('param-include-headers').checked;
+    UIParams.useFloatingWindows = document.getElementById('param-use-floating-windows').checked;
 
-    document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
-
-    localStorage.setItem('cohesionThreshold', UIParams.cohesionThreshold);
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
-    
+    localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
+
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
 
@@ -2014,15 +2343,6 @@ function updateUIParams() {
         }
         if (window.graphInstance && typeof window.graphInstance.refreshColors === 'function') {
             window.graphInstance.refreshColors();
-        }
-    }
-
-    if (UIParams.cohesionThreshold !== prevThreshold) {
-        const [hashPath] = (window.location.hash || '#collections').split('?');
-        if (hashPath === '#clusters') {
-            filterClusterRowsByCohesion(UIParams.cohesionThreshold);
-        } else {
-            refreshClusterCards();
         }
     }
 }
@@ -2043,9 +2363,8 @@ function refreshClusterCards() {
     document.querySelectorAll('.cluster-cards-cell').forEach(cell => {
         try {
             const clusters = JSON.parse(cell.dataset.clusters || '[]');
-            if (typeof renderClusterCards === 'function') {
-                cell.innerHTML = renderClusterCards(clusters);
-            }
+            const isBinary = cell.dataset.isBinary === 'true';
+            cell.innerHTML = EntityRenderer.renderClusterCard(clusters, isBinary);
         } catch (e) {
             console.error("Failed to re-render cluster cards", e);
         }
@@ -2053,21 +2372,38 @@ function refreshClusterCards() {
 }
 
 function loadUIParams() {
-    const elCohesion = document.getElementById('param-cohesion');
     const elColorTags = document.getElementById('param-color-tags');
     const elIncludeHeaders = document.getElementById('param-include-headers');
-    if (elCohesion) {
-        elCohesion.value = UIParams.cohesionThreshold;
-        document.getElementById('val-cohesion').innerText = UIParams.cohesionThreshold.toFixed(2);
-    }
+    const elFloatingWindows = document.getElementById('param-use-floating-windows');
     if (elColorTags) elColorTags.checked = UIParams.colorByTag;
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
+    if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
 }
 
 window.addEventListener('load', () => {
     loadUIParams();
-    populateCollectionDropdown();
-    if (!window.location.hash) window.location.hash = '#collections';
+
+    const { collection, viewKey } = getRoutingState();
+    updateNavVisibility(collection);
+    if (window.location.pathname === '/' || window.location.pathname === '') {
+        history.replaceState(null, '', '/collections');
+    } else {
+        const pathParts = window.location.pathname.split('/').filter(Boolean);
+        if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && collection) {
+            history.replaceState(null, '', `/collections/${encodeURIComponent(collection)}/files`);
+        }
+    }
+
+    if (window.location.hash) {
+        // Migration for users with bookmarks
+        const [hashPath, queryString] = window.location.hash.split('?');
+        const viewKey = hashPath.substring(1);
+        const params = new URLSearchParams(queryString);
+        const col = params.get('collection') || 'main';
+        window.location.hash = ''; // Clear hash
+        navigate(viewKey, params, col, true);
+        return;
+    }
 
     // Attach graph settings listeners
     const graphSettingIds = [
@@ -2087,82 +2423,79 @@ window.addEventListener('load', () => {
         }
     });
 
-    const [hashPath, queryString] = (window.location.hash || '').split('?');
-
-    if (applySimViewDefaults(hashPath, queryString)) {
-        loadDiffQueue();
-        return;
-    }
     refreshData();
     loadDiffQueue();
 
-    // Sidebar History Hover Listeners
-    const navHistoryContainer = document.querySelector('.history-dropdown-container');
-    if (navHistoryContainer) {
-        let historyHideTimeout = null;
-        const historyFlyout = document.getElementById('history-flyout');
+    function setupSidebarHistoryHover() {
+        const navHistoryContainer = document.querySelector('.history-dropdown-container');
+        if (navHistoryContainer) {
+            let historyHideTimeout = null;
+            const historyFlyout = document.getElementById('history-flyout');
 
-        const showHistoryPanel = () => {
-            if (historyHideTimeout) clearTimeout(historyHideTimeout);
-            if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
-
-            const isCollapsed = document.body.classList.contains('sidebar-collapsed');
-            if (isCollapsed && historyFlyout) {
-                // Populate flyout with same content as the global dropdown
-                const globalDropdown = document.getElementById('history-dropdown');
-                if (globalDropdown) historyFlyout.innerHTML = globalDropdown.innerHTML;
-                // Position vertically at the icon
-                const rect = navHistoryContainer.getBoundingClientRect();
-                historyFlyout.style.top = Math.min(rect.top, window.innerHeight - 420) + 'px';
-                historyFlyout.style.display = 'flex';
-            } else {
-                const dropdown = document.getElementById('history-dropdown');
-                if (dropdown) {
-                    dropdown.style.display = 'block';
-                    const chev = document.getElementById('nav-history-chevron');
-                    if (chev) chev.style.transform = 'rotate(180deg)';
-                }
-            }
-        };
-
-        const hideHistoryPanel = () => {
-            historyHideTimeout = setTimeout(() => {
-                const dropdown = document.getElementById('history-dropdown');
-                if (dropdown) {
-                    dropdown.style.display = 'none';
-                    const chev = document.getElementById('nav-history-chevron');
-                    if (chev) chev.style.transform = 'rotate(0deg)';
-                }
-                if (historyFlyout) historyFlyout.style.display = 'none';
-            }, 200);
-        };
-
-        navHistoryContainer.addEventListener('mouseenter', showHistoryPanel);
-        navHistoryContainer.addEventListener('mouseleave', hideHistoryPanel);
-
-        if (historyFlyout) {
-            historyFlyout.addEventListener('mouseenter', () => {
+            const showHistoryPanel = () => {
                 if (historyHideTimeout) clearTimeout(historyHideTimeout);
-            });
-            historyFlyout.addEventListener('mouseleave', hideHistoryPanel);
-            // Allow clicking items inside flyout to work (loadHistoryItemByTimestamp)
-            historyFlyout.addEventListener('click', (e) => {
-                const item = e.target.closest('.history-item');
-                if (item && item.getAttribute('onclick')) {
-                    historyFlyout.style.display = 'none';
+                if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
+
+                const isCollapsed = document.body.classList.contains('sidebar-collapsed');
+                if (isCollapsed && historyFlyout) {
+                    // Populate flyout with same content as the global dropdown
+                    const globalDropdown = document.getElementById('history-dropdown');
+                    if (globalDropdown) historyFlyout.innerHTML = globalDropdown.innerHTML;
+                    // Position vertically at the icon
+                    const rect = navHistoryContainer.getBoundingClientRect();
+                    historyFlyout.style.top = Math.min(rect.top, window.innerHeight - 420) + 'px';
+                    historyFlyout.style.display = 'flex';
+                } else {
+                    const dropdown = document.getElementById('history-dropdown');
+                    if (dropdown) {
+                        dropdown.style.display = 'block';
+                        const chev = document.getElementById('nav-history-chevron');
+                        if (chev) chev.style.transform = 'rotate(180deg)';
+                    }
                 }
-                const clearBtn = e.target.closest('.history-dropdown-clear-btn');
-                if (clearBtn) {
-                    // Re-render flyout after clearing
-                    setTimeout(() => {
-                        if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
-                        const globalDropdown = document.getElementById('history-dropdown');
-                        if (globalDropdown) historyFlyout.innerHTML = globalDropdown.innerHTML;
-                    }, 50);
-                }
-            });
+            };
+
+            const hideHistoryPanel = () => {
+                historyHideTimeout = setTimeout(() => {
+                    const dropdown = document.getElementById('history-dropdown');
+                    if (dropdown) {
+                        dropdown.style.display = 'none';
+                        const chev = document.getElementById('nav-history-chevron');
+                        if (chev) chev.style.transform = 'rotate(0deg)';
+                    }
+                    if (historyFlyout) historyFlyout.style.display = 'none';
+                }, 200);
+            };
+
+            navHistoryContainer.addEventListener('mouseenter', showHistoryPanel);
+            navHistoryContainer.addEventListener('mouseleave', hideHistoryPanel);
+
+            if (historyFlyout) {
+                historyFlyout.addEventListener('mouseenter', () => {
+                    if (historyHideTimeout) clearTimeout(historyHideTimeout);
+                });
+                historyFlyout.addEventListener('mouseleave', hideHistoryPanel);
+                // Allow clicking items inside flyout to work (loadHistoryItemByTimestamp)
+                historyFlyout.addEventListener('click', (e) => {
+                    const item = e.target.closest('.history-item');
+                    if (item && item.getAttribute('onclick')) {
+                        historyFlyout.style.display = 'none';
+                    }
+                    const clearBtn = e.target.closest('.history-dropdown-clear-btn');
+                    if (clearBtn) {
+                        // Re-render flyout after clearing
+                        setTimeout(() => {
+                            if (typeof renderHistoryDropdowns === 'function') renderHistoryDropdowns();
+                            const globalDropdown = document.getElementById('history-dropdown');
+                            if (globalDropdown) historyFlyout.innerHTML = globalDropdown.innerHTML;
+                        }, 50);
+                    }
+                });
+            }
         }
     }
+    window.setupSidebarHistoryHover = setupSidebarHistoryHover;
+    setupSidebarHistoryHover();
 
 
     // View-Specific History Hover Listeners
@@ -2184,7 +2517,47 @@ window.addEventListener('load', () => {
     }
 
     // Navbar Job Status Polling
-    const updateJobStatusIcon = async () => {
+    window.triggerRebuildAll = async function () {
+        const { collection, params } = getRoutingState();
+        const algo = params.get('algo') || 'unweighted_cosine';
+
+        // Select all possible buttons
+        const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
+        const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+
+        btns.forEach(btn => btn.disabled = true);
+        icons.forEach(icon => icon.classList.add('fa-spin'));
+
+        try {
+            const resp = await fetch('/api/cluster/rebuild_all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    collection: collection,
+                    algo: algo
+                })
+            });
+
+            if (resp.ok) {
+                if (typeof showToast === 'function') {
+                    showToast(`Analysis rebuild pipeline enqueued!`, 'success');
+                }
+                if (window.refreshData) window.refreshData();
+            } else {
+                const data = await resp.json();
+                if (typeof showToast === 'function') {
+                    showToast(`Failed to trigger rebuild: ${data.error || 'Unknown error'}`, 'error');
+                }
+            }
+        } catch (e) {
+            console.error(e);
+            if (typeof showToast === 'function') {
+                showToast('Error triggering rebuild', 'error');
+            }
+        }
+    };
+
+    window.updateJobStatusIcon = async () => {
         try {
             const res = await fetch('/api/jobs/stats');
             if (!res.ok) return;
@@ -2192,8 +2565,11 @@ window.addEventListener('load', () => {
             const loader = document.getElementById('nav-jobs-loader');
             const icon = document.getElementById('nav-jobs-icon');
             const navLink = document.getElementById('nav-jobs');
+
+            const isActive = stats.active_workers > 0 || stats.pending_jobs > 0;
+
             if (loader && icon && navLink) {
-                if (stats.active_workers > 0 || stats.pending_jobs > 0) {
+                if (isActive) {
                     loader.style.display = 'block';
                     icon.style.display = 'none';
                     navLink.title = `${stats.active_workers} active, ${stats.pending_jobs} pending jobs`;
@@ -2203,84 +2579,50 @@ window.addEventListener('load', () => {
                     navLink.title = "Background Jobs";
                 }
             }
+
+            // Update rebuild buttons
+            const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
+            const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+
+            const { collection: currentCollection, viewKey: path } = getRoutingState();
+
+            // Rebuild animation should only show if a job FOR THIS COLLECTION is active
+            const activeCollections = stats.active_collections || [];
+            const isCollectionActive = currentCollection && activeCollections.includes(currentCollection);
+            const showAnimation = isActive && isCollectionActive;
+
+            btns.forEach(btn => {
+                btn.disabled = showAnimation;
+                btn.title = showAnimation ? "A job for this collection is already running" : "Rebuild Clusters & Binary Sim";
+            });
+
+            icons.forEach(icon => {
+                if (showAnimation) icon.classList.add('fa-spin');
+                else icon.classList.remove('fa-spin');
+            });
+
+            // Handle Header Rebuild Button Visibility (only if sidebar is collapsed AND view is Clusters/BinSim)
+            const headerRebuildBtn = document.getElementById('header-rebuild-all-btn');
+            if (headerRebuildBtn) {
+                const isCollapsed = document.body.classList.contains('sidebar-collapsed');
+                const isRelevantView = (path === 'clusters' || path === 'binary-similarity');
+
+                if (isCollapsed && isRelevantView) {
+                    headerRebuildBtn.style.display = 'inline-flex';
+                } else {
+                    headerRebuildBtn.style.display = 'none';
+                }
+            }
         } catch (e) {
             // Silently fail for navbar polling
         }
     };
-    updateJobStatusIcon();
-    setInterval(updateJobStatusIcon, 10000); // Check every 10s
+    window.updateJobStatusIcon();
+    setInterval(window.updateJobStatusIcon, 10000); // Check every 10s
 });
 
-async function populateCollectionDropdown() {
-    try {
-        const res = await fetch('/api/collection/search');
-        if (!res.ok) return;
-        const data = await res.json();
-        const collections = data.collections || (Array.isArray(data) ? data : []);
-        
-        const list = document.getElementById('collection-flyout-list');
-        const trigger = document.getElementById('nav-collections');
-        const flyout = document.getElementById('collection-flyout');
-        if (!list || !trigger || !flyout) return;
-
-        const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
-        const currentCollection = params.get('collection') || '';
-
-        const nameDisplay = document.getElementById('current-collection-name');
-        if (nameDisplay) {
-            nameDisplay.innerText = currentCollection || 'Collections';
-            nameDisplay.style.color = currentCollection ? 'var(--accent)' : 'inherit';
-        }
-
-        list.innerHTML = collections.map(c => `
-            <div class="collection-item ${c.name === currentCollection ? 'active' : ''}" onclick="selectCollection('${c.name}')">
-                <i class="fa-solid fa-database"></i>
-                <span>${c.name}</span>
-            </div>
-        `).join('') || '<div class="collection-item dim">No collections found</div>';
-
-        updateNavVisibility(currentCollection);
-
-        // Hover Logic
-        if (!trigger.dataset.hasListener) {
-            let hideTimeout = null;
-
-            const show = () => {
-                if (hideTimeout) clearTimeout(hideTimeout);
-                const rect = trigger.getBoundingClientRect();
-                flyout.style.top = rect.top + 'px';
-                flyout.style.display = 'flex';
-            };
-
-            const hide = () => {
-                hideTimeout = setTimeout(() => {
-                    flyout.style.display = 'none';
-                }, 300);
-            };
-
-            trigger.addEventListener('mouseenter', show);
-            trigger.addEventListener('mouseleave', hide);
-            flyout.addEventListener('mouseenter', () => { if (hideTimeout) clearTimeout(hideTimeout); });
-            flyout.addEventListener('mouseleave', hide);
-            
-            trigger.dataset.hasListener = "true";
-        }
-    } catch (e) {
-        console.error("Failed to populate collections", e);
-    }
-}
-
-function selectCollection(name) {
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const p = new URLSearchParams(queryString);
-    if (name) p.set('collection', name);
-    else p.delete('collection');
-    window.location.hash = `${hashPath}?${p.toString()}`;
-    document.getElementById('collection-flyout').style.display = 'none';
-}
-
 function updateNavVisibility(collection) {
-    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-file-call-graph'];
+    const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-bin-clusters', 'nav-binary-similarity', 'nav-chord-map'];
     navItems.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = collection ? 'flex' : 'none';
@@ -2288,19 +2630,51 @@ function updateNavVisibility(collection) {
 }
 
 function renderClusters(items) {
-    return items.map(c => `
-        <tr data-cluster-id="${c.cluster_id}">
+    const { collection } = getRoutingState();
+    return items.map(c => {
+        const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
+        const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
+
+        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(m => {
+            if (typeof m === 'string') {
+                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m}">${m}</div>`;
+            }
+            return `
+                <div style="margin-bottom:2px; width: 100%;">
+                    ${EntityRenderer.renderFunction(m, { showActions: false })}
+                </div>
+            `;
+        }).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
+
+        return `
+        <tr data-cluster-id="${c.cluster_id}"
+            data-entity-data='${JSON.stringify({
+            cluster_id: c.cluster_id,
+            cluster_uuid: c.cluster_uuid,
+            cluster_name: c.cluster_name
+        }).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
             <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
                 ${(c.cluster_uuid || '').substring(0, 8)}
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <span id="name-display-${c.cluster_id}">${c.cluster_name}</span>
-                    <button class="btn-panel" style="padding: 2px 5px; font-size: 0.6rem;" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')">✎</button>
+                    <span id="name-display-${c.cluster_id}" style="cursor:pointer;">${c.cluster_name}</span>
+                    <button class="btn-action" title="Rename" onclick="renameCluster('${c.cluster_id}', '${c.cluster_name}')"><i class="fa-solid fa-pen"></i></button>
                 </div>
             </td>
-            <td style="font-weight:bold">${c.count.toLocaleString()}</td>
+            <td>
+                <div style="display:inline-flex; align-items:center; gap:8px;">
+                    <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
+                    <a href="/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
+                        <i class="fa-solid fa-code"></i>
+                    </a>
+                    <a href="/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
+                        <i class="fa-solid fa-code-compare"></i>
+                    </a>
+                </div>
+            </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
@@ -2319,20 +2693,19 @@ function renderClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
-            <td>
-                <div style="display:flex; gap:10px;">
-                    <a href="#functions?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">View Functions →</a>
-                    <a href="#function-similarity?collection=${getCollectionFromHash()}&cluster_uuid=${c.cluster_uuid}" class="btn-action" style="color:var(--info)">View similarities →</a>
+            <td style="min-width: 350px;">
+                <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
+                    ${sampleMembersHtml}
                 </div>
             </td>
         </tr>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function applyClusterSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const params = new URLSearchParams(queryString);
+    const { viewKey, params } = getRoutingState();
 
     const globalQ = document.getElementById('cluster-search-input')?.value;
     params.set('q', globalQ || '');
@@ -2344,6 +2717,9 @@ function applyClusterSearch() {
     const ccount = document.getElementById('flt-cluster-min-count')?.value;
     const cfeat = document.getElementById('flt-cluster-min-features')?.value;
     const ccoh = document.getElementById('flt-cluster-min-cohesion')?.value;
+    const fFuncName = document.getElementById('flt-cluster-func-name')?.value;
+    const fFuncAddr = document.getElementById('flt-cluster-func-addr')?.value;
+    const fFileName = document.getElementById('flt-cluster-file-name')?.value;
 
     if (cid) params.set('cluster_id', cid); else params.delete('cluster_id');
     if (cuuid) params.set('cluster_uuid', cuuid); else params.delete('cluster_uuid');
@@ -2352,21 +2728,184 @@ function applyClusterSearch() {
     if (ccount) params.set('min_count', ccount); else params.delete('min_count');
     if (cfeat) params.set('min_features', cfeat); else params.delete('min_features');
     if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
+    if (fFuncName) params.set('func_name', fFuncName); else params.delete('func_name');
+    if (fFuncAddr) params.set('func_addr', fFuncAddr); else params.delete('func_addr');
+    if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
 
     currentOffset = 0;
     isEndOfResults = false;
-    window.location.hash = `${hashPath}?${params.toString()}`;
+    navigate(viewKey, params);
+}
+
+function renderBinClusters(items) {
+    const { collection, params } = getRoutingState();
+    const nameType = params.get('cluster_name_type') || 'file';
+
+    return items.map(c => {
+        let displayName = c.cluster_name;
+        if (nameType === 'yara' && c.yara_distribution && c.yara_distribution.length > 0) {
+            displayName = c.yara_distribution[0].value;
+        }
+
+        const showDots = (c.sample_members && c.sample_members.length > 0) && (c.count > 3 || c.sample_members.length > 3);
+        const remaining = showDots ? Math.max(c.count - 3, c.sample_members.length - 3) : 0;
+
+        const sampleMembersHtml = (c.sample_members || []).slice(0, 3).map(m => {
+            if (typeof m === 'string') {
+                return `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m}">${m}</div>`;
+            }
+            // For binaries, we don't have a standardized renderer yet, but we can wrap them
+            return `<div class="mono" style="font-size:0.7rem; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${m.name}">${m.name}</div>`;
+        }).join('') + (showDots ? `<div class="mono" style="font-size:0.7rem; color:var(--text-dim); padding-left:2px; line-height:1;">and ${remaining} others ...</div>` : '') || '<span class="dim">—</span>';
+
+        return `
+        <tr data-cluster-id="${c.cluster_id}"
+            data-entity-data='${JSON.stringify({
+            cluster_id: c.cluster_id,
+            cluster_uuid: c.cluster_uuid,
+            cluster_name: displayName
+        }).replace(/'/g, "&apos;")}'
+            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
+                ${(c.cluster_uuid || '').substring(0, 8)}
+                <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
+            </td>
+            <td>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span id="name-display-bin-${c.cluster_id}" style="cursor:pointer; font-weight:bold;">${displayName}</span>
+                        <button class="btn-action" title="Rename" onclick="renameBinCluster('${c.cluster_id}', '${(c.cluster_name || '').replace(/'/g, "\\'")}')"><i class="fa-solid fa-pen"></i></button>
+                    </div>
+                    <div class="dim" style="font-size:0.65rem; display:flex; flex-direction:column; gap:2px;">
+                        ${c.yara_distribution && c.yara_distribution.length ? `<div>Yara: <span style="color:var(--accent)">${c.yara_distribution[0].value} (${c.yara_distribution[0].percent}%)</span></div>` : ''}
+                        ${c.avtype_distribution && c.avtype_distribution.length ? `<div>AV: <span style="color:var(--accent)">${c.avtype_distribution[0].value} (${c.avtype_distribution[0].percent}%)</span></div>` : ''}
+                    </div>
+                </div>
+            </td>
+            <td>
+                <div style="display:inline-flex; align-items:center; gap:8px;">
+                    <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
+                    <a href="/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
+                        <i class="fa-solid fa-file-code"></i>
+                    </a>
+                </div>
+            </td>
+            <td>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                        <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
+                    </div>
+                    <span class="dim">${(c.avg_stability).toFixed(2)}</span>
+                </div>
+            </td>
+            <td>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                        <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
+                    </div>
+                    <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
+                </div>
+            </td>
+            <td class="dim">${formatDate(c.created_at)}</td>
+            <td style="min-width: 250px;">
+                <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
+                    ${sampleMembersHtml}
+                </div>
+            </td>
+        </tr>
+        `;
+    }).join('');
+}
+
+function applyBinClusterSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+
+    const globalQ = document.getElementById('bin-cluster-search-input')?.value;
+    params.set('q', globalQ || '');
+
+    const cid = document.getElementById('flt-bin-cluster-id')?.value;
+    const cuuid = document.getElementById('flt-bin-cluster-uuid')?.value;
+    const cname = document.getElementById('flt-bin-cluster-name')?.value;
+    const cstab = document.getElementById('flt-bin-cluster-min-stability')?.value;
+    const ccount = document.getElementById('flt-bin-cluster-min-count')?.value;
+    const ccountMax = document.getElementById('flt-bin-cluster-max-count')?.value;
+    const ccoh = document.getElementById('flt-bin-cluster-min-cohesion')?.value;
+    const ccohMax = document.getElementById('flt-bin-cluster-max-cohesion')?.value;
+    const fFileName = document.getElementById('flt-bin-cluster-file-name')?.value;
+    const fFileMd5 = document.getElementById('flt-bin-cluster-file-md5')?.value;
+
+    if (cid) params.set('cluster_id', cid); else params.delete('cluster_id');
+    if (cuuid) params.set('cluster_uuid', cuuid); else params.delete('cluster_uuid');
+    if (cname) params.set('cluster_name', cname); else params.delete('cluster_name');
+    if (cstab) params.set('min_stability', cstab); else params.delete('min_stability');
+    if (ccount) params.set('min_count', ccount); else params.delete('min_count');
+    if (ccountMax) params.set('max_count', ccountMax); else params.delete('max_count');
+    if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
+    if (ccohMax) params.set('max_cohesion', ccohMax); else params.delete('max_cohesion');
+    if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
+    if (fFileMd5) params.set('file_md5', fFileMd5); else params.delete('file_md5');
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+
+function updateD3ClusterName(cid, newName) {
+    [window.hierarchyInstance, window.packingInstance, window.binHierarchyInstance, window.binPackingInstance].forEach(instance => {
+        if (instance && instance.rawNodes) {
+            const match = instance.rawNodes.find(n => n.id === cid || n.cluster_id === cid || n.cluster_uuid === cid || n.uuid === cid);
+            if (match) {
+                if (match.cluster_name !== undefined) match.cluster_name = newName;
+                if (match.name !== undefined) match.name = newName;
+                instance.render(instance.rawNodes);
+            }
+        }
+    });
+}
+
+async function renameBinCluster(clusterId, currentName) {
+    const newName = prompt(`Enter new name for binary cluster ${clusterId}:`, currentName);
+    if (!newName || newName === currentName) return;
+
+    const { collection, params } = getRoutingState();
+    const algo = params.get('algo') || 'unweighted_cosine';
+
+    try {
+        const res = await fetch('/api/bin_cluster/meta', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection, algo, cluster_id: clusterId, cluster_name: newName })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            const el = document.getElementById(`name-display-bin-${clusterId}`);
+            if (el) el.innerText = newName;
+            updateD3ClusterName(clusterId, newName);
+            if (typeof showToast === 'function') {
+                showToast(`Binary cluster renamed to ${newName}`, 'success');
+            }
+        } else {
+            if (typeof showToast === 'function') {
+                showToast(`Rename failed: ${data.error}`, 'error');
+            }
+        }
+    } catch (err) {
+        if (typeof showToast === 'function') {
+            showToast(`Error renaming binary cluster: ${err}`, 'error');
+        }
+    }
 }
 
 async function renameCluster(clusterId, currentName) {
     const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
     if (!newName || newName === currentName) return;
 
-    const collection = getCollectionFromHash();
-    const algo = new URLSearchParams(window.location.hash.split('?')[1]).get('algo') || 'unweighted_cosine';
+    const { collection, params } = getRoutingState();
+    const algo = params.get('algo') || 'unweighted_cosine';
 
     try {
         const res = await fetch('/api/cluster/meta', {
@@ -2380,20 +2919,54 @@ async function renameCluster(clusterId, currentName) {
             })
         });
         if (res.ok) {
-            document.getElementById(`name-display-${clusterId}`).innerText = newName;
+            const el = document.getElementById(`name-display-${clusterId}`);
+            if (el) el.innerText = newName;
+            updateD3ClusterName(clusterId, newName);
+            if (typeof showToast === 'function') {
+                showToast(`Cluster renamed to ${newName}`, 'success');
+            }
         } else {
-            alert("Failed to rename cluster");
+            if (typeof showToast === 'function') {
+                showToast("Failed to rename cluster", "error");
+            }
         }
     } catch (e) {
         console.error(e);
-        alert("Error renaming cluster");
+        if (typeof showToast === 'function') {
+            showToast("Error renaming cluster", "error");
+        }
     }
 }
 
 function switchClusterView(mode) {
-    const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
+    const { viewKey, params } = getRoutingState();
     params.set('view', mode);
-    window.location.hash = `#clusters?${params.toString()}`;
+    if (mode !== 'hierarchy' && mode !== 'packing') {
+        params.delete('show_parents');
+        params.delete('show_children');
+        params.delete('show_members');
+        params.delete('path_compression');
+        params.delete('show_binary_sankey');
+    }
+    navigate(viewKey, params);
+}
+
+function switchBinClusterView(mode) {
+    const { viewKey, params } = getRoutingState();
+    params.set('view', mode);
+    if (mode !== 'hierarchy' && mode !== 'packing') {
+        params.delete('show_parents');
+        params.delete('show_children');
+        params.delete('show_members');
+        params.delete('path_compression');
+    }
+    navigate(viewKey, params);
+}
+
+function changeBinClusterNameType(value) {
+    const { viewKey, params } = getRoutingState();
+    params.set('cluster_name_type', value);
+    navigate(viewKey, params);
 }
 
 function showTokenContextMenu(e) {
@@ -2457,13 +3030,7 @@ function showTokenContextMenu(e) {
         if (item) {
             const h = item.dataset.hash;
             const c = item.dataset.col;
-            const url = `/feature/index.html?hash=${encodeURIComponent(h)}&collection=${encodeURIComponent(c)}`;
-
-            if (me.ctrlKey || me.metaKey) {
-                window.open(url, '_blank');
-            } else {
-                showGlobalFeaturePanel(h, c);
-            }
+            showGlobalFeaturePanel(h, c, me);
         }
         closeMenu();
     };
@@ -2479,397 +3046,14 @@ function showTokenContextMenu(e) {
     }, 10);
 }
 
-window.showGraphContextMenu = function(e, type, data, isRefresh = false) {
-    if (window.setTrigger) window.setTrigger(e);
-    const graph = window.graphInstance;
-    if (!graph) return;
-
-    let menu = document.getElementById('graph-context-menu');
-    if (!menu) {
-        menu = document.createElement('div');
-        menu.id = 'graph-context-menu';
-        menu.className = 'context-menu';
-        document.body.appendChild(menu);
-    }
-
-    if (window.hideDiffPreview) window.hideDiffPreview();
-    if (window.hideCodePreview) window.hideCodePreview();
-    if (window.hideBinaryPreview) window.hideBinaryPreview();
-
-    // Save current context menu state for refreshing and set open state AFTER hide functions to avoid them immediately resetting graphContextMenuOpen
-    window.currentContextMenu = { e, type, data };
-    window.graphContextMenuOpen = true;
-
-    // Generate HTML content based on type
-    let html = '';
-    
-    if (type === 'node') {
-        const nodeId = data.id;
-        const nodeName = data.name;
-        // Fetch latest node details from graph nodes_map
-        const latestNode = graph.nodes_map.get(nodeId) || data;
-        const userTags = latestNode.user_tags || [];
-        const tags = latestNode.tags || [];
-
-        html += `<div class="context-menu-header">Function: ${nodeName}</div>`;
-        
-        // Bookmark/Ignore/Tag actions
-        html += renderBookmarkIgnoreTagItems('function', nodeId, tags, userTags);
-
-        // Add to Diff, See Similar, Show Features
-        html += `
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${nodeId}', '${nodeName.replace(/'/g, "\\'")}')">
-            <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Add to Diff</span>
-        </div>
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar('${nodeId}')">
-            <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>See Similar</span>
-        </div>
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel('${nodeId}', event)">
-            <i class="fa-solid fa-fingerprint" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Show Features</span>
-        </div>`;
-
-        // Check if there is a selected similarity (previewed via hover/scroll)
-        let selectedSim = null;
-        if (window.diffPreviewPairs && window.diffPreviewPairs.length > 0) {
-            const currentPair = window.diffPreviewPairs[window.diffPreviewIndex || 0];
-            if (currentPair && (currentPair.id1 === nodeId || currentPair.id2 === nodeId)) {
-                selectedSim = currentPair;
-            }
-        }
-
-        if (selectedSim) {
-            const simId = selectedSim.sid || `${selectedSim.id1}|${selectedSim.id2}|${selectedSim.algo}`;
-            // Fetch latest pair from graph all_pairs to get latest tags
-            const latestPair = graph.all_pairs.find(p => 
-                (p.id1 === selectedSim.id1 && p.id2 === selectedSim.id2) || 
-                (p.id1 === selectedSim.id2 && p.id2 === selectedSim.id1)
-            ) || selectedSim;
-            
-            const simUserTags = latestPair.user_tags || [];
-            const simTags = latestPair.tags || [];
-            const percentScore = (parseFloat(selectedSim.score) * 100).toFixed(1);
-
-            html += `<div class="context-menu-header" style="margin-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 6px;">Similarity: ${percentScore}% Match</div>`;
-            
-            html += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${selectedSim.id1}', '${selectedSim.n1.replace(/'/g, "\\'")}', '${selectedSim.id2}', '${selectedSim.n2.replace(/'/g, "\\'")}', event)">
-                <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-                <span>Show Diff</span>
-            </div>`;
-
-            html += renderBookmarkIgnoreTagItems('similarity', simId, simTags, simUserTags);
-        }
-    } else if (type === 'link') {
-        const id1 = data.id1;
-        const id2 = data.id2;
-        const name1 = data.name1;
-        const name2 = data.name2;
-        const simId = data.sid || `${id1}|${id2}|${data.algo}`;
-        
-        // Fetch latest pair from graph
-        const latestPair = graph.all_pairs.find(p => 
-            (p.id1 === id1 && p.id2 === id2) || (p.id1 === id2 && p.id2 === id1)
-        ) || data;
-
-        const simUserTags = latestPair.user_tags || [];
-        const simTags = latestPair.tags || [];
-        const percentScore = (parseFloat(data.score) * 100).toFixed(1);
-
-        html += `<div class="context-menu-header">Similarity: ${percentScore}% Match</div>`;
-        
-        html += `
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${id1}', '${name1.replace(/'/g, "\\'")}', '${id2}', '${name2.replace(/'/g, "\\'")}', event)">
-            <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Show Diff</span>
-        </div>`;
-
-        html += renderBookmarkIgnoreTagItems('similarity', simId, simTags, simUserTags);
-    } else if (type === 'file') {
-        const md5 = data.md5;
-        const fileName = data.file_name;
-        const fileId = data.fileId || `${data.collection}:file:${md5}`;
-
-        // Find file tags from nodes map
-        let fileUserTags = [];
-        let fileTags = [];
-        for (const node of graph.nodes_map.values()) {
-            if (node.md5 === md5) {
-                fileUserTags = node.file_user_tags || [];
-                fileTags = node.file_tags || [];
-                break;
-            }
-        }
-
-        html += `<div class="context-menu-header">File: ${fileName}</div>`;
-        html += renderBookmarkIgnoreTagItems('file', fileId, fileTags, fileUserTags);
-    }
-
-    menu.innerHTML = html;
-    menu.style.display = 'block';
-
-    // Disable SVG pointer events so underlying graph elements can't fire hover events through the menu
-    const graphSvg = document.querySelector('#bk-similarity-plot svg');
-    if (graphSvg) graphSvg.style.pointerEvents = 'none';
-
-    if (!isRefresh) {
-        // Position the menu
-        let x = e.clientX, y = e.clientY;
-        menu.style.left = x + 'px';
-        menu.style.top = y + 'px';
-
-        // Check boundary collisions
-        const rect = menu.getBoundingClientRect();
-        if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 10;
-        if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 10;
-
-        menu.style.left = Math.max(5, x) + 'px';
-        menu.style.top = Math.max(5, y) + 'px';
-    }
-
-    // Attach click outside listener to close the menu (using capture phase to intercept stopPropagation)
-    if (!isRefresh) {
-        const closeGlobal = (me) => {
-            if (!menu.contains(me.target)) {
-                window.closeGraphContextMenu();
-            }
-        };
-        // Delay attaching listener slightly to avoid catching the current click
-        setTimeout(() => {
-            document.addEventListener('mousedown', closeGlobal, { capture: true });
-            window._contextMenuCloseFn = closeGlobal;
-        }, 10);
-    }
-};
-
-window.closeGraphContextMenu = function() {
-    let menu = document.getElementById('graph-context-menu');
-    if (menu) {
-        menu.style.display = 'none';
-    }
-    window.graphContextMenuOpen = false;
-    window.currentContextMenu = null;
-    // Re-enable SVG pointer events
-    const graphSvg = document.querySelector('#bk-similarity-plot svg');
-    if (graphSvg) graphSvg.style.pointerEvents = '';
-    if (window._contextMenuCloseFn) {
-        document.removeEventListener('mousedown', window._contextMenuCloseFn, { capture: true });
-        window._contextMenuCloseFn = null;
-    }
-};
-
-window.toggleContextMenuBookmark = async function(event, etype, eid) {
-    const userTags = getEntityUserTags(etype, eid);
-    const isBookmarked = userTags.includes('bookmark');
-    
-    if (isBookmarked) {
-        await removeTag(null, etype, eid, 'bookmark');
-    } else {
-        await confirmAddTag(etype, eid, 'bookmark');
-    }
-};
-
-window.toggleContextMenuIgnore = async function(event, etype, eid) {
-    const userTags = getEntityUserTags(etype, eid);
-    const isIgnored = userTags.includes('ignore');
-    
-    if (isIgnored) {
-        await removeTag(null, etype, eid, 'ignore');
-    } else {
-        await confirmAddTag(etype, eid, 'ignore');
-    }
-};
-
-window.toggleContextMenuTag = async function(event, etype, eid, tag) {
-    const userTags = getEntityUserTags(etype, eid);
-    const hasTag = userTags.includes(tag);
-    if (hasTag) {
-        await removeTag(null, etype, eid, tag);
-    } else {
-        await confirmAddTag(etype, eid, tag);
-    }
-};
-
-window.showInlineTagInput = function(event, etype, eid) {
-    const item = event.currentTarget;
-    const parent = item.parentElement;
-    
-    // Create an input wrapper
-    const wrapper = document.createElement('div');
-    wrapper.style.padding = '6px 12px';
-    wrapper.style.display = 'flex';
-    wrapper.style.flexDirection = 'column';
-    wrapper.style.gap = '4px';
-    wrapper.style.position = 'relative';
-    
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Search or create...';
-    input.style.width = '100%';
-    input.style.background = '#222';
-    input.style.border = '1px solid rgba(255,255,255,0.2)';
-    input.style.color = '#fff';
-    input.style.padding = '4px 8px';
-    input.style.borderRadius = '4px';
-    input.style.fontSize = '0.75rem';
-    
-    wrapper.appendChild(input);
-    parent.replaceChild(wrapper, item);
-    input.focus();
-    
-    // Clicking inside the input block shouldn't close the parent context menu
-    wrapper.onmousedown = (e) => e.stopPropagation();
-    
-    input.onkeydown = async (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const tag = input.value.trim();
-            if (tag) {
-                await confirmAddTag(etype, eid, tag);
-            }
-        } else if (e.key === 'Escape') {
-            window.refreshContextMenuUI();
-        }
-    };
-    
-    if (window.attachTagAutocomplete) {
-        window.attachTagAutocomplete(input, async (tag) => {
-            if (tag && tag.trim()) {
-                await confirmAddTag(etype, eid, tag.trim());
-            }
-        });
-    }
-};
-
-window.removeContextMenuTag = async function(event, etype, eid, tag) {
-    await removeTag(null, etype, eid, tag);
-};
-
-window.refreshContextMenuUI = function() {
-    if (!window.currentContextMenu) return;
-    const { e, type, data } = window.currentContextMenu;
-    window.showGraphContextMenu(e, type, data, true);
-};
-
-function getEntityUserTags(etype, eid) {
-    const graph = window.graphInstance;
-    if (!graph) return [];
-    
-    if (etype === 'function') {
-        const latest = graph.nodes_map.get(eid);
-        return latest ? (latest.user_tags || []) : [];
-    } else if (etype === 'file') {
-        const md5 = eid.split(':').pop();
-        for (const node of graph.nodes_map.values()) {
-            if (node.md5 === md5) {
-                return node.file_user_tags || [];
-            }
-        }
-    } else if (etype === 'similarity') {
-        let latest = graph.all_pairs.find(p => p.sid === eid);
-        if (!latest) {
-            const parts = eid.split('|');
-            if (parts.length >= 2) {
-                latest = graph.all_pairs.find(p => 
-                    (p.id1 === parts[0] && p.id2 === parts[1]) || 
-                    (p.id1 === parts[1] && p.id2 === parts[0])
-                );
-            }
-        }
-        return latest ? (latest.user_tags || []) : [];
-    }
-    return [];
-}
-
-function renderBookmarkIgnoreTagItems(etype, eid, tagsList, userTagsList) {
-    const isBookmarked = userTagsList.includes('bookmark');
-    const isIgnored = userTagsList.includes('ignore');
-
-    let html = '';
-    
-    // Bookmark and Ignore side-by-side buttons
-    html += `
-    <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-        <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'rgba(102, 217, 239, 0.1)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-            Bookmark
-        </button>
-        <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'rgba(249, 38, 114, 0.1)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
-            Ignore
-        </button>
-    </div>`;
-
-    // Generate Tags nested submenu dropdown items
-    const allKnownTags = Object.keys(window.tagMetadata || {}).filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
-    
-    let submenuHtml = '';
-    allKnownTags.forEach(tag => {
-        const isActive = userTagsList.includes(tag);
-        const color = window.getTagMetadata ? window.getTagMetadata(tag).color : '#66d9ef';
-        const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
-        
-        submenuHtml += `
-        <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${tag.replace(/'/g, "\\'")}')">
-            <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
-            <span>${tag}</span>
-        </div>`;
-    });
-
-    if (submenuHtml) {
-        submenuHtml += `<div style="border-top: 1px solid rgba(255,255,255,0.05); margin: 4px 0;"></div>`;
-    }
-
-    submenuHtml += `
-    <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.showInlineTagInput(event, '${etype}', '${eid}')">
-        <i class="fa-solid fa-plus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-        <span>Add custom tag...</span>
-    </div>`;
-
-    // Tags submenu category row
-    html += `
-    <div class="context-menu-item tag-submenu-trigger" style="position: relative;">
-        <i class="fa-solid fa-tags" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-        <span>Tags</span>
-        <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
-        
-        <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
-            ${submenuHtml}
-        </div>
-    </div>`;
-
-    // Applied tags list preview
-    html += renderContextMenuTagsList(etype, eid, tagsList, userTagsList);
-
-    return html;
-}
-
-function renderContextMenuTagsList(etype, eid, tagsList, userTagsList) {
-    const allTags = [...(userTagsList || [])].filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());
-    if (allTags.length === 0) return '';
-    
-    const tagsHtml = allTags.map(tag => {
-        let color = '#66d9ef';
-        if (window.getTagMetadata) {
-            color = window.getTagMetadata(tag).color;
-        }
-        const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, '${etype}', '${eid}', '${tag}')`;
-        return `
-        <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
-            ${tag}
-            <span onclick="${removeClick}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
-        </span>`;
-    }).join('');
-
-    return `
-    <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-        ${tagsHtml}
-    </div>`;
-}
-
 document.addEventListener('DOMContentLoaded', () => {
+    if (typeof UI !== 'undefined' && UI.Sidebar) {
+        UI.Sidebar.init('sidebar-container');
+    }
+
+    if (window.self !== window.top) {
+        document.body.classList.add('in-iframe');
+    }
 
     // Intercept wheel events for scrolling code/diff preview tooltips while hovering trigger elements
     // [REMOVED: Now handled in previews.js to prevent double-scroll]
@@ -2906,12 +3090,12 @@ document.addEventListener('DOMContentLoaded', () => {
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
 window.applySimSearch = applySimSearch;
+window.applyBinSimSearch = applyBinSimSearch;
 window.applyClusterSearch = applyClusterSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
-window.selectCollection = selectCollection;
 window.resetColumnWidths = resetColumnWidths;
 window.toggleSort = toggleSort;
 window.applySearch = applySearch;
@@ -2951,6 +3135,13 @@ window.addEventListener('message', (event) => {
     const { action, tag, targets } = msg;
     if (!tag || !targets || !targets.length) return;
 
+    // If we encounter a new tag, refresh metadata to get its color/priority
+    if (action === 'add' && (!window.tagMetadata || !window.tagMetadata[tag])) {
+        if (typeof fetchTagMetadata === 'function') {
+            fetchTagMetadata(getCollectionFromHash());
+        }
+    }
+
     // 1. Update dashboard DOM (tables, tag editors)
     targets.forEach(({ etype, eid }) => {
         let editors = Array.from(document.querySelectorAll(`[data-etype="${etype}"][data-eid="${eid}"]`));
@@ -2979,11 +3170,14 @@ window.addEventListener('message', (event) => {
 
     // 2. Refresh row colors and update sim graph with patched in-memory tag data
     if (typeof refreshAllRowColors === 'function') refreshAllRowColors();
-    if (window.graphInstance && typeof window.graphInstance.applyTagUpdate === 'function') {
-        targets.forEach(({ etype, eid }) => {
-            window.graphInstance.applyTagUpdate(action, etype, eid, tag);
-        });
-    }
+    [window.graphInstance, window.hierarchyInstance, window.packingInstance, window.binHierarchyInstance, window.binPackingInstance].forEach(inst => {
+        if (inst && typeof inst.applyTagUpdate === 'function') {
+            targets.forEach(({ etype, eid }) => {
+                inst.applyTagUpdate(action, etype, eid, tag);
+            });
+        }
+    });
+
     if (typeof window.refreshContextMenuUI === 'function') {
         window.refreshContextMenuUI();
     }
@@ -3003,14 +3197,14 @@ window.addEventListener('message', (event) => {
 
 // --- Saved Filters & History Mechanism ---
 const viewMetaData = {
-    '#collections': { name: 'Collections', icon: 'fa-layer-group' },
-    '#batches': { name: 'Batches', icon: 'fa-boxes-stacked' },
-    '#files': { name: 'Files', icon: 'fa-file-code' },
-    '#functions': { name: 'Functions', icon: 'fa-code' },
-    '#features-global': { name: 'Features', icon: 'fa-fingerprint' },
-    '#function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
-    '#clusters': { name: 'Clusters', icon: 'fa-bullseye' },
-    '#file-call-graph': { name: 'Call Graph', icon: 'fa-sitemap' }
+    'collections': { name: 'Collections', icon: 'fa-layer-group' },
+    'batches': { name: 'Batches', icon: 'fa-boxes-stacked' },
+    'files': { name: 'Files', icon: 'fa-file-code' },
+    'functions': { name: 'Functions', icon: 'fa-code' },
+    'features-global': { name: 'Features', icon: 'fa-fingerprint' },
+    'function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
+    'clusters': { name: 'Clusters', icon: 'fa-bullseye' },
+    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' }
 };
 
 function getFilterSummary(path, params) {
@@ -3018,34 +3212,39 @@ function getFilterSummary(path, params) {
     const q = params.get('q');
     if (q) summary.push(`q: "${q}"`);
 
-    if (path === '#files') {
+    if (path === 'files') {
         const file_name = params.get('file_name');
         const file_md5 = params.get('file_md5');
         const language_id = params.get('language_id');
         const min_function_count = params.get('min_function_count');
         const max_function_count = params.get('max_function_count');
-        
+
         if (file_name) summary.push(`Name: "${file_name}"`);
         if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
         if (language_id) summary.push(`Lang: ${language_id}`);
         if (min_function_count || max_function_count) {
             summary.push(`Funcs: ${min_function_count || 0}-${max_function_count || '∞'}`);
         }
-    } else if (path === '#functions') {
+        const min_cohesion = params.get('min_cohesion');
+        const max_cohesion = params.get('max_cohesion');
+        if (min_cohesion || max_cohesion) {
+            summary.push(`Cohesion: ${min_cohesion || 0}-${max_cohesion || 1}`);
+        }
+    } else if (path === 'functions') {
         const function_name = params.get('function_name');
         const file_name = params.get('file_name');
         const file_md5 = params.get('file_md5');
         const min_features = params.get('min_features');
         const cluster_name = params.get('cluster_name');
         const entrypoint_address = params.get('entrypoint_address');
-        
+
         if (function_name) summary.push(`Func: "${function_name}"`);
         if (file_name) summary.push(`File: "${file_name}"`);
         if (file_md5) summary.push(`MD5: ${file_md5.substring(0, 6)}`);
         if (entrypoint_address) summary.push(`Addr: ${entrypoint_address}`);
         if (min_features && min_features !== '0') summary.push(`Min Feat: ${min_features}`);
         if (cluster_name) summary.push(`Cluster: "${cluster_name}"`);
-    } else if (path === '#function-similarity') {
+    } else if (path === 'function-similarity') {
         const name = params.get('name');
         const md5 = params.get('md5');
         const address = params.get('address');
@@ -3054,7 +3253,7 @@ function getFilterSummary(path, params) {
         const algo = params.get('algo');
         const cross_binary = params.get('cross_binary');
         const match_mode = params.get('match_mode');
-        
+
         if (name) summary.push(`Func: "${name}"`);
         if (md5) summary.push(`MD5: ${md5.substring(0, 6)}`);
         if (address) summary.push(`Addr: ${address}`);
@@ -3065,20 +3264,17 @@ function getFilterSummary(path, params) {
             summary.push(cross_binary === 'true' ? 'Cross-Binary' : 'Same-Binary');
         }
         if (match_mode && match_mode !== 'any') summary.push(`Match: ${match_mode}`);
-    } else if (path === '#clusters') {
+    } else if (path === 'clusters') {
         const cluster_uuid = params.get('cluster_uuid');
         const cluster_name = params.get('cluster_name');
         const min_count = params.get('min_count');
         const min_cohesion = params.get('min_cohesion');
-        
+
         if (cluster_uuid) summary.push(`UUID: ${cluster_uuid.substring(0, 6)}`);
         if (cluster_name) summary.push(`Name: "${cluster_name}"`);
         if (min_count && min_count !== '0') summary.push(`Min Funcs: ${min_count}`);
         if (min_cohesion && min_cohesion !== '0') summary.push(`Cohesion >= ${min_cohesion}`);
-    } else if (path === '#file-call-graph') {
-        const file_md5 = params.get('file_md5');
-        if (file_md5) summary.push(`File MD5: ${file_md5.substring(0, 8)}`);
-    } else if (path === '#features-global') {
+    } else if (path === 'features-global') {
         const hash = params.get('hash');
         const type = params.get('type');
         const op = params.get('op');
@@ -3107,14 +3303,12 @@ function getFilterSummary(path, params) {
 
 function getGraphTypeBadge(path, params) {
     const viewMode = params.get('view') || 'table';
-    if (path === '#function-similarity') {
+    if (path === 'function-similarity') {
         return viewMode === 'graph' ? 'Graph' : 'Table';
-    } else if (path === '#clusters') {
+    } else if (path === 'clusters') {
         if (viewMode === 'hierarchy') return 'Hierarchy';
         if (viewMode === 'packing') return 'Packing';
         return 'Table';
-    } else if (path === '#file-call-graph') {
-        return 'Call Graph';
     }
     return 'Table';
 }
@@ -3131,7 +3325,7 @@ function formatRelativeTime(timestamp) {
 }
 
 function addToHistory(path, queryString) {
-    if (path === '#collections') return;
+    if (path === 'collections') return;
 
     const params = new URLSearchParams(queryString);
     const col = params.get('collection') || 'main';
@@ -3146,7 +3340,7 @@ function addToHistory(path, queryString) {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     const now = Date.now();
     const cleanParamsObj = {};
@@ -3191,7 +3385,7 @@ function addToHistory(path, queryString) {
         const last = history[0];
         const isSameView = last.path === path && last.collection === col && last.view === view;
         const timeDiff = now - last.timestamp;
-        
+
         // Typing merge (debounce within 7 seconds)
         if (isSameView && timeDiff < 7000) {
             history[0] = newItem;
@@ -3230,13 +3424,25 @@ function loadHistoryItemByTimestamp(timestamp) {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     const item = history.find(h => h.timestamp === timestamp);
     if (!item) return;
 
-    const qs = serializeParams(item.params);
-    window.location.hash = `${item.path}?${qs}`;
+    let path = item.path;
+    if (path.startsWith('#')) path = path.substring(1);
+
+    const params = new URLSearchParams();
+    for (const [key, val] of Object.entries(item.params)) {
+        if (Array.isArray(val)) {
+            val.forEach(v => params.append(key, v));
+        } else {
+            params.set(key, val);
+        }
+    }
+
+    const col = params.get('collection');
+    navigate(path, params, col);
     closeAllHistoryDropdowns();
 }
 
@@ -3244,21 +3450,19 @@ function renderHistoryDropdowns() {
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     const globalDropdown = document.getElementById('history-dropdown');
     const viewDropdown = document.getElementById('view-history-dropdown');
-    const [currentPath, currentQueryString] = (window.location.hash || '#collections').split('?');
-    const currentParams = new URLSearchParams(currentQueryString);
-    const currentCol = currentParams.get('collection') || 'main';
+    const { viewKey: currentPath, collection: currentCol, params: currentParams } = getRoutingState();
 
     const esc = (str) => {
         if (!str) return '';
         return str.replace(/&/g, '&amp;')
-                  .replace(/</g, '&lt;')
-                  .replace(/>/g, '&gt;')
-                  .replace(/"/g, '&quot;')
-                  .replace(/'/g, '&#039;');
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     };
 
     // 1. Render Global Dropdown
@@ -3353,14 +3557,12 @@ function clearSearchHistory(event) {
         event.stopPropagation();
         event.preventDefault();
     }
-    const [currentPath, currentQueryString] = (window.location.hash || '#collections').split('?');
-    const currentParams = new URLSearchParams(currentQueryString);
-    const currentCol = currentParams.get('collection') || 'main';
+    const { collection: currentCol } = getRoutingState();
 
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     // Keep items from other collections
     const filtered = history.filter(item => item.collection !== currentCol);
@@ -3373,14 +3575,12 @@ function clearViewHistory(event, path) {
         event.stopPropagation();
         event.preventDefault();
     }
-    const [currentPath, currentQueryString] = (window.location.hash || '#collections').split('?');
-    const currentParams = new URLSearchParams(currentQueryString);
-    const currentCol = currentParams.get('collection') || 'main';
+    const { collection: currentCol } = getRoutingState();
 
     let history = [];
     try {
         history = JSON.parse(localStorage.getItem('bsimvis_search_history') || '[]');
-    } catch(e) {}
+    } catch (e) { }
 
     // Keep items that are not in this view or not in this collection
     const filtered = history.filter(item => !(item.path === path && item.collection === currentCol));
@@ -3396,7 +3596,7 @@ function toggleHistoryDropdown(event) {
     const dropdown = document.getElementById('history-dropdown');
     if (!dropdown) return;
     const isVisible = dropdown.style.display === 'block';
-    
+
     closeAllHistoryDropdowns();
 
     if (!isVisible) {
@@ -3415,7 +3615,7 @@ function toggleViewHistoryDropdown(event) {
     const dropdown = document.getElementById('view-history-dropdown');
     if (!dropdown) return;
     const isVisible = dropdown.style.display === 'block';
-    
+
     closeAllHistoryDropdowns();
 
     if (!isVisible) {
@@ -3478,7 +3678,7 @@ function restoreGraphSettings() {
         if (settings.colorSim !== undefined) setVal('graph-color-sim', settings.colorSim);
         if (settings.bundleTension !== undefined) setVal('graph-bundle-tension', settings.bundleTension);
         if (settings.linkWidth !== undefined) setVal('graph-link-width', settings.linkWidth);
-        
+
         const chk = document.getElementById('graph-scale-width');
         if (chk && settings.scaleWidth !== undefined) chk.checked = settings.scaleWidth;
 
@@ -3495,27 +3695,26 @@ function restoreGraphSettings() {
                 window.graphInstance.applyProfile(settings.activeProfile);
             }
         }
-    } catch(e) {
+    } catch (e) {
         console.error("Failed to restore graph settings", e);
     }
 }
 window.restoreGraphSettings = restoreGraphSettings;
 
 function downloadSearchResults(format) {
-    const [hashPath, queryString] = (window.location.hash || '#collections').split('?');
-    const route = routes[hashPath];
+    const { viewKey, params } = getRoutingState();
+    const route = routes[viewKey];
     if (!route || !route.api) {
         alert("Downloads are not available for this view.");
         return;
     }
-    
-    const params = new URLSearchParams(queryString);
+
     params.set('format', format);
     // For downloads, we want to fetch all matches, so we set limit to a large number
     params.set('limit', '100000');
-    
+
     const downloadUrl = route.api + '?' + params.toString();
-    
+
     // Create a temporary anchor element to trigger the browser download
     const link = document.createElement('a');
     link.href = downloadUrl;
@@ -3543,3 +3742,31 @@ function closeExportDropdown() {
     if (dropdown) dropdown.style.display = 'none';
 }
 window.closeExportDropdown = closeExportDropdown;
+
+async function refreshFunctionRow(funcId) {
+    const row = document.querySelector(`.sim-row[data-id="${funcId}"]`);
+    if (!row) return;
+
+    const parts = funcId.split(':');
+    const collection = parts[0];
+    const md5 = parts[2];
+    const addr = parts[3];
+
+    try {
+        // Use exact ID search
+        const res = await fetch(`/api/function/search?collection=${collection}&entrypoint_address=${addr}&file_md5=${md5}`);
+        const data = await res.json();
+        if (data.functions && data.functions.length > 0) {
+            const f = data.functions[0];
+            const newHtml = renderFunctions([f], {});
+            const temp = document.createElement('tbody');
+            temp.innerHTML = newHtml;
+            const newRow = temp.firstElementChild;
+            row.replaceWith(newRow);
+        }
+    } catch (e) {
+        console.error("Failed to refresh function row:", e);
+    }
+}
+
+window.refreshFunctionRow = refreshFunctionRow;

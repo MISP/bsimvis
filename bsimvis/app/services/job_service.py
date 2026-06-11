@@ -25,6 +25,16 @@ class JobType(Enum):
     SYNC_MILVUS = "sync_milvus"
     CLUSTER_FUNCTIONS = "cluster_functions"
     CLEAR_CLUSTER = "clear_cluster"
+    CLUSTER_BINARIES = "cluster_binaries"
+    CLEAR_BIN_CLUSTER = "clear_bin_cluster"
+    BUILD_BIN_SIM = "build_bin_sim"
+    CLEAR_BIN_SIM = "clear_bin_sim"
+    REINDEX_BIN_SIM = "reindex_bin_sim"
+    ENRICH_FEATURES = "enrich_features"
+    DELETE_COLLECTION = "delete_collection"
+    CLEAN_COLLECTION = "clean_collection"
+    PROPAGATE_METADATA = "propagate_metadata"
+
 
 
 class JobService:
@@ -47,14 +57,17 @@ class JobService:
             "parent_id": parent_id or "",
             "error": "",
         }
+        if isinstance(payload, dict) and "collection" in payload:
+            job_data["collection"] = payload["collection"]
 
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
 
-        # Add to global list of jobs for tracking
-        self.r.lpush("jobs:global", job_id)
-        # Keep only the last 1000 jobs in the global list
-        self.r.ltrim("jobs:global", 0, 999)
+        # Add to global list of jobs for tracking if not a subtask
+        if not is_subtask:
+            self.r.lpush("jobs:global", job_id)
+            # Keep only the last 1000 jobs in the global list
+            self.r.ltrim("jobs:global", 0, 999)
 
         # If it's not a subtask of a pipeline (or it's the first subtask), enqueue it
         if not is_subtask:
@@ -62,20 +75,31 @@ class JobService:
 
         return job_id
 
-    def create_pipeline(self, tasks):
+    def _resolve_task(self, task, parent_id):
+        """Resolves a task definition into a job_id."""
+        if isinstance(task, str):
+            # Existing job_id
+            self.r.hset(f"job:{task}", "parent_id", parent_id)
+            # Remove from jobs:global since it now has a parent
+            self.r.lrem("jobs:global", 0, task)
+            return task
+        elif isinstance(task, (list, tuple)) and len(task) >= 2:
+            jtype, payload = task[0], task[1]
+            return self.create_job(jtype, payload, parent_id=parent_id, is_subtask=True)
+        else:
+            raise ValueError(f"Invalid task format: {task}")
+
+    def create_pipeline(self, tasks, parent_id=None, enqueue=True):
         """
         Creates a pipeline with a list of tasks.
-        tasks: list of (JobType, payload)
+        tasks: list of (JobType, payload) or job_id strings
         """
         pipeline_id = f"pipe_{str(uuid.uuid4())[:18]}"
         timestamp = int(time.time() * 1000)
 
         task_ids = []
-        for i, (jtype, payload) in enumerate(tasks):
-            # Create subtasks but don't enqueue them independently (is_subtask=True)
-            tid = self.create_job(
-                jtype, payload, parent_id=pipeline_id, is_subtask=True
-            )
+        for task in tasks:
+            tid = self._resolve_task(task, pipeline_id)
             task_ids.append(tid)
 
         pipeline_data = {
@@ -83,22 +107,103 @@ class JobService:
             "type": "pipeline",
             "status": JobStatus.PENDING.value,
             "task_ids": json.dumps(task_ids),
-            "current_task_idx": 0,
             "created_at": timestamp,
             "updated_at": timestamp,
             "progress": 0,
+            "parent_id": parent_id or "",
             "error": "",
         }
+
+        # Determine collection from tasks if possible
+        collection = None
+        for task in tasks:
+            if isinstance(task, (list, tuple)) and len(task) >= 2:
+                payload = task[1]
+                if isinstance(payload, dict) and "collection" in payload:
+                    collection = payload["collection"]
+                    break
+            elif isinstance(task, str):
+                st = self.r.hgetall(f"job:{task}")
+                if st:
+                    collection = st.get("collection")
+                    if not collection and "payload" in st:
+                        try:
+                            pl = json.loads(st["payload"])
+                            collection = pl.get("collection")
+                        except:
+                            pass
+                    if collection:
+                        break
+
+        if collection:
+            pipeline_data["collection"] = collection
 
         self.r.hset(f"job:{pipeline_id}", mapping=pipeline_data)
         self.r.lpush("jobs:global", pipeline_id)
         self.r.ltrim("jobs:global", 0, 999)
 
-        # Enqueue only the first task of the pipeline
-        if task_ids:
-            self.enqueue_job(task_ids[0])
+        if enqueue:
+            self.start_job(pipeline_id)
 
         return pipeline_id
+
+    def create_group(self, tasks, parent_id=None, enqueue=True):
+        """
+        Creates a group with a list of tasks to run in parallel.
+        tasks: list of (JobType, payload) or job_id strings
+        """
+        group_id = f"group_{str(uuid.uuid4())[:18]}"
+        timestamp = int(time.time() * 1000)
+
+        task_ids = []
+        for task in tasks:
+            tid = self._resolve_task(task, group_id)
+            task_ids.append(tid)
+
+        group_data = {
+            "id": group_id,
+            "type": "group",
+            "status": JobStatus.PENDING.value,
+            "task_ids": json.dumps(task_ids),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "progress": 0,
+            "parent_id": parent_id or "",
+            "error": "",
+        }
+
+        # Determine collection from tasks if possible
+        collection = None
+        for task in tasks:
+            if isinstance(task, (list, tuple)) and len(task) >= 2:
+                payload = task[1]
+                if isinstance(payload, dict) and "collection" in payload:
+                    collection = payload["collection"]
+                    break
+            elif isinstance(task, str):
+                st = self.r.hgetall(f"job:{task}")
+                if st:
+                    collection = st.get("collection")
+                    if not collection and "payload" in st:
+                        try:
+                            pl = json.loads(st["payload"])
+                            collection = pl.get("collection")
+                        except:
+                            pass
+                    if collection:
+                        break
+
+        if collection:
+            group_data["collection"] = collection
+
+        self.r.hset(f"job:{group_id}", mapping=group_data)
+        self.r.lpush("jobs:global", group_id)
+        self.r.ltrim("jobs:global", 0, 999)
+
+        if enqueue:
+            self.start_job(group_id)
+
+        return group_id
 
     def enqueue_job(self, job_id):
         """Pushes a job ID onto the appropriate priority queue."""
@@ -109,6 +214,7 @@ class JobService:
             JobType.CLEAR_SIM.value,
             JobType.CLEAR_FEATURES.value,
             JobType.CLEAR_CLUSTER.value,
+            JobType.CLEAR_BIN_SIM.value,
             JobType.SYNC_MILVUS.value,
         ]
 
@@ -116,6 +222,109 @@ class JobService:
             self.r.lpush("jobs:pending:high", job_id)
         else:
             self.r.lpush("jobs:pending", job_id)
+
+    def start_job(self, job_id):
+        """Starts a job. If it's a group or pipeline, it resolves down to leaf jobs."""
+        job = self.r.hgetall(f"job:{job_id}")
+        if not job:
+            return
+
+        jtype = job.get("type")
+
+        if job.get("status") == JobStatus.CANCELLED.value:
+            return
+
+        if jtype in ["pipeline", "group"]:
+            self.r.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+
+        if jtype == "pipeline":
+            tids = json.loads(job.get("task_ids", "[]"))
+            if tids:
+                self.start_job(tids[0])
+            else:
+                self.complete_job(job_id)
+        elif jtype == "group":
+            tids = json.loads(job.get("task_ids", "[]"))
+            if tids:
+                for tid in tids:
+                    self.start_job(tid)
+            else:
+                self.complete_job(job_id)
+        else:
+            self.enqueue_job(job_id)
+
+    def complete_job(self, job_id):
+        """Marks a job as completed and advances its parent if applicable."""
+        self.r.hset(f"job:{job_id}", "status", JobStatus.COMPLETED.value)
+        self.update_progress(job_id, 100)
+
+        parent_id = self.r.hget(f"job:{job_id}", "parent_id")
+        if parent_id:
+            self.advance_parent(parent_id, job_id)
+
+    def advance_parent(self, parent_id, finished_job_id):
+        """Advances the parent job based on its type (pipeline sequence or group barrier)."""
+        parent = self.r.hgetall(f"job:{parent_id}")
+        if not parent or parent.get("status") == JobStatus.CANCELLED.value:
+            return
+
+        ptype = parent.get("type")
+        tids = json.loads(parent.get("task_ids", "[]"))
+
+        if ptype == "pipeline":
+            try:
+                current_idx = tids.index(finished_job_id)
+                if current_idx + 1 < len(tids):
+                    next_tid = tids[current_idx + 1]
+                    self.add_log(
+                        parent_id,
+                        f"Sub-task {finished_job_id} done. Starting next: {next_tid}",
+                    )
+                    self.start_job(next_tid)
+                else:
+                    self.add_log(parent_id, "All tasks in pipeline completed.")
+                    self.complete_job(parent_id)
+            except ValueError:
+                pass
+
+        elif ptype == "group":
+            all_done = True
+            any_failed = False
+            for tid in tids:
+                status = self.r.hget(f"job:{tid}", "status")
+                if status not in [
+                    JobStatus.COMPLETED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]:
+                    all_done = False
+                    break
+                if status == JobStatus.FAILED.value:
+                    any_failed = True
+
+            if all_done:
+                if any_failed:
+                    self.add_log(
+                        parent_id, "All tasks in group finished, but some failed."
+                    )
+                else:
+                    self.add_log(parent_id, "All tasks in group completed.")
+                self.complete_job(parent_id)
+
+    def fail_job(self, job_id, error_msg):
+        """Marks a job as failed and cascades failure to its parent."""
+        self.r.hset(f"job:{job_id}", "status", JobStatus.FAILED.value)
+        self.r.hset(f"job:{job_id}", "error", error_msg)
+        self.add_log(job_id, f"Execution error: {error_msg}")
+
+        parent_id = self.r.hget(f"job:{job_id}", "parent_id")
+        if parent_id:
+            parent_type = self.r.hget(f"job:{parent_id}", "type")
+            if parent_type == "group":
+                # For groups, we don't fail the group instantly. We wait for other tasks.
+                self.advance_parent(parent_id, job_id)
+            else:
+                self.fail_job(parent_id, f"Failed because sub-task {job_id} failed.")
 
     def get_job_status(self, job_id):
         """Returns the full job or pipeline status."""
@@ -203,15 +412,24 @@ class JobService:
             f"job_log:{job_id}", f"[{int(time.time()*1000)}] Job cancelled by user."
         )
 
-        # If it's a pipeline, cancel all subtasks
+        # Cancel all subtasks recursively
         if "task_ids" in data:
             tids = json.loads(data["task_ids"])
             for tid in tids:
-                self.r.hset(f"job:{tid}", "status", JobStatus.CANCELLED.value)
-                self.r.lrem("jobs:pending", 0, tid)
-                self.r.lrem("jobs:pending:high", 0, tid)
+                self.cancel_job(tid)
 
         return True
+
+    def cancel_all_jobs(self):
+        """Cancels all pending/running jobs and pipelines."""
+        cancelled = 0
+        job_ids = self.r.lrange("jobs:global", 0, -1)
+        for jid in job_ids:
+            status = self.r.hget(f"job:{jid}", "status")
+            if status in [JobStatus.PENDING.value, JobStatus.RUNNING.value]:
+                self.cancel_job(jid)
+                cancelled += 1
+        return cancelled
 
     def add_log(self, job_id, message):
         """Adds a log entry for a job."""
@@ -291,6 +509,40 @@ class JobService:
 
         global_eta = remaining_items / total_speed if total_speed > 0 else 0
 
+        # Collect active collections
+        active_collections = set()
+        # Check processing jobs
+        all_processing_ids = self.r.lrange("jobs:processing", 0, -1)
+        # Also check pending jobs (last 100 for efficiency)
+        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
+            "jobs:pending:high", 0, 100
+        )
+
+        for jid in set(all_processing_ids + pending_ids):
+            job = self.r.hgetall(f"job:{jid}")
+            if not job:
+                continue
+            if job.get("status") in [
+                JobStatus.CANCELLED.value,
+                JobStatus.FAILED.value,
+                JobStatus.COMPLETED.value,
+            ]:
+                continue
+
+            coll = job.get("collection")
+            if coll:
+                active_collections.add(coll)
+            else:
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        coll = payload.get("collection")
+                        if coll:
+                            active_collections.add(coll)
+                    except:
+                        pass
+
         return {
             "active_workers": active_jobs_count,
             "pending_jobs": pending_count,
@@ -298,58 +550,180 @@ class JobService:
             "total_speed": round(total_speed, 2),
             "remaining_items": remaining_items,
             "global_eta": int(global_eta),
+            "active_collections": list(active_collections),
         }
 
-    def list_jobs(self, limit=50, offset=0):
+    def list_jobs(self, limit=100, offset=0, collection=None, status=None, jtype=None):
         """Returns a paged list of jobs and the total count."""
-        total = self.r.llen("jobs:global")
-        job_ids = self.r.lrange("jobs:global", offset, offset + limit - 1)
-        # Fetch summary info for each job in a pipeline (MGET equivalent for hashes not possible, but we can do a quick loop)
-        results = []
-        for jid in job_ids:
-            job = self.r.hgetall(f"job:{jid}")
-            if job:
-                # Extract target from payload
-                target = ""
-                collection = ""
+        # Fetch all top-level job IDs (at most 1000)
+        all_job_ids = self.r.lrange("jobs:global", 0, -1)
+
+        # Batch fetch all top-level job hashes using pipeline
+        pipe = self.r.pipeline()
+        for jid in all_job_ids:
+            pipe.hgetall(f"job:{jid}")
+        raw_jobs = pipe.execute()
+
+        # Parse payloads and build initial list of top-level job dicts
+        top_level_jobs = []
+        for jid, job in zip(all_job_ids, raw_jobs):
+            if not job:
+                continue
+
+            # Extract target and collection from payload
+            target = ""
+            coll = job.get("collection", "")
+            if not coll:
                 payload_raw = job.get("payload")
                 if payload_raw:
                     try:
                         payload = json.loads(payload_raw)
-                        collection = payload.get("collection", "")
+                        coll = payload.get("collection", "")
                         target = (
                             payload.get("md5")
                             or payload.get("file_id")
                             or payload.get("batch_uuid")
                             or ""
                         )
-                        # Truncate long targets
+                        if target and len(target) > 20:
+                            target = target[:8] + "..." + target[-8:]
+                    except:
+                        pass
+            else:
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        target = (
+                            payload.get("md5")
+                            or payload.get("file_id")
+                            or payload.get("batch_uuid")
+                            or ""
+                        )
                         if target and len(target) > 20:
                             target = target[:8] + "..." + target[-8:]
                     except:
                         pass
 
-                # Basic summary info
-                parent_id = job.get("parent_id", "")
+            parent_id = job.get("parent_id", "")
+            task_ids = []
+            if "task_ids" in job:
+                try:
+                    task_ids = json.loads(job["task_ids"])
+                except:
+                    pass
+
+            # Apply filters early to top-level jobs
+            if collection and coll != collection:
+                continue
+            if status and job.get("status") != status:
+                continue
+            if jtype and job.get("type") != jtype:
+                continue
+
+            top_level_jobs.append(
+                {
+                    "id": jid,
+                    "type": job.get("type"),
+                    "status": job.get("status"),
+                    "progress": int(job.get("progress", 0)),
+                    "collection": coll,
+                    "target": target,
+                    "created_at": int(job.get("created_at", 0)),
+                    "updated_at": int(job.get("updated_at", 0)),
+                    "parent_id": parent_id,
+                    "task_ids": task_ids,
+                }
+            )
+
+        # Total is the count of filtered top-level jobs
+        total = len(top_level_jobs)
+
+        # Paginate top-level jobs
+        paginated_top_level = top_level_jobs[offset : offset + limit]
+
+        # Now, recursively fetch all subtask descendants for the paginated top-level jobs.
+        results = list(paginated_top_level)
+        results_map = {res["id"]: res for res in results}
+
+        to_fetch = []
+        for job in paginated_top_level:
+            if job["type"] in ["pipeline", "group"] and job.get("task_ids"):
+                to_fetch.extend(job["task_ids"])
+
+        while to_fetch:
+            ids_to_fetch = list(set(tid for tid in to_fetch if tid not in results_map))
+            to_fetch = []
+
+            if not ids_to_fetch:
+                break
+
+            pipe = self.r.pipeline()
+            for tid in ids_to_fetch:
+                pipe.hgetall(f"job:{tid}")
+            raw_sub_jobs = pipe.execute()
+
+            for tid, sub_job in zip(ids_to_fetch, raw_sub_jobs):
+                if not sub_job:
+                    continue
+
+                target = ""
+                coll = sub_job.get("collection", "")
+                if not coll:
+                    payload_raw = sub_job.get("payload")
+                    if payload_raw:
+                        try:
+                            payload = json.loads(payload_raw)
+                            coll = payload.get("collection", "")
+                            target = (
+                                payload.get("md5")
+                                or payload.get("file_id")
+                                or payload.get("batch_uuid")
+                                or ""
+                            )
+                            if target and len(target) > 20:
+                                target = target[:8] + "..." + target[-8:]
+                        except:
+                            pass
+                else:
+                    payload_raw = sub_job.get("payload")
+                    if payload_raw:
+                        try:
+                            payload = json.loads(payload_raw)
+                            target = (
+                                payload.get("md5")
+                                or payload.get("file_id")
+                                or payload.get("batch_uuid")
+                                or ""
+                            )
+                            if target and len(target) > 20:
+                                target = target[:8] + "..." + target[-8:]
+                        except:
+                            pass
+
                 task_ids = []
-                if "task_ids" in job:
+                if "task_ids" in sub_job:
                     try:
-                        task_ids = json.loads(job["task_ids"])
+                        task_ids = json.loads(sub_job["task_ids"])
                     except:
                         pass
 
-                results.append(
-                    {
-                        "id": jid,
-                        "type": job.get("type"),
-                        "status": job.get("status"),
-                        "progress": int(job.get("progress", 0)),
-                        "collection": collection,
-                        "target": target,
-                        "created_at": int(job.get("created_at", 0)),
-                        "updated_at": int(job.get("updated_at", 0)),
-                        "parent_id": parent_id,
-                        "task_ids": task_ids,
-                    }
-                )
+                sub_job_dict = {
+                    "id": tid,
+                    "type": sub_job.get("type"),
+                    "status": sub_job.get("status"),
+                    "progress": int(sub_job.get("progress", 0)),
+                    "collection": coll,
+                    "target": target,
+                    "created_at": int(sub_job.get("created_at", 0)),
+                    "updated_at": int(sub_job.get("updated_at", 0)),
+                    "parent_id": sub_job.get("parent_id", ""),
+                    "task_ids": task_ids,
+                }
+                results_map[tid] = sub_job_dict
+                results.append(sub_job_dict)
+
+                if sub_job_dict["type"] in ["pipeline", "group"] and task_ids:
+                    to_fetch.extend(task_ids)
+
         return results, total

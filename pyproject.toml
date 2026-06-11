@@ -17,6 +17,7 @@ dependencies = [
     "pymilvus>=2.4.0",
     "hdbscan>=0.8.40",
     "scikit-learn>=1.6.0",
+    "ollama>=0.6.2",
 ]
 
 [project.scripts]

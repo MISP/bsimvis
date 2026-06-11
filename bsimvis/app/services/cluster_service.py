@@ -27,18 +27,32 @@ class ClusterService:
         self,
         collection,
         algo="unweighted_cosine",
-        min_cluster_size=5,
+        min_cluster_size=None,
         min_samples=None,
-        cluster_selection_epsilon=0.0,
-        selection_method="eom",
-        min_sim=0.0,
-        min_features=0,
+        cluster_selection_epsilon=None,
+        selection_method=None,
+        min_sim=None,
+        min_features=None,
         job_service=None,
         job_id=None,
     ):
         """
         Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
         """
+        from bsimvis.app.services.config_service import config_service
+
+        if min_cluster_size is None:
+            min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
+        if min_samples is None:
+            min_samples = config_service.get("clustering.min_samples", 1)
+        if cluster_selection_epsilon is None:
+            cluster_selection_epsilon = config_service.get("clustering.epsilon", 0.1)
+        if selection_method is None:
+            selection_method = config_service.get("clustering.selection_method", "eom")
+        if min_sim is None:
+            min_sim = config_service.get("clustering.min_sim", 0.0)
+        if min_features is None:
+            min_features = config_service.get("clustering.min_features", 0)
         if hdbscan is None:
             logging.error(
                 "hdbscan library not installed. Please install it to use clustering."
@@ -64,6 +78,13 @@ class ClusterService:
                 pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
             if cursor == 0:
                 break
+            if len(pairs) % 10000 == 0:
+                logging.info(f"[*] Fetched {len(pairs)} similarity pairs...")
+
+        msg = f"Fetched {len(pairs)} similarity pairs."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         if not pairs:
             logging.warning(f"No similarity pairs found for {collection}:{algo}")
@@ -165,41 +186,171 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        # 3. Run HDBSCAN
-        # For graph-based data, we use a condensed distance matrix or just provide the edges
-        # However, hdbscan.HDBSCAN(metric='precomputed') expects a full distance matrix.
-        # For scalability, we use the 'geometric' approach if we have vectors,
-        # but here we only have the graph.
+        # 3. Connected Components and Local HDBSCAN
+        import scipy.sparse as sp
+        from scipy.sparse.csgraph import connected_components
+        import pandas as pd
 
-        # Alternative: Build a sparse distance matrix
-        # But HDBSCAN precomputed requires a full dense matrix usually.
-        # If the dataset is huge, we might need a different approach.
-        # For now, let's use a dense matrix with a large default distance (1.0)
-
-        dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float32)
-        np.fill_diagonal(dist_matrix, 0)
-
-        for i, j, d in edges:
-            dist_matrix[i, j] = d
-            dist_matrix[j, i] = d
-
-        logging.info(f"[*] Running HDBSCAN (min_cluster_size={min_cluster_size})...")
+        msg = f"Shattering graph into connected components to avoid OOM..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(job_id, "Running HDBSCAN algorithm...")
+            job_service.add_log(job_id, msg)
 
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min_cluster_size,
-            min_samples=min_samples,
-            cluster_selection_epsilon=cluster_selection_epsilon,
-            cluster_selection_method=selection_method,
-            metric="precomputed",
-            gen_min_span_tree=True,
-        )
-        # Only fit to get the condensed tree (no flat clustering)
-        clusterer.fit(dist_matrix.astype(np.float64))
-        # Calculate HDBSCAN stabilities and per-function membership strengths
-        # We use the condensed tree to calculate persistence for all nodes
-        tree_df = clusterer.condensed_tree_.to_pandas()
+        rows = []
+        cols = []
+        data = []
+        for i, j, d in edges:
+            if d < 1.0: # Only real similarity edges
+                rows.extend([i, j])
+                cols.extend([j, i])
+                data.extend([1, 1])
+
+        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        
+        comp_to_nodes = {}
+        for i, comp_id in enumerate(labels):
+            if comp_id not in comp_to_nodes:
+                comp_to_nodes[comp_id] = []
+            comp_to_nodes[comp_id].append(i)
+
+        comp_to_edges = {}
+        for i, j, d in edges:
+            c = labels[i]
+            if c == labels[j]:
+                if c not in comp_to_edges:
+                    comp_to_edges[c] = []
+                comp_to_edges[c].append((i, j, d))
+
+        msg = f"Found {n_components} connected components. Running local HDBSCAN..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        global_tree_rows = []
+        global_root_id = num_nodes
+        next_cluster_id = num_nodes + 1
+        comp_roots = []
+        
+        start_fit = time.time()
+        
+        for comp_id, comp_nodes in comp_to_nodes.items():
+            size = len(comp_nodes)
+            if size < min_cluster_size:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+                
+            sub_id_to_global = {i: global_idx for i, global_idx in enumerate(comp_nodes)}
+            global_to_sub_id = {global_idx: i for i, global_idx in enumerate(comp_nodes)}
+            
+            if size >= 5000:
+                from scipy.sparse.linalg import svds
+                
+                rows_sp, cols_sp, data_sp = [], [], []
+                if comp_id in comp_to_edges:
+                    for u, v, d in comp_to_edges[comp_id]:
+                        ui = global_to_sub_id[u]
+                        vi = global_to_sub_id[v]
+                        sim = 1.0 - d
+                        rows_sp.extend([ui, vi])
+                        cols_sp.extend([vi, ui])
+                        data_sp.extend([sim, sim])
+                
+                comp_matrix = sp.csr_matrix((data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32)
+                comp_matrix.setdiag(1.0)
+                
+                k = min(50, size - 1)
+                u, s, vt = svds(comp_matrix, k=k)
+                embeddings = u @ np.diag(np.sqrt(s))
+                del comp_matrix, rows_sp, cols_sp, data_sp
+                
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min(min_cluster_size, size),
+                    min_samples=min(min_samples, size),
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    cluster_selection_method=selection_method,
+                    metric="euclidean",
+                    gen_min_span_tree=True,
+                )
+                clusterer.fit(embeddings)
+            else:
+                sub_dist = np.ones((size, size), dtype=np.float32)
+                np.fill_diagonal(sub_dist, 0)
+                
+                if comp_id in comp_to_edges:
+                    for u, v, d in comp_to_edges[comp_id]:
+                        ui = global_to_sub_id[u]
+                        vi = global_to_sub_id[v]
+                        sub_dist[ui, vi] = d
+                        sub_dist[vi, ui] = d
+                        
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min(min_cluster_size, size),
+                    min_samples=min(min_samples, size),
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    cluster_selection_method=selection_method,
+                    metric="precomputed",
+                    gen_min_span_tree=True,
+                )
+                clusterer.fit(sub_dist.astype(np.float64))
+            
+            local_tree_df = clusterer.condensed_tree_.to_pandas()
+            if local_tree_df.empty:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+                
+            sub_internal_to_global = {}
+            # Ensure local root maps to a single global internal ID
+            local_root_sub = local_tree_df['parent'].min()
+            
+            for _, row in local_tree_df.iterrows():
+                parent = int(row['parent'])
+                child = int(row['child'])
+                
+                if parent not in sub_internal_to_global:
+                    sub_internal_to_global[parent] = next_cluster_id
+                    next_cluster_id += 1
+                    
+                if child < size: # Leaf
+                    global_child = sub_id_to_global[child]
+                else: # Internal
+                    if child not in sub_internal_to_global:
+                        sub_internal_to_global[child] = next_cluster_id
+                        next_cluster_id += 1
+                    global_child = sub_internal_to_global[child]
+                    
+                global_tree_rows.append({
+                    'parent': sub_internal_to_global[parent],
+                    'child': global_child,
+                    'lambda_val': float(row['lambda_val']),
+                    'child_size': int(row['child_size'])
+                })
+                
+            comp_roots.append((sub_internal_to_global[local_root_sub], size))
+            
+        # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
+        for comp_root, size in comp_roots:
+            global_tree_rows.append({
+                'parent': global_root_id,
+                'child': comp_root,
+                'lambda_val': 1.0,
+                'child_size': size
+            })
+            
+        tree_df = pd.DataFrame(global_tree_rows)
+        fit_time = time.time() - start_fit
+        
+        msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        msg = f"Global condensed tree has {len(tree_df)} rows."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
 
         # 1. Birth lambdas for all clusters
         # Root birth is 0
@@ -220,8 +371,58 @@ class ClusterService:
         # Stability and per-point strengths will be calculated after extracting members
         pass
 
+        # Pruning tree based on cluster_selection_epsilon (if > 0)
+        pruned_clusters = set()
+        if cluster_selection_epsilon and cluster_selection_epsilon > 0.0:
+            lambda_threshold = 1.0 / cluster_selection_epsilon
+            for c, b_lambda in birth_lambdas.items():
+                if b_lambda > lambda_threshold:
+                    pruned_clusters.add(c)
+
+        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+
+        def get_nearest_non_pruned_ancestor(node):
+            curr = node
+            while curr in child_to_parent:
+                p = child_to_parent[curr]
+                if p not in pruned_clusters:
+                    return p
+                curr = p
+            return None
+
+        # Build a pruned tree DataFrame
+        if pruned_clusters:
+            pruned_rows = []
+            for _, row in tree_df.iterrows():
+                parent = int(row["parent"])
+                child = int(row["child"])
+                child_size = int(row["child_size"])
+                lambda_val = float(row["lambda_val"])
+
+                if parent in pruned_clusters:
+                    ancestor = get_nearest_non_pruned_ancestor(parent)
+                    if ancestor is not None:
+                        parent = ancestor
+                    else:
+                        continue  # Skip if no ancestor
+
+                if child_size > 1:
+                    if child in pruned_clusters:
+                        continue
+
+                pruned_rows.append(
+                    {
+                        "parent": parent,
+                        "child": child,
+                        "lambda_val": lambda_val,
+                        "child_size": child_size,
+                    }
+                )
+            import pandas as pd
+
+            tree_df = pd.DataFrame(pruned_rows)
+
         # 4. Extract Condensed Tree for UI and Hierarchical Storage
-        tree_df = clusterer.condensed_tree_.to_pandas()
         tree_json = tree_df.to_json(orient="records")
         tree_key = f"{collection}:cluster:tree:{algo}"
         r.set(tree_key, tree_json)
@@ -307,6 +508,24 @@ class ClusterService:
                 pipe.execute()
         pipe.execute()
 
+        # Extract and save direct members (where child_size == 1)
+        direct_members = {}
+        for _, row in tree_df.iterrows():
+            if int(row["child_size"]) == 1:
+                p = int(row["parent"])
+                leaf = int(row["child"])
+                if leaf in idx_to_id:
+                    fid = idx_to_id[leaf]
+                    if p not in direct_members:
+                        direct_members[p] = []
+                    direct_members[p].append(fid)
+
+        for c, d_members in direct_members.items():
+            pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *d_members)
+            if len(pipe) > 1000:
+                pipe.execute()
+        pipe.execute()
+
         func_tag_fields = [
             f for f in self.get_native_fields("func", False) if f.startswith("cluster_")
         ]
@@ -384,26 +603,50 @@ class ClusterService:
         all_member_fids = list(id_to_idx.keys())
         all_member_meta = {}
         total_members = len(all_member_fids)
+        msg = f"Pre-fetching metadata for {total_members} functions..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id, f"Pre-fetching metadata for {total_members} functions..."
-            )
+            job_service.add_log(job_id, msg)
 
         for i in range(0, total_members, 1000):
             chunk = all_member_fids[i : i + 1000]
             m_pipe = r.pipeline()
             for fid in chunk:
-                m_pipe.json().get(f"{fid}:meta", "$")
-            for fid, res in zip(chunk, m_pipe.execute()):
-                if res and isinstance(res, list) and res[0]:
-                    all_member_meta[fid] = res[0]
+                m_pipe.json().get(f"{fid}:meta", "$.function_name")
+                m_pipe.json().get(f"{fid}:meta", "$.bsim_features_count")
+            results = m_pipe.execute()
+            for idx, fid in enumerate(chunk):
+                name_res = results[idx * 2]
+                feat_res = results[idx * 2 + 1]
+                name = name_res[0] if isinstance(name_res, list) and name_res else None
+                feat_count = (
+                    feat_res[0] if isinstance(feat_res, list) and feat_res else 0
+                )
+                all_member_meta[fid] = {
+                    "function_name": name,
+                    "bsim_features_count": feat_count,
+                }
+            
+            if i % 5000 == 0:
+                logging.info(f"[*] Fetched meta for {i}/{total_members} functions...")
+
+        # Build sparse adjacency dictionary of similarities for fast cohesion calculation
+        msg = f"Building sparse adjacency map for cohesion calculation..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+            
+        adj_sim = {i: {} for i in range(num_nodes)}
+        for u, v, d in edges:
+            sim = 1.0 - d
+            adj_sim[u][v] = sim
+            adj_sim[v][u] = sim
 
         total_clusters = len(cluster_members)
+        msg = f"Enriching metadata for {total_clusters} hierarchical clusters..."
+        logging.info(f"[*] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Enriching metadata for {total_clusters} hierarchical clusters...",
-            )
+            job_service.add_log(job_id, msg)
 
         for idx, (label, members) in enumerate(cluster_members.items()):
             names = []
@@ -421,24 +664,53 @@ class ClusterService:
             )
             avg_features = np.mean(feature_counts) if feature_counts else 0
 
-            # Exact Average Internal Similarity (Cohesion)
+            # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
             if len(members) > 1:
                 member_indices = [id_to_idx[fid] for fid in members]
-                sub_matrix = dist_matrix[np.ix_(member_indices, member_indices)]
-
                 n_members = len(members)
-                total_dist = np.sum(sub_matrix)
-                # Exclude the diagonal (distance to self is 0)
-                avg_dist = float(total_dist) / (n_members * (n_members - 1))
 
-                cohesion_score = max(0.0, min(1.0, 1.0 - avg_dist))
+                total_sim = 0.0
+                if n_members < 50:
+                    for i in range(n_members):
+                        u = member_indices[i]
+                        for j in range(i + 1, n_members):
+                            v = member_indices[j]
+                            total_sim += adj_sim[u].get(v, 0.0)
+                else:
+                    member_set = set(member_indices)
+                    for u in member_indices:
+                        for v, sim in adj_sim[u].items():
+                            if v in member_set:
+                                total_sim += sim
+                    total_sim /= 2.0
+
+                cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
+
+            unique_md5s = set()
+            for fid in members:
+                # fid format: collection:func:md5:address
+                parts = fid.split(":")
+                if len(parts) >= 3:
+                    unique_md5s.add(parts[2])
 
             # Find representative function name/snippet
             rep_fid = members[0] if members else None
             rep_meta = all_member_meta.get(rep_fid, {}) if rep_fid else {}
             snippet = rep_meta.get("function_name", "unknown")
+
+            samples = []
+            for fid in members[:5]:
+                m = all_member_meta.get(fid, {})
+                samples.append({
+                    "function_id": fid,
+                    "function_name": m.get("function_name", "Unknown"),
+                    "entrypoint_address": m.get("entrypoint_address"),
+                    "file_md5": m.get("file_md5"),
+                    "collection": collection,
+                    "bsim_features_count": m.get("bsim_features_count", 0)
+                })
 
             meta = {
                 "cluster_id": int(label),
@@ -450,7 +722,8 @@ class ClusterService:
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
-                "sample_members": names[:5],  # Include a few actual function names
+                "unique_files_count": len(unique_md5s),
+                "sample_members": samples,
                 "created_at": int(time.time() * 1000),
             }
 
@@ -574,6 +847,7 @@ class ClusterService:
 
             if cid != "noise":
                 r.delete(f"{collection}:cluster:{algo}:{cid}:members")
+                r.delete(f"{collection}:cluster:{algo}:{cid}:direct_members")
                 r.delete(f"{collection}:cluster:{algo}:{cid}:meta")
 
             if job_service and job_id and i % 10 == 0:
@@ -833,9 +1107,12 @@ class ClusterService:
                 f"Propagating cluster indexes to {total_candidates} candidate similarities "
                 f"(out of {total_sims} total sims)...",
             )
+            logging.info(f"[*] Starting similarity index propagation for {total_candidates} candidates...")
 
         candidate_list = list(candidate_sids)
         update_pipe = r.pipeline()
+        
+        start_prop = time.time()
 
         # Batch aggregators to compress Redis pipeline commands by over 99%
         tag_buckets = {}  # bucket_key -> set of sids
@@ -925,11 +1202,12 @@ class ClusterService:
                     )
 
         flush_batch()
-
+        
+        prop_time = time.time() - start_prop
+        msg = f"Indexed {indexed} similarities with cluster info in {prop_time:.2f}s."
+        logging.info(f"[+] {msg}")
         if job_service and job_id:
-            job_service.add_log(
-                job_id, f"Indexed {indexed} similarities with cluster info."
-            )
+            job_service.add_log(job_id, msg)
 
         return True
 

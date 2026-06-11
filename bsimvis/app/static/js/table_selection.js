@@ -378,10 +378,10 @@ class TableSelection {
         }
     }
 
-    copySelection() {
+    async copySelection() {
         if (this.selectedCells.size === 0) return;
 
-        const isSimilarityTable = window.location.hash.startsWith('#function-similarity');
+        const isSimilarityTable = window.location.pathname.includes('/function-similarity');
 
         // Helper to clean and extract text from an element, formatting tag editors nicely
         const cleanAndGetText = (el) => {
@@ -535,7 +535,7 @@ class TableSelection {
                 const line = [];
                 cols.forEach(c => {
                     const cellEl = rowEl.children[c];
-                    if (window.location.hash.startsWith('#files') && c === 1) {
+                    if (window.location.pathname.includes('/files') && c === 1) {
                         // Split MD5 and Arch/Language
                         if (cellEl) {
                             const divs = cellEl.querySelectorAll('div');
@@ -547,7 +547,7 @@ class TableSelection {
                         } else {
                             line.push('', '');
                         }
-                    } else if (window.location.hash.startsWith('#clusters') && c === 0) {
+                    } else if (window.location.pathname.includes('/clusters') && c === 0) {
                         // Split UUID and ID in cluster view
                         if (cellEl) {
                             const uuid = cellEl.getAttribute('data-uuid') || cleanAndGetText(cellEl).split('ID:')[0].trim();
@@ -588,9 +588,9 @@ class TableSelection {
                         headerLine.push(label);
                     }
                 } else {
-                    if (window.location.hash.startsWith('#files') && c === 1) {
+                    if (window.location.pathname.includes('/files') && c === 1) {
                         headerLine.push('MD5', 'Arch');
-                    } else if (window.location.hash.startsWith('#clusters') && c === 0) {
+                    } else if (window.location.pathname.includes('/clusters') && c === 0) {
                         headerLine.push('UUID', 'ID');
                     } else {
                         headerLine.push(label);
@@ -635,24 +635,60 @@ class TableSelection {
         });
         htmlContent += '</table>';
 
-        if (navigator.clipboard && window.ClipboardItem) {
+        let success = false;
+        if (typeof ClipboardItem !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.write === 'function') {
             try {
                 const data = [new ClipboardItem({
                     'text/plain': new Blob([csvContent], { type: 'text/plain' }),
                     'text/html': new Blob([htmlContent], { type: 'text/html' })
                 })];
-                navigator.clipboard.write(data).then(() => {
-                    console.log('Selection copied to clipboard (HTML & CSV)');
-                }).catch(err => {
-                    console.error('ClipboardItem write failed', err);
-                    navigator.clipboard.writeText(csvContent);
-                });
+                await navigator.clipboard.write(data);
+                success = true;
+                console.log('Selection copied to clipboard (HTML & CSV)');
             } catch (err) {
-                console.error('ClipboardItem construction failed', err);
-                navigator.clipboard.writeText(csvContent);
+                console.warn('ClipboardItem write failed, trying fallback...', err);
             }
-        } else {
-            navigator.clipboard.writeText(csvContent);
+        }
+
+        if (!success) {
+            // Fallback 1: Try document.execCommand('copy') with custom copy listener for rich HTML table + CSV
+            try {
+                const listener = function(e) {
+                    e.clipboardData.setData('text/html', htmlContent);
+                    e.clipboardData.setData('text/plain', csvContent);
+                    e.preventDefault();
+                };
+                document.addEventListener('copy', listener);
+                success = document.execCommand('copy');
+                document.removeEventListener('copy', listener);
+                if (success) {
+                    console.log('Selection copied to clipboard via fallback HTML/CSV');
+                }
+            } catch (err) {
+                console.warn("Fallback rich copy failed, trying plain text copy...", err);
+            }
+        }
+
+        if (!success) {
+            // Fallback 2: Try document.execCommand('copy') with a temporary textarea (CSV text only)
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = csvContent;
+                textArea.style.position = "fixed";
+                textArea.style.top = "0";
+                textArea.style.left = "0";
+                textArea.style.opacity = "0";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                success = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                if (success) {
+                    console.log('Selection copied to clipboard via fallback CSV only');
+                }
+            } catch (err) {
+                console.error("All table copy methods failed", err);
+            }
         }
     }
 }

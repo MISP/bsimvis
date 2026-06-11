@@ -43,8 +43,12 @@ def index_features():
 
     payload = {"collection": collection, "md5": md5, "batch_uuid": batch_uuid}
 
-    job_id = job_service.create_job(JobType.INDEX_FEATURES, payload)
-    return {"job_id": job_id, "status": "enqueued"}
+    tasks = [
+        (JobType.INDEX_FEATURES, payload),
+        (JobType.ENRICH_FEATURES, {"collection": collection}),
+    ]
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "status": "enqueued"}
 
 
 def clear_features():

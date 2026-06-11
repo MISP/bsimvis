@@ -2,6 +2,8 @@ import requests
 import json
 import time
 import sys
+import datetime
+import re
 
 API_BASE = "http://localhost:5000/api"
 
@@ -213,7 +215,16 @@ def job_status(job_id, watch, logs):
             if logs and job.get("logs"):
                 print("Recent Logs:")
                 for log in reversed(job["logs"][:10]):
-                    print(f"  {log}")
+                    match = re.match(r"^\[(\d+)\] (.*)", log)
+                    if match:
+                        ts = int(match.group(1))
+                        msg = match.group(2)
+                        date_str = datetime.datetime.fromtimestamp(
+                            ts / 1000.0
+                        ).strftime("%Y-%m-%d %H:%M:%S")
+                        print(f"  [{date_str}] {msg}")
+                    else:
+                        print(f"  {log}")
 
             if job["status"] in ["completed", "failed", "cancelled"]:
                 print("\nJob finished.")
@@ -226,8 +237,14 @@ def job_status(job_id, watch, logs):
 
 def cancel_job(job_id):
     try:
-        resp = requests.post(f"{API_BASE}/jobs/{job_id}/cancel")
-        resp.raise_for_status()
-        print(f"Job {job_id} cancellation requested.")
+        if job_id == "all":
+            resp = requests.post(f"{API_BASE}/jobs/all/cancel")
+            resp.raise_for_status()
+            data = resp.json()
+            print(f"Cancelled {data.get('cancelled_count', 0)} job(s).")
+        else:
+            resp = requests.post(f"{API_BASE}/jobs/{job_id}/cancel")
+            resp.raise_for_status()
+            print(f"Job {job_id} cancellation requested.")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

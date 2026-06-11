@@ -1,5 +1,6 @@
 // Universal Diff Queue Manager for BSimVis
 let diffSelection = [];
+let fileDiffSelection = [];
 let diffPreviewTimer = null;
 let activeDiffKey = null;
 const diffPreviewCache = new Map();
@@ -23,6 +24,26 @@ function normalizeFuncId(id) {
     return id;
 }
 
+function buildDiffUrl(id1, id2) {
+    const n1 = normalizeFuncId(id1);
+    const n2 = normalizeFuncId(id2);
+    if (!n1 || !n2) return '/collections/main/files/x/functions/x/vs/main/x/x';
+    const p1 = n1.split(':');
+    const p2 = n2.split(':');
+    if (p1.length < 4 || p2.length < 4) return '/collections/main/files/x/functions/x/vs/main/x/x';
+    const collA = p1[0] || 'main';
+    const md5A = p1[2];
+    const addrA = p1[3];
+    const collB = p2[0] || 'main';
+    const md5B = p2[2];
+    const addrB = p2[3];
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/functions/${encodeURIComponent(addrA)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}/${encodeURIComponent(addrB)}`;
+}
+
+function buildFileDiffUrl(collA, md5A, collB, md5B) {
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
+}
+
 function getParentEvent(e) {
     if (window.parent && window.parent !== window && window.frameElement) {
         const rect = window.frameElement.getBoundingClientRect();
@@ -44,10 +65,18 @@ function saveDiffQueue() {
 function loadDiffQueue() {
     try {
         const stored = localStorage.getItem('bsim_diff_queue');
-        if (stored) {
-            diffSelection = JSON.parse(stored) || [];
-            updateDiffQueueUI();
-        }
+        diffSelection = stored ? (JSON.parse(stored) || []) : [];
+        updateDiffQueueUI();
+        
+        const storedFile = localStorage.getItem('bsim_file_diff_queue');
+        fileDiffSelection = storedFile ? (JSON.parse(storedFile) || []) : [];
+        updateFileDiffQueueUI();
+    } catch(e) {}
+}
+
+function saveFileDiffQueue() {
+    try {
+        localStorage.setItem('bsim_file_diff_queue', JSON.stringify(fileDiffSelection));
     } catch(e) {}
 }
 
@@ -92,6 +121,56 @@ function clearDiffSelection() {
     saveDiffQueue();
 }
 
+function addToFileDiff(id, name, event) {
+    if (window.parent && window.parent !== window && typeof window.parent.addToFileDiff === 'function') {
+        window.parent.addToFileDiff(id, name, event);
+        return;
+    }
+
+    const existing = fileDiffSelection.findIndex(item => item.id === id);
+    if (existing !== -1) {
+        fileDiffSelection.splice(existing, 1);
+    } else {
+        fileDiffSelection.push({ id, name });
+    }
+
+    if (fileDiffSelection.length > 2) {
+        fileDiffSelection.shift();
+    }
+
+    saveFileDiffQueue();
+    updateFileDiffQueueUI();
+
+    if (fileDiffSelection.length === 2) {
+        const collection = (typeof getRoutingState === 'function' ? getRoutingState().collection : null) || 'main';
+        const itemA = fileDiffSelection[0];
+        const itemB = fileDiffSelection[1];
+        const md5a = itemA.id.split(':').pop();
+        const md5b = itemB.id.split(':').pop();
+        const collA = itemA.id.split(':')[0] || 'main';
+        const collB = itemB.id.split(':')[0] || 'main';
+        
+        fileDiffSelection = [];
+        saveFileDiffQueue();
+        updateFileDiffQueueUI();
+        
+        const url = buildFileDiffUrl(collA, md5a, collB, md5b);
+        const title = `Binary Diff: ${itemA.name} vs ${itemB.name}`;
+
+        Nav.openPath(url, event, { title, type: 'bin_sim' });
+    }
+}
+
+function clearFileDiffSelection() {
+    if (window.parent && window.parent !== window && typeof window.parent.clearFileDiffSelection === 'function') {
+        window.parent.clearFileDiffSelection();
+        return;
+    }
+    fileDiffSelection = [];
+    updateFileDiffQueueUI();
+    saveFileDiffQueue();
+}
+
 function updateDiffQueueUI() {
     if (window.parent && window.parent !== window && typeof window.parent.updateDiffQueueUI === 'function') {
         // If we are in an iframe, let parent manage the state, but sync our own buttons
@@ -111,7 +190,7 @@ function updateDiffQueueUI() {
                     <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
                 </span>`;
         } else {
-            const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff()" style="background:#000; color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
+            const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff(event)" style="background:#000; color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
             status.innerHTML = `
                 <span class="badge diff-queue-badge" style="background:var(--success); color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(166,226,46,0.4);">
                     <span>±</span> 2/2 Ready: ${queue[0].name} vs ${queue[1].name}
@@ -178,11 +257,55 @@ function updateDiffQueueUI() {
     }
 }
 
-function openStandaloneDiff() {
+function updateFileDiffQueueUI() {
+    if (window.parent && window.parent !== window && typeof window.parent.updateFileDiffQueueUI === 'function') {
+        // let parent manage
+    }
+
+    const queue = window.parent && window.parent !== window ? 
+        JSON.parse(localStorage.getItem('bsim_file_diff_queue') || '[]') : fileDiffSelection;
+
+    // File Diff Queue Status Card
+    document.querySelectorAll('#file-diff-queue-status').forEach(status => {
+        if (queue.length === 0) {
+            status.innerHTML = '';
+        } else if (queue.length === 1) {
+            status.innerHTML = `
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
+                    <i class="fa-solid fa-file-code"></i> 1/2 Selected: ${queue[0].name}
+                    <button onclick="clearFileDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear File Diff Selection">&times;</button>
+                </span>`;
+        }
+    });
+
+    // Sync file-diff buttons
+    document.querySelectorAll('.btn-file-diff-action[data-file-id]').forEach(btn => {
+        const id = btn.dataset.fileId;
+        const inQueue = queue.some(item => item.id === id);
+        if (inQueue) {
+            btn.classList.add('active');
+            if (btn.dataset.fullText) {
+                btn.innerHTML = '<i class="fa-solid fa-file-code"></i> In Diff Queue';
+            }
+        } else {
+            btn.classList.remove('active');
+            if (btn.dataset.fullText) {
+                btn.innerHTML = '<i class="fa-solid fa-file-code"></i> Add to Diff';
+            }
+        }
+    });
+
+
+}
+
+function openStandaloneDiff(e) {
     try {
         const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
         if (queue.length < 2) return;
-        window.open(`/diff/index.html?id1=${encodeURIComponent(queue[0].id)}&id2=${encodeURIComponent(queue[1].id)}`, '_blank');
+        const url = buildDiffUrl(queue[0].id, queue[1].id);
+        const title = `Diff: ${queue[0].name} vs ${queue[1].name}`;
+        
+        Nav.openPath(url, e, { title: title, type: 'diff' });
         clearDiffSelection();
     } catch(e) {}
 }
@@ -221,16 +344,16 @@ function moveDiffPreview(e) {
     }
 }
 
-function hideDiffPreview(e) {
+function hideDiffPreview(e, skipContextMenu = false) {
     if (window.parent && window.parent !== window && typeof window.parent.hideDiffPreview === 'function') {
-        window.parent.hideDiffPreview(getParentEvent(e));
+        window.parent.hideDiffPreview(getParentEvent(e), skipContextMenu);
         return;
     }
     if (window.hideAllTooltips) {
         // We only want to hide if we aren't moving into the tooltip itself
         const tooltip = document.getElementById('diff-preview-tooltip');
         if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
-        window.hideAllTooltips();
+        window.hideAllTooltips(skipContextMenu);
     } else {
         const tooltip = document.getElementById('diff-preview-tooltip');
         if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
@@ -427,6 +550,9 @@ function renderPreviewSide(sideData, side) {
 
 window.addEventListener('storage', (e) => {
     if (e.key === 'bsim_diff_queue') {
+        loadDiffQueue();
+    }
+    if (e.key === 'bsim_file_diff_queue') {
         loadDiffQueue();
     }
 });

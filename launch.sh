@@ -53,10 +53,12 @@ fi
 
 # Optional screen cleanup (default off, enable with --clear or CLEAN_SCREEN=true)
 CLEAN_SCREEN=${CLEAN_SCREEN:-$CLEAR}
+PROJECT_NAME=${PROJECT_NAME:-bsimvis}
+
 if [ "$CLEAN_SCREEN" = "true" ]; then
-    if screen -list | grep -q "bsimvis-"; then
-        echo "Cleaning up stale bsimvis screen sessions..."
-        screen -ls | grep bsimvis- | cut -d. -f1 | awk '{print $1}' | xargs -I{} screen -X -S {} quit
+    if screen -list | grep -q "${PROJECT_NAME}-"; then
+        echo "Cleaning up stale ${PROJECT_NAME} screen sessions..."
+        screen -ls | grep "${PROJECT_NAME}-" | cut -d. -f1 | awk '{print $1}' | xargs -I{} screen -X -S {} quit
     fi
 fi
 
@@ -95,10 +97,10 @@ DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 echo "--- Launching Services (Data: ${DATA_BASE_DIR}) ---"
 
 # Start Redis
-start_screen "bsimvis-redis" "redis-server --port ${REDIS_PORT} --dir ${DATA_BASE_DIR}/redis"
+start_screen "${PROJECT_NAME}-redis" "redis-server --port ${REDIS_PORT} --dir ${DATA_BASE_DIR}/redis"
 
 # Start Kvrocks
-start_screen "bsimvis-kvrocks" "kvrocks -c kvrocks.conf --port ${KVROCKS_PORT} --dir ${DATA_BASE_DIR}/kvrocks"
+start_screen "${PROJECT_NAME}-kvrocks" "kvrocks -c kvrocks.conf --port ${KVROCKS_PORT} --dir ${DATA_BASE_DIR}/kvrocks"
 
 # Wait for both datastores to be ready before launching dependent services
 wait_for_port "${REDIS_PORT}" "Redis"
@@ -113,14 +115,14 @@ if [ "$ENABLE_MILVUS" = "true" ]; then
     MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
 
     echo "Launching Milvus stack (Etcd, Minio, Milvus)..."
-    start_screen "bsimvis-etcd" "etcd --data-dir ${DATA_BASE_DIR}/etcd --advertise-client-urls http://127.0.0.1:${ETCD_PORT} --listen-client-urls http://0.0.0.0:${ETCD_PORT}"
+    start_screen "${PROJECT_NAME}-etcd" "etcd --data-dir ${DATA_BASE_DIR}/etcd --advertise-client-urls http://127.0.0.1:${ETCD_PORT} --listen-client-urls http://0.0.0.0:${ETCD_PORT}"
     
-    start_screen "bsimvis-minio" "MINIO_ROOT_USER=${MINIO_ACCESS_KEY} MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY} minio server ${DATA_BASE_DIR}/minio --address \":${MINIO_PORT}\" --console-address \":${MINIO_CONSOLE_PORT}\""
+    start_screen "${PROJECT_NAME}-minio" "MINIO_ROOT_USER=${MINIO_ACCESS_KEY} MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY} minio server ${DATA_BASE_DIR}/minio --address \":${MINIO_PORT}\" --console-address \":${MINIO_CONSOLE_PORT}\""
     
     # Give a moment for etcd and minio to start
     sleep 2
     
-    start_screen "bsimvis-milvus" "ETCD_ENDPOINTS=localhost:${ETCD_PORT} MINIO_ADDRESS=localhost:${MINIO_PORT} milvus run standalone"
+    start_screen "${PROJECT_NAME}-milvus" "ETCD_ENDPOINTS=localhost:${ETCD_PORT} MINIO_ADDRESS=localhost:${MINIO_PORT} milvus run standalone"
 fi
 
 # Determine python command
@@ -132,16 +134,16 @@ elif command -v uv > /dev/null; then
 fi
 
 # Start App
-start_screen "bsimvis-app" "${PYTHON_CMD} app.py"
+start_screen "${PROJECT_NAME}-app" "${PYTHON_CMD} app.py"
 
 # Start Workers
 echo "Starting ${WORKERS_COUNT} workers..."
 for i in $(seq 1 $WORKERS_COUNT); do
-    start_screen "bsimvis-worker-${i}" "${PYTHON_CMD} bsimvis/worker.py"
+    start_screen "${PROJECT_NAME}-worker-${i}" "${PYTHON_CMD} bsimvis/worker.py"
 done
 
 echo "--------------------------"
 echo "All services started in screen sessions."
 echo "Use 'screen -ls' to see running sessions."
 echo "Use 'screen -r <name>' to attach to a session."
-echo "To stop all sessions: screen -ls | grep bsimvis- | cut -d. -f1 | awk '{print \$1}' | xargs -I{} screen -X -S {} quit"
+echo "To stop all sessions: screen -ls | grep ${PROJECT_NAME}- | cut -d. -f1 | awk '{print \$1}' | xargs -I{} screen -X -S {} quit"

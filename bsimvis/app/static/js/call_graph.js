@@ -36,9 +36,9 @@ class FileCallGraph {
                 
                 select.onchange = (e) => {
                     if (e.target.value) {
-                        window.location.hash = `#file-call-graph?collection=${col}&file_md5=${e.target.value}`;
+                        window.location.search = `?collection=${col}&file_md5=${e.target.value}`;
                     } else {
-                        window.location.hash = `#file-call-graph?collection=${col}`;
+                        window.location.search = `?collection=${col}`;
                     }
                 };
             }
@@ -194,6 +194,10 @@ class FileCallGraph {
             });
         svg.call(zoomBehavior);
 
+        this.svg = svg;
+        this.g = g;
+        this.zoomBehavior = zoomBehavior;
+
         // Arrows
         svg.append("defs").selectAll("marker")
             .data(["end"])
@@ -318,6 +322,13 @@ class FileCallGraph {
             if (d.is_external) return;
             if (window.showFunctionCodeById) {
                 window.showFunctionCodeById(d.id, d.name, '', event);
+            }
+        }).on("contextmenu", (event, d) => {
+            if (d.is_external) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (window.showGraphContextMenu) {
+                window.showGraphContextMenu(event, 'node', d);
             }
         });
 
@@ -483,4 +494,42 @@ class FileCallGraph {
             .on("drag", dragged)
             .on("end", dragended);
     }
+
+    resetZoom() {
+        if (this.svg && this.zoomBehavior) {
+            this.svg.transition().duration(750).call(
+                this.zoomBehavior.transform,
+                d3.zoomIdentity
+            );
+        }
+    }
+
+    toggleLabels() {
+        if (this.svg) {
+            const texts = this.svg.selectAll("text");
+            const isHidden = texts.style("display") === "none";
+            texts.style("display", isHidden ? "block" : "none");
+        }
+    }
 }
+
+window.initCallGraph = function(data, containerId) {
+    const cg = new FileCallGraph(containerId);
+    window.callGraphInstance = cg;
+    cg.nodes = data.nodes;
+    cg.links = data.edges;
+    cg.render();
+    return cg;
+};
+
+window.resetCallGraphZoom = function() {
+    if (window.callGraphInstance) {
+        window.callGraphInstance.resetZoom();
+    }
+};
+
+window.toggleCallGraphLabels = function() {
+    if (window.callGraphInstance) {
+        window.callGraphInstance.toggleLabels();
+    }
+};

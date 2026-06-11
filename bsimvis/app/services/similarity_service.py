@@ -33,10 +33,10 @@ class SimilarityService:
         collection,
         batch_uuid=None,
         md5=None,
-        algo="unweighted_cosine",
-        top_k=1000,
-        min_score=0.3,
-        min_features=0,
+        algo=None,
+        top_k=None,
+        min_score=None,
+        min_features=None,
         job_service=None,
         job_id=None,
         sleep_time=0,
@@ -45,6 +45,16 @@ class SimilarityService:
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
         """
+        from bsimvis.app.services.config_service import config_service
+
+        if algo is None:
+            algo = config_service.get("similarity.algo", "unweighted_cosine")
+        if top_k is None:
+            top_k = config_service.get("similarity.top_k", 1000)
+        if min_score is None:
+            min_score = config_service.get("similarity.min_score", 0.3)
+        if min_features is None:
+            min_features = config_service.get("similarity.min_features", 0)
         r = self.r
         function_ids = []
 
@@ -496,16 +506,26 @@ class SimilarityService:
         self,
         collection,
         base_id,
-        algo="unweighted_cosine",
-        top_k=1000,
-        min_score=0.3,
-        min_features=0,
+        algo=None,
+        top_k=None,
+        min_score=None,
+        min_features=None,
         sleep_time=0,
     ):
         """
         Builds similarities for a single function against the collection.
         base_id: coll:function:md5:addr
         """
+        from bsimvis.app.services.config_service import config_service
+
+        if algo is None:
+            algo = config_service.get("similarity.algo", "unweighted_cosine")
+        if top_k is None:
+            top_k = config_service.get("similarity.top_k", 1000)
+        if min_score is None:
+            min_score = config_service.get("similarity.min_score", 0.3)
+        if min_features is None:
+            min_features = config_service.get("similarity.min_features", 0)
         parts = base_id.split(":")
         if len(parts) < 4:
             return False

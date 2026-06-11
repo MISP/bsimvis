@@ -33,3 +33,24 @@
 [profiles.no-analysis]
     description = "Decompile only"
     no_analysis = true
+[clustering]
+    epsilon = 0.001
+    min_cluster_size = 2
+    min_samples = 1
+    selection_method = "eom"
+    min_sim = 0.0
+    min_features = 0
+    min_cohesion = 0.5
+
+[similarity]
+    top_k = 1000
+    min_score = 0.7
+    min_features = 0
+    algo = "unweighted_cosine"
+
+
+[llm]
+    ollama_url = "http://localhost:11434"
+    model = "qwen3.6:35b"
+    prompt =  "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]"
+

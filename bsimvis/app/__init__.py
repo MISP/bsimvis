@@ -58,6 +58,47 @@ def create_app():
 
     app.register_blueprint(api_bp)
 
+    # -------------------------------------------------------------------------
+    # RESTful Frontend Routes
+    # -------------------------------------------------------------------------
+
+    @app.route("/collection/<collection>/search/<view>")
+    @app.route("/collection/<collection>/<view>")
+    @app.route("/collection/<collection>")
+    @app.route("/collections")
+    @app.route("/jobs")
+    @app.route("/upload")
+    def dashboard_ui(collection=None, view=None):
+        return send_from_directory(app.static_folder, "index.html")
+
+    @app.route("/collection/<collection>/file/<md5>")
+    def file_ui(collection, md5):
+        return send_from_directory(app.static_folder, "file/index.html")
+
+    @app.route("/collection/<collection>/call_graph/<md5>")
+    def call_graph_ui(collection, md5):
+        return send_from_directory(app.static_folder, "call_graph/index.html")
+
+    @app.route("/collection/<collection>/function/<md5>/<address>")
+    def function_ui(collection, md5, address):
+        return send_from_directory(app.static_folder, "function/index.html")
+
+    @app.route("/collection/<collection>/function/<md5>/<address>/features")
+    def function_features_ui(collection, md5, address):
+        return send_from_directory(app.static_folder, "function/features/index.html")
+
+    @app.route("/collection/<collection>/bin_sim/<md5>")
+    def bin_sim_ui(collection, md5):
+        return send_from_directory(app.static_folder, "bin_sim/index.html")
+
+    @app.route("/collection/<collection>/diff/<path:rest>")
+    def diff_ui(collection, rest):
+        return send_from_directory(app.static_folder, "diff/index.html")
+
+    @app.route("/collection/<collection>/feature/<hash_val>")
+    def feature_ui(collection, hash_val):
+        return send_from_directory(app.static_folder, "feature/index.html")
+
     # Serve the Bare JS frontend
     @app.route("/")
     def index():
@@ -65,6 +106,11 @@ def create_app():
 
     @app.route("/<path:path>")
     def serve_static(path):
-        return send_from_directory(app.static_folder, path)
+        from werkzeug.exceptions import NotFound
+        try:
+            return send_from_directory(app.static_folder, path)
+        except NotFound:
+            # SPA fallback: unknown paths are handled by the frontend router
+            return send_from_directory(app.static_folder, "index.html")
 
     return app

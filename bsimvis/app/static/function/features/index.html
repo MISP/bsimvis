@@ -6,23 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Function Features Browser</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/css/logo.css">
+    <link rel="stylesheet" href="/css/dashboard.css">
+    <script src="/js/navigation.js"></script>
+    <script src="/js/ui_components.js"></script>
     <script src="/js/utils.js"></script>
+    <script src="/js/entity_renderer.js"></script>
     <script src="/js/code_renderer.js"></script>
     <script src="/js/metadata.js"></script>
     <script src="/js/diff_queue.js"></script>
     <script src="/js/table_selection.js"></script>
     <style>
-        body {
-            background-color: var(--bg);
-            color: var(--text);
-            padding: 15px;
-            font-family: 'Inter', sans-serif;
-            overflow-y: auto;
-            height: auto;
-        }
-
         .container {
             max-width: 100%;
             margin: 0 auto;
@@ -170,6 +166,8 @@
 </head>
 
 <body>
+    <div id="sidebar-container"></div>
+    <main style="flex:1; display:flex; flex-direction:column; overflow:hidden; padding: 15px;">
     <div class="container">
         <div class="header">
             <div>
@@ -179,7 +177,7 @@
             <div style="display:flex; gap:10px; align-items:center;">
                 <div id="diff-queue-status" style="display:flex; align-items:center; gap:10px;"></div>
                 <button class="btn-code-action"
-                    onclick="window.open('/function/index.html?id=' + encodeURIComponent(window.featureId), '_self')">
+                    onclick="const parts = window.featureId.split(':'); window.open(`/collection/${encodeURIComponent(parts[0])}/function/${encodeURIComponent(parts[2])}/${encodeURIComponent(parts[3])}`, '_self')">
                     <span>↗</span> Code
                 </button>
                 <button id="add-diff-btn" class="btn-diff-action" data-full-text="true"
@@ -221,8 +219,9 @@
     <div id="bsim-tooltip"></div>
     <script>
         const API_URL = "/api/function/features";
+        const restful = parseRestfulPath();
         const params = new URLSearchParams(window.location.search);
-        const id = normalizeFuncId(params.get('id'));
+        const id = normalizeFuncId(restful.id || params.get('id'));
         window.featureId = id;
         const tooltipEl = document.getElementById('bsim-tooltip');
         window.globalTips = {};
@@ -455,8 +454,13 @@
         featuresBody.addEventListener('pointerover', e => handleHoverMove(e, true));
         featuresBody.addEventListener('pointerout', e => handleHoverMove(e, false));
 
+        if (typeof UI !== 'undefined' && UI.Sidebar) {
+            UI.Sidebar.init('sidebar-container');
+        }
+
         updateDiffQueueUI();
     </script>
+</main>
 </body>
 
 </html>

@@ -26,8 +26,16 @@ ns_search = Namespace("search", description="Unified search and metadata utiliti
 ns_similarity = Namespace("similarity", description="Similarity engine and results")
 ns_tags = Namespace("tags", description="Tag management")
 ns_cluster = Namespace("cluster", description="Hierarchical clustering and analysis")
+ns_bin_cluster = Namespace(
+    "bin_cluster", description="Binary-level hierarchical clustering"
+)
 ns_features = Namespace("features", description="Global feature indexing and status")
 ns_diff = Namespace("diff", description="Function diff and alignment")
+ns_bin_sim = Namespace(
+    "bin_sim", description="Binary-level similarity and clustering comparison"
+)
+ns_notes = Namespace("notes", description="Function notes management")
+ns_llm = Namespace("llm", description="Large Language Model integration (Ollama)")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -40,8 +48,12 @@ api.add_namespace(ns_search)
 api.add_namespace(ns_similarity)
 api.add_namespace(ns_tags)
 api.add_namespace(ns_cluster)
+api.add_namespace(ns_bin_cluster)
 api.add_namespace(ns_features)
 api.add_namespace(ns_diff)
+api.add_namespace(ns_bin_sim)
+api.add_namespace(ns_notes)
+api.add_namespace(ns_llm)
 
 # --- Models & Examples ---
 
@@ -105,12 +117,33 @@ file_upload_data_model = api.model(
     "FileUploadData",
     {
         "collection": fields.String(default="main", description="Collection name"),
-        "file_md5": fields.String(description="File MD5 (will be calculated if missing)"),
+        "file_md5": fields.String(
+            description="File MD5 (will be calculated if missing)"
+        ),
         "top_k": fields.Integer(description="Top K matches per function"),
         "min_score": fields.Float(description="Minimum similarity score threshold"),
         "min_features": fields.Integer(description="Minimum feature count required"),
-        "algo": fields.String(default="unweighted_cosine", description="Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)"),
+        "algo": fields.String(
+            default="unweighted_cosine",
+            description="Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
+        ),
         "skip_sim": fields.Boolean(default=False, description="Skip similarity build"),
+    },
+)
+
+file_metadata_update_model = api.model(
+    "FileMetadataUpdate",
+    {
+        "collection": fields.String(default="main", description="Collection name"),
+        "metadata": fields.Raw(required=True, description="Dictionary of metadata fields to update")
+    }
+)
+
+bulk_metadata_propagate_model = api.model(
+    "BulkMetadataPropagate",
+    {
+        "collection": fields.String(default="main", description="Collection name"),
+        "updates": fields.Raw(required=True, description="Mapping of MD5 to metadata dictionary")
     }
 )
 
@@ -139,6 +172,117 @@ similarity_clear_model = api.model(
     },
 )
 
+bin_sim_build_model = api.model(
+    "BinSimBuild",
+    {
+        "collection": fields.String(default="main"),
+        "algo": fields.String(default="unweighted_cosine"),
+        "md5_a": fields.String(),
+        "md5_b": fields.String(),
+        "min_cohesion": fields.Float(default=0.5),
+    },
+)
+bin_sim_clear_model = api.model(
+    "BinSimClear",
+    {
+        "collection": fields.String(default="main"),
+        "algo": fields.String(default="unweighted_cosine"),
+        "md5": fields.String(),
+    },
+)
+
+# Note Models
+note_model = api.model(
+    "Note",
+    {
+        "id": fields.String(example="7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d"),
+        "text": fields.String(example="This function handles input validation"),
+        "owner": fields.String(example="user"),
+        "timestamp": fields.Integer(example=1775639990508),
+    },
+)
+
+note_add_model = api.model(
+    "NoteAdd",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "text": fields.String(required=True, example="This function handles input validation"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+note_update_model = api.model(
+    "NoteUpdate",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "note_id": fields.String(required=True, example="uuid"),
+        "text": fields.String(required=True, example="Updated note text"),
+    },
+)
+
+note_remove_model = api.model(
+    "NoteRemove",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "note_id": fields.String(required=True, example="uuid"),
+    },
+)
+
+file_note_add_model = api.model(
+    "FileNoteAdd",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "file_id": fields.String(required=True, example="main:file:16c2addf..."),
+        "text": fields.String(required=True, example="Suspected dropper"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+file_note_update_model = api.model(
+    "FileNoteUpdate",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "file_id": fields.String(required=True, example="main:file:16c2addf..."),
+        "note_id": fields.String(required=True, example="uuid"),
+        "text": fields.String(required=True, example="Updated note text"),
+    },
+)
+
+file_note_remove_model = api.model(
+    "FileNoteRemove",
+    {
+        "collection": fields.String(required=True, example="main"),
+        "file_id": fields.String(required=True, example="main:file:16c2addf..."),
+        "note_id": fields.String(required=True, example="uuid"),
+    },
+)
+
+# LLM Models
+llm_summary_request_model = api.model(
+    "LLMSummaryRequest",
+    {
+        "func_id": fields.String(required=True, example="main:func:123:456"),
+        "prompt": fields.String(description="Optional custom prompt"),
+        "code": fields.String(description="Optional code string"),
+        "func_name": fields.String(description="Optional function name"),
+    },
+)
+
+llm_chat_request_model = api.model(
+    "LLMChatRequest",
+    {
+        "messages": fields.List(
+            fields.Raw,
+            required=True,
+            example=[{"role": "user", "content": "What does this function do?"}],
+        )
+    },
+)
+
+# --- Routes & Resources ---
 sim_pair_model = api.model(
     "SimilarityPair",
     {
@@ -188,7 +332,7 @@ class JobList(Resource):
         params={
             "limit": {
                 "description": "Number of jobs to return",
-                "default": 50,
+                "default": 100,
                 "example": 20,
             },
             "offset": {"description": "Pagination offset", "default": 0, "example": 0},
@@ -227,6 +371,15 @@ class JobDetail(Resource):
         from bsimvis.app.routes.jobs import get_job
 
         return get_job(job_id)
+
+
+@ns_jobs.route("/all/cancel")
+class JobCancelAll(Resource):
+    def post(self):
+        """Cancels all pending or running jobs and pipelines."""
+        from bsimvis.app.routes.jobs import cancel_all_jobs
+
+        return cancel_all_jobs()
 
 
 @ns_jobs.route("/<string:job_id>/cancel")
@@ -288,6 +441,42 @@ class CollectionSearch(Resource):
         return search_collections()
 
 
+@ns_collection.route("/delete")
+class CollectionDelete(Resource):
+    @ns_collection.expect(
+        api.model(
+            "CollectionDelete",
+            {
+                "collection": fields.String(required=True, description="Collection name to delete"),
+            },
+        )
+    )
+    def post(self):
+        """Wipes and deletes a collection entirely (asynchronous background job)."""
+        from bsimvis.app.routes.search_collection import delete_collection
+
+        return delete_collection()
+
+
+@ns_collection.route("/clean")
+class CollectionClean(Resource):
+    @ns_collection.expect(
+        api.model(
+            "CollectionClean",
+            {
+                "collection": fields.String(required=True, description="Collection name to clean"),
+            },
+        )
+    )
+    def post(self):
+        """Cleans up temporary raw and JSON upload keys in a collection (asynchronous background job)."""
+        from bsimvis.app.routes.search_collection import clean_collection
+
+        return clean_collection()
+
+
+
+
 # --- Batch Namespace ---
 @ns_batch.route("/search")
 class BatchSearch(Resource):
@@ -343,6 +532,14 @@ class FileSearch(Resource):
             "batch_uuid": {
                 "description": "Filter by batch UUID",
                 "example": "uuid-1234-abcd",
+            },
+            "bin_cluster_uuid": {
+                "description": "Filter by binary cluster UUID",
+                "example": "a1b2c3d4e5f6",
+            },
+            "bin_cluster_name": {
+                "description": "Filter by binary cluster name substring",
+                "example": "libc",
             },
             "tag": {
                 "description": "Filter by tag (static or user)",
@@ -403,6 +600,18 @@ class FileSearch(Resource):
             "max_file_date": {
                 "description": "Latest file date (ISO or timestamp)",
             },
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0–1.0)",
+                "example": 0.5,
+            },
+            "max_cohesion": {
+                "description": "Maximum cluster cohesion score (0.0–1.0)",
+                "example": 1.0,
+            },
+            "algo": {
+                "description": "Similarity algorithm",
+                "default": "unweighted_cosine",
+            },
             "sort_by": {
                 "description": "Sort field: entry_date, file_date, function_count",
                 "example": "entry_date",
@@ -423,7 +632,23 @@ class FileSearch(Resource):
         return search_files()
 
 
+
+@ns_file.route("/details/<string:file_md5>")
+class FileDetails(Resource):
+    @ns_file.doc(description="Get full metadata for a file including its clusters")
+    @ns_file.expect(
+        api.parser()
+        .add_argument("collection", type=str, default="main", location="args")
+        .add_argument("algo", type=str, default="unweighted_cosine", location="args")
+    )
+    def get(self, file_md5):
+        from flask import request
+        collection = request.args.get("collection", "main")
+        from bsimvis.app.routes.search_file import get_file_details
+        return get_file_details(collection, file_md5)
+
 @ns_file.route("/upload_file_data")
+
 class FileUpload(Resource):
     @ns_file.expect(file_upload_data_model)
     def post(self):
@@ -458,6 +683,44 @@ class RawFileUpload(Resource):
         from bsimvis.app.routes.file import upload_raw_binary
 
         return upload_raw_binary()
+
+
+@ns_file.route("/upload/batch_finalize")
+class BatchFinalize(Resource):
+    @ns_file.doc(
+        params={
+            "pipeline_ids": "List of pipeline IDs to group",
+            "batch_uuid": "Batch UUID",
+            "collection": "Collection name",
+            "algo": "Similarity algorithm",
+            "skip_sim": "Skip binary similarity",
+        }
+    )
+    def post(self):
+        """Finalizes a batch upload by orchestrating a master pipeline."""
+        from bsimvis.app.routes.file import finalize_batch_upload
+
+        return finalize_batch_upload()
+
+
+@ns_file.route("/<string:file_md5>/metadata")
+class FileMetadata(Resource):
+    @ns_file.doc(description="Updates metadata fields for a file and propagates them")
+    @ns_file.expect(file_metadata_update_model)
+    def patch(self, file_md5):
+        """Partially updates metadata for a file and triggers propagation."""
+        from bsimvis.app.routes.file import update_file_metadata
+        return update_file_metadata(file_md5)
+
+
+@ns_file.route("/metadata/propagate")
+class BulkMetadataPropagate(Resource):
+    @ns_file.doc(description="Updates metadata fields in bulk and propagates them")
+    @ns_file.expect(bulk_metadata_propagate_model)
+    def post(self):
+        """Updates metadata fields in bulk and propagates them."""
+        from bsimvis.app.routes.file import bulk_propagate_metadata
+        return bulk_propagate_metadata()
 
 
 @ns_file.route("/call_graph")
@@ -519,15 +782,33 @@ class FunctionSearch(Resource):
             "file_static_tag": {"description": "Filter by file-level static tag"},
             "file_user_tag": {"description": "Filter by file-level user tag"},
             "exclude_tag": {"description": "Exclude functions with this tag"},
-            "exclude_static_tag": {"description": "Exclude functions with this static tag"},
+            "exclude_static_tag": {
+                "description": "Exclude functions with this static tag"
+            },
             "exclude_user_tag": {"description": "Exclude functions with this user tag"},
-            "exclude_func_tag": {"description": "Exclude functions with this function-level tag"},
-            "exclude_func_static_tag": {"description": "Exclude functions with this function-level static tag"},
-            "exclude_func_user_tag": {"description": "Exclude functions with this function-level user tag"},
-            "exclude_file_tag": {"description": "Exclude functions with this file-level tag"},
-            "exclude_file_static_tag": {"description": "Exclude functions with this file-level static tag"},
-            "exclude_file_user_tag": {"description": "Exclude functions with this file-level user tag"},
+            "exclude_func_tag": {
+                "description": "Exclude functions with this function-level tag"
+            },
+            "exclude_func_static_tag": {
+                "description": "Exclude functions with this function-level static tag"
+            },
+            "exclude_func_user_tag": {
+                "description": "Exclude functions with this function-level user tag"
+            },
+            "exclude_file_tag": {
+                "description": "Exclude functions with this file-level tag"
+            },
+            "exclude_file_static_tag": {
+                "description": "Exclude functions with this file-level static tag"
+            },
+            "exclude_file_user_tag": {
+                "description": "Exclude functions with this file-level user tag"
+            },
             "min_features": {"description": "Minimum BSim feature count", "example": 5},
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0–1.0). Clusters below this threshold are excluded from the response.",
+                "example": 0.5,
+            },
             "sort_by": {
                 "description": "Sort field: id, function_name, bsim_features_count",
                 "example": "bsim_features_count",
@@ -740,19 +1021,43 @@ class SimilaritySearch(Resource):
             "exclude_tag": {"description": "Exclude pairs with this tag"},
             "exclude_static_tag": {"description": "Exclude pairs with this static tag"},
             "exclude_user_tag": {"description": "Exclude pairs with this user tag"},
-            "exclude_sim_tag": {"description": "Exclude pairs with this similarity-level tag"},
-            "exclude_sim_static_tag": {"description": "Exclude pairs with this similarity-level static tag"},
-            "exclude_sim_user_tag": {"description": "Exclude pairs with this similarity-level user tag"},
-            "exclude_func_tag": {"description": "Exclude pairs with this function-level tag"},
-            "exclude_func_static_tag": {"description": "Exclude pairs with this function-level static tag"},
-            "exclude_func_user_tag": {"description": "Exclude pairs with this function-level user tag"},
-            "exclude_file_tag": {"description": "Exclude pairs with this file-level tag"},
-            "exclude_file_static_tag": {"description": "Exclude pairs with this file-level static tag"},
-            "exclude_file_user_tag": {"description": "Exclude pairs with this file-level user tag"},
-            "language": {"description": "Filter by language ID", "example": "x86:LE:64:default"},
+            "exclude_sim_tag": {
+                "description": "Exclude pairs with this similarity-level tag"
+            },
+            "exclude_sim_static_tag": {
+                "description": "Exclude pairs with this similarity-level static tag"
+            },
+            "exclude_sim_user_tag": {
+                "description": "Exclude pairs with this similarity-level user tag"
+            },
+            "exclude_func_tag": {
+                "description": "Exclude pairs with this function-level tag"
+            },
+            "exclude_func_static_tag": {
+                "description": "Exclude pairs with this function-level static tag"
+            },
+            "exclude_func_user_tag": {
+                "description": "Exclude pairs with this function-level user tag"
+            },
+            "exclude_file_tag": {
+                "description": "Exclude pairs with this file-level tag"
+            },
+            "exclude_file_static_tag": {
+                "description": "Exclude pairs with this file-level static tag"
+            },
+            "exclude_file_user_tag": {
+                "description": "Exclude pairs with this file-level user tag"
+            },
+            "language": {
+                "description": "Filter by language ID",
+                "example": "x86:LE:64:default",
+            },
             "namespace": {"description": "Filter by namespace", "example": "std"},
             "ret_type": {"description": "Filter by return type", "example": "int"},
-            "address": {"description": "Filter by entrypoint address", "example": "0x401000"},
+            "address": {
+                "description": "Filter by entrypoint address",
+                "example": "0x401000",
+            },
             "cross_binary": {
                 "description": "Only cross-binary pairs: true or false",
                 "example": "true",
@@ -762,6 +1067,10 @@ class SimilaritySearch(Resource):
                 "default": "any",
             },
             "min_features": {"description": "Minimum feature count", "example": 5},
+            "min_cohesion": {
+                "description": "Minimum cluster cohesion score (0.0-1.0). Clusters below this threshold are excluded.",
+                "example": 0.5,
+            },
             "sort_by": {
                 "description": "Sort field: score or feat_count",
                 "default": "score",
@@ -1109,9 +1418,9 @@ class ClusterBuild(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
-                "min_cluster_size": fields.Integer(default=5),
-                "min_samples": fields.Integer(),
-                "epsilon": fields.Float(default=0.0),
+                "min_cluster_size": fields.Integer(default=2),
+                "min_samples": fields.Integer(default=1),
+                "epsilon": fields.Float(default=0.1),
                 "selection_method": fields.String(default="eom"),
                 "min_sim": fields.Float(default=0.0),
                 "min_features": fields.Integer(default=0),
@@ -1133,6 +1442,16 @@ class ClusterRebuild(Resource):
         from bsimvis.app.routes.cluster import rebuild_cluster
 
         return rebuild_cluster()
+
+
+@ns_cluster.route("/rebuild_all")
+class ClusterRebuildAll(Resource):
+    @ns_cluster.expect(api.models["ClusterBuild"])
+    def post(self):
+        """Enqueues a full re-analysis pipeline (Clusters + Binary Sim)."""
+        from bsimvis.app.routes.cluster import rebuild_all_pipeline
+
+        return rebuild_all_pipeline()
 
 
 @ns_cluster.route("/clear")
@@ -1170,6 +1489,7 @@ class ClusterList(Resource):
             "cluster_id": "Filter by cluster ID",
             "cluster_uuid": "Filter by cluster UUID",
             "cluster_name": "Filter by cluster name",
+            "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
     def get(self):
@@ -1245,27 +1565,148 @@ class ClusterFunctions(Resource):
         return get_cluster_functions()
 
 
-@ns_cluster.route("/dendrogram")
-class ClusterDendrogram(Resource):
-    @ns_cluster.doc(
+# --- Binary Cluster Namespace ---
+@ns_bin_cluster.route("/build")
+class BinClusterBuild(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterBuild",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+                "min_cluster_size": fields.Integer(default=2),
+                "min_samples": fields.Integer(default=1),
+                "epsilon": fields.Float(default=0.1),
+                "selection_method": fields.String(default="eom"),
+                "min_sim": fields.Float(default=0.0),
+            },
+        )
+    )
+    def post(self):
+        """Enqueues a binary clustering job."""
+        from bsimvis.app.routes.bin_cluster import build_bin_cluster
+
+        return build_bin_cluster()
+
+
+@ns_bin_cluster.route("/rebuild")
+class BinClusterRebuild(Resource):
+    @ns_bin_cluster.expect(api.models["BinClusterBuild"])
+    def post(self):
+        """Enqueues a clear + cluster pipeline for binaries."""
+        from bsimvis.app.routes.bin_cluster import rebuild_bin_cluster
+
+        return rebuild_bin_cluster()
+
+
+@ns_bin_cluster.route("/clear")
+class BinClusterClear(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterClear",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+            },
+        )
+    )
+    def post(self):
+        """Enqueues a binary cluster clear job."""
+        from bsimvis.app.routes.bin_cluster import clear_bin_cluster
+
+        return clear_bin_cluster()
+
+
+@ns_bin_cluster.route("/list")
+class BinClusterList(Resource):
+    @ns_bin_cluster.doc(
         params={
             "collection": "Collection name",
             "algo": "Algorithm",
-            "stability_threshold": "Cut-off stability",
-            "min_cluster_size": "Min size filter",
-            "max_cluster_size": "Max size filter",
-            "cohesion_min": "Min cohesion filter",
-            "cohesion_max": "Max cohesion filter",
-            "min_features": "Min features filter",
-            "max_features": "Max features filter",
-            "show_parents": "Show parent clusters (true/false)",
+            "min_stability": "Min cluster stability",
+            "min_count": "Min member count",
+            "min_cohesion": "Min cohesion score",
+            "sort_by": "Sort field (count, stability, cohesion)",
+            "sort_order": "Sort order (asc/desc)",
+            "format": "Output format (json/csv)",
+            "q": "Search query across IDs and names",
+            "cluster_id": "Filter by cluster ID",
+            "cluster_uuid": "Filter by cluster UUID",
+            "cluster_name": "Filter by cluster name",
+            "show_members": "Whether to return direct member IDs/names (true/false)",
         }
     )
     def get(self):
-        """Returns a hierarchical tree of clusters (D3-compatible)."""
-        from bsimvis.app.routes.cluster import get_cluster_dendrogram
+        """Lists discovered binary clusters with metadata and filtering."""
+        from bsimvis.app.routes.bin_cluster import list_bin_clusters
 
-        return get_cluster_dendrogram()
+        return list_bin_clusters()
+
+
+@ns_bin_cluster.route("/tree")
+class BinClusterTree(Resource):
+    @ns_bin_cluster.doc(params={"collection": "Collection name", "algo": "Algorithm"})
+    def get(self):
+        """Returns the condensed tree for binary clustering."""
+        from bsimvis.app.routes.bin_cluster import get_bin_cluster_tree
+
+        return get_bin_cluster_tree()
+
+
+@ns_bin_cluster.route("/meta")
+class BinClusterMeta(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterMetaUpdate",
+            {
+                "collection": fields.String(required=True),
+                "algo": fields.String(default="unweighted_cosine"),
+                "cluster_id": fields.String(required=True),
+                "cluster_name": fields.String(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Updates metadata for a binary cluster (e.g. rename)."""
+        from bsimvis.app.routes.bin_cluster import update_bin_cluster_meta
+
+        return update_bin_cluster_meta()
+
+
+@ns_bin_cluster.route("/members")
+class BinClusterMembers(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "cluster_id": "Target cluster ID",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Lists all file IDs in a specific binary cluster."""
+        from bsimvis.app.routes.bin_cluster import list_bin_cluster_members
+
+        return list_bin_cluster_members()
+
+
+@ns_bin_cluster.route("/files")
+class BinClusterFiles(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "cluster_uuid": "Target cluster UUID",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Returns a quick sample of file metadata for a cluster UUID."""
+        from bsimvis.app.routes.bin_cluster import get_bin_cluster_files
+
+        return get_bin_cluster_files()
 
 
 # --- Features Namespace ---
@@ -1336,3 +1777,254 @@ class DiffView(Resource):
         from bsimvis.app.routes.function_diff import diff_api
 
         return diff_api()
+
+
+# --- Bin Sim Namespace ---
+@ns_bin_sim.route("/build")
+class BinSimBuild(Resource):
+    @ns_bin_sim.expect(bin_sim_build_model)
+    def post(self):
+        """Enqueues a job to build binary similarities."""
+        from bsimvis.app.routes.bin_sim import build_bin_sim
+
+        return build_bin_sim()
+
+
+@ns_bin_sim.route("/rebuild")
+class BinSimRebuild(Resource):
+    @ns_bin_sim.expect(bin_sim_build_model)
+    def post(self):
+        """Enqueues a pipeline to clear and build binary similarities."""
+        from bsimvis.app.routes.bin_sim import rebuild_bin_sim
+
+        return rebuild_bin_sim()
+
+
+@ns_bin_sim.route("/clear")
+class BinSimClear(Resource):
+    @ns_bin_sim.expect(bin_sim_clear_model)
+    def post(self):
+        """Enqueues a job to clear binary similarities."""
+        from bsimvis.app.routes.bin_sim import clear_bin_sim
+
+        return clear_bin_sim()
+
+
+@ns_bin_sim.route("/diff")
+class BinSimDiff(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": "Collection name (default: main)",
+            "algo": "Algorithm (default: unweighted_cosine)",
+            "md5_a": "First binary MD5",
+            "md5_b": "Second binary MD5",
+        }
+    )
+    def get(self):
+        """Returns binary similarity diff doc for a pair of binaries."""
+        from bsimvis.app.routes.bin_sim import get_bin_sim
+
+        return get_bin_sim()
+
+
+@ns_bin_sim.route("/list")
+class BinSimList(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": "Collection name (default: main)",
+            "algo": "Algorithm (default: unweighted_cosine)",
+            "md5": "Target binary MD5",
+            "limit": "Max results",
+            "offset": "Pagination offset",
+        }
+    )
+    def get(self):
+        """Lists pre-calculated similar binaries for a given binary MD5."""
+        from bsimvis.app.routes.bin_sim import list_bin_sims
+
+        return list_bin_sims()
+
+
+@ns_bin_sim.route("/search")
+class BinSimSearch(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": {
+                "description": "Collection name",
+                "required": True,
+                "example": "main",
+            },
+            "algo": {
+                "description": "Algorithm (default: unweighted_cosine)",
+                "default": "unweighted_cosine",
+            },
+            "q": {"description": "Keyword search (MD5, file names)", "example": "libc"},
+            "md5": {"description": "Filter pairs involving this MD5 (either side)"},
+            "md5_a": {"description": "Filter by exact md5_a"},
+            "md5_b": {"description": "Filter by exact md5_b"},
+            "file_name": {
+                "description": "Filter by file name substring (either side)",
+                "example": "libc",
+            },
+            "file_tag": {
+                "description": "Filter by file tag (either side)",
+                "example": "malware",
+            },
+            "min_score": {
+                "description": "Minimum score (collection-weighted)",
+                "example": 0.5,
+            },
+            "max_score": {"description": "Maximum score", "example": 1.0},
+            "min_coverage_a": {
+                "description": "Minimum coverage for binary A",
+                "example": 0.5,
+            },
+            "max_coverage_a": {"description": "Maximum coverage for binary A"},
+            "min_coverage_b": {"description": "Minimum coverage for binary B"},
+            "max_coverage_b": {"description": "Maximum coverage for binary B"},
+            "min_shared": {"description": "Minimum shared clusters", "example": 5},
+            "max_shared": {"description": "Maximum shared clusters"},
+            "sort_by": {
+                "description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"
+            },
+            "sort_order": {"description": "Sort direction: desc (default) or asc"},
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Results per page", "default": 50},
+        }
+    )
+    def get(self):
+        """Search binary similarity pairs with rich filtering and sorting."""
+        from bsimvis.app.routes.search_bin_sim import search_bin_sims
+
+        return search_bin_sims()
+
+
+
+@ns_bin_sim.route("/reindex")
+class BinSimReindex(Resource):
+    @ns_bin_sim.expect(
+        api.model(
+            "BinSimReindex",
+            {
+                "collection": fields.String(default="main"),
+                "algo": fields.String(default="unweighted_cosine"),
+            },
+        )
+    )
+    def post(self):
+        """Rebuilds secondary indexes for all existing binary similarity pairs (backfill)."""
+        from bsimvis.app.routes.bin_sim import reindex_bin_sim
+
+        return reindex_bin_sim()
+
+# --- Notes Routes ---
+
+@ns_notes.route("/add")
+class NoteAdd(Resource):
+    @ns_notes.expect(note_add_model)
+    @ns_notes.response(200, "Success", note_model)
+    def post(self):
+        """Adds a note to a function."""
+        from bsimvis.app.routes.notes import add_note
+        return add_note()
+
+@ns_notes.route("/update")
+class NoteUpdate(Resource):
+    @ns_notes.expect(note_update_model)
+    @ns_notes.response(200, "Success", note_model)
+    def put(self):
+        """Updates an existing note."""
+        from bsimvis.app.routes.notes import update_note
+        return update_note()
+
+@ns_notes.route("/remove")
+class NoteRemove(Resource):
+    @ns_notes.expect(note_remove_model)
+    @ns_notes.response(200, "Success")
+    def delete(self):
+        """Removes a note from a function."""
+        from bsimvis.app.routes.notes import remove_note
+        return remove_note()
+
+@ns_notes.route("/list")
+class NoteList(Resource):
+    @ns_notes.doc(params={
+        "collection": "Collection name",
+        "func_id": "Function ID"
+    })
+    @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
+    def get(self):
+        """Lists all notes for a function."""
+        from bsimvis.app.routes.notes import get_notes
+        return get_notes()
+
+
+# --- File Note Routes ---
+
+@ns_notes.route("/file/add")
+class FileNoteAdd(Resource):
+    @ns_notes.expect(file_note_add_model)
+    @ns_notes.response(200, "Success", note_model)
+    def post(self):
+        """Adds a note to a file."""
+        from bsimvis.app.routes.notes import add_file_note
+        return add_file_note()
+
+@ns_notes.route("/file/update")
+class FileNoteUpdate(Resource):
+    @ns_notes.expect(file_note_update_model)
+    @ns_notes.response(200, "Success", note_model)
+    def put(self):
+        """Updates an existing file note."""
+        from bsimvis.app.routes.notes import update_file_note
+        return update_file_note()
+
+@ns_notes.route("/file/remove")
+class FileNoteRemove(Resource):
+    @ns_notes.expect(file_note_remove_model)
+    @ns_notes.response(200, "Success")
+    def delete(self):
+        """Removes a note from a file."""
+        from bsimvis.app.routes.notes import remove_file_note
+        return remove_file_note()
+
+@ns_notes.route("/file/list")
+class FileNoteList(Resource):
+    @ns_notes.doc(params={
+        "collection": "Collection name",
+        "file_id": "File ID (e.g. main:file:{md5})"
+    })
+    @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
+    def get(self):
+        """Lists all notes for a file."""
+        from bsimvis.app.routes.notes import get_file_notes
+        return get_file_notes()
+
+# --- LLM Namespace ---
+
+@ns_llm.route("/summarize")
+class LLMSummarize(Resource):
+    @ns_llm.expect(llm_summary_request_model)
+    def post(self):
+        """Generates a summary for a function using LLM."""
+        from bsimvis.app.routes.llm import summarize
+        return summarize()
+
+@ns_llm.route("/chat")
+class LLMChat(Resource):
+    @ns_llm.expect(llm_chat_request_model)
+    def post(self):
+        """Continues a discussion about a function using LLM."""
+        from bsimvis.app.routes.llm import chat
+        return chat()
+
+@ns_llm.route("/summarize_file")
+class LLMSummarizeFile(Resource):
+    @ns_llm.expect(api.model(
+        "LLMFileSummaryRequest",
+        {"file_id": fields.String(required=True, example="main:file:16c2addf...")}
+    ))
+    def post(self):
+        """Streams a threat-intel summary for a binary file using all available metadata."""
+        from bsimvis.app.routes.llm import summarize_file
+        return summarize_file()

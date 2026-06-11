@@ -101,7 +101,9 @@ class FeatureService:
                 )
 
         if indexed_features:
-            self.index_global_features(collection, list(indexed_features))
+            self.r.sadd(
+                f"{collection}:features:pending_enrichment", *list(indexed_features)
+            )
 
         return True
 
@@ -332,7 +334,9 @@ class FeatureService:
 
         return results
 
-    def index_global_features(self, collection, feature_hashes):
+    def index_global_features(
+        self, collection, feature_hashes, job_service=None, job_id=None
+    ):
         """
         Computes global metadata (most common type/op pair, frequency, tf_score, decompiled context)
         for a list of feature hashes, and saves them to KV / secondary indexes.
@@ -349,6 +353,12 @@ class FeatureService:
         # Process in chunks to avoid blocking Kvrocks / Redis
         chunk_size = 200
         for i in range(0, len(feature_hashes), chunk_size):
+            if job_service and job_id:
+                pct = int(i / len(feature_hashes) * 100)
+                job_service.update_progress(
+                    job_id, pct, f"Enriching global features: {i}/{len(feature_hashes)}"
+                )
+
             chunk = feature_hashes[i : i + chunk_size]
 
             # --- STAGE 1: Batch fetch samples, frequencies, and scores ---
@@ -546,3 +556,34 @@ class FeatureService:
                 save_feature(save_pipe, collection, fh, global_meta)
 
             save_pipe.execute()
+
+        if job_service and job_id:
+            job_service.update_progress(job_id, 100, "Completed feature enrichment.")
+
+    def enrich_features(self, collection, job_service=None, job_id=None):
+        """
+        Enriches all features that were added to the pending enrichment set.
+        """
+        pending_key = f"{collection}:features:pending_enrichment"
+        feature_hashes = list(self.r.smembers(pending_key))
+        if not feature_hashes:
+            logging.info(
+                f"[*] No pending features to enrich in collection: {collection}"
+            )
+            if job_service and job_id:
+                job_service.update_progress(
+                    job_id, 100, "No pending features to enrich."
+                )
+            return True
+
+        feature_hashes = [
+            fh.decode() if isinstance(fh, bytes) else fh for fh in feature_hashes
+        ]
+
+        total = len(feature_hashes)
+        logging.info(
+            f"[*] Enriching {total} global features for collection: {collection}"
+        )
+        self.index_global_features(collection, feature_hashes, job_service, job_id)
+        self.r.delete(pending_key)
+        return True

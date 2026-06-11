@@ -15,14 +15,12 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     const fileId = m['file_md5'] ? `${collection}:file:${m['file_md5']}` : null;
     
     // Tags and Clusters
-    const fileTagsHtml = (fileId && typeof renderTagEditor === 'function') 
-        ? renderTagEditor('file', fileId, m['file_tags'] || [], m['file_user_tags'] || []) 
-        : '';
+    const fileTagsHtml = EntityRenderer.renderTag('file', fileId, m['file_tags'] || [], m['file_user_tags'] || []);
     const tags = m['tags'] || [];
     const user_tags = m['user_tags'] || [];
     const clusters = m['clusters'] || [];
-    const tagsHtml = typeof renderTagEditor === 'function' ? renderTagEditor('function', fullId, tags, user_tags) : '';
-    const clustersHtml = typeof renderClusterCards === 'function' ? renderClusterCards(clusters) : '';
+    const tagsHtml = EntityRenderer.renderTag('function', fullId, tags, user_tags);
+    const clustersHtml = EntityRenderer.renderClusterCard(clusters);
 
     // Specialized relation rendering (Callers/Callees)
     const renderRelationList = (list, title, iconClass) => {
@@ -36,54 +34,54 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
             if (typeof t === 'object' && t !== null && t.name) {
                 const isExt = t.is_external;
                 const fid = t.id || '';
-                const name = t.name;
-                const addr = t.entrypoint || '';
-                const ns = t.namespace || '';
-                const ret = t.return_type || '';
-                const params = t.parameters || [];
                 
-                let labelHtml = '';
-                if (typeof formatSigComponent === 'function') {
-                    const sig = formatSigComponent(ns, ret, name, params);
-                    labelHtml = `${sig.ret ? `<span class="sig-ret">${sig.ret}</span> ` : ''}${sig.ns ? `<span class="sig-ns">${sig.ns}::</span>` : ''}${name}<span class="sig-paren">(</span>${sig.params.map(p => `<span class="sig-param">${p}</span>`).join(', ')}<span class="sig-paren">)</span>`;
-                } else {
-                    labelHtml = name;
-                }
-                
-                if (addr) labelHtml += ` <span class="sig-addr">@${addr}</span>`;
-                
-                const color = isExt ? '#f92672' : 'var(--accent)';
-                const cursor = (isExt || !fid) ? 'default' : 'pointer';
-                const previewAttrs = (isExt || !fid) ? '' : `
-                    onmouseenter="
-                        const fid='${fid}'; const n='${name.replace(/'/g, "\\'")}'; const a='${addr}';
-                        if(window.showCodePreview) { showCodePreview(fid, n, a, '', 0, event); }
-                        else if(window.parent && window.parent.showCodePreview) { window.parent.showCodePreview(fid, n, a, '', 0, event); }
-                    "
-                    onmousemove="
-                        if(window.moveCodePreview) { moveCodePreview(event); }
-                        else if(window.parent && window.parent.moveCodePreview) { window.parent.moveCodePreview(event); }
-                    "
-                    onmouseleave="
-                        if(window.hideCodePreview) { hideCodePreview(event); }
-                        else if(window.parent && window.parent.hideCodePreview) { window.parent.hideCodePreview(event); }
-                    "
-                `;
-                const clickAttr = (isExt || !fid) ? '' : `onclick="
-                    const fid='${fid}'; 
-                    const name='${name.replace(/'/g, "\\'")}';
-                    if(window.showFunctionCodeById) { 
-                        showFunctionCodeById(fid, name, '', event); 
-                    } else if(window.parent && window.parent.showFunctionCodeById) { 
-                        window.parent.showFunctionCodeById(fid, name, '', event); 
-                    } else { 
-                        window.location.href='/function/index.html?id='+encodeURIComponent(fid); 
-                    }"` ;
+                const funcData = {
+                    ...t,
+                    function_name: t.name,
+                    function_id: fid,
+                    entrypoint_address: t.entrypoint,
+                    collection: collection
+                };
 
-                return `<span class="relation-tag" style="border-color:${color}; color:${color}; cursor:${cursor};" ${previewAttrs} ${clickAttr}>
-                    ${labelHtml}
-                    ${isExt ? '<span class="ext-badge">EXT</span>' : ''}
-                </span>`;
+                const renderOptions = {
+                    showActions: false
+                };
+
+                const funcHtml = EntityRenderer.renderFunction(funcData, renderOptions);
+                const color = isExt ? '#f92672' : 'var(--accent)';
+                
+// Robust navigation handler
+window.getNavHandler = () => {
+    return function(id, name, lineHash = '', e) {
+        // Use global showFunctionCodeById if available (most robust)
+        const globalNav = window.showFunctionCodeById || (window.parent && window.parent.showFunctionCodeById);
+        
+        if (globalNav) {
+            globalNav(id, name, lineHash, e);
+        } else {
+            // Fallback for standalone: construct and open with Nav if available, or window.open
+            const parts = id.split(':');
+            const col = parts[0];
+            const md5 = parts[2];
+            const addr = parts[3];
+            const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;
+            
+            const Nav = window.Nav || (window.parent && window.parent.Nav);
+            if (Nav) {
+                Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
+            } else {
+                window.open(url, '_blank');
+            }
+        }
+    };
+};
+
+const safeName = (funcData.function_name || '').replace(/'/g, "\\'");
+                
+return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()('${funcData.function_id}', '${safeName}', '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
+    ${funcHtml}
+    ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
+</span>`;
             }
             return `<span class="relation-tag">${JSON.stringify(t)}</span>`;
         }).join('');
@@ -112,7 +110,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
 
     if (options.showCodeLink) {
         headerActionsHtml += `
-            <a class="btn-code-compact" href="/function/index.html?id=${encodeURIComponent(fullId)}" target="_blank" title="Open Code" 
+            <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const parts = '${fullId}'.split(':'); const url = '/collection/' + encodeURIComponent(parts[0] || 'main') + '/function/' + encodeURIComponent(parts[2]) + '/' + encodeURIComponent(parts[3]); Nav.openPath(url, event, { title: 'Code: ' + parts[3], type: 'function' });" title="Open Code" 
                style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: rgba(102, 217, 239, 0.1); color: var(--accent); border: 1px solid rgba(102, 217, 239, 0.3);">
                <i class="fa-solid fa-code"></i>
             </a>`;
@@ -133,7 +131,10 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
         const valueColor = (key.includes('address') || key.includes('md5') || key.includes('id') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
         
         if (key === 'bsim_features_count') {
-            valueDisplay = `${val} <button class="btn-icon" onclick="if (window.parent && typeof window.parent.showFeaturePanel === 'function') { window.parent.showFeaturePanel('${fullId}', event); } else if (typeof window.showFeaturePanel === 'function') { window.showFeaturePanel('${fullId}', event); } else { window.location.href = '/function/features/index.html?id=' + encodeURIComponent('${fullId}'); }" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
+            valueDisplay = `${val} <button class="btn-icon" onclick="navigateToFeatures('${fullId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
+        }
+        if (key === 'file_name') {
+            valueDisplay = `<b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${val.replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${val.replace(/'/g, "\\'")}', type: 'file'}); }">${val}</b>`;
         }
 
         return `<div class="meta-row" title="${labelText}">
@@ -177,13 +178,21 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     const collapseClass = startCollapsed ? 'collapsed' : '';
     const chevronClass = startCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
     const anglesIconClass = startCollapsed ? 'fa-angles-down' : 'fa-angles-up';
-    const toggleText = startCollapsed ? 'Show More' : 'Show Less';
+    const toggleText = startCollapsed ? 'Show more metadata' : 'Show less metadata';
 
     const cardHtml = `
     <div class="func-meta-card modern flattened compact" ${options.side ? `data-side="${options.side}"` : ''}>
         <div class="meta-header">
             <div class="meta-title-row" style="margin-bottom: 8px;">
-                <div class="meta-sig">
+                <div class="meta-sig" 
+                     data-entity-data='${JSON.stringify({
+                        function_id: fullId,
+                        function_name: label,
+                        file_md5: fileMd5,
+                        entrypoint_address: addr,
+                        collection: collection
+                     }).replace(/'/g, "&apos;")}'
+                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                     <span class="meta-return-type">${returnType}</span>
                     ${namespace ? `<span class="meta-namespace">${namespace}::</span>` : ''}
                     <span class="meta-func-name">${label}</span>
@@ -194,6 +203,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                            title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background: rgba(174, 129, 255, 0.1); color: var(--info); border: 1px solid rgba(174, 129, 255, 0.3);">
                            <i class="fa-solid fa-code-compare"></i>
                         </a>
+                        ${EntityRenderer.renderNoteButton(fullId, m.note_owners, { raw_data: m })}
                         ${headerActionsHtml}
                     </div>
 
@@ -206,9 +216,6 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                     </div>
                 </div>
                 <div class="meta-header-actions">
-                    <button class="btn-copy-small" title="Copy Function ID" onclick="copyToClipboard('${fullId}', this)">
-                        <i class="fa-solid fa-copy"></i>
-                    </button>
                     ${options.rightHeaderHtml || ''}
                 </div>
             </div>
@@ -216,23 +223,19 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
             <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); color: #ddd; margin-top: 6px;">
                 <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;">
                     <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${fileMd5}</span>
-                    <span><b style="font-size: 1rem; color: #aaa; font-family: 'Inter', sans-serif;">${m['file_name'] || 'N/A'}</b></span>
+                    <span><b style="font-size: 1rem; color: var(--accent); font-family: 'Inter', sans-serif; cursor: pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${(m['file_name'] || '').replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${(m['file_name'] || '').replace(/'/g, "\\'")}', type: 'file'}); }">${m['file_name'] || 'N/A'}</b></span>
                     <div style="display: flex; align-items: center; overflow: hidden; margin-left: 5px;">
                         ${fileTagsHtml}
                     </div>
                 </div>
-                <button class="btn-more-toggle" onclick="toggleSection(this)" style="display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; color: #aaa; cursor: pointer; user-select: none; transition: all 0.2s;">
-                    <i class="fa-solid ${anglesIconClass} toggle-icon" style="font-size: 0.75rem; opacity: 0.7;"></i>
-                    <span class="toggle-text" style="font-weight: 500;">${toggleText}</span>
-                    <i class="fa-solid ${chevronClass} toggle-chevron" style="font-size: 0.7rem; opacity: 0.5;"></i>
-                </button>
             </div>
         </div>
 
         <div class="meta-content">
             <div class="meta-section" data-section-type="metadata">
-                <div class="meta-columns meta-col-body ${collapseClass}" style="gap: 20px;">
-                    <!-- Row 1: Metadata Fields -->
+                <div class="meta-col-body-wrapper ${collapseClass}">
+                    <div class="meta-columns meta-col-body" style="gap: 20px;">
+                        <!-- Row 1: Metadata Fields -->
                     <div class="meta-col" style="border-right: 1px solid rgba(255, 255, 255, 0.05); padding-right: 15px;">
                         <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-gears"></i> Function Metadata</div>
                         ${funcHtml}
@@ -268,6 +271,14 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                         </div>
                     </div>
                 </div>
+                </div>
+            </div>
+            <div style="display: flex; justify-content: center; padding-top: 4px; padding-bottom: 4px;">
+                <button class="btn-more-toggle" onclick="toggleSection(this)" style="display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); padding: 4px 12px; border-radius: 4px; font-size: 0.75rem; color: #aaa; cursor: pointer; user-select: none; transition: all 0.2s;">
+                    <i class="fa-solid ${anglesIconClass} toggle-icon" style="font-size: 0.75rem; opacity: 0.7;"></i>
+                    <span class="toggle-text" style="font-weight: 500;">${toggleText}</span>
+                    <i class="fa-solid ${chevronClass} toggle-chevron" style="font-size: 0.7rem; opacity: 0.5;"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -312,21 +323,17 @@ function toggleMetaDetail(id, event) {
 }
 
 function navigateToFeatures(id, e) {
-    const url = `/function/features/index.html?id=${encodeURIComponent(id)}`;
-    if (e && (e.ctrlKey || e.metaKey)) {
-        window.open(url, '_blank');
-        return;
-    }
-    if (window.parent && window.parent !== window && typeof window.parent.showFeaturePanel === 'function') {
-        window.parent.showFeaturePanel(id, e);
-    } else if (typeof window.showFeaturePanel === 'function') {
-        window.showFeaturePanel(id, e);
-    } else {
-        window.location.href = url;
-    }
+    const parts = id.split(':');
+    if (parts.length < 4) return;
+    const col = parts[0];
+    const md5 = parts[2];
+    const addr = parts[3];
+    const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}/features`;
+
+    Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
 }
 
-function seeSimilar(fullId) {
+function seeSimilar(fullId, e) {
     // If no ID passed, try to find it from the card context or global
     const id = fullId || window.currentFuncId;
     if (!id) return;
@@ -336,18 +343,10 @@ function seeSimilar(fullId) {
     const col = parts[0];
     const md5 = parts[2];
     const addr = parts[3];
-    const hash = `#function-similarity?collection=${col}&md5=${md5}&address=${addr}&algo=unweighted_cosine`;
+    
+    const url = `/collection/${encodeURIComponent(col)}/functions/similarities?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
 
-    if (window.parent && window.parent !== window && typeof window.parent.location !== 'undefined') {
-        window.parent.location.hash = hash;
-        if (typeof window.parent.hideCodePanel === 'function') {
-            window.parent.hideCodePanel();
-        }
-    } else {
-        // Standalone view: redirect to main dashboard with hash
-        // hash already starts with #, so just append it to /
-        window.location.href = '/' + hash;
-    }
+    Nav.openPath(url, e, { title: `Similar to: ${addr}`, type: 'function-similarity' });
 }
 
 function toggleSection(headerEl) {
@@ -355,7 +354,7 @@ function toggleSection(headerEl) {
     const side = card ? card.getAttribute('data-side') : null;
 
     const performToggle = (cCard, forceState) => {
-        const body = cCard.querySelector('.meta-col-body');
+        const body = cCard.querySelector('.meta-col-body-wrapper');
         const chevron = cCard.querySelector('.toggle-chevron');
         const textSpan = cCard.querySelector('.toggle-text');
         const toggleIcon = cCard.querySelector('.toggle-icon');
@@ -372,7 +371,7 @@ function toggleSection(headerEl) {
                 }
             }
             if (textSpan) {
-                textSpan.textContent = isCollapsed ? 'Show More' : 'Show Less';
+                textSpan.textContent = isCollapsed ? 'Show more metadata' : 'Show less metadata';
             }
             if (toggleIcon) {
                 if (isCollapsed) {
@@ -405,3 +404,107 @@ function toggleSection(headerEl) {
         }
     }
 }
+
+function renderFileMetadata(container, m, fullId, options = {}) {
+    if (!m) return "";
+    
+    const fileName = m['file_name'] || 'unknown_file';
+    const fileMd5 = m['file_md5'] || 'N/A';
+    const collection = fullId ? fullId.split(':')[0] : 'main';
+    const fileId = fullId || (m['file_md5'] ? `${collection}:file:${m['file_md5']}` : null);
+    
+    const tagsHtml = EntityRenderer.renderTag('file', fileId, m['tags'] || [], m['user_tags'] || []);
+    
+    // Grouping Metadata
+    const fileMetaKeys = ['language_id', 'processor', 'compiler', 'format', 'endian', 'address_size'];
+    const statsMetaKeys = ['function_count', 'bsim_features_count', 'cohesion_score', 'entry_date', 'file_date'];
+    
+    const renderRow = (key, val, icon = null) => {
+        const labelText = key.replace(/_/g, ' ');
+        const prefix = icon ? `<i class="fa-solid ${icon}" style="margin-right:8px; opacity:0.5; width:14px;"></i>` : '';
+        let valueDisplay = val;
+        if (key.includes('date') && val) valueDisplay = new Date(val).toLocaleString();
+        if (key === 'cohesion_score' && val) valueDisplay = (val * 100).toFixed(1) + '%';
+        
+        const valueColor = (key.includes('md5') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
+        
+        return `<div class="meta-row" title="${labelText}">
+            <span class="meta-label">${prefix}${labelText}</span>
+            <span class="meta-value mono" style="color:${valueColor}">${valueDisplay}</span>
+        </div>`;
+    };
+
+    const getIcon = (k) => {
+        if (k === 'language_id') return 'fa-globe';
+        if (k === 'processor') return 'fa-microchip';
+        if (k === 'compiler') return 'fa-terminal';
+        if (k === 'format') return 'fa-file-code';
+        if (k === 'endian') return 'fa-arrow-right-arrow-left';
+        if (k === 'address_size') return 'fa-ruler-horizontal';
+        if (k === 'function_count') return 'fa-list-ol';
+        if (k === 'bsim_features_count') return 'fa-fingerprint';
+        if (k === 'cohesion_score') return 'fa-percent';
+        if (k.includes('date')) return 'fa-calendar-days';
+        return null;
+    };
+
+    let fileHtml = '';
+    fileMetaKeys.forEach(k => { if (m[k] !== undefined) fileHtml += renderRow(k, m[k], getIcon(k)); });
+
+    let statsHtml = '';
+    statsMetaKeys.forEach(k => { if (m[k] !== undefined) statsHtml += renderRow(k, m[k], getIcon(k)); });
+
+    const cardHtml = `
+    <div class="func-meta-card modern flattened compact file-meta-card" ${options.side ? `data-side="${options.side}"` : ''}>
+        <div class="meta-header">
+            <div class="meta-title-row" style="margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+                <div class="meta-sig" 
+                     data-entity-data='${JSON.stringify({
+                        type: 'file',
+                        file_md5: fileMd5,
+                        file_name: fileName,
+                        collection: collection
+                     }).replace(/'/g, "&apos;")}'
+                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)"
+                     style="display: flex; align-items: center; flex: 1;">
+                    <i class="fa-solid fa-file" style="margin-right: 8px; color: var(--accent);"></i>
+                    <span class="meta-func-name"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${fileName.replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${fileName.replace(/'/g, "\\'")}', type: 'file'}); }">${fileName}</b></span>
+                    
+                    <div class="meta-header-addr mono" style="margin-left: 10px; color: var(--accent); font-size: 0.8rem; opacity: 0.8;">
+                        # ${fileMd5}
+                    </div>
+
+                    <div class="meta-header-tags" style="display: inline-flex; gap: 4px; margin-left: 10px;">
+                        ${tagsHtml}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="meta-content">
+            <div class="meta-section">
+                <div class="meta-columns meta-col-body" style="gap: 20px; padding: 10px 15px;">
+                    <div class="meta-col" style="border-right: 1px solid rgba(255, 255, 255, 0.05); padding-right: 15px;">
+                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-info-circle"></i> File Info</div>
+                        ${fileHtml}
+                    </div>
+                    <div class="meta-col">
+                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-chart-bar"></i> Statistics</div>
+                        ${statsHtml}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    `;
+
+    if (container) {
+        const el = typeof container === 'string' ? document.getElementById(container) : container;
+        if (el) el.innerHTML = cardHtml;
+    }
+    return cardHtml;
+}
+
+window.seeSimilar = seeSimilar;
+window.navigateToFeatures = navigateToFeatures;
+

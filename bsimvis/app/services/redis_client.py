@@ -36,7 +36,7 @@ class TimedRedis(redis.Redis):
             duration = time.time() - start
             timer.record(cmd_name, duration, category)
 
-    def pipeline(self, transaction=True, shard_hint=None):
+    def pipeline(self, transaction=False, shard_hint=None):
         return TimedPipeline(
             self.connection_pool, self.response_callbacks, transaction, shard_hint
         )

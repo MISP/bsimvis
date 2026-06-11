@@ -38,7 +38,7 @@ function renderJobs(jobs) {
             }
             pipelineChildren.get(job.parent_id).push(job);
         }
-        if (job.type === 'pipeline' && job.task_ids) {
+        if ((job.type === 'pipeline' || job.type === 'group') && job.task_ids) {
             job.task_ids.forEach(tid => {
                 childJobIds.add(tid);
             });
@@ -47,7 +47,7 @@ function renderJobs(jobs) {
 
     // Order pipeline children according to task_ids sequence
     jobsList.forEach(job => {
-        if (job.type === 'pipeline') {
+        if (job.type === 'pipeline' || job.type === 'group') {
             const children = [];
             const taskIds = job.task_ids || [];
             taskIds.forEach(tid => {
@@ -75,7 +75,7 @@ function renderJobs(jobs) {
         if (childJobIds.has(job.id)) {
             let hasParentInList = false;
             for (let [id, pJob] of jobsById.entries()) {
-                if (pJob.type === 'pipeline' && pJob.task_ids && pJob.task_ids.includes(job.id)) {
+                if ((pJob.type === 'pipeline' || pJob.type === 'group') && pJob.task_ids && pJob.task_ids.includes(job.id)) {
                     hasParentInList = true;
                     break;
                 }
@@ -90,8 +90,8 @@ function renderJobs(jobs) {
 
     const rows = [];
 
-    function renderJobRow(job, parentId = null) {
-        const isPipeline = job.type === 'pipeline';
+    function renderJobRow(job, parentId = null, level = 0, shouldHide = false) {
+        const isPipeline = job.type === 'pipeline' || job.type === 'group';
         const progress = job.progress || 0;
         const status = job.status || 'pending';
         
@@ -135,21 +135,23 @@ function renderJobs(jobs) {
         let typeDisplay = '';
         if (isPipeline) {
             const chevron = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
+            const icon = job.type === 'pipeline' ? 'fa-microchip' : 'fa-layer-group';
+            const labelText = job.type === 'pipeline' ? 'PIPELINE' : 'GROUP';
             typeDisplay = `
                 <div class="pipeline-header-cell" onclick="togglePipelineCollapse('${job.id}')" style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
                     <i class="fa-solid ${chevron} collapse-chevron" style="color: var(--accent); width: 12px;"></i>
-                    <span class="pipeline-label"><i class="fa-solid fa-microchip"></i> PIPELINE</span>
+                    <span class="pipeline-label"><i class="fa-solid ${icon}"></i> ${labelText}</span>
                 </div>
             `;
         } else {
             typeDisplay = `<span class="job-label">${job.type}</span>`;
         }
 
-        const indent = parentId ? '<span class="job-indent"></span>' : '';
+        const indent = level > 0 ? `<span class="job-indent" style="margin-left: ${level * 15}px;"></span>` : '';
         const collectionDisplay = job.collection ? `<div class="job-collection-cell"><i class="fa-solid fa-database"></i> ${job.collection}</div>` : '<span class="dim">-</span>';
         const targetDisplay = job.target ? `<code class="job-target-text">${job.target}</code>` : '<span class="dim">-</span>';
         
-        const rowStyle = parentId && collapsedPipelines.has(parentId) ? 'display: none;' : '';
+        const rowStyle = shouldHide ? 'display: none;' : '';
         
         return `
             <tr class="job-row ${isPipeline ? 'pipeline-row' : ''} ${parentId ? 'child-row' : ''}" ${parentId ? `data-parent-id="${parentId}"` : ''} style="${rowStyle}">
@@ -174,14 +176,23 @@ function renderJobs(jobs) {
         `;
     }
 
-    topLevelItems.forEach(item => {
-        rows.push(renderJobRow(item));
-        if (item.type === 'pipeline') {
+    function renderTree(item, parentId = null, level = 0, ancestorCollapsed = false) {
+        const amICollapsed = collapsedPipelines.has(item.id);
+        // Hide if the immediate parent is collapsed or any ancestor is collapsed
+        const shouldHide = (parentId !== null && collapsedPipelines.has(parentId)) || ancestorCollapsed;
+        
+        rows.push(renderJobRow(item, parentId, level, shouldHide));
+        
+        if (item.type === 'pipeline' || item.type === 'group') {
             const children = pipelineChildren.get(item.id) || [];
             children.forEach(child => {
-                rows.push(renderJobRow(child, item.id));
+                renderTree(child, item.id, level + 1, shouldHide || amICollapsed);
             });
         }
+    }
+
+    topLevelItems.forEach(item => {
+        renderTree(item);
     });
 
     return rows.join('');
@@ -281,7 +292,19 @@ async function refreshJobModal(jobId, isInitial = false) {
         if (job.logs && job.logs.length > 0) {
             const sortedLogs = [...job.logs].reverse();
             sortedLogs.forEach(log => {
-                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${log.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+                let htmlLine = '';
+                // Try to match [timestamp] message
+                const match = log.match(/^\[(\d+)\] (.*)/);
+                if (match) {
+                    const timestamp = parseInt(match[1]);
+                    const message = match[2];
+                    const dateStr = formatDate(timestamp);
+                    const escapedMessage = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                    htmlLine = `<span style="color: var(--accent); opacity: 0.8; font-weight: 500;">[${dateStr}]</span> ${escapedMessage}`;
+                } else {
+                    htmlLine = log.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                }
+                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${htmlLine}</div>`;
             });
         } else {
             logsInnerHtml = '<div style="font-style: italic;">No logs available yet.</div>';
@@ -305,6 +328,35 @@ async function refreshJobModal(jobId, isInitial = false) {
                 </div>
             `;
         }
+
+        // Build Payload Metadata HTML
+        let payloadHtml = '';
+        if (job.payload && Object.keys(job.payload).length > 0) {
+            payloadHtml = `
+                <div style="margin-top: 20px;">
+                    <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Job Parameters & Metadata</h4>
+                    <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
+            `;
+            
+            for (const [key, value] of Object.entries(job.payload)) {
+                let displayValue = value;
+                if (typeof value === 'object' && value !== null) {
+                    displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${JSON.stringify(value)}</code>`;
+                } else if (typeof value === 'string' && value.length > 30) {
+                    displayValue = `<code title="${value}" style="font-size: 0.75rem;">${value.substring(0, 12)}...${value.substring(value.length - 8)}</code>`;
+                } else {
+                    displayValue = `<code style="font-size: 0.85rem; color: #eee;">${value}</code>`;
+                }
+
+                payloadHtml += `
+                    <div>
+                        <div style="color: var(--dim); font-size: 0.65rem; text-transform: uppercase; margin-bottom: 2px; letter-spacing: 0.5px;">${key.replace(/_/g, ' ')}</div>
+                        <div style="word-break: break-all;">${displayValue}</div>
+                    </div>
+                `;
+            }
+            payloadHtml += '</div></div>';
+        }
         
         const modalBody = document.getElementById('job-modal-body');
         
@@ -324,6 +376,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                 </div>
             </div>
             ${errorHtml}
+            ${payloadHtml}
             ${subtasksHtml}
             ${logsHtml}
         `;
@@ -438,15 +491,19 @@ if (!document.getElementById('jobs-style')) {
 
 // Auto-refresh when in jobs view
 setInterval(() => {
-    const [path] = (window.location.hash || '').split('?');
-    if (path === '#jobs') {
+    const restful = (typeof parseRestfulPath === 'function') ? parseRestfulPath() : null;
+    const isJobsView = (restful && restful.view === 'jobs') || window.location.pathname === '/jobs' || (window.location.hash && window.location.hash.split('?')[0] === '#jobs');
+    if (isJobsView) {
         const modal = document.getElementById('job-details-modal');
         const isModalOpen = modal && modal.style.display !== 'none';
         
         if (isModalOpen && currentActiveJobId) {
             refreshJobModal(currentActiveJobId);
         } else {
-            if (window.refreshData) window.refreshData(false, false);
+            if (localStorage.getItem('jobAutoRefresh') !== 'false') {
+                if (window.refreshData) window.refreshData(false, false);
+            }
         }
     }
 }, 5000);
+

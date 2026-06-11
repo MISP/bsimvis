@@ -51,7 +51,7 @@ function renderUploadView(params) {
                             </div>
                             <div class="form-group">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
-                                <input type="number" id="upload-min-func-len" value="10" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
                         </div>
 
@@ -174,7 +174,12 @@ function clearUploadList() {
     selectedFiles = [];
     updateFileList();
     const progContainer = document.getElementById('upload-progress-container');
-    if (progContainer) progContainer.style.display = 'none';
+    if (progContainer) {
+        progContainer.style.display = 'none';
+        // Remove go-to-collection footer so it doesn't persist into a new session
+        const goBtn = document.getElementById('go-to-collection-btn');
+        if (goBtn) goBtn.closest('div[style*="border-top"]')?.remove();
+    }
     const startBtn = document.getElementById('start-upload-btn');
     if (startBtn) {
         startBtn.disabled = false;
@@ -230,7 +235,7 @@ async function startBatchUpload() {
     const minFuncLen = document.getElementById('upload-min-func-len').value;
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     
-// batchUuid generated server-side
+    let currentBatchUuid = null;
 
     document.getElementById('upload-progress-container').style.display = 'block';
     document.getElementById('start-upload-btn').disabled = true;
@@ -266,7 +271,10 @@ async function startBatchUpload() {
             const url = new URL('/api/file/upload', window.location.origin);
             url.searchParams.set('collection', collection);
             url.searchParams.set('file_name', file.name);
-        // batch_uuid omitted; server will generate
+            url.searchParams.set('enqueue', 'false');
+            if (currentBatchUuid) {
+                url.searchParams.set('batch_uuid', currentBatchUuid);
+            }
             url.searchParams.set('batch_name', batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
@@ -279,6 +287,9 @@ async function startBatchUpload() {
 
             if (response.ok) {
                 const data = await response.json();
+                if (!currentBatchUuid && data.batch_uuid) {
+                    currentBatchUuid = data.batch_uuid;
+                }
                 statusEl.innerText = 'QUEUED';
                 statusEl.style.color = 'var(--success)';
                 progressEl.style.width = '100%';
@@ -301,12 +312,54 @@ async function startBatchUpload() {
         document.getElementById('global-progress-text').innerText = `${totalProgress}%`;
     }
 
+    if (results.length > 0) {
+        try {
+            document.getElementById('global-progress-text').innerText = 'Finalizing Batch...';
+            const pipelineIds = results.map(r => r.pipeline_id);
+            const finalizeRes = await fetch('/api/file/upload/batch_finalize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pipeline_ids: pipelineIds,
+                    batch_uuid: currentBatchUuid,
+                    collection: collection,
+                    algo: 'unweighted_cosine' // Default or grab from UI if available
+                })
+            });
+
+            if (finalizeRes.ok) {
+                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${results.length} binaries`, 'success');
+            } else {
+                console.error("Failed to finalize batch", await finalizeRes.text());
+                if (typeof showToast === 'function') showToast('Binaries uploaded, but master pipeline orchestration failed.', 'warning');
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
     const globalSpinner = document.getElementById('global-upload-spinner');
     if (globalSpinner) globalSpinner.style.display = 'none';
     
     document.getElementById('start-upload-btn').innerHTML = '<i class="fa-solid fa-check"></i> Finished';
-    
-    if (typeof showToast === 'function') showToast(`Successfully queued ${results.length} binaries for analysis`, 'success');
+
+    // Show "Go to Collection" button once upload is done
+    const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
+    const progressContainer = document.getElementById('upload-progress-container');
+    if (progressContainer && !document.getElementById('go-to-collection-btn')) {
+        const goBtn = document.createElement('div');
+        goBtn.style.cssText = 'margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;';
+        goBtn.innerHTML = `
+            <span style="font-size: 0.8rem; color: var(--subtle);">
+                <i class="fa-solid fa-layer-group" style="margin-right: 6px;"></i>
+                Uploaded to <b style="color: var(--text);">${collection}</b>
+            </span>
+            <button id="go-to-collection-btn" onclick="Nav.openPath('${collectionUrl}')" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-arrow-right"></i> Go to Collection
+            </button>
+        `;
+        progressContainer.appendChild(goBtn);
+    }
 }
 
 async function populateUploadCollectionDropdown(currentCollection) {

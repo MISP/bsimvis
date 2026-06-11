@@ -1,6 +1,7 @@
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.config_service import config_service
 
 job_service = JobService()
 
@@ -10,17 +11,25 @@ def build_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", 5)
+    min_cluster_size = data.get(
+        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+    )
 
     payload = {
         "collection": collection,
         "algo": algo,
         "min_cluster_size": min_cluster_size,
-        "min_samples": data.get("min_samples"),
-        "epsilon": data.get("epsilon", 0.0),
-        "selection_method": data.get("selection_method", "eom"),
-        "min_sim": data.get("min_sim", 0.0),
-        "min_features": data.get("min_features", 0),
+        "min_samples": data.get(
+            "min_samples", config_service.get("clustering.min_samples", 1)
+        ),
+        "epsilon": data.get("epsilon", config_service.get("clustering.epsilon", 0.1)),
+        "selection_method": data.get(
+            "selection_method", config_service.get("clustering.selection_method", "eom")
+        ),
+        "min_sim": data.get("min_sim", config_service.get("clustering.min_sim", 0.0)),
+        "min_features": data.get(
+            "min_features", config_service.get("clustering.min_features", 0)
+        ),
     }
 
     job_id = job_service.create_job(JobType.CLUSTER_FUNCTIONS, payload)
@@ -32,7 +41,9 @@ def rebuild_cluster():
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
-    min_cluster_size = data.get("min_cluster_size", 5)
+    min_cluster_size = data.get(
+        "min_cluster_size", config_service.get("clustering.min_cluster_size", 2)
+    )
 
     tasks = [
         (
@@ -48,11 +59,100 @@ def rebuild_cluster():
                 "collection": collection,
                 "algo": algo,
                 "min_cluster_size": min_cluster_size,
-                "min_samples": data.get("min_samples"),
-                "epsilon": data.get("epsilon", 0.0),
-                "selection_method": data.get("selection_method", "eom"),
-                "min_sim": data.get("min_sim", 0.0),
-                "min_features": data.get("min_features", 0),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_features": data.get(
+                    "min_features", config_service.get("clustering.min_features", 0)
+                ),
+            },
+        ),
+    ]
+
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
+
+
+def rebuild_all_pipeline():
+    """Enqueues a full re-analysis pipeline: clear clusters -> clear bin_sim -> cluster functions -> build bin_sim."""
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    algo = data.get("algo", "unweighted_cosine")
+
+    tasks = [
+        (JobType.CLEAR_CLUSTER, {"collection": collection, "algo": algo}),
+        (JobType.CLEAR_BIN_SIM, {"collection": collection, "algo": algo}),
+        (JobType.CLEAR_BIN_CLUSTER, {"collection": collection, "algo": algo}),
+        (
+            JobType.CLUSTER_FUNCTIONS,
+            {
+                "collection": collection,
+                "algo": algo,
+                "min_cluster_size": data.get(
+                    "min_cluster_size",
+                    config_service.get("clustering.min_cluster_size", 2),
+                ),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_features": data.get(
+                    "min_features", config_service.get("clustering.min_features", 0)
+                ),
+            },
+        ),
+        (
+            JobType.BUILD_BIN_SIM,
+            {
+                "collection": collection,
+                "algo": algo,
+                "min_cohesion": data.get("min_cohesion", 0.5),
+            },
+        ),
+        (
+            JobType.CLUSTER_BINARIES,
+            {
+                "collection": collection,
+                "algo": algo,
+                "min_cluster_size": data.get(
+                    "min_cluster_size",
+                    config_service.get("clustering.min_cluster_size", 2),
+                ),
+                "min_samples": data.get(
+                    "min_samples", config_service.get("clustering.min_samples", 1)
+                ),
+                "epsilon": data.get(
+                    "epsilon", config_service.get("clustering.epsilon", 0.1)
+                ),
+                "selection_method": data.get(
+                    "selection_method",
+                    config_service.get("clustering.selection_method", "eom"),
+                ),
+                "min_sim": data.get(
+                    "min_sim", config_service.get("clustering.min_sim", 0.0)
+                ),
+                "min_cohesion": data.get(
+                    "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+                ),
             },
         ),
     ]
@@ -74,6 +174,37 @@ def clear_cluster():
     return {"job_id": job_id, "status": "enqueued"}
 
 
+def _get_matching_ids(r, collection, level, field, val):
+    reg_key = f"{collection}:reg:{level}:{field}"
+    matching_ids = set()
+    val_lower = val.lower().strip()
+    if not val_lower:
+        return matching_ids
+
+    matching_buckets = []
+    try:
+        for bucket in r.sscan_iter(reg_key, match=f"*{val_lower}*"):
+            bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
+            if val_lower in bucket_str.lower():
+                matching_buckets.append(bucket_str)
+    except Exception as e:
+        import logging
+
+        logging.warning(f"SSCAN failed for registry {reg_key}: {e}")
+
+    if matching_buckets:
+        pipe = r.pipeline()
+        for bucket in matching_buckets:
+            pipe.smembers(bucket)
+        results = pipe.execute()
+        for res in results:
+            if res:
+                matching_ids.update(
+                    m.decode() if isinstance(m, bytes) else str(m) for m in res
+                )
+    return matching_ids
+
+
 def list_clusters():
     """Lists discovered clusters with metadata, filtering, and sorting."""
     collection = request.args.get("collection", "main")
@@ -86,11 +217,26 @@ def list_clusters():
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
 
+    limit = request.args.get("limit", 100, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    # Column-specific function member filters
+    func_name_q = request.args.get("func_name", "").strip()
+    func_addr_q = request.args.get("func_addr", "").strip()
+    file_name_q = request.args.get("file_name", "").strip()
+
     try:
         min_stability = float(request.args.get("min_stability", 0))
+        max_stability = float(request.args.get("max_stability", 0))
         min_count = int(request.args.get("min_count", 0))
+        max_count = int(request.args.get("max_count", 0))
         min_features = float(request.args.get("min_features", 0))
+        max_features = float(request.args.get("max_features", 0))
         min_cohesion = float(request.args.get("min_cohesion", 0))
+        max_cohesion = float(request.args.get("max_cohesion", 0))
+        show_parents = request.args.get("show_parents", "false").lower() == "true"
+        show_children = request.args.get("show_children", "false").lower() == "true"
+        show_members = request.args.get("show_members", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -133,12 +279,34 @@ def list_clusters():
 
     # 2. Fetch all metadata
     results = []
+    total = 0
+
+    # Fetch tree links to provide parent information
+    links_key = f"{collection}:cluster:tree_links:{algo}"
+    links_raw = r.get(links_key)
+    child_to_parent = {}
+    parent_to_children = {}
+    if links_raw:
+        import json
+
+        try:
+            links = json.loads(links_raw)
+            child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
+            for l in links:
+                p = str(l["parent"])
+                if p not in parent_to_children:
+                    parent_to_children[p] = []
+                parent_to_children[p].append(str(l["child"]))
+        except Exception:
+            pass
+
     if all_meta_keys:
         pipe = r.pipeline()
         for k in all_meta_keys:
             pipe.json().get(k, "$")
         raw_metas = pipe.execute()
 
+        meta_map = {}
         for meta in raw_metas:
             if not meta:
                 continue
@@ -147,9 +315,11 @@ def list_clusters():
                 import json
 
                 m = json.loads(m)
-
-            # Apply filters
             cid = str(m.get("cluster_id", ""))
+            meta_map[cid] = m
+
+        valid_nodes = set()
+        for cid, m in meta_map.items():
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
 
@@ -170,51 +340,227 @@ def list_clusters():
                 continue
             if cluster_name_q and cluster_name_q not in cname.lower():
                 continue
-            if m.get("avg_stability", 0) < min_stability:
+            if min_stability > 0 and m.get("avg_stability", 0) < min_stability:
                 continue
-            if m.get("member_count", 0) < min_count:
+            if max_stability > 0 and m.get("avg_stability", 0) > max_stability:
                 continue
-            if m.get("avg_features", 0) < min_features:
+            if min_count > 0 and m.get("member_count", 0) < min_count:
                 continue
-            if m.get("cohesion_score", 0) < min_cohesion:
+            if max_count > 0 and m.get("member_count", 0) > max_count:
+                continue
+            if min_features > 0 and m.get("avg_features", 0) < min_features:
+                continue
+            if max_features > 0 and m.get("avg_features", 0) > max_features:
+                continue
+            if min_cohesion > 0 and m.get("cohesion_score", 0) < min_cohesion:
+                continue
+            if max_cohesion > 0 and m.get("cohesion_score", 0) > max_cohesion:
                 continue
 
-            results.append(
-                {
-                    "cluster_id": m.get("cluster_id"),
-                    "cluster_uuid": m.get("cluster_uuid"),
-                    "cluster_name": m.get("cluster_name"),
-                    "avg_stability": m.get("avg_stability", 0.0),
-                    "avg_features": m.get("avg_features", 0),
-                    "cohesion_score": m.get("cohesion_score", 0),
-                    "count": m.get("member_count"),
-                    "created_at": m.get("created_at"),
-                }
-            )
+            valid_nodes.add(cid)
 
-    # 3. Sorting
+        # Filter valid_nodes by function member criteria if specified
+        has_member_filters = bool(func_name_q or func_addr_q or file_name_q)
+        if has_member_filters and valid_nodes:
+            matched_fids = None
+            first_filter = True
+
+            if func_name_q:
+                fids = _get_matching_ids(
+                    r, collection, "func", "function_name", func_name_q
+                )
+                if first_filter:
+                    matched_fids = fids
+                    first_filter = False
+                else:
+                    matched_fids.intersection_update(fids)
+
+            if func_addr_q:
+                fids = _get_matching_ids(
+                    r, collection, "func", "entrypoint_address", func_addr_q
+                )
+                if first_filter:
+                    matched_fids = fids
+                    first_filter = False
+                else:
+                    matched_fids.intersection_update(fids)
+
+            if file_name_q:
+                fids = _get_matching_ids(
+                    r, collection, "func", "file_name", file_name_q
+                )
+                if first_filter:
+                    matched_fids = fids
+                    first_filter = False
+                else:
+                    matched_fids.intersection_update(fids)
+
+            if not matched_fids:
+                valid_nodes = set()
+            else:
+                filtered_valid_nodes = set()
+                pipe = r.pipeline()
+                valid_nodes_list = list(valid_nodes)
+                for cid in valid_nodes_list:
+                    pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
+                all_cluster_members = pipe.execute()
+
+                for cid, members_raw in zip(valid_nodes_list, all_cluster_members):
+                    if members_raw:
+                        members = {
+                            m.decode() if isinstance(m, bytes) else str(m)
+                            for m in members_raw
+                        }
+                        if members.intersection(matched_fids):
+                            filtered_valid_nodes.add(cid)
+                valid_nodes = filtered_valid_nodes
+
+        # Paginate matched nodes BEFORE expanding
+        matched_results = []
+        for cid in valid_nodes:
+            m = meta_map.get(cid)
+            if not m:
+                m = {"cluster_id": cid}
+            matched_results.append(m)
+
+        reverse = sort_order == "desc"
+        if sort_by == "stability":
+            matched_results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
+        elif sort_by == "count":
+            matched_results.sort(key=lambda x: x.get("member_count", 0), reverse=reverse)
+        elif sort_by == "features":
+            matched_results.sort(key=lambda x: x.get("avg_features", 0), reverse=reverse)
+        elif sort_by == "cohesion":
+            matched_results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
+        else:
+            matched_results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
+
+        total = len(matched_results)
+        page_metas = matched_results[offset : offset + limit]
+        
+        page_nodes = set(str(m.get("cluster_id")) for m in page_metas)
+        expanded_nodes = set(page_nodes)
+
+        # Expand parents if requested
+        if show_parents:
+            for node in page_nodes:
+                curr = node
+                while curr in child_to_parent:
+                    curr = child_to_parent[curr]
+                    expanded_nodes.add(curr)
+
+        # Expand children if requested
+        if show_children:
+            queue = list(page_nodes)
+            while queue:
+                curr = queue.pop(0)
+                children = parent_to_children.get(curr, [])
+                for child in children:
+                    if child not in expanded_nodes:
+                        expanded_nodes.add(child)
+                        queue.append(child)
+
+        for cid in expanded_nodes:
+            m = meta_map.get(cid)
+            if not m:
+                if not show_parents and not show_children:
+                    continue
+                m = {"cluster_id": cid}
+            cluster_result = {
+                "cluster_id": m.get("cluster_id"),
+                "cluster_uuid": m.get("cluster_uuid"),
+                "cluster_name": m.get("cluster_name"),
+                "avg_stability": m.get("avg_stability", 0.0),
+                "avg_features": m.get("avg_features", 0),
+                "cohesion_score": m.get("cohesion_score", 0),
+                "count": m.get("member_count"),
+                "created_at": m.get("created_at"),
+                "parent": child_to_parent.get(str(m.get("cluster_id"))),
+                "snippet": m.get("snippet", ""),
+                "sample_members": m.get("sample_members", []),
+            }
+            results.append(cluster_result)
+
+    # 3. Sorting expanded results
     reverse = sort_order == "desc"
     if sort_by == "stability":
-        results.sort(key=lambda x: x["avg_stability"], reverse=reverse)
+        results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
     elif sort_by == "count":
-        results.sort(key=lambda x: x["count"], reverse=reverse)
+        results.sort(key=lambda x: x.get("count") or 0, reverse=reverse)
     elif sort_by == "features":
         results.sort(key=lambda x: x.get("avg_features", 0), reverse=reverse)
     elif sort_by == "cohesion":
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
     else:
-        results.sort(key=lambda x: str(x["cluster_id"]), reverse=reverse)
+        results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
+
+    page = results
+
+    # 4. Fetch direct members for ONLY the clusters in the current page
+    if show_members and page:
+        import json
+
+        p_pipe = r.pipeline()
+        page_cids = [str(c["cluster_id"]) for c in page]
+        for cid in page_cids:
+            p_pipe.smembers(f"{collection}:cluster:{algo}:{cid}:direct_members")
+        direct_members_ids_list = p_pipe.execute()
+
+        all_member_ids = set()
+        cluster_to_member_ids = {}
+        for cid, ids_raw in zip(page_cids, direct_members_ids_list):
+            if ids_raw:
+                ids = [x.decode() if isinstance(x, bytes) else x for x in ids_raw]
+                cluster_to_member_ids[cid] = ids
+                all_member_ids.update(ids)
+
+        member_meta_map = {}
+        if all_member_ids:
+            all_member_ids_list = list(all_member_ids)
+            m_pipe = r.pipeline()
+            for mid in all_member_ids_list:
+                m_pipe.json().get(f"{mid}:meta", "$")
+            raw_metas = m_pipe.execute()
+            for mid, meta in zip(all_member_ids_list, raw_metas):
+                m = meta[0] if isinstance(meta, list) and meta else {}
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except Exception:
+                        m = {}
+                member_meta_map[mid] = m
+
+        for cluster_res in page:
+            cid = str(cluster_res["cluster_id"])
+            mids = cluster_to_member_ids.get(cid, [])
+            cluster_res["direct_members"] = [
+                {
+                    "id": mid,
+                    "name": member_meta_map.get(mid, {}).get(
+                        "function_name", "Unknown"
+                    ),
+                    "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
+                    "bin": member_meta_map.get(mid, {}).get("file_name"),
+                    "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
+                    "v_size": member_meta_map.get(mid, {}).get(
+                        "bsim_features_count"
+                    ),
+                }
+                for mid in mids
+            ]
 
     response_data = {
         "collection": collection,
         "algo": algo,
-        "total": len(results),
-        "results": results,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "results": page,
     }
     if format_arg == "csv":
         from bsimvis.app.services.export_service import export_to_csv
 
-        return export_to_csv(results, "clusters")
+        return export_to_csv(page, "clusters")
     elif format_arg == "json":
         from bsimvis.app.services.export_service import export_to_json
 
@@ -320,7 +666,7 @@ def list_cluster_members():
         m = meta[0] if isinstance(meta, list) and meta else {}
         results.append({"id": page[i], "meta": m})
 
-    return {"cluster_id": cluster_id, "total": total, "results": results}
+    return {"cluster_id": cluster_id, "total": total, "offset": offset, "limit": limit, "results": results}
 
 
 def get_cluster_functions():
@@ -415,116 +761,3 @@ def get_cluster_functions():
         "collection": collection,
         "cluster_uuid": cluster_uuid,
     }
-
-
-def get_cluster_dendrogram():
-    """
-    Returns a hierarchical tree of clusters, supporting dynamic 'cutting'
-    via stability or size thresholds.
-    """
-    collection = request.args.get("collection", "main")
-    algo = request.args.get("algo", "unweighted_cosine")
-
-    try:
-        min_size = int(request.args.get("min_cluster_size", 0))
-        max_size = int(request.args.get("max_cluster_size", 0))
-        cohesion_min = float(request.args.get("cohesion_min", 0.0))
-        cohesion_max = float(request.args.get("cohesion_max", 0.0))
-        features_min = float(request.args.get("min_features", 0.0))
-        features_max = float(request.args.get("max_features", 0.0))
-        stability_threshold = float(request.args.get("stability_threshold", 0.0))
-        show_parents = request.args.get("show_parents", "true").lower() == "true"
-    except ValueError:
-        return {"error": "Invalid numeric parameter"}, 400
-
-    r = get_redis()
-    links_key = f"{collection}:cluster:tree_links:{algo}"
-    links_raw = r.get(links_key)
-    if not links_raw:
-        return {"error": "No dendrogram data found"}, 404
-
-    import json
-
-    links = json.loads(links_raw)
-
-    # 1. Gather all unique cluster IDs in the tree
-    cluster_ids = set()
-    for l in links:
-        cluster_ids.add(l["parent"])
-        cluster_ids.add(l["child"])
-
-    # 2. Fetch metadata for all these clusters
-    pipe = r.pipeline()
-    for cid in cluster_ids:
-        pipe.json().get(f"{collection}:cluster:{algo}:{cid}:meta", "$")
-
-    raw_metas = pipe.execute()
-    meta_map = {}
-    for cid, res in zip(cluster_ids, raw_metas):
-        if res:
-            m = res[0] if isinstance(res, list) else res
-            if isinstance(m, str):
-                m = json.loads(m)
-            meta_map[cid] = m
-
-    # 3. Build tree and apply cut
-    # We only include nodes that satisfy our threshold
-    valid_nodes = set()
-    for cid, m in meta_map.items():
-        sz = m.get("member_count", 0)
-        if sz < min_size:
-            continue
-        if max_size > 0 and sz > max_size:
-            continue
-
-        coh = m.get("cohesion_score", 0)
-        if coh < cohesion_min:
-            continue
-        if cohesion_max > 0 and coh > cohesion_max:
-            continue
-
-        feat = m.get("avg_features", 0)
-        if feat < features_min:
-            continue
-        if features_max > 0 and feat > features_max:
-            continue
-
-        stab = m.get("avg_stability", 0.0)
-        if stab < stability_threshold:
-            continue
-
-        valid_nodes.add(cid)
-
-    # If a node is valid, all its ancestors must be in the response to form a tree
-    # child_to_parent map for traversal
-    child_to_parent = {l["child"]: l["parent"] for l in links}
-
-    expanded_nodes = set(valid_nodes)
-    if show_parents:
-        for node in valid_nodes:
-            curr = node
-            while curr in child_to_parent:
-                curr = child_to_parent[curr]
-                expanded_nodes.add(curr)
-
-    # 4. Construct response nodes
-    nodes = []
-    for cid in expanded_nodes:
-        m = meta_map.get(cid, {"cluster_id": cid})
-
-        nodes.append(
-            {
-                "id": cid,
-                "parent": child_to_parent.get(cid),
-                "name": m.get("cluster_name", f"Cluster {cid}"),
-                "uuid": m.get("cluster_uuid"),
-                "size": m.get("member_count", 0),
-                "stability": m.get("avg_stability", 0.0),
-                "cohesion": m.get("cohesion_score", 0.0),
-                "avg_features": m.get("avg_features", 0.0),
-                "snippet": m.get("snippet", ""),
-                "members": m.get("sample_members", []),
-            }
-        )
-
-    return {"collection": collection, "algo": algo, "nodes": nodes}

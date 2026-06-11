@@ -260,5 +260,22 @@ class MilvusService:
             logging.error(f"[!] Milvus Search Error: {e}")
             return None
 
+    def drop_collection(self, collection_name):
+        """Drops a collection from Milvus."""
+        if not self.enabled:
+            return False
+        self.connect()
+        try:
+            if utility.has_collection(collection_name):
+                utility.drop_collection(collection_name)
+                if collection_name in self._collections:
+                    del self._collections[collection_name]
+                logging.info(f"[*] Dropped Milvus collection: {collection_name}")
+                return True
+        except Exception as e:
+            logging.error(f"[!] Failed to drop Milvus collection {collection_name}: {e}")
+        return False
+
 
 milvus_service = MilvusService()
+

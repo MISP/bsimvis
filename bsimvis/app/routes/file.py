@@ -29,31 +29,55 @@ def upload_file_data():
         file_md5 = data.get("file_md5")
 
         if not file_md5:
+            file_meta = data.get("file_metadata", {})
+            file_md5 = file_meta.get("file_md5")
+
+        if not file_md5:
             # Efficient MD5 from raw bytes instead of re-serializing the dict
             file_md5 = hashlib.md5(raw_bytes).hexdigest()
 
         # 1. Store in Kvrocks (JSON.SET)
         r_data = get_redis()
+
+        # Check if file is already in the collection
+        if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+            return {
+                "error": f"File with MD5 {file_md5} already exists in collection '{collection}'"
+            }, 400
+
         file_id = f"{collection}:file:{file_md5}:data"
 
         # Store as a standard string (SET) instead of a JSON object.
         # This is much faster and avoids server-side parsing of large files.
         r_data.set(file_id, raw_bytes)
 
+        from bsimvis.app.services.config_service import config_service
+
+        algo = data.get("algo")
+        if algo is None:
+            algo = config_service.get("similarity.algo", "unweighted_cosine")
+
+        top_k = data.get("top_k")
+        if top_k is None:
+            top_k = config_service.get("similarity.top_k", 1000)
+
+        min_score = data.get("min_score")
+        if min_score is None:
+            min_score = config_service.get("similarity.min_score", 0.3)
+
+        min_features = data.get("min_features")
+        if min_features is None:
+            min_features = config_service.get("similarity.min_features", 0)
+
         build_sim_payload = {
             "collection": collection,
             "file_id": file_id,
             "md5": file_md5,
-            "algo": "unweighted_cosine",
+            "algo": algo,
+            "top_k": top_k,
+            "min_score": min_score,
+            "min_features": min_features,
         }
-        if "top_k" in data:
-            build_sim_payload["top_k"] = data["top_k"]
-        if "min_score" in data:
-            build_sim_payload["min_score"] = data["min_score"]
-        if "min_features" in data:
-            build_sim_payload["min_features"] = data["min_features"]
-        if "algo" in data:
-            build_sim_payload["algo"] = data["algo"]
 
         if (
             build_sim_payload.get("algo") == "milvus_sparse"
@@ -64,6 +88,14 @@ def upload_file_data():
             }, 400
 
         skip_sim = data.get("skip_sim", False)
+
+        enqueue_val = request.args.get("enqueue")
+        if enqueue_val is not None:
+            enqueue = enqueue_val.lower() == "true"
+        else:
+            enqueue = data.get("enqueue", True)
+            if isinstance(enqueue, str):
+                enqueue = enqueue.lower() == "true"
 
         # 2. Trigger Pipeline
         # Steps: Meta indexing, Function indexing, Feature indexing, Sim bake
@@ -90,13 +122,20 @@ def upload_file_data():
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
             pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
 
-        pipeline_id = job_service.create_pipeline(pipeline_tasks)
+        if enqueue:
+            pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
+
+        pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
         return {
-            "status": "processing",
+            "status": "processing" if enqueue else "queued",
             "file_id": file_id,
             "pipeline_id": pipeline_id,
-            "message": "Data stored. Processing pipeline started.",
+            "message": (
+                "Data stored. Processing pipeline started."
+                if enqueue
+                else "Data stored. Pipeline queued."
+            ),
         }
 
     except Exception as e:
@@ -113,9 +152,13 @@ def upload_raw_binary():
     Stores it in Kvrocks and triggers the Ghidra analysis job.
     """
     try:
+        logging.info(f"[*] Raw upload request received. Args: {request.args}")
         raw_bytes = request.get_data()
         if not raw_bytes:
+            logging.warning("[-] No data provided in raw upload request")
             return {"error": "No data provided"}, 400
+
+        logging.info(f"[*] Received {len(raw_bytes)} bytes for raw upload")
 
         # Get metadata from headers or query params
         collection = request.args.get("collection", "main")
@@ -129,8 +172,14 @@ def upload_raw_binary():
         # Compute MD5
         file_md5 = hashlib.md5(raw_bytes).hexdigest()
 
-        # Store raw binary in Kvrocks
+        # Check if file is already in the collection
         r_data = get_redis()
+        if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+            return {
+                "error": f"File with MD5 {file_md5} already exists in collection '{collection}'"
+            }, 400
+
+        # Store raw binary in Kvrocks
         raw_file_id = f"{collection}:file:{file_md5}:raw"
         r_data.set(raw_file_id, raw_bytes)
 
@@ -164,15 +213,20 @@ def upload_raw_binary():
                 val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
             )
 
+        if "file_metadata_extra" in request.args:
+            analysis_payload["file_metadata_extra"] = json.loads(request.args.get("file_metadata_extra"))
+
         # Trigger Pipeline: Analysis -> Indexing -> Similarity
         pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
 
-        pipeline_id = job_service.create_pipeline(pipeline_tasks)
+        enqueue = request.args.get("enqueue", "true").lower() == "true"
+        pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
         return {
-            "status": "processing",
+            "status": "processing" if enqueue else "queued",
             "file_md5": file_md5,
             "pipeline_id": pipeline_id,
+            "batch_uuid": batch_uuid,
             "message": "Binary uploaded. Analysis pipeline started.",
         }
 
@@ -181,3 +235,151 @@ def upload_raw_binary():
 
         logging.error(f"Raw upload failed: {str(e)}")
         return {"error": str(e), "detail": traceback.format_exc()}, 500
+
+
+def finalize_batch_upload():
+    """
+    Finalizes a batch upload by wrapping all file pipelines in a group,
+    and appending clustering/bin_sim at the end.
+    """
+    data = request.json
+    if not data:
+        return {"error": "Missing JSON payload"}, 400
+
+    pipeline_ids = data.get("pipeline_ids", [])
+    batch_uuid = data.get("batch_uuid")
+    collection = data.get("collection", "main")
+    algo = data.get("algo", "unweighted_cosine")
+    skip_sim = data.get("skip_sim", False)
+    min_cohesion = data.get("min_cohesion")
+
+    if not pipeline_ids:
+        return {"error": "No pipelines provided"}, 400
+
+    group_id = job_service.create_group(pipeline_ids, enqueue=False)
+
+    # 1. Clear old results in parallel before rebuilding
+    clear_tasks = [
+        (JobType.CLEAR_CLUSTER.value, {"collection": collection, "algo": algo}),
+    ]
+    if not skip_sim:
+        clear_tasks.append(
+            (JobType.CLEAR_BIN_SIM.value, {"collection": collection, "algo": algo})
+        )
+        clear_tasks.append(
+            (JobType.CLEAR_BIN_CLUSTER.value, {"collection": collection, "algo": algo})
+        )
+
+    clear_group_id = job_service.create_group(clear_tasks, enqueue=False)
+
+    master_tasks = [group_id, clear_group_id]
+
+    # After the clears, we do clustering:
+    master_tasks.append(
+        (
+            JobType.CLUSTER_FUNCTIONS.value,
+            {"collection": collection, "algo": algo, "batch_uuid": batch_uuid},
+        )
+    )
+
+    # After clustering, we do binary similarity:
+    if not skip_sim:
+        build_payload = {
+            "collection": collection,
+            "algo": algo,
+            "batch_uuid": batch_uuid,
+        }
+        if min_cohesion is not None:
+            build_payload["min_cohesion"] = min_cohesion
+        master_tasks.append(
+            (
+                JobType.BUILD_BIN_SIM.value,
+                build_payload,
+            )
+        )
+        cluster_payload = {
+            "collection": collection,
+            "algo": algo,
+        }
+        if min_cohesion is not None:
+            cluster_payload["min_cohesion"] = min_cohesion
+        master_tasks.append(
+            (JobType.CLUSTER_BINARIES.value, cluster_payload)
+        )
+
+    # Enrich features must be the absolute last job to run:
+    master_tasks.append(
+        (
+            JobType.ENRICH_FEATURES.value,
+            {"collection": collection, "batch_uuid": batch_uuid},
+        )
+    )
+
+    master_id = job_service.create_pipeline(master_tasks, enqueue=True)
+
+    return {
+        "status": "success",
+        "master_pipeline_id": master_id,
+        "batch_uuid": batch_uuid,
+    }
+
+
+def update_file_metadata(file_md5):
+    """
+    Partially updates metadata for a single file and enqueues propagation.
+    """
+    try:
+        data = request.json or {}
+        collection = data.get("collection", "main")
+        metadata = data.get("metadata", {})
+
+        if not metadata:
+            return {"error": "Missing metadata to update"}, 400
+
+        payload = {
+            "collection": collection,
+            "updates": {file_md5: metadata}
+        }
+
+        job_id = job_service.create_job(JobType.PROPAGATE_METADATA, payload)
+
+        return {
+            "status": "processing",
+            "job_id": job_id,
+            "message": "Metadata propagation job enqueued."
+        }
+
+    except Exception as e:
+        logging.error(f"Failed to update file metadata: {e}")
+        return {"error": str(e)}, 500
+
+
+def bulk_propagate_metadata():
+    """
+    Updates metadata for multiple files in bulk and enqueues propagation.
+    """
+    try:
+        data = request.json or {}
+        collection = data.get("collection", "main")
+        updates = data.get("updates", {})
+
+        if not updates:
+            return {"error": "Missing updates mapping"}, 400
+
+        payload = {
+            "collection": collection,
+            "updates": updates
+        }
+
+        job_id = job_service.create_job(JobType.PROPAGATE_METADATA, payload)
+
+        return {
+            "status": "processing",
+            "job_id": job_id,
+            "message": "Bulk metadata propagation job enqueued."
+        }
+
+    except Exception as e:
+        logging.error(f"Failed bulk metadata propagation: {e}")
+        return {"error": str(e)}, 500
+

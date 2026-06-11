@@ -1,7 +1,7 @@
 """
 IndexConfig — single source of truth for all secondary index declarations.
 
-Configured by source entity ("file", "func", "sim").
+Configured by source entity ("file", "func", "sim", "bin_sim").
 For each field on a source entity, we declare which target levels it should
 propagate to via the list: ["file", "func", "sim"].
 
@@ -10,6 +10,9 @@ If the field is 'tags' or 'user_tags' and it is propagated to a DIFFERENT level,
 it is prefixed with the source level.
 e.g. file -> tags -> sim becomes 'file_tags' at the sim level.
 This avoids namespace collisions and allows direct sim-level queries like ?file_tag=x.
+
+bin_sim level uses native fields only (no propagation to other levels).
+File metadata is denormalized directly into the bin_sim index at build time.
 """
 
 INDEX_CONFIG = {
@@ -24,6 +27,27 @@ INDEX_CONFIG = {
         "batch_order": ["file", "func", "sim"],  # numeric
         "entry_date": ["file", "func", "sim"],  # numeric
         "file_date": ["file", "func", "sim"],  # numeric
+        "function_count": ["file"],  # numeric
+        "bsim_features_count": ["file"],  # numeric
+        "cohesion_score": ["file"],  # numeric
+        "bin_cluster_id": ["file"],
+        "bin_cluster_uuid": ["file"],
+        "bin_cluster_name": ["file"],
+        "bin_cluster_stability": ["file"],
+        "first_seen": ["file", "func", "sim"],
+        "last_seen": ["file", "func", "sim"],
+        "filetype": ["file", "func", "sim"],
+        "avtype": ["file", "func", "sim"],
+        "yara": ["file", "func", "sim"],
+        "cc_ip": ["file", "func", "sim"],
+        "file_names": ["file", "func", "sim"],
+        "inferred_yara": ["file"],
+        "inferred_avtype": ["file"],
+        "inferred_filetype": ["file"],
+        "inferred_ccip": ["file"],
+        "inferred_filename": ["file"],
+        "inferred_md5": ["file"],
+        "note_owners": ["file"],
     },
     "func": {
         "function_name": ["func", "sim"],  # fast sim search by function name
@@ -41,6 +65,7 @@ INDEX_CONFIG = {
         "cluster_uuid": ["func"],
         "cluster_name": ["func"],
         "cluster_stability": ["func"],
+        "note_owners": ["func"],
     },
     "sim": {
         "tags": ["sim"],
@@ -53,6 +78,29 @@ INDEX_CONFIG = {
         "op": ["feature"],
         "frequency": ["feature"],
         "tf_score": ["feature"],
+    },
+    # bin_sim: native fields only, written directly from bin_sim doc + denormalized file meta
+    "bin_sim": {
+        "md5_a": ["bin_sim"],
+        "md5_b": ["bin_sim"],
+        "algo": ["bin_sim"],
+        "file_name_a": ["bin_sim"],  # denormalized from file meta at build time
+        "file_name_b": ["bin_sim"],
+        "file_tags_a": ["bin_sim"],  # denormalized tags for binary A
+        "file_tags_b": ["bin_sim"],
+        "file_user_tags_a": ["bin_sim"],
+        "file_user_tags_b": ["bin_sim"],
+        "score": ["bin_sim"],  # numeric
+        "score_sim_weighted": ["bin_sim"],  # numeric
+        "score_collection_weighted": ["bin_sim"],  # numeric
+        "coverage_a": ["bin_sim"],  # numeric
+        "coverage_b": ["bin_sim"],  # numeric
+        "shared_clusters": ["bin_sim"],  # numeric
+        "computed_at": ["bin_sim"],  # numeric (timestamp)
+        "architecture_a": ["bin_sim"],
+        "architecture_b": ["bin_sim"],
+        "functions_count_a": ["bin_sim"],  # numeric
+        "functions_count_b": ["bin_sim"],  # numeric
     },
 }
 
@@ -79,6 +127,7 @@ INDEX_CONFIG_legacy = {
         "calling_convention": ["func"],
         "entrypoint_address": ["func", "sim"],
         "decompiler_id": ["func"],
+        "note_owners": ["func"],
         "instruction_count": ["func"],  # numeric
         "bsim_features_count": ["func"],  # numeric
     },
@@ -93,11 +142,23 @@ NUM_FIELDS = {
     "batch_order",
     "entry_date",
     "file_date",
+    "function_count",
     "instruction_count",
     "bsim_features_count",
+    "cohesion_score",
     "cluster_stability",
     "frequency",
     "tf_score",
+    # bin_sim numeric fields
+    "score",
+    "score_sim_weighted",
+    "score_collection_weighted",
+    "coverage_a",
+    "coverage_b",
+    "shared_clusters",
+    "functions_count_a",
+    "functions_count_b",
+    "computed_at",
 }
 
 EXACT_FIELDS = {
@@ -137,6 +198,21 @@ def get_native_fields(source_level: str, is_num: bool) -> list[str]:
     ]
 
 
+def get_fields_targeting_level(level: str, is_num: bool) -> list[str]:
+    """Returns all fields (from any source level) that target 'level'.
+    Used to ensure that all fields targeting 'level' (both native and propagated)
+    are indexed when saving/processing objects at that level.
+    """
+    fields = set()
+    for src_level, cfg in INDEX_CONFIG.items():
+        if src_level == "bin_sim":
+            continue
+        for field, targets in cfg.items():
+            if level in targets and (field in NUM_FIELDS) == is_num:
+                fields.add(resolve_target_field(src_level, level, field))
+    return list(fields)
+
+
 # ---------------------------------------------------------------------------
 # Accessors for similarity_service.py (Propagation during build)
 # ---------------------------------------------------------------------------
@@ -155,6 +231,8 @@ def get_propagated_fields(target_level: str) -> dict:
     """
     result = {"file": [], "func": [], "sim": []}
     for src_level, fields in INDEX_CONFIG.items():
+        if src_level == "bin_sim":
+            continue  # bin_sim is standalone, not propagated
         for field, targets in fields.items():
             if target_level in targets and field not in NUM_FIELDS:
                 target_field = resolve_target_field(src_level, target_level, field)

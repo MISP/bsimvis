@@ -411,7 +411,8 @@ def search_features():
             "hash": request.args.get("hash", ""),
             "type": request.args.get("type", ""),
             "op": request.args.get("op", ""),
-            "sort_by": request.args.get("sort_by") or request.args.get("sort", "tf_score"),
+            "sort_by": request.args.get("sort_by")
+            or request.args.get("sort", "tf_score"),
             "sort_order": request.args.get("sort_order")
             or request.args.get("order", "desc"),
             "offset": offset,

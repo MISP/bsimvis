@@ -202,8 +202,7 @@ def delete_collection():
 
         job_service = JobService()
         job_id = job_service.create_job(
-            JobType.DELETE_COLLECTION,
-            {"collection": collection}
+            JobType.DELETE_COLLECTION, {"collection": collection}
         )
         return {"job_id": job_id, "status": "enqueued"}
     except Exception as e:
@@ -224,12 +223,9 @@ def clean_collection():
 
         job_service = JobService()
         job_id = job_service.create_job(
-            JobType.CLEAN_COLLECTION,
-            {"collection": collection}
+            JobType.CLEAN_COLLECTION, {"collection": collection}
         )
         return {"job_id": job_id, "status": "enqueued"}
     except Exception as e:
         logging.error(f"Error in clean_collection route: {e}", exc_info=True)
         return {"error": str(e)}, 500
-
-

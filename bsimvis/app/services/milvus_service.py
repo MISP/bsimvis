@@ -273,9 +273,10 @@ class MilvusService:
                 logging.info(f"[*] Dropped Milvus collection: {collection_name}")
                 return True
         except Exception as e:
-            logging.error(f"[!] Failed to drop Milvus collection {collection_name}: {e}")
+            logging.error(
+                f"[!] Failed to drop Milvus collection {collection_name}: {e}"
+            )
         return False
 
 
 milvus_service = MilvusService()
-

@@ -59,7 +59,9 @@ def search_bin_sims():
             t.strip().lower() for t in request.args.getlist("file_tag") if t.strip()
         ]
         exclude_file_tag_filters = [
-            t.strip().lower() for t in request.args.getlist("exclude_file_tag") if t.strip()
+            t.strip().lower()
+            for t in request.args.getlist("exclude_file_tag")
+            if t.strip()
         ]
         exclude_file_static_tag_filters = [
             t.strip().lower()
@@ -85,7 +87,9 @@ def search_bin_sims():
             if t.strip()
         ]
         exclude_sim_user_tag_filters = [
-            t.strip().lower() for t in request.args.getlist("exclude_user_tag") if t.strip()
+            t.strip().lower()
+            for t in request.args.getlist("exclude_user_tag")
+            if t.strip()
         ]
 
         # 1. Fetch Candidate SIDs
@@ -300,7 +304,9 @@ def search_bin_sims():
                 combined_user_tags = set(
                     t.lower() for t in ld["file_user_tags_a"] + ld["file_user_tags_b"]
                 )
-                if any(tf in combined_user_tags for tf in exclude_file_user_tag_filters):
+                if any(
+                    tf in combined_user_tags for tf in exclude_file_user_tag_filters
+                ):
                     continue
 
             filtered_docs.append(ld)
@@ -368,18 +374,31 @@ def search_bin_sims():
                     "functions_count_b"
                 ) or file_funcs_count.get(m_b, 0)
 
-                doc["compiler_a"] = meta_a.get("compiler") or meta_a.get("compiler_id", "")
-                doc["compiler_b"] = meta_b.get("compiler") or meta_b.get("compiler_id", "")
+                doc["compiler_a"] = meta_a.get("compiler") or meta_a.get(
+                    "compiler_id", ""
+                )
+                doc["compiler_b"] = meta_b.get("compiler") or meta_b.get(
+                    "compiler_id", ""
+                )
                 doc["entry_date_a"] = meta_a.get("entry_date", 0)
                 doc["entry_date_b"] = meta_b.get("entry_date", 0)
 
                 normalize_tags(doc)
-                normalize_tags(doc, tag_fields=["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"])
+                normalize_tags(
+                    doc,
+                    tag_fields=[
+                        "file_tags_a",
+                        "file_user_tags_a",
+                        "file_tags_b",
+                        "file_user_tags_b",
+                    ],
+                )
 
                 # Re-apply sim_tag_filters if provided
                 if sim_tag_filters:
                     combined_sim_tags = set(
-                        t.lower() for t in doc.get("tags", []) + doc.get("user_tags", [])
+                        t.lower()
+                        for t in doc.get("tags", []) + doc.get("user_tags", [])
                     )
                     if not all(tf in combined_sim_tags for tf in sim_tag_filters):
                         total -= 1
@@ -387,13 +406,16 @@ def search_bin_sims():
 
                 if exclude_sim_tag_filters:
                     combined_sim_tags = set(
-                        t.lower() for t in doc.get("tags", []) + doc.get("user_tags", [])
+                        t.lower()
+                        for t in doc.get("tags", []) + doc.get("user_tags", [])
                     )
                     if any(tf in combined_sim_tags for tf in exclude_sim_tag_filters):
                         total -= 1
                         continue
                 if exclude_sim_static_tag_filters:
-                    combined_sim_static_tags = set(t.lower() for t in doc.get("tags", []))
+                    combined_sim_static_tags = set(
+                        t.lower() for t in doc.get("tags", [])
+                    )
                     if any(
                         tf in combined_sim_static_tags
                         for tf in exclude_sim_static_tag_filters
@@ -405,7 +427,8 @@ def search_bin_sims():
                         t.lower() for t in doc.get("user_tags", [])
                     )
                     if any(
-                        tf in combined_sim_user_tags for tf in exclude_sim_user_tag_filters
+                        tf in combined_sim_user_tags
+                        for tf in exclude_sim_user_tag_filters
                     ):
                         total -= 1
                         continue
@@ -421,4 +444,3 @@ def search_bin_sims():
     except Exception as e:
         logging.error(f"Error in search_bin_sims: {e}", exc_info=True)
         return {"error": str(e)}, 500
-

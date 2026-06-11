@@ -9,6 +9,38 @@ if (typeof window.getCurrentCollection !== 'function') {
 
 let tagMetadata = {};
 window.tagMetadata = tagMetadata;
+
+if (typeof escapeHtml === 'undefined') {
+    window.escapeHtml = function (value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+}
+if (typeof escapeAttr === 'undefined') window.escapeAttr = window.escapeHtml;
+if (typeof jsString === 'undefined') {
+    window.jsString = function (value) {
+        return JSON.stringify(String(value ?? ''))
+            .replace(/</g, '\\u003C')
+            .replace(/>/g, '\\u003E')
+            .replace(/&/g, '\\u0026')
+            .replace(/\u2028/g, '\\u2028')
+            .replace(/\u2029/g, '\\u2029');
+    };
+}
+if (typeof safeCssColor === 'undefined') {
+    window.safeCssColor = function (value, fallback = '#66d9ef') {
+        const color = String(value ?? '').trim();
+        if (/^#[0-9a-fA-F]{3,8}$/.test(color)) return color;
+        if (/^rgba?\(\s*[0-9.]+%?\s*,\s*[0-9.]+%?\s*,\s*[0-9.]+%?(\s*,\s*(0|1|0?\.[0-9]+))?\s*\)$/.test(color)) return color;
+        if (/^hsla?\(\s*[0-9.]+(?:deg)?\s*,\s*[0-9.]+%\s*,\s*[0-9.]+%(\s*,\s*(0|1|0?\.[0-9]+))?\s*\)$/.test(color)) return color;
+        return fallback;
+    };
+}
+
 let isFetchingTagMetadata = false;
 let tagFetchPromise = null;
 
@@ -45,16 +77,16 @@ async function fetchTagMetadata(collection) {
 function getRawTagColor(analysisTags, userTags = []) {
     const allTags = [...(analysisTags || []), ...(userTags || [])].filter(t => t && t.trim());
     if (allTags.length === 0) return null;
-    
+
     let bestColor = null;
     let maxPrio = -1;
     allTags.forEach(t => {
         let meta = tagMetadata[t];
         if (t === 'bookmark') meta = { color: '#66d9ef', priority: 1000 };
         if (t === 'ignore') meta = { color: '#f92672', priority: 900 };
-        const color = (meta && meta.color) ? meta.color : '#66d9ef';
+        const color = safeCssColor((meta && meta.color) ? meta.color : '#66d9ef');
         const priority = (meta && meta.priority !== undefined) ? meta.priority : 0;
-        
+
         if (priority >= maxPrio) {
             maxPrio = priority;
             bestColor = color;
@@ -66,7 +98,7 @@ function getRawTagColor(analysisTags, userTags = []) {
 function getRowTagColor(analysisTags, userTags = []) {
     const colorEnabled = typeof UIParams !== 'undefined' ? UIParams.colorByTag : (localStorage.getItem('sim-color-by-tag') === 'true');
     if (!colorEnabled) return "";
-    
+
     const bestColor = getRawTagColor(analysisTags, userTags);
     if (bestColor) {
         return `linear-gradient(90deg, ${bestColor}44 0%, transparent 100%)`;
@@ -102,7 +134,7 @@ function refreshAllRowColors() {
 
         const analystCards = editor.querySelectorAll('.sim-tag-card');
         const analysisCards = editor.querySelectorAll('.analysis-tag-badge');
-        
+
         const userTags = Array.from(analystCards).map(c => c.textContent.replace('×', '').trim());
         const analysisTags = Array.from(analysisCards).map(c => c.textContent.trim());
 
@@ -160,10 +192,10 @@ window.showTooltip = (e, tag, coll) => {
         el.style.cssText = "position:fixed; z-index:20005; background:rgba(20,22,26,0.95); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
         document.body.appendChild(el);
     }
-    
-    el.innerHTML = `<div style="color:var(--dim)">Loading stats for <b>${tag}</b>...</div>`;
+
+    el.innerHTML = `<div style="color:var(--dim)">Loading stats for <b>${escapeHtml(tag)}</b>...</div>`;
     el.style.display = 'block';
-    
+
     fetch(`/api/tags/stats?collection=${coll}&tag=${encodeURIComponent(tag)}`)
         .then(res => res.json())
         .then(stats => {
@@ -172,7 +204,7 @@ window.showTooltip = (e, tag, coll) => {
                 <div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:5px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
                     <div style="display:flex; align-items:center; gap:8px;">
                         <span style="width:10px; height:10px; border-radius:50%; background:${meta.color}"></span>
-                        ${tag}
+                        ${escapeHtml(tag)}
                     </div>
                     <div style="font-size:0.65rem; background:rgba(255,171,46,0.1); color:var(--accent); padding:2px 6px; border-radius:4px; border:1px solid rgba(255,171,46,0.2);">
                         Prio: ${meta.priority || 0}
@@ -186,7 +218,7 @@ window.showTooltip = (e, tag, coll) => {
                 <div style="margin-top:8px; font-size:0.65rem; color:var(--dim); font-style:italic;">Right-click tag to customize</div>
             `;
         });
-        
+
     const moveTooltip = (ev) => {
         let x = ev.clientX + 15;
         let y = ev.clientY + 15;
@@ -202,7 +234,7 @@ window.getTagMetadata = (tag) => {
     if (tag === 'bookmark') return { color: '#66d9ef', priority: 1000 };
     if (tag === 'ignore') return { color: '#f92672', priority: 900 };
     const m = tagMetadata[tag] || (window.parent && window.parent.tagMetadata && window.parent.tagMetadata[tag]);
-    if (m) return m;
+    if (m) return { ...m, color: safeCssColor(m.color) };
     const palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700", "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"];
     let hash = 0; for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
     return { color: palette[Math.abs(hash) % palette.length], priority: 0 };
@@ -219,8 +251,9 @@ window.hideTooltip = () => {
 window.handleTagContextMenu = (e, tag) => {
     e.preventDefault();
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
-    const currentMeta = tagMetadata[tag] || { color: "#66d9ef", priority: 0 };
-    
+    const currentMeta = { ...(tagMetadata[tag] || { color: "#66d9ef", priority: 0 }) };
+    currentMeta.color = safeCssColor(currentMeta.color);
+
     let menu = document.getElementById('tag-custom-context-menu');
     if (!menu) {
         menu = document.createElement('div');
@@ -228,22 +261,22 @@ window.handleTagContextMenu = (e, tag) => {
         menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
         document.body.appendChild(menu);
     }
-    
+
     menu.innerHTML = `
         <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center;">
-            <span>Tag: ${tag}</span>
+            <span>Tag: ${escapeHtml(tag)}</span>
             <button onclick="document.getElementById('tag-custom-context-menu').style.display='none'" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
         </div>
         <div style="padding:15px; display:flex; flex-direction:column; gap:15px;">
             <div id="tag-picker-container" style="display:flex; justify-content:center;"></div>
-            
+
             <div style="display:flex; flex-direction:column; gap:8px;">
                 <label style="font-size:0.75rem; color:var(--dim); display:flex; justify-content:space-between;">
                     Priority <span id="tag-prio-val" style="color:var(--accent)">${currentMeta.priority}</span>
                 </label>
                 <input type="range" id="tag-prio-slider" min="0" max="1000" step="10" value="${currentMeta.priority}" style="width:100%; cursor:pointer;">
             </div>
-            
+
             <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
                 Apply Changes
             </button>
@@ -272,7 +305,7 @@ window.handleTagContextMenu = (e, tag) => {
         saveBtn.innerText = "Saving...";
         const newColor = colorPicker.color.hexString;
         const newPrio = parseInt(prioSlider.value);
-        
+
         try {
             await Promise.all([
                 fetch('/api/tags/color', {
@@ -286,7 +319,7 @@ window.handleTagContextMenu = (e, tag) => {
                     body: JSON.stringify({collection: coll, tag: tag, priority: newPrio})
                 })
             ]);
-            
+
             // Force immediate metadata sync
             const updatedMeta = { color: newColor, priority: newPrio };
             tagMetadata[tag] = updatedMeta;
@@ -311,7 +344,7 @@ window.handleTagContextMenu = (e, tag) => {
             }
 
             menu.style.display = 'none';
-            
+
         } catch (err) {
             console.error("Failed to save tag metadata", err);
             saveBtn.disabled = false;
@@ -320,16 +353,16 @@ window.handleTagContextMenu = (e, tag) => {
     };
 
     menu.style.display = 'block';
-    
+
     // Position handling
     let x = e.clientX;
     let y = e.clientY;
     if (x + 240 > window.innerWidth) x -= 240;
     if (y + 350 > window.innerHeight) y -= 350;
-    
+
     menu.style.left = x + 'px';
     menu.style.top = y + 'px';
-    
+
     const closeMenu = (me) => {
         if (!menu.contains(me.target)) {
             menu.style.display = 'none';
@@ -344,52 +377,53 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const isIgnored = userTagsList.includes('ignore');
     const editorClass = etype === 'similarity' ? 'sim-tags-editor' : 'entity-tags-editor';
     const bookmarkOnClick = etype === 'similarity'
-        ? `toggleBookmark(event, '${eid}')`
-        : `toggleEntityBookmark(event, '${etype}', '${eid}')`;
+        ? `toggleBookmark(event, ${jsString(eid)})`
+        : `toggleEntityBookmark(event, ${jsString(etype)}, ${jsString(eid)})`;
 
     const ignoreOnClick = etype === 'similarity'
-        ? `toggleIgnore(event, '${eid}')`
-        : `toggleEntityIgnore(event, '${etype}', '${eid}')`;
+        ? `toggleIgnore(event, ${jsString(eid)})`
+        : `toggleEntityIgnore(event, ${jsString(etype)}, ${jsString(eid)})`;
 
-    const addOnClick = `startAddTag(event, '${etype}', '${eid}')`;
+    const addOnClick = `startAddTag(event, ${jsString(etype)}, ${jsString(eid)})`;
 
-    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${t}">${t}</span>`).join('');
-    
+    const analysisHtml = tagsList.map(t => `<span class="analysis-tag-badge" title="Analysis Tag: ${escapeAttr(t)}">${escapeHtml(t)}</span>`).join('');
+
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
         const meta = tagMetadata[t] || { color: '#66d9ef' };
-        const color = meta.color;
-        const removeClick = `removeTag(event, '${etype}', '${eid}', '${t}')`;
+        const color = safeCssColor(meta.color);
+        const removeClick = `removeTag(event, ${jsString(etype)}, ${jsString(eid)}, ${jsString(t)})`;
         const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
-        
+
         return `
-        <span class="sim-tag-card" 
-              style="border-color:${color}44; color:${color}; background:${color}11; cursor:pointer;" 
-              onmouseenter="showTooltip(event, '${t}', '${coll}')" 
+        <span class="sim-tag-card"
+              style="border-color:${color}44; color:${color}; background:${color}11; cursor:pointer;"
+              onmouseenter="showTooltip(event, ${escapeAttr(jsString(t))}, ${escapeAttr(jsString(coll))})"
               onmouseleave="hideTooltip()"
-              oncontextmenu="handleTagContextMenu(event, '${t}')">
-            ${t} 
-            <span class="remove-tag-btn" onclick="${removeClick}" style="background:${color}22">×</span>
+              oncontextmenu="handleTagContextMenu(event, ${escapeAttr(jsString(t))})">
+            ${escapeHtml(t)}
+            <span class="remove-tag-btn" onclick="${escapeAttr(removeClick)}" style="background:${escapeAttr(color)}22">×</span>
         </span>`;
     }).join('');
     return `
-        <div class="${editorClass}" data-etype="${etype}" data-eid="${eid}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle;">
-            <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" 
+        <div class="${editorClass}" data-etype="${escapeAttr(etype)}" data-eid="${escapeAttr(eid)}" style="display:inline-flex; flex-wrap:wrap; gap:2px; align-items:center; vertical-align:middle;">
+            <button class="bookmark-btn ${isBookmarked ? 'active' : ''}"
                     title="${isBookmarked ? 'Remove Bookmark' : 'Add Bookmark'}"
-                    onclick="${bookmarkOnClick}">
+                    onclick="${escapeAttr(bookmarkOnClick)}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
             </button>
-            <button class="ignore-btn ${isIgnored ? 'active' : ''}" 
+            <button class="ignore-btn ${isIgnored ? 'active' : ''}"
                     title="${isIgnored ? 'Remove Ignore' : 'Add Ignore'}"
-                    onclick="${ignoreOnClick}">
+                    onclick="${escapeAttr(ignoreOnClick)}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
             </button>
             ${analysisHtml}
             ${userHtml}
-            <button class="add-tag-btn" onclick="${addOnClick}">+</button>
+            <button class="add-tag-btn" onclick="${escapeAttr(addOnClick)}">+</button>
         </div>
     `;
 };
+
 window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     const { collection } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: 'main' };
@@ -502,7 +536,7 @@ window.moveClusterCardTooltip = function(e) {
             return;
         }
     }
-    
+
     const container = e.target.closest('.cluster-cards-container');
     if (container) {
         const overflow = container.querySelector('.cluster-overflow-box');
@@ -512,7 +546,7 @@ window.moveClusterCardTooltip = function(e) {
         
         let x = boxRect.right + 15;
         let y = boxRect.top;
-        
+
         if (x + tooltipRect.width > window.innerWidth) {
             x = boxRect.left - tooltipRect.width - 15;
         }
@@ -528,7 +562,12 @@ window.moveClusterCardTooltip = function(e) {
 window.renderClusterCards = (clusters, isBinary = false) => {
     if (!clusters || clusters.length === 0) return '';
     
-    const sorted = [...clusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    const threshold = typeof UIParams !== 'undefined' ? UIParams.cohesionThreshold : 0.5;
+    const validClusters = clusters.filter(c => (c.cohesion_score || 0) >= threshold);
+    if (validClusters.length === 0) return '';
+
+    const sorted = [...validClusters].sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0));
+    
     const renderCard = (c, isHidden = false) => {
         const name = c.cluster_name || `Cluster ${c.cluster_id}`;
         const score = (c.cohesion_score || 0).toFixed(2);
@@ -550,30 +589,29 @@ window.renderClusterCards = (clusters, isBinary = false) => {
         }
         
         const maxWidth = isBinary ? '160px' : '80px';
-        
         const cardClass = isHidden ? 'tag-card cluster-card cluster-hidden' : 'tag-card cluster-card';
         const clusterType = isBinary ? 'file' : 'function';
 
         return `
         <span class="${cardClass}"
-              onmouseenter="showClusterCardTooltip(event, '${uuid}', '${name.replace(/'/g, "\\'")}', ${c.member_count || 0}, ${c.cluster_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0}, '${clusterType}')"
+              onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
-              onclick="applyClusterFilter('${uuid}', ${isBinary})"
+              onclick="applyClusterFilter(${escapeAttr(jsString(uuid))}, ${isBinary})"
               style="border-color:${color}44; color:${color}; background:${color}11; align-items:center; gap:4px; padding:2px 6px 2px 8px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"></circle>
                 <circle cx="12" cy="12" r="4"></circle>
             </svg>
-            <span style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${displayName.replace(/"/g, '&quot;')}">${displayName}</span>
-            <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${c.member_count || 0}</span>
+            <span style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
+            <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
         </span>`;
     };
 
     const hasMore = sorted.length > 1;
     const moreHtml = hasMore ? `
-        <span class="analysis-tag-badge cluster-card-more" 
+        <span class="analysis-tag-badge cluster-card-more"
               style="cursor:help; margin:2px; font-size:0.65rem; padding: 2px 6px;">
             +${sorted.length - 1}
         </span>` : '';
@@ -756,7 +794,7 @@ function attachAutocomplete(input, level, field, onSelect) {
             div.className = 'tag-suggestion-item';
             div.style.display = 'flex';
             div.style.justifyContent = 'space-between';
-            div.innerHTML = `<span>${item.value}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${item.count}</span>`;
+            div.innerHTML = `<span>${escapeHtml(item.value)}</span> <span class="dim" style="font-size:0.6rem; margin-left:10px;">${escapeHtml(item.count)}</span>`;
             div.onmousedown = (e) => {
                 e.preventDefault();
                 onSelect(item.value);
@@ -1044,7 +1082,7 @@ async function confirmAddTag(etype, eid, tag, container) {
 
 function updateUIForTagAdd(editors, tag) {
     const meta = tagMetadata[tag] || { color: '#66d9ef' };
-    const color = meta.color;
+    const color = safeCssColor(meta.color);
     const isBookmark = (tag === 'bookmark');
     const isIgnore = (tag === 'ignore');
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
@@ -1066,14 +1104,14 @@ function updateUIForTagAdd(editors, tag) {
                 card.style.color = color;
                 card.style.background = color + '11';
                 card.style.cursor = 'pointer';
-                
-                // Add event handlers for tooltip and context menu
-                card.setAttribute('onmouseenter', `showTooltip(event, '${tag}', '${coll}')`);
-                card.setAttribute('onmouseleave', 'hideTooltip()');
-                card.setAttribute('oncontextmenu', `handleTagContextMenu(event, '${tag}')`);
 
-                const removeClick = `removeTag(event, '${editor.dataset.etype}', '${editor.dataset.eid}', '${tag}')`;
-                card.innerHTML = `${tag} <span class="remove-tag-btn" onclick="${removeClick}" style="background:${color}22">×</span>`;
+                // Add event handlers for tooltip and context menu
+                card.setAttribute('onmouseenter', `showTooltip(event, ${jsString(tag)}, ${jsString(coll)})`);
+                card.setAttribute('onmouseleave', 'hideTooltip()');
+                card.setAttribute('oncontextmenu', `handleTagContextMenu(event, ${jsString(tag)})`);
+
+                const removeClick = `removeTag(event, ${jsString(editor.dataset.etype)}, ${jsString(editor.dataset.eid)}, ${jsString(tag)})`;
+                card.innerHTML = `${escapeHtml(tag)} <span class="remove-tag-btn" onclick="${escapeAttr(removeClick)}" style="background:${escapeAttr(color)}22">×</span>`;
                 const addBtn = editor.querySelector('.add-tag-btn');
                 if (addBtn) editor.insertBefore(card, addBtn);
                 else editor.appendChild(card);

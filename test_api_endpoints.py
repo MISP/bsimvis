@@ -685,10 +685,10 @@ def run_all_tests():
                 "metadata": {
                     "yara": ["test_yara_rule_propagate"],
                     "avtype": ["test_avtype_propagate"],
-                    "file_names": ["propagated_test_name.exe"]
-                }
+                    "file_names": ["propagated_test_name.exe"],
+                },
             },
-            label=f"PATCH /api/file/{file_md5}/metadata"
+            label=f"PATCH /api/file/{file_md5}/metadata",
         )
         if patch_body and "job_id" in patch_body:
             job_id = patch_body["job_id"]
@@ -710,7 +710,7 @@ def run_all_tests():
                 "GET",
                 "/api/file/search",
                 params={"collection": COLLECTION, "yara": "test_yara_rule_propagate"},
-                label="GET /api/file/search (by propagated yara)"
+                label="GET /api/file/search (by propagated yara)",
             )
 
         bulk_body = test_endpoint(
@@ -723,9 +723,9 @@ def run_all_tests():
                         "yara": ["bulk_yara_rule_propagate"],
                         "avtype": ["bulk_avtype_propagate"],
                     }
-                }
+                },
             },
-            label="POST /api/file/metadata/propagate"
+            label="POST /api/file/metadata/propagate",
         )
         if bulk_body and "job_id" in bulk_body:
             job_id = bulk_body["job_id"]
@@ -747,7 +747,7 @@ def run_all_tests():
                 "GET",
                 "/api/file/search",
                 params={"collection": COLLECTION, "yara": "bulk_yara_rule_propagate"},
-                label="GET /api/file/search (by bulk propagated yara)"
+                label="GET /api/file/search (by bulk propagated yara)",
             )
 
     # ── Collection Clean ───────────────────────────────────────────────────
@@ -797,7 +797,6 @@ def run_all_tests():
             except Exception as e:
                 vprint(f"     Poll deletion error: {e}")
             time.sleep(2)
-
 
 
 # ---------------------------------------------------------------------------

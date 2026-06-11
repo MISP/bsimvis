@@ -10,7 +10,7 @@ window.Breadcrumbs = {
         if (viewKey !== 'collections' && collection) {
             segments.push({
                 label: collection,
-                url: `/collections`,
+                url: '/collections',
                 icon: 'fa-solid fa-database'
             });
         }

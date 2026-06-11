@@ -135,16 +135,20 @@ file_metadata_update_model = api.model(
     "FileMetadataUpdate",
     {
         "collection": fields.String(default="main", description="Collection name"),
-        "metadata": fields.Raw(required=True, description="Dictionary of metadata fields to update")
-    }
+        "metadata": fields.Raw(
+            required=True, description="Dictionary of metadata fields to update"
+        ),
+    },
 )
 
 bulk_metadata_propagate_model = api.model(
     "BulkMetadataPropagate",
     {
         "collection": fields.String(default="main", description="Collection name"),
-        "updates": fields.Raw(required=True, description="Mapping of MD5 to metadata dictionary")
-    }
+        "updates": fields.Raw(
+            required=True, description="Mapping of MD5 to metadata dictionary"
+        ),
+    },
 )
 
 # Similarity Models
@@ -207,7 +211,9 @@ note_add_model = api.model(
     {
         "collection": fields.String(required=True, example="main"),
         "func_id": fields.String(required=True, example="main:func:123:456"),
-        "text": fields.String(required=True, example="This function handles input validation"),
+        "text": fields.String(
+            required=True, example="This function handles input validation"
+        ),
         "owner": fields.String(example="user"),
     },
 )
@@ -447,7 +453,9 @@ class CollectionDelete(Resource):
         api.model(
             "CollectionDelete",
             {
-                "collection": fields.String(required=True, description="Collection name to delete"),
+                "collection": fields.String(
+                    required=True, description="Collection name to delete"
+                ),
             },
         )
     )
@@ -464,7 +472,9 @@ class CollectionClean(Resource):
         api.model(
             "CollectionClean",
             {
-                "collection": fields.String(required=True, description="Collection name to clean"),
+                "collection": fields.String(
+                    required=True, description="Collection name to clean"
+                ),
             },
         )
     )
@@ -473,8 +483,6 @@ class CollectionClean(Resource):
         from bsimvis.app.routes.search_collection import clean_collection
 
         return clean_collection()
-
-
 
 
 # --- Batch Namespace ---
@@ -632,7 +640,6 @@ class FileSearch(Resource):
         return search_files()
 
 
-
 @ns_file.route("/details/<string:file_md5>")
 class FileDetails(Resource):
     @ns_file.doc(description="Get full metadata for a file including its clusters")
@@ -643,12 +650,14 @@ class FileDetails(Resource):
     )
     def get(self, file_md5):
         from flask import request
+
         collection = request.args.get("collection", "main")
         from bsimvis.app.routes.search_file import get_file_details
+
         return get_file_details(collection, file_md5)
 
-@ns_file.route("/upload_file_data")
 
+@ns_file.route("/upload_file_data")
 class FileUpload(Resource):
     @ns_file.expect(file_upload_data_model)
     def post(self):
@@ -710,6 +719,7 @@ class FileMetadata(Resource):
     def patch(self, file_md5):
         """Partially updates metadata for a file and triggers propagation."""
         from bsimvis.app.routes.file import update_file_metadata
+
         return update_file_metadata(file_md5)
 
 
@@ -720,6 +730,7 @@ class BulkMetadataPropagate(Resource):
     def post(self):
         """Updates metadata fields in bulk and propagates them."""
         from bsimvis.app.routes.file import bulk_propagate_metadata
+
         return bulk_propagate_metadata()
 
 
@@ -1899,7 +1910,6 @@ class BinSimSearch(Resource):
         return search_bin_sims()
 
 
-
 @ns_bin_sim.route("/reindex")
 class BinSimReindex(Resource):
     @ns_bin_sim.expect(
@@ -1917,7 +1927,9 @@ class BinSimReindex(Resource):
 
         return reindex_bin_sim()
 
+
 # --- Notes Routes ---
+
 
 @ns_notes.route("/add")
 class NoteAdd(Resource):
@@ -1926,7 +1938,9 @@ class NoteAdd(Resource):
     def post(self):
         """Adds a note to a function."""
         from bsimvis.app.routes.notes import add_note
+
         return add_note()
+
 
 @ns_notes.route("/update")
 class NoteUpdate(Resource):
@@ -1935,7 +1949,9 @@ class NoteUpdate(Resource):
     def put(self):
         """Updates an existing note."""
         from bsimvis.app.routes.notes import update_note
+
         return update_note()
+
 
 @ns_notes.route("/remove")
 class NoteRemove(Resource):
@@ -1944,22 +1960,23 @@ class NoteRemove(Resource):
     def delete(self):
         """Removes a note from a function."""
         from bsimvis.app.routes.notes import remove_note
+
         return remove_note()
+
 
 @ns_notes.route("/list")
 class NoteList(Resource):
-    @ns_notes.doc(params={
-        "collection": "Collection name",
-        "func_id": "Function ID"
-    })
+    @ns_notes.doc(params={"collection": "Collection name", "func_id": "Function ID"})
     @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
     def get(self):
         """Lists all notes for a function."""
         from bsimvis.app.routes.notes import get_notes
+
         return get_notes()
 
 
 # --- File Note Routes ---
+
 
 @ns_notes.route("/file/add")
 class FileNoteAdd(Resource):
@@ -1968,7 +1985,9 @@ class FileNoteAdd(Resource):
     def post(self):
         """Adds a note to a file."""
         from bsimvis.app.routes.notes import add_file_note
+
         return add_file_note()
+
 
 @ns_notes.route("/file/update")
 class FileNoteUpdate(Resource):
@@ -1977,7 +1996,9 @@ class FileNoteUpdate(Resource):
     def put(self):
         """Updates an existing file note."""
         from bsimvis.app.routes.notes import update_file_note
+
         return update_file_note()
+
 
 @ns_notes.route("/file/remove")
 class FileNoteRemove(Resource):
@@ -1986,21 +2007,28 @@ class FileNoteRemove(Resource):
     def delete(self):
         """Removes a note from a file."""
         from bsimvis.app.routes.notes import remove_file_note
+
         return remove_file_note()
+
 
 @ns_notes.route("/file/list")
 class FileNoteList(Resource):
-    @ns_notes.doc(params={
-        "collection": "Collection name",
-        "file_id": "File ID (e.g. main:file:{md5})"
-    })
+    @ns_notes.doc(
+        params={
+            "collection": "Collection name",
+            "file_id": "File ID (e.g. main:file:{md5})",
+        }
+    )
     @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
     def get(self):
         """Lists all notes for a file."""
         from bsimvis.app.routes.notes import get_file_notes
+
         return get_file_notes()
 
+
 # --- LLM Namespace ---
+
 
 @ns_llm.route("/summarize")
 class LLMSummarize(Resource):
@@ -2008,7 +2036,9 @@ class LLMSummarize(Resource):
     def post(self):
         """Generates a summary for a function using LLM."""
         from bsimvis.app.routes.llm import summarize
+
         return summarize()
+
 
 @ns_llm.route("/chat")
 class LLMChat(Resource):
@@ -2016,15 +2046,20 @@ class LLMChat(Resource):
     def post(self):
         """Continues a discussion about a function using LLM."""
         from bsimvis.app.routes.llm import chat
+
         return chat()
+
 
 @ns_llm.route("/summarize_file")
 class LLMSummarizeFile(Resource):
-    @ns_llm.expect(api.model(
-        "LLMFileSummaryRequest",
-        {"file_id": fields.String(required=True, example="main:file:16c2addf...")}
-    ))
+    @ns_llm.expect(
+        api.model(
+            "LLMFileSummaryRequest",
+            {"file_id": fields.String(required=True, example="main:file:16c2addf...")},
+        )
+    )
     def post(self):
         """Streams a threat-intel summary for a binary file using all available metadata."""
         from bsimvis.app.routes.llm import summarize_file
+
         return summarize_file()

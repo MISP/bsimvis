@@ -265,7 +265,8 @@ class BinSimService:
         if all_unique_fids:
             if job_service and job_id:
                 job_service.add_log(
-                    job_id, f"[*] Loading metadata for {len(all_unique_fids)} functions..."
+                    job_id,
+                    f"[*] Loading metadata for {len(all_unique_fids)} functions...",
                 )
             fids_list = list(all_unique_fids)
             pipe = r.pipeline()
@@ -595,8 +596,12 @@ class BinSimService:
                 else 0.0
             )
 
-            cov_a = len(assigned_a) / len(all_funcs_a_total) if all_funcs_a_total else 0.0
-            cov_b = len(assigned_b) / len(all_funcs_b_total) if all_funcs_b_total else 0.0
+            cov_a = (
+                len(assigned_a) / len(all_funcs_a_total) if all_funcs_a_total else 0.0
+            )
+            cov_b = (
+                len(assigned_b) / len(all_funcs_b_total) if all_funcs_b_total else 0.0
+            )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
             pair_scores[(m_a, m_b)] = score_collection_weighted

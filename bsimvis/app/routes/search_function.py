@@ -89,7 +89,9 @@ def search_functions():
                                 resolve_target_field,
                             )
 
-                            allowed_fields.append(resolve_target_field(src_lvl, lvl, field))
+                            allowed_fields.append(
+                                resolve_target_field(src_lvl, lvl, field)
+                            )
                 # Deduplicate
                 allowed_fields = list(set(allowed_fields))
 
@@ -234,7 +236,8 @@ def search_functions():
             (
                 func_tag_filters,
                 "func_tag",
-                _paths_for_source("func", "tags") + _paths_for_source("func", "user_tags"),
+                _paths_for_source("func", "tags")
+                + _paths_for_source("func", "user_tags"),
             ),
             (
                 func_static_tag_filters,
@@ -249,7 +252,8 @@ def search_functions():
             (
                 file_tag_filters,
                 "file_tag",
-                _paths_for_source("file", "tags") + _paths_for_source("file", "user_tags"),
+                _paths_for_source("file", "tags")
+                + _paths_for_source("file", "user_tags"),
             ),
             (
                 file_static_tag_filters,
@@ -291,7 +295,12 @@ def search_functions():
                     logging.info(
                         f"FUNC SEARCH | {session_id} | Filter '{label}={val}' matched 0."
                     )
-                    return {"total": 0, "functions": [], "offset": offset, "limit": limit}
+                    return {
+                        "total": 0,
+                        "functions": [],
+                        "offset": offset,
+                        "limit": limit,
+                    }
 
                 add_group(all_matches, field_name=f"{label}:{val}")
 
@@ -303,7 +312,8 @@ def search_functions():
             (
                 ex_func_tag_filters,
                 "ex_func_tag",
-                _paths_for_source("func", "tags") + _paths_for_source("func", "user_tags"),
+                _paths_for_source("func", "tags")
+                + _paths_for_source("func", "user_tags"),
             ),
             (
                 ex_func_static_tag_filters,
@@ -318,7 +328,8 @@ def search_functions():
             (
                 ex_file_tag_filters,
                 "ex_file_tag",
-                _paths_for_source("file", "tags") + _paths_for_source("file", "user_tags"),
+                _paths_for_source("file", "tags")
+                + _paths_for_source("file", "user_tags"),
             ),
             (
                 ex_file_static_tag_filters,
@@ -575,4 +586,3 @@ def search_functions():
     except Exception as e:
         logging.error(f"Error in search_functions: {e}", exc_info=True)
         return {"error": str(e)}, 500
-

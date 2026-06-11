@@ -425,19 +425,29 @@ def list_clusters():
 
         reverse = sort_order == "desc"
         if sort_by == "stability":
-            matched_results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("avg_stability", 0.0), reverse=reverse
+            )
         elif sort_by == "count":
-            matched_results.sort(key=lambda x: x.get("member_count", 0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("member_count", 0), reverse=reverse
+            )
         elif sort_by == "features":
-            matched_results.sort(key=lambda x: x.get("avg_features", 0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("avg_features", 0), reverse=reverse
+            )
         elif sort_by == "cohesion":
-            matched_results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: x.get("cohesion_score", 0), reverse=reverse
+            )
         else:
-            matched_results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
+            matched_results.sort(
+                key=lambda x: str(x.get("cluster_id", "")), reverse=reverse
+            )
 
         total = len(matched_results)
         page_metas = matched_results[offset : offset + limit]
-        
+
         page_nodes = set(str(m.get("cluster_id")) for m in page_metas)
         expanded_nodes = set(page_nodes)
 
@@ -542,9 +552,7 @@ def list_clusters():
                     "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
                     "bin": member_meta_map.get(mid, {}).get("file_name"),
                     "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
-                    "v_size": member_meta_map.get(mid, {}).get(
-                        "bsim_features_count"
-                    ),
+                    "v_size": member_meta_map.get(mid, {}).get("bsim_features_count"),
                 }
                 for mid in mids
             ]
@@ -666,7 +674,13 @@ def list_cluster_members():
         m = meta[0] if isinstance(meta, list) and meta else {}
         results.append({"id": page[i], "meta": m})
 
-    return {"cluster_id": cluster_id, "total": total, "offset": offset, "limit": limit, "results": results}
+    return {
+        "cluster_id": cluster_id,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "results": results,
+    }
 
 
 def get_cluster_functions():

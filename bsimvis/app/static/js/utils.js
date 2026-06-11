@@ -1,5 +1,39 @@
 // Shared utilities for BSimVis
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value);
+}
+
+function jsString(value) {
+    return JSON.stringify(String(value ?? ''))
+        .replace(/</g, '\\u003C')
+        .replace(/>/g, '\\u003E')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+}
+
+function safeCssClassPart(value) {
+    return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function safeCssColor(value, fallback = '#66d9ef') {
+    const color = String(value ?? '').trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(color)) return color;
+    if (/^rgba?\(\s*[0-9.]+%?\s*,\s*[0-9.]+%?\s*,\s*[0-9.]+%?(\s*,\s*(0|1|0?\.[0-9]+))?\s*\)$/.test(color)) return color;
+    if (/^hsla?\(\s*[0-9.]+(?:deg)?\s*,\s*[0-9.]+%\s*,\s*[0-9.]+%(\s*,\s*(0|1|0?\.[0-9]+))?\s*\)$/.test(color)) return color;
+    return fallback;
+}
+
 function formatDate(iso) {
     if (!iso || iso === 'N/A') return '---';
     if (typeof iso === 'string' && /^\d+$/.test(iso)) {

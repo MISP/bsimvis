@@ -184,19 +184,21 @@ main {
     flex: 1;
     display: flex;
     flex-direction: column;
-    padding: 30px;
+    padding: 10px 30px 30px 30px;
     overflow: hidden;
     box-sizing: border-box;
 }
 
 .header {
     margin-bottom: 10px;
+    transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin 0.4s ease, opacity 0.3s ease, padding 0.4s ease;
 }
 
 .header-top {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 30px;
 }
 
 /* Table Styling */
@@ -465,7 +467,8 @@ tr:nth-child(even) {
     background: #ffffff;
     border-radius: 4px;
     padding: 0 12px;
-    width: 600px;
+    flex: 1;
+    min-width: 0;
     max-width: 100%;
     border: 1px solid #dcdcdc;
     transition: border-color 0.2s, box-shadow 0.2s;
@@ -1213,11 +1216,27 @@ body.sidebar-collapsed .nav-collection-container {
 }
 
 #search-area {
+    display: flex;
     transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), margin 0.4s ease, opacity 0.3s ease, padding 0.4s ease;
     max-height: 500px;
+    max-width: 50%;
 }
 
-body.header-collapsed #search-area {
+#search-area .filter-bar {
+    margin: 0;
+    padding: 0;
+    flex: 1;
+}
+
+#search-area .filter-bar > div {
+    flex: 1;
+}
+
+#search-area .search-input-wrapper {
+    flex: 1;
+}
+
+body.header-collapsed .header {
     max-height: 0 !important;
     margin-bottom: 0 !important;
     padding-top: 0 !important;
@@ -2095,3 +2114,13 @@ body.in-iframe main {
 .floating-copy-btn i {
     font-size: 1.1rem;
 }
+
+#pagination-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 20px 0;
+    width: 100%;
+}
+

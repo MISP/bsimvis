@@ -56,84 +56,84 @@
     <div id="sidebar-container"></div>
 
     <main id="main-content">
-        <div id="breadcrumbs-container"></div>
+        <div id="breadcrumbs-container" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--border); margin-bottom: 15px; border-radius: 6px; gap: 15px; flex-wrap: wrap;">
+            <div id="breadcrumbs-list"></div>
+            <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                <span id="view-total" class="badge"
+                    style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
+                <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation" style="color:#ffab2e; display:none; cursor:help; font-size: 0.9rem;" title="Pool Truncated"></i>
+                <i id="limit-warn-icon" class="fa-solid fa-circle-info" style="color:#60a5fa; display:none; cursor:help; font-size: 0.9rem;" title="Result Limit Reached"></i>
+                <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
+                <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
+                    <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+                    <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+
+                    <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
+                        title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
+                        <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
+                    </button>
+
+                    <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
+                        <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
+                    </button>
+
+                    <button id="header-clear-btn" onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
+                        <i class="fa-solid fa-trash-can"></i> Clear
+                    </button>
+                    <div id="header-history-btn-container" class="view-history-container" style="position:relative;">
+                        <button id="view-history-btn" class="top-action-btn" title="View Search History">
+                            <i class="fa-solid fa-clock-rotate-left"></i> History
+                        </button>
+                        <div id="view-history-dropdown" class="history-dropdown view-history-dropdown"
+                            style="display:none;"></div>
+                    </div>
+                    <div class="export-dropdown-container" id="export-dropdown-container"
+                        style="position:relative; display:none;">
+                        <button id="export-btn" class="top-action-btn" title="Export Results"
+                            onclick="toggleExportDropdown(event)">
+                            <i class="fa-solid fa-download" style="color:var(--accent);"></i>
+                        </button>
+                        <div id="export-dropdown" class="history-dropdown view-history-dropdown"
+                            style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
+                            <div class="history-dropdown-title" style="color:var(--accent);">Export Options</div>
+                            <a href="#"
+                                onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();"
+                                class="history-item"
+                                style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as
+                                CSV
+                            </a>
+                            <a href="#"
+                                onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();"
+                                class="history-item"
+                                style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as
+                                JSON
+                            </a>
+                        </div>
+                    </div>
+                    <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
+                        title="Toggle Filters">
+                        <i class="fa-solid fa-filter"></i> Filters
+                    </button>
+                    <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
+                        title="Toggle Search Area">
+                        <i class="fa-solid fa-magnifying-glass"></i> Search
+                    </button>
+                    <button id="header-settings-btn" onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
         <div id="dashboard-view-container" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
             <div class="header">
                 <div class="header-top">
-                    <div style="display:flex; align-items:center; gap:15px;">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <h1 id="view-title" style="margin:0">Dashboard</h1>
-                            <span id="view-collection-badge" class="badge"
-                                style="display:none; font-size:0.8rem; background:var(--card-bg); color:var(--accent); border:1px solid var(--border);"></span>
-                        </div>
-                        <span id="view-total" class="badge"
-                            style="background:rgba(255,171,46,0.1); color:var(--accent); font-size:0.75rem; display:none; border:1px solid rgba(255,171,46,0.3)"></span>
-                        <i id="pool-warn-icon" class="fa-solid fa-triangle-exclamation" style="color:#ffab2e; display:none; cursor:help; font-size: 0.9rem;" title="Pool Truncated"></i>
-                        <i id="limit-warn-icon" class="fa-solid fa-circle-info" style="color:#60a5fa; display:none; cursor:help; font-size: 0.9rem;" title="Result Limit Reached"></i>
-                        <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
+                    <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+                            <h1 id="view-title" style="margin:0; white-space:nowrap;">Dashboard</h1>
                     </div>
-                    <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
-                        <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-                        <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-
-                        <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
-                            title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
-                            <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
-                        </button>
-
-                        <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
-                            <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
-                        </button>
-
-                        <button onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
-                            <i class="fa-solid fa-trash-can"></i> Clear
-                        </button>
-                        <div class="view-history-container" style="position:relative;">
-                            <button id="view-history-btn" class="top-action-btn" title="View Search History">
-                                <i class="fa-solid fa-clock-rotate-left"></i> History
-                            </button>
-                            <div id="view-history-dropdown" class="history-dropdown view-history-dropdown"
-                                style="display:none;"></div>
-                        </div>
-                        <div class="export-dropdown-container" id="export-dropdown-container"
-                            style="position:relative; display:none;">
-                            <button id="export-btn" class="top-action-btn" title="Export Results"
-                                onclick="toggleExportDropdown(event)">
-                                <i class="fa-solid fa-download" style="color:var(--accent);"></i>
-                            </button>
-                            <div id="export-dropdown" class="history-dropdown view-history-dropdown"
-                                style="display:none; width:155px; border-top-color:var(--accent); right:0; left:auto;">
-                                <div class="history-dropdown-title" style="color:var(--accent);">Export Options</div>
-                                <a href="#"
-                                    onclick="event.preventDefault(); downloadSearchResults('csv'); closeExportDropdown();"
-                                    class="history-item"
-                                    style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
-                                    <i class="fa-solid fa-file-csv" style="color:#22c55e; font-size:0.9rem;"></i> Export as
-                                    CSV
-                                </a>
-                                <a href="#"
-                                    onclick="event.preventDefault(); downloadSearchResults('json'); closeExportDropdown();"
-                                    class="history-item"
-                                    style="display:flex; align-items:center; text-decoration:none; color:var(--text); font-size:0.75rem; gap:8px;">
-                                    <i class="fa-solid fa-file-code" style="color:#3b82f6; font-size:0.9rem;"></i> Export as
-                                    JSON
-                                </a>
-                            </div>
-                        </div>
-                        <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
-                            title="Toggle Filters">
-                            <i class="fa-solid fa-filter"></i> Filters
-                        </button>
-                        <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
-                            title="Toggle Search Area">
-                            <i class="fa-solid fa-magnifying-glass"></i> Search
-                        </button>
-                        <button onclick="toggleUISettings()" class="top-action-btn" title="UI Settings">
-                            <i class="fa-solid fa-gear"></i>
-                        </button>
-                    </div>
+                    <div id="search-area" style="margin-left:auto; flex:1;"></div>
                 </div>
-                <div id="search-area"></div>
             </div>
 
             <!-- UI Settings Panel -->
@@ -181,6 +181,7 @@
                                 <colgroup id="table-colgroup"></colgroup>
                                 <tbody id="table-body"></tbody>
                             </table>
+                            <div id="pagination-container"></div>
                         </div>
                     </div>
 
@@ -203,12 +204,9 @@
                     <div id="hierarchy-view-container" style="display: none; flex: 1; min-height: 500px; position: relative;"></div>
                     <div id="packing-view-container" style="display: none; flex: 1; min-height: 500px; position: relative;"></div>
                     <div id="chord-view-container" style="display: none; flex: 1; min-height: 500px; position: relative;"></div>
-                    <div id="upload-view-container" style="display: none; flex: 1; flex-direction: column; overflow: hidden;"></div>
+                    <div id="upload-view-container" style="display: none; flex: 1; flex-direction: column; overflow-y: auto; overflow-x: hidden;"></div>
                     <div id="binary-density-view-container" style="display: none;"></div>
 
-                </div>
-                <div id="grid-footer" style="flex-shrink:0;">
-                    <div id="pagination-container"></div>
                 </div>
             </div>
         </div>

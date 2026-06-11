@@ -380,14 +380,26 @@
                 const submenu = trigger.querySelector('.submenu');
                 if (!submenu) return;
                 
+                submenu.style.display = 'block';
                 submenu.style.left = '100%';
                 submenu.style.right = 'auto';
+                submenu.style.top = '-6px';
                 
                 const rect = submenu.getBoundingClientRect();
                 if (rect.right > window.innerWidth) {
                     submenu.style.left = 'auto';
                     submenu.style.right = '100%';
                 }
+                
+                if (rect.bottom > window.innerHeight) {
+                    const diff = rect.bottom - window.innerHeight;
+                    submenu.style.top = `-${diff + 16}px`;
+                }
+            });
+            trigger.addEventListener('mouseleave', () => {
+                const submenu = trigger.querySelector('.submenu');
+                if (!submenu) return;
+                submenu.style.display = 'none';
             });
         });
 

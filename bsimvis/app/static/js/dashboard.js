@@ -345,11 +345,11 @@ window.ModuleLoader = {
     currentModule: null,
 
     async loadView(viewName, params) {
-        console.log(`Loading view: ${viewName}`, params);
-        
+
+
         const dashboardContainer = document.getElementById('dashboard-view-container');
         const moduleContainer = document.getElementById('module-view-container');
-        
+
         if (dashboardContainer) dashboardContainer.style.display = 'none';
         if (moduleContainer) {
             moduleContainer.style.display = 'flex';
@@ -367,12 +367,16 @@ window.ModuleLoader = {
             'call_graph': window.CallGraphView,
             'feature': window.FeatureView,
             'function_features': window.FunctionFeaturesView,
-            'bin_sim': { init: (p) => { if(window.renderBinarySimilarityView) {
-                const searchParams = new URLSearchParams();
-                for(let k in p) if(p[k] !== undefined) searchParams.set(k, p[k]);
-                moduleContainer.innerHTML = '<div id="binary-similarity-container" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>';
-                window.renderBinarySimilarityView(searchParams, 'binary-similarity-container');
-            } } }
+            'bin_sim': {
+                init: (p) => {
+                    if (window.renderBinarySimilarityView) {
+                        const searchParams = new URLSearchParams();
+                        for (let k in p) if (p[k] !== undefined) searchParams.set(k, p[k]);
+                        moduleContainer.innerHTML = '<div id="binary-similarity-container" style="flex:1; display:flex; flex-direction:column; overflow:hidden;"></div>';
+                        window.renderBinarySimilarityView(searchParams, 'binary-similarity-container');
+                    }
+                }
+            }
         };
 
         const module = moduleMap[viewName];
@@ -398,7 +402,7 @@ window.ModuleLoader = {
 
         const dashboardContainer = document.getElementById('dashboard-view-container');
         const moduleContainer = document.getElementById('module-view-container');
-        
+
         if (moduleContainer) {
             moduleContainer.style.display = 'none';
             moduleContainer.innerHTML = '';
@@ -407,10 +411,40 @@ window.ModuleLoader = {
     }
 };
 
+function hideDashboardActions() {
+    const toHide = [
+        document.getElementById('search-settings-container'),
+        document.getElementById('header-clear-btn'),
+        document.getElementById('header-history-btn-container'),
+        document.getElementById('toggle-filters-btn'),
+        document.getElementById('collapse-header-btn'),
+        document.getElementById('header-settings-btn')
+    ];
+    toHide.forEach(el => {
+        if (el) el.style.display = 'none';
+    });
+    const settingsPanel = document.getElementById('ui-settings-panel');
+    if (settingsPanel) settingsPanel.style.display = 'none';
+}
+
+function showDashboardActions() {
+    const toShow = [
+        document.getElementById('header-clear-btn'),
+        document.getElementById('header-history-btn-container'),
+        document.getElementById('toggle-filters-btn'),
+        document.getElementById('collapse-header-btn'),
+        document.getElementById('header-settings-btn')
+    ];
+    toShow.forEach(el => {
+        if (el) el.style.display = '';
+    });
+}
+
 async function refreshData(appendArg = false, force = false) {
     const append = (appendArg === true);
     const { viewKey, collection, params } = getRoutingState();
-    
+
+
     // Check if we should load a module view
     if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
@@ -420,6 +454,7 @@ async function refreshData(appendArg = false, force = false) {
             const segments = window.Breadcrumbs.generate({ viewKey, collection, params }, null);
             window.Breadcrumbs.render(segments);
         }
+        hideDashboardActions();
         await ModuleLoader.loadView(viewKey, stateParams);
         return;
     }
@@ -519,7 +554,16 @@ async function refreshData(appendArg = false, force = false) {
     }
 
     // Ensure collection is in params for the API call
-    params.set('collection', collection);
+    if (viewKey !== 'jobs') {
+        params.set('collection', collection);
+    } else {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('collection')) {
+            params.set('collection', urlParams.get('collection'));
+        } else {
+            params.delete('collection');
+        }
+    }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
     updateUI(viewKey, collection, params, route);
@@ -624,6 +668,7 @@ async function refreshData(appendArg = false, force = false) {
 }
 
 function updateUI(viewKey, collection, params, route) {
+    showDashboardActions();
     const routingState = getRoutingState();
     if (window.Breadcrumbs) {
         const segments = window.Breadcrumbs.generate(routingState, route);
@@ -666,7 +711,7 @@ function updateUI(viewKey, collection, params, route) {
     }
     if (tableBodyWrap) tableBodyWrap.style.display = '';
 
-    if (pag) pag.style.display = 'block';
+    if (pag) pag.style.display = 'flex';
 
     if (window.graphInstance) window.graphInstance.stop();
     if (window.hierarchyInstance) window.hierarchyInstance.stop();
@@ -695,15 +740,6 @@ function updateUI(viewKey, collection, params, route) {
 
     // Titles
     document.getElementById('view-title').innerText = route.title;
-    const badgeEl = document.getElementById('view-collection-badge');
-    if (badgeEl) {
-        if (col) {
-            badgeEl.style.display = 'inline-block';
-            badgeEl.innerText = `Collection: ${col}`;
-        } else {
-            badgeEl.style.display = 'none';
-        }
-    }
 
     // Side Collections Info
     const viewHistoryBtnContainer = document.querySelector('.view-history-container');
@@ -732,7 +768,7 @@ function updateUI(viewKey, collection, params, route) {
             if (targetView === 'collections') {
                 url = `/collections`;
             } else if (targetView === 'jobs') {
-                url = `/jobs`;
+                url = `/jobs?collection=${encodeURIComponent(col)}`;
             } else if (targetView === 'files') {
                 url = `/collections/${encodeURIComponent(col)}/files`;
             } else if (targetView === 'functions') {
@@ -755,8 +791,13 @@ function updateUI(viewKey, collection, params, route) {
 
             if (saved) {
                 const savedParams = new URLSearchParams(saved);
-                savedParams.delete('collection'); // Already in path
-                if (savedParams.toString()) url += `?${savedParams.toString()}`;
+                if (targetView !== 'jobs') {
+                    savedParams.delete('collection'); // Already in path
+                    if (savedParams.toString()) url += `?${savedParams.toString()}`;
+                } else {
+                    savedParams.set('collection', col);
+                    url = `/jobs?${savedParams.toString()}`;
+                }
             }
             el.href = url;
 
@@ -839,7 +880,7 @@ function updateUI(viewKey, collection, params, route) {
                 tableWrap.style.flex = '1';
             }
             if (tableBodyWrap) tableBodyWrap.style.display = '';
-            if (pag) pag.style.display = 'block';
+            if (pag) pag.style.display = 'flex';
         }
         if (gview) gview.style.display = 'none';
         if (hview) hview.style.display = 'none';
@@ -1179,7 +1220,7 @@ function updateUI(viewKey, collection, params, route) {
             } else {
                 if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = '1'; }
                 if (tableBodyWrap) tableBodyWrap.style.display = '';
-                if (pag) pag.style.display = 'block';
+                if (pag) pag.style.display = 'flex';
                 if (gview) gview.style.display = 'none';
                 if (chordView) chordView.style.display = 'none';
                 if (hview) hview.style.display = 'none';
@@ -1213,8 +1254,8 @@ function updateUI(viewKey, collection, params, route) {
         // Surgical UI State Syncing (when path haven't changed)
         const p = new URLSearchParams(params);
         const syncInput = (id, paramName) => { const el = document.getElementById(id); if (el) el.value = p.get(paramName) || ''; };
-        const syncSelect = (id, paramName) => { const el = document.getElementById(id); if (el) el.value = p.get(paramName) || ''; };
-
+        const syncSelect = (id, paramName, defaultVal = '') => { const el = document.getElementById(id); if (el) el.value = p.get(paramName) || defaultVal; };
+ 
         // Sync main search bars
         syncInput('file-search-input', 'q');
         syncInput('func-search-input', 'q');
@@ -1223,11 +1264,11 @@ function updateUI(viewKey, collection, params, route) {
         syncInput('cluster-search-input', 'q');
         syncInput('bin-cluster-search-input', 'q');
         syncInput('bsim-search-input', 'q');
-
+ 
         // Sync view settings
         syncInput('sim-pool-limit', 'pool_limit');
         syncInput('sim-limit', 'limit');
-
+ 
         // Sync filter inputs
         if (path === 'files') {
             syncInput('flt-file-name', 'file_name'); syncInput('flt-file-md5', 'file_md5'); syncInput('flt-file-language', 'language_id'); syncInput('flt-file-yara', 'yara'); syncInput('flt-file-avtype', 'avtype'); syncInput('flt-file-ccip', 'cc_ip');
@@ -1239,10 +1280,18 @@ function updateUI(viewKey, collection, params, route) {
             const prefix = path === 'function-similarity' ? 'sim-' : 'flt-func-';
             const nameParam = path === 'function-similarity' ? 'name' : 'function_name';
             const addrParam = path === 'function-similarity' ? 'address' : 'entrypoint_address';
-            if (path === 'function-similarity') { syncInput('sim-min-score', 'min_score'); syncInput('sim-max-score', 'max_score'); syncSelect('sim-algo', 'algo'); syncSelect('sim-cross-binary', 'cross_binary'); syncSelect('sim-match-mode', 'match_mode'); }
+            if (path === 'function-similarity') { 
+                syncInput('sim-min-score', 'min_score'); 
+                syncInput('sim-max-score', 'max_score'); 
+                syncSelect('sim-algo', 'algo', 'unweighted_cosine'); 
+                syncSelect('sim-cross-binary', 'cross_binary', ''); 
+                syncSelect('sim-match-mode', 'match_mode', 'any'); 
+            }
             syncInput('flt-func-name', nameParam); syncInput('flt-func-namespace', 'namespace'); syncInput('flt-func-ret_type', 'return_type'); syncInput('flt-func-address', addrParam);
             syncInput('flt-func-cluster', 'cluster_uuid'); syncInput('flt-func-cluster-name', 'cluster_name'); syncInput('flt-func-min-cohesion', 'min_cohesion');
-            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name'); syncInput('flt-func-md5', 'file_md5'); syncInput('flt-func-language', 'language_id');
+            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name');
+            const md5Val = p.get('md5') || p.get('file_md5');
+            const md5El = document.getElementById('flt-func-md5'); if (md5El) md5El.value = md5Val || '';
         } else if (path === 'features-global') {
             syncInput('flt-feat-hash', 'hash'); syncInput('flt-feat-type', 'type'); syncInput('flt-feat-op', 'op');
             syncInput('flt-feat-min-tf', 'min_tf_score'); syncInput('flt-feat-max-tf', 'max_tf_score'); syncInput('flt-feat-min-freq', 'min_frequency'); syncInput('flt-feat-max-freq', 'max_frequency');
@@ -1250,11 +1299,11 @@ function updateUI(viewKey, collection, params, route) {
             syncInput('flt-cluster-uuid', 'cluster_uuid'); syncInput('flt-cluster-id', 'cluster_id'); syncInput('flt-cluster-name', 'cluster_name'); syncInput('flt-cluster-min-count', 'min_count'); syncInput('flt-cluster-min-stability', 'min_stability'); syncInput('flt-cluster-min-features', 'min_features'); syncInput('flt-cluster-min-cohesion', 'min_cohesion');
             syncInput('flt-cluster-func-name', 'func_name'); syncInput('flt-cluster-func-addr', 'func_addr'); syncInput('flt-cluster-file-name', 'file_name');
         } else if (path === 'bin-clusters') {
-            syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type');
+            syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type', 'file');
             syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion');
             syncInput('flt-bin-cluster-file-name', 'file_name'); syncInput('flt-bin-cluster-file-md5', 'file_md5');
         } else if (path === 'binary-similarity') {
-            syncSelect('bsim-score-type', 'sort'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
+            syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
             syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
         } else if (path === 'jobs') {
             syncSelect('job-type-filter', 'type'); syncSelect('job-collection-filter', 'collection'); syncSelect('job-status-filter', 'status');
@@ -1288,10 +1337,10 @@ function updateUI(viewKey, collection, params, route) {
                 if (viewMode === 'hierarchy') { if (hview) hview.style.display = 'flex'; if (pview) pview.style.display = 'none'; if (path === 'clusters') loadHierarchyView(params); else loadBinHierarchyView(params); }
                 else { if (hview) hview.style.display = 'none'; if (pview) pview.style.display = 'flex'; if (path === 'clusters') loadPackingView(params); else loadBinPackingView(params); }
             }
-        } else if (tableBodyWrap && tableBodyWrap.style.display === 'none') {
+        } else if (path !== 'upload' && tableBodyWrap && tableBodyWrap.style.display === 'none') {
             if (tableWrap) { tableWrap.style.display = 'flex'; tableWrap.style.flex = '1'; }
             tableBodyWrap.style.display = '';
-            if (pag) pag.style.display = 'block';
+            if (pag) pag.style.display = 'flex';
             if (gview) gview.style.display = 'none';
             if (chordView) chordView.style.display = 'none';
             if (hview) hview.style.display = 'none';
@@ -1301,6 +1350,11 @@ function updateUI(viewKey, collection, params, route) {
 
     // Re-inject tags for all views that support them
     setTimeout(() => {
+        // Always clear existing cards first to avoid duplicates when navigating same-view
+        ['sim', 'func', 'file', 'bin-sim'].forEach(key => {
+            const container = document.getElementById(`tag-container-${key}`);
+            if (container) container.querySelectorAll('.tag-filter-card').forEach(c => c.remove());
+        });
         const tagSearchParams = new URLSearchParams(params);
         const tagFields = [
             { key: 'sim', fields: ['sim_tag', 'sim_static_tag', 'sim_user_tag', 'exclude_sim_tag', 'exclude_sim_static_tag', 'exclude_sim_user_tag'] },
@@ -1974,8 +2028,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${p.meta1?.file_name || ''}</div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${p.meta2?.file_name || ''}</div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m1}', '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta1?.file_name || ''}</b></div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m2}', '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta2?.file_name || ''}</b></div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2152,8 +2206,12 @@ function applySimViewDefaults(hashPath, queryString) {
 function navigate(viewKey, queryParams = null, collection = null, replace = false) {
     const currentParams = new URLSearchParams(window.location.search);
     const restful = parseRestfulPath();
-    const col = collection || restful.collection || currentParams.get('collection') || 'main';
+    const path = window.location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+    const col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || 'main';
     const params = queryParams || currentParams;
+
 
     let url = `/collections/${col}/${viewKey}`;
     if (viewKey === 'files') {
@@ -2180,9 +2238,11 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
         url = `/jobs`;
     }
 
-    // Clean up params as collection is in the path
+    // Clean up params as collection is in the path (except for jobs)
     const cleanParams = new URLSearchParams(params);
-    cleanParams.delete('collection');
+    if (viewKey !== 'jobs') {
+        cleanParams.delete('collection');
+    }
 
     if (cleanParams.toString()) url += `?${cleanParams.toString()}`;
 
@@ -2323,14 +2383,14 @@ function loadUIParams() {
 window.addEventListener('load', () => {
     loadUIParams();
 
-    const restful = parseRestfulPath();
-    updateNavVisibility(restful.collection);
+    const { collection, viewKey } = getRoutingState();
+    updateNavVisibility(collection);
     if (window.location.pathname === '/' || window.location.pathname === '') {
         history.replaceState(null, '', '/collections');
     } else {
         const pathParts = window.location.pathname.split('/').filter(Boolean);
-        if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && restful.collection) {
-            history.replaceState(null, '', `/collections/${encodeURIComponent(restful.collection)}/files`);
+        if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && collection) {
+            history.replaceState(null, '', `/collections/${encodeURIComponent(collection)}/files`);
         }
     }
 

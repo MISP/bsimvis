@@ -331,18 +331,24 @@ class SimilarityService:
         if discovery_results:
             self._persist_and_index_batch(collection, algo, discovery_results)
 
-    def _persist_and_index_batch(self, collection, algo, discovery_results):
+    def _persist_and_index_batch(self, collection, algo, discovery_results, pool_id=None):
         """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
         persist_pipe = r.pipeline()
         now = int(time.time() * 1000)
 
-        def extract_md5(fid, coll):
-            prefix = f"{coll}:func:"
-            if fid.startswith(prefix):
-                parts = fid[len(prefix) :].split(":")
-                if parts:
-                    return parts[0]
+        def extract_md5(fid):
+            # FID is {coll}:func:{md5}:{addr}
+            parts = fid.split(":")
+            if len(parts) >= 3:
+                return parts[2]
+            return "unknown"
+
+        def extract_coll(fid):
+            # FID is {coll}:func:{md5}:{addr}
+            parts = fid.split(":")
+            if len(parts) >= 1:
+                return parts[0]
             return "unknown"
 
         # 1. Canonical Persistence
@@ -350,27 +356,42 @@ class SimilarityService:
             for item in candidates:
                 if fid > item["id"]:
                     id_a, id_b = fid, item["id"]
-                    md5_a, md5_b = t_md5, extract_md5(item["id"], collection)
+                    md5_a, md5_b = t_md5, extract_md5(item["id"])
                     fc_a, fc_b = t_total, item["c_total"]
+                    coll_a, coll_b = extract_coll(fid), extract_coll(item["id"])
                 else:
                     id_a, id_b = item["id"], fid
-                    md5_a, md5_b = extract_md5(item["id"], collection), t_md5
+                    md5_a, md5_b = extract_md5(item["id"]), t_md5
                     fc_a, fc_b = item["c_total"], t_total
-
-                func_prefix = f"{collection}:func:"
-                clean_id_a = (
-                    id_a[len(func_prefix) :] if id_a.startswith(func_prefix) else id_a
-                )
-                clean_id_b = (
-                    id_b[len(func_prefix) :] if id_b.startswith(func_prefix) else id_b
-                )
+                    coll_a, coll_b = extract_coll(item["id"]), extract_coll(fid)
 
                 score_rounded = round(item["score"], 4)
-                sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
+                
+                if pool_id:
+                    # Pool Namespace: global:pool:{pool_id}:sim:{fid1}::{fid2}
+                    sid = f"global:pool:{pool_id}:sim:{id_a}::{id_b}"
+                    score_key = f"global:pool:{pool_id}:sim:score"
+                    all_key = f"global:pool:{pool_id}:sim:all"
+                    involves_func_prefix = f"global:pool:{pool_id}:sim:involves:func:"
+                    involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
+                    min_feat_key = f"global:pool:{pool_id}:sim:min_features"
+                    cross_binary_prefix = f"global:pool:{pool_id}:sim:is_cross_binary:"
+                else:
+                    # Collection Namespace
+                    func_prefix = f"{collection}:func:"
+                    clean_id_a = id_a[len(func_prefix):] if id_a.startswith(func_prefix) else id_a
+                    clean_id_b = id_b[len(func_prefix):] if id_b.startswith(func_prefix) else id_b
+                    sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
+                    score_key = f"{collection}:sim:score:{algo}"
+                    all_key = f"{collection}:sim:all"
+                    involves_func_prefix = f"{collection}:sim:involves:func:"
+                    involves_file_prefix = f"{collection}:sim:involves:file:"
+                    min_feat_key = f"{collection}:sim:min_features"
+                    cross_binary_prefix = f"{collection}:sim:is_cross_binary:"
 
                 sim_doc = {
                     "type": "sim",
-                    "collection": collection,
+                    "collection": collection if not pool_id else f"pool:{pool_id}",
                     "algo": algo,
                     "score": score_rounded,
                     "id1": id_a,
@@ -383,28 +404,36 @@ class SimilarityService:
                     "entry_date": now,
                     "is_cross_binary": "true" if md5_a != md5_b else "false",
                 }
+                
+                if pool_id:
+                    sim_doc["coll_1"] = coll_a
+                    sim_doc["coll_2"] = coll_b
 
                 persist_pipe.json().set(sid, "$", sim_doc)
-                persist_pipe.zadd(
-                    f"{collection}:sim:score:{algo}", {sid: score_rounded}
-                )
-                persist_pipe.zadd(f"{collection}:sim:all", {sid: 0})
-                persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_a}", sid)
-                persist_pipe.sadd(f"{collection}:sim:involves:func:{clean_id_b}", sid)
-                persist_pipe.sadd(f"{collection}:sim:involves:file:{md5_a}", sid)
-                persist_pipe.sadd(f"{collection}:sim:involves:file:{md5_b}", sid)
-                persist_pipe.zadd(
-                    f"{collection}:sim:min_features", {sid: sim_doc["min_features"]}
-                )
-                persist_pipe.zadd(
-                    f"{collection}:sim:is_cross_binary:{sim_doc['is_cross_binary']}",
-                    {sid: 0},
-                )
+                persist_pipe.zadd(score_key, {sid: score_rounded})
+                persist_pipe.zadd(all_key, {sid: 0})
+                
+                # For involves, we use the full FID if it's a pool
+                inv_id_a = id_a if pool_id else clean_id_a
+                inv_id_b = id_b if pool_id else clean_id_b
+                persist_pipe.sadd(f"{involves_func_prefix}{inv_id_a}", sid)
+                persist_pipe.sadd(f"{involves_func_prefix}{inv_id_b}", sid)
+                
+                # File involves
+                inv_file_a = f"{coll_a}:{md5_a}" if pool_id else md5_a
+                inv_file_b = f"{coll_b}:{md5_b}" if pool_id else md5_b
+                persist_pipe.sadd(f"{involves_file_prefix}{inv_file_a}", sid)
+                persist_pipe.sadd(f"{involves_file_prefix}{inv_file_b}", sid)
+                
+                persist_pipe.zadd(min_feat_key, {sid: sim_doc["min_features"]})
+                persist_pipe.zadd(f"{cross_binary_prefix}{sim_doc['is_cross_binary']}", {sid: 0})
 
         persist_pipe.execute()
 
         # 2. Metadata Propagation (Search Index)
         propagated = get_propagated_fields("sim")
+        # Optimization: use pool_id for coll param in save_similarity if provided
+        target_coll = f"global:pool:{pool_id}" if pool_id else collection
         needs_func_meta = len(propagated.get("func", [])) > 0
         needs_file_meta = (
             len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
@@ -491,13 +520,13 @@ class SimilarityService:
 
                 save_similarity(
                     idx_pipe,
-                    collection,
+                    target_coll,
                     sid,
                     sim_doc_for_idx,
                     func_meta1=func_meta_cache.get(id_a),
                     func_meta2=func_meta_cache.get(id_b),
-                    file_meta1=file_meta_cache.get(f"{collection}:file:{md5_a}"),
-                    file_meta2=file_meta_cache.get(f"{collection}:file:{md5_b}"),
+                    file_meta1=file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
+                    file_meta2=file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
                 )
 
         idx_pipe.execute()
@@ -902,3 +931,118 @@ class SimilarityService:
         """Removes a user tag from a similarity pair (delegates to TagService)."""
         sid = self._canonicalize_sid(collection, id1, id2, algo)
         return self.tag_service.remove_user_tag(collection, "similarity", sid, tag)
+
+    def build_pool(
+        self,
+        pool_id,
+        job_service=None,
+        job_id=None,
+    ):
+        """
+        Orchestrates cross-collection similarity discovery for a pool.
+        """
+        from bsimvis.app.services.pool_service import pool_service
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            logging.error(f"Pool {pool_id} not found")
+            return False
+
+        collections = pool.get("collections", [])
+        algo = pool.get("algo", "unweighted_cosine")
+        top_k = int(pool.get("top_k", 1000))
+        min_score = float(pool.get("min_score", 0.3))
+        
+        r = self.r
+        
+        # 1. Collect all functions from all collections
+        all_function_ids = []
+        for coll in collections:
+            all_function_ids.extend([f.decode() if isinstance(f, bytes) else f for f in r.smembers(f"{coll}:all_functions")])
+            
+        total = len(all_function_ids)
+        if total == 0:
+            logging.warning(f"No functions found in collections {collections}")
+            return True
+
+        logging.info(f"[*] Building pool {pool_id} for {total} functions...")
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Building pool {pool_id} for {total} functions...")
+
+        start_time = time.time()
+        chunk_size = 5
+        
+        for i in range(0, total, chunk_size):
+            chunk = all_function_ids[i : i + chunk_size]
+            
+            # Update Progress
+            if job_service and job_id:
+                elapsed = time.time() - start_time
+                done = i
+                speed = done / elapsed if elapsed > 0 else 0
+                job_service.update_progress(job_id, done / total, {"speed": round(speed, 2)})
+
+            discovery_results = []
+            for fid in chunk:
+                # Get vector
+                vec_key = f"{fid}:vec:tf"
+                features_raw = r.zrange(vec_key, 0, -1, withscores=True)
+                if not features_raw:
+                    continue
+                
+                target_feat_total = 0
+                target_feat_norm_sq = 0
+                lua_features_args = []
+                for f_hash, f_tf_raw in features_raw:
+                    f_tf = float(f_tf_raw)
+                    target_feat_total += f_tf
+                    target_feat_norm_sq += f_tf * f_tf
+                    lua_features_args.extend([f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash), str(f_tf)])
+                
+                target_feat_norm = math.sqrt(target_feat_norm_sq)
+                
+                # Search in EACH collection of the pool
+                candidates = []
+                for search_coll in collections:
+                    # LUA discovery for each collection
+                    lua_args = [
+                        fid,
+                        search_coll,
+                        algo,
+                        min_score,
+                        target_feat_total,
+                        target_feat_norm,
+                        top_k,
+                        0, # min_features
+                    ] + lua_features_args
+                    
+                    try:
+                        coll_candidates_raw = self._find_script(args=lua_args)
+                        if coll_candidates_raw:
+                            for k in range(0, len(coll_candidates_raw), 3):
+                                candidates.append({
+                                    "id": coll_candidates_raw[k].decode() if isinstance(coll_candidates_raw[k], bytes) else coll_candidates_raw[k],
+                                    "score": float(coll_candidates_raw[k+1]),
+                                    "c_total": float(coll_candidates_raw[k+2])
+                                })
+                    except Exception as e:
+                        logging.error(f"LUA search failed for {fid} in {search_coll}: {e}")
+
+                if candidates:
+                    # Sort and limit combined candidates
+                    candidates.sort(key=lambda x: x["score"], reverse=True)
+                    candidates = candidates[:top_k]
+                    
+                    parts = fid.split(":")
+                    md5 = parts[2] if len(parts) >= 3 else "unknown"
+                    discovery_results.append((fid, md5, "", target_feat_total, candidates))
+
+            if discovery_results:
+                self._persist_and_index_batch("", algo, discovery_results, pool_id=pool_id)
+
+        # 2. Update Sync Snapshots
+        pool_service.update_sync_snapshots(pool_id)
+        
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Pool build {pool_id} completed in {time.time() - start_time:.2f}s")
+        
+        return True

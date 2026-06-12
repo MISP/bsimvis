@@ -44,17 +44,19 @@ def search_collections():
         for name in page_names:
             pipe.scard(f"{name}:all_files")
             pipe.scard(f"{name}:all_functions")
+            pipe.scard(f"{name}:all_batches")
             pipe.zrange(f"{name}:idx:file:entry_date", -1, -1, withscores=True)
             pipe.hgetall(f"global:collection:{name}:meta")
         pipe_results = pipe.execute()
 
         results = []
         for i, name in enumerate(page_names):
-            idx = i * 4
+            idx = i * 5
             total_files = pipe_results[idx]
             total_functions = pipe_results[idx + 1]
-            zrange_res = pipe_results[idx + 2]
-            meta = pipe_results[idx + 3] or {}
+            total_batches = pipe_results[idx + 2]
+            zrange_res = pipe_results[idx + 3]
+            meta = pipe_results[idx + 4] or {}
 
             # Determine last_updated from latest file entry_date
             last_updated = 0
@@ -76,6 +78,7 @@ def search_collections():
                     "name": name,
                     "total_files": int(total_files) if total_files else 0,
                     "total_functions": int(total_functions) if total_functions else 0,
+                    "total_batches": int(total_batches) if total_batches else 0,
                     "last_updated": last_updated,
                 }
             )

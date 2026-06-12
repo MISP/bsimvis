@@ -246,20 +246,28 @@ def similarity_search():
 
         r = get_redis()
 
-        # Algorithm Name Standardizer
-        # Map frontend 'milvus_sparse' to the ZSET name used in Redis
-        # Support legacy 'milvus_inverted' if it exists and milvus_sparse doesn't
-        if algo == "milvus_sparse":
-            if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(
-                f"{col}:sim:score:milvus_inverted"
-            ):
-                algo = "milvus_inverted"
-                logging.info(
-                    f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}"
-                )
+        is_pool = False
+        pool_id = None
+        if col.startswith("pool:"):
+            is_pool = True
+            pool_id = col[5:]
+            algo_zset = f"global:pool:{pool_id}:sim:score"
+            min_features_zset = f"global:pool:{pool_id}:sim:min_features"
+        else:
+            # Algorithm Name Standardizer
+            # Map frontend 'milvus_sparse' to the ZSET name used in Redis
+            # Support legacy 'milvus_inverted' if it exists and milvus_sparse doesn't
+            if algo == "milvus_sparse":
+                if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(
+                    f"{col}:sim:score:milvus_inverted"
+                ):
+                    algo = "milvus_inverted"
+                    logging.info(
+                        f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}"
+                    )
 
-        algo_zset = f"{col}:sim:score:{algo}"
-        min_features_zset = f"{col}:sim:min_features"
+            algo_zset = f"{col}:sim:score:{algo}"
+            min_features_zset = f"{col}:sim:min_features"
         pool_truncated = False
         total = 0
 
@@ -417,25 +425,22 @@ def similarity_search():
                 val_lower = val.lower()
                 matches = []
 
-                for field in allowed_fields:
-                    # # 1. Try Exact Match (O(1))
-                    # exact_key = f"{col}:idx:{lvl}:{field}:{val_lower}"
-                    # if r.exists(exact_key):
-                    #     if lvl == "sim":
-                    #         matches.append((lvl, [exact_key.split(":")[-1]], field))
-                    #     else:
-                    #         targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_key)]
-                    #         logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} exact {lvl}-level targets for '{field}:{val}'")
-                    #         matches.append((lvl, targets, field))
+                # Determine correct registry and index prefixes
+                if is_pool:
+                    reg_prefix = f"global:pool:{pool_id}:reg"
+                    idx_prefix = f"global:pool:{pool_id}:idx"
+                else:
+                    reg_prefix = f"{col}:reg"
+                    idx_prefix = f"{col}:idx"
 
-                    # 2. Try Registry-Based Match
-                    registry_key = f"{col}:reg:{lvl}:{field}"
+                for field in allowed_fields:
+                    registry_key = f"{reg_prefix}:{lvl}:{field}"
                     if r.exists(registry_key):
                         matching_buckets = []
 
                         # NEW: Perfect match fields
                         if field in EXACT_FIELDS:
-                            target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
+                            target_bucket = f"{idx_prefix}:{lvl}:{field}:{val_lower}"
                             if r.sismember(registry_key, target_bucket):
                                 matching_buckets = [target_bucket]
                         else:
@@ -458,11 +463,11 @@ def similarity_search():
                             targets = []
                             if lvl == "sim":
                                 # Fix: Don't use split(":")[-1] as tags can contain colons
-                                prefix = f"{col}:idx:sim:{field}:"
+                                sim_idx_prefix = f"{idx_prefix}:sim:{field}:"
                                 targets = [
-                                    b[len(prefix) :]
+                                    b[len(sim_idx_prefix) :]
                                     for b in matching_buckets
-                                    if b.startswith(prefix)
+                                    if b.startswith(sim_idx_prefix)
                                 ]
                             else:
                                 if len(matching_buckets) == 1:
@@ -904,7 +909,7 @@ def similarity_search():
 
             # --- LUA CONFIG ---
             lua_config = {
-                "collection": col,
+                "collection": f"global:pool:{pool_id}" if is_pool else col,
                 "algo": algo,
                 "pool_limit": pool_limit,
                 "groups": groups,  # Use the sorted groups
@@ -986,13 +991,23 @@ def similarity_search():
             sim_data_map = {}  # sid -> {id1, id2, sim_doc, other_metric, sort_sc}
 
             def extract_from_sid(sid):
-                sim_prefix = f"{col}:sim:{algo}:"
-                if not sid.startswith(sim_prefix):
-                    return None, None
-                parts = sid[len(sim_prefix) :].split("::")
-                if len(parts) != 2:
-                    return None, None
-                return f"{col}:func:{parts[0]}", f"{col}:func:{parts[1]}"
+                if is_pool:
+                    # global:pool:{pool_id}:sim:{fid1}::{fid2}
+                    sim_prefix = f"global:pool:{pool_id}:sim:"
+                    if not sid.startswith(sim_prefix):
+                        return None, None
+                    parts = sid[len(sim_prefix) :].split("::")
+                    if len(parts) != 2:
+                        return None, None
+                    return parts[0], parts[1]
+                else:
+                    sim_prefix = f"{col}:sim:{algo}:"
+                    if not sid.startswith(sim_prefix):
+                        return None, None
+                    parts = sid[len(sim_prefix) :].split("::")
+                    if len(parts) != 2:
+                        return None, None
+                    return f"{col}:func:{parts[0]}", f"{col}:func:{parts[1]}"
 
             for i, (sid, sort_sc) in enumerate(page_results):
                 raw_json = sim_raw[i * 2]
@@ -1038,30 +1053,33 @@ def similarity_search():
                 meta = (m_json[0] if isinstance(m_json, list) else m_json) or {}
                 if isinstance(meta, str):
                     meta = json.loads(meta)
+                
+                meta["collection"] = fid.split(":")[0]
 
                 scores = {}
                 for k, v in scores_raw.items():
                     k_str = k.decode() if isinstance(k, bytes) else k
                     scores[k_str] = float(v)
-                    unique_cluster_ids.add(k_str)
+                    unique_cluster_ids.add((meta["collection"], k_str))
 
                 f_meta_map[fid] = {"meta": meta, "scores": scores}
                 if meta.get("file_md5"):
-                    unique_md5s.add(meta["file_md5"])
+                    coll = fid.split(":")[0]
+                    unique_md5s.add((coll, meta["file_md5"]))
 
             # Phase 3: Fetch File Metadata (DEDUPLICATED)
             file_meta_map = {}
             if unique_md5s:
                 file_pipe = r.pipeline()
                 md5_list = list(unique_md5s)
-                for md5 in md5_list:
-                    file_pipe.json().get(f"{col}:file:{md5}:meta", "$")
+                for f_coll, md5 in md5_list:
+                    file_pipe.json().get(f"{f_coll}:file:{md5}:meta", "$")
                 file_results = file_pipe.execute()
-                for md5, res in zip(md5_list, file_results):
+                for (f_coll, md5), res in zip(md5_list, file_results):
                     fm = (res[0] if isinstance(res, list) else res) or {}
                     if isinstance(fm, str):
                         fm = json.loads(fm)
-                    file_meta_map[md5] = fm
+                    file_meta_map[f"{f_coll}:{md5}"] = fm
 
             # Phase 4: Fetch Cluster Metadata (DEDUPLICATED & ALGO-AWARE)
             cluster_meta_map = {}
@@ -1074,10 +1092,10 @@ def similarity_search():
                     if algo in ["unweighted_cosine", "weighted_cosine"]
                     else "unweighted_cosine"
                 )
-                for cid in c_list:
-                    c_pipe.json().get(f"{col}:cluster:{c_algo}:{cid}:meta", "$")
+                for c_coll, cid in c_list:
+                    c_pipe.json().get(f"{c_coll}:cluster:{c_algo}:{cid}:meta", "$")
                 c_results = c_pipe.execute()
-                for cid, res in zip(c_list, c_results):
+                for (c_coll, cid), res in zip(c_list, c_results):
                     cm = (res[0] if isinstance(res, list) else res) or {}
                     if isinstance(cm, str):
                         cm = json.loads(cm)
@@ -1098,8 +1116,8 @@ def similarity_search():
                 m1, s1 = f1_data["meta"], f1_data["scores"]
                 m2, s2 = f2_data["meta"], f2_data["scores"]
 
-                f1 = file_meta_map.get(m1.get("file_md5"), {})
-                f2 = file_meta_map.get(m2.get("file_md5"), {})
+                f1 = file_meta_map.get(f"{m1.get('collection')}:{m1.get('file_md5')}", {})
+                f2 = file_meta_map.get(f"{m2.get('collection')}:{m2.get('file_md5')}", {})
 
                 sim_score = (
                     float(s_data["sort_sc"])

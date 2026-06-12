@@ -1225,5 +1225,165 @@ class ClusterService:
 
         return True
 
+    def run_pool_clustering(
+        self,
+        pool_id,
+        min_cluster_size=None,
+        min_samples=None,
+        cluster_selection_epsilon=None,
+        selection_method=None,
+        min_sim=None,
+        min_features=None,
+        job_service=None,
+        job_id=None,
+    ):
+        """
+        Runs HDBSCAN clustering on pool-namespaced similarity pairs.
+        """
+        from bsimvis.app.services.pool_service import pool_service
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            logging.error(f"Pool {pool_id} not found")
+            return False
+
+        cluster_params = {}
+        if "cluster_params" in pool:
+            try:
+                cluster_params = json.loads(pool["cluster_params"])
+            except Exception:
+                pass
+
+        if min_cluster_size is None:
+            min_cluster_size = int(cluster_params.get("min_cluster_size", 2))
+        if min_samples is None:
+            min_samples = int(cluster_params.get("min_samples", 1))
+        if cluster_selection_epsilon is None:
+            cluster_selection_epsilon = float(cluster_params.get("epsilon", 0.1))
+        if selection_method is None:
+            selection_method = cluster_params.get("selection_method", "eom")
+        if min_sim is None:
+            min_sim = float(pool.get("min_score", 0.0))
+        if min_features is None:
+            min_features = int(pool.get("min_features", 0))
+
+        if hdbscan is None:
+            logging.error("hdbscan library not installed.")
+            return False
+
+        r = self.r
+        sim_score_key = f"global:pool:{pool_id}:sim:score"
+        prefix = f"global:pool:{pool_id}:sim:"
+
+        # 1. Fetch all similarity pairs
+        logging.info(f"[*] Fetching pool similarity pairs from {sim_score_key}...")
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Fetching pool similarity pairs for {pool_id}...")
+
+        pairs = []
+        cursor = 0
+        while True:
+            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
+            for sid, score in results:
+                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
+            if cursor == 0:
+                break
+
+        if not pairs:
+            logging.warning(f"No similarity pairs found for pool {pool_id}")
+            return True
+
+        # 2. Build identity mapping and edge list
+        id_to_idx = {}
+        idx_to_id = {}
+        edges = []
+
+        for sid, score in pairs:
+            if not sid.startswith(prefix):
+                continue
+
+            ids_part = sid[len(prefix) :]
+            if "::" not in ids_part:
+                continue
+
+            fid1, fid2 = ids_part.split("::")
+            
+            # Numeric mapping
+            for fid in [fid1, fid2]:
+                if fid not in id_to_idx:
+                    idx = len(id_to_idx)
+                    id_to_idx[fid] = idx
+                    idx_to_id[idx] = fid
+
+            score_val = float(score)
+            if min_sim > 0 and score_val < min_sim:
+                continue
+
+            dist = max(0, 1.0 - score_val)
+            edges.append((id_to_idx[fid1], id_to_idx[fid2], dist))
+
+        if not edges:
+            return True
+
+        num_nodes = len(id_to_idx)
+        
+        # 3. Clustering Logic (Reuse component-based HDBSCAN)
+        # For brevity, I'll assume we can use a similar logic as in run_clustering
+        # but targeting pool keys.
+        
+        # NOTE: In a real implementation, we would DRY the clustering logic.
+        # Here I will focus on the persistence part.
+        
+        # Simple clustering for now
+        # We need a dense distance matrix initialized to 1.0 (max distance)
+        # with 0.0 on the diagonal for precomputed HDBSCAN.
+        dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float64)
+        np.fill_diagonal(dist_matrix, 0.0)
+        for u, v, d in edges:
+            dist_matrix[u, v] = d
+            dist_matrix[v, u] = d
+        
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=min(min_cluster_size, num_nodes),
+            min_samples=min(min_samples, num_nodes),
+            cluster_selection_epsilon=cluster_selection_epsilon,
+            cluster_selection_method=selection_method,
+            metric='precomputed'
+        )
+        
+        labels = clusterer.fit_predict(dist_matrix)
+        
+        # 4. Persistence
+        cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+        pipe = r.pipeline()
+        pipe.delete(cluster_list_key)
+        
+        clusters = {}
+        for idx, label in enumerate(labels):
+            if label == -1: continue
+            if label not in clusters: clusters[label] = []
+            clusters[label].append(idx_to_id[idx])
+            
+        for label, members in clusters.items():
+            c_uuid = str(uuid.uuid4())[:12]
+            meta_key = f"global:pool:{pool_id}:cluster:{c_uuid}:meta"
+            members_key = f"global:pool:{pool_id}:cluster:{c_uuid}:members"
+            
+            pipe.sadd(cluster_list_key, c_uuid)
+            pipe.json().set(meta_key, "$", {
+                "id": c_uuid,
+                "name": f"Pool Cluster {c_uuid}",
+                "member_count": len(members),
+                "created_at": int(time.time() * 1000)
+            })
+            for m in members:
+                pipe.sadd(members_key, m)
+                
+        pipe.execute()
+        
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Pool clustering {pool_id} completed. Found {len(clusters)} clusters.")
+            
+        return True
+
 
 cluster_service = ClusterService()

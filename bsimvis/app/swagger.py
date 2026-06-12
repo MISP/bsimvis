@@ -36,6 +36,7 @@ ns_bin_sim = Namespace(
 )
 ns_notes = Namespace("notes", description="Function notes management")
 ns_llm = Namespace("llm", description="Large Language Model integration (Ollama)")
+ns_pool = Namespace("pool", description="Cross-collection pool management")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -54,6 +55,7 @@ api.add_namespace(ns_diff)
 api.add_namespace(ns_bin_sim)
 api.add_namespace(ns_notes)
 api.add_namespace(ns_llm)
+api.add_namespace(ns_pool)
 
 # --- Models & Examples ---
 
@@ -2063,3 +2065,74 @@ class LLMSummarizeFile(Resource):
         from bsimvis.app.routes.llm import summarize_file
 
         return summarize_file()
+
+# --- Pool Namespace ---
+
+pool_config_model = api.model(
+    "PoolConfig",
+    {
+        "algo": fields.String(default="unweighted_cosine"),
+        "top_k": fields.Integer(default=1000),
+        "min_score": fields.Float(default=0.3),
+        "cluster_algo": fields.String(default="hdbscan"),
+        "cluster_params": fields.Raw(description="Dictionary of clustering parameters"),
+    },
+)
+
+pool_create_model = api.model(
+    "PoolCreate",
+    {
+        "pool_id": fields.String(required=True, example="my_pool"),
+        "name": fields.String(required=True, example="My Cross-Collection Pool"),
+        "collections": fields.List(fields.String, required=True, example=["main", "bench"]),
+        "config": fields.Nested(pool_config_model),
+    },
+)
+
+@ns_pool.route("")
+class PoolList(Resource):
+    @ns_pool.doc(params={"collection": "Filter pools by collection membership"})
+    def get(self):
+        """Lists all defined pools."""
+        from bsimvis.app.routes.pools import list_pools
+        return list_pools()
+
+    @ns_pool.expect(pool_create_model)
+    def post(self):
+        """Creates a new pool definition."""
+        from bsimvis.app.routes.pools import create_pool
+        return create_pool()
+
+@ns_pool.route("/<string:pool_id>")
+class PoolDetail(Resource):
+    @ns_pool.doc(params={"pool_id": "Pool ID"})
+    def get(self, pool_id):
+        """Returns details for a specific pool."""
+        from bsimvis.app.routes.pools import get_pool
+        return get_pool(pool_id)
+
+    def delete(self, pool_id):
+        """Deletes a pool and all its data."""
+        from bsimvis.app.routes.pools import delete_pool
+        return delete_pool(pool_id)
+
+@ns_pool.route("/<string:pool_id>/build")
+class PoolBuild(Resource):
+    def post(self, pool_id):
+        """Enqueues a job to build/rebuild similarities for a pool."""
+        from bsimvis.app.routes.pools import build_pool
+        return build_pool(pool_id)
+
+@ns_pool.route("/<string:pool_id>/cluster")
+class PoolCluster(Resource):
+    def post(self, pool_id):
+        """Enqueues a job to run clustering for a pool."""
+        from bsimvis.app.routes.pools import cluster_pool
+        return cluster_pool(pool_id)
+
+@ns_pool.route("/<string:pool_id>/sync_check")
+class PoolSyncCheck(Resource):
+    def get(self, pool_id):
+        """Checks if the pool is outdated compared to source collections."""
+        from bsimvis.app.routes.pools import sync_check
+        return sync_check(pool_id)

@@ -34,6 +34,8 @@ class JobType(Enum):
     DELETE_COLLECTION = "delete_collection"
     CLEAN_COLLECTION = "clean_collection"
     PROPAGATE_METADATA = "propagate_metadata"
+    BUILD_POOL_SIM = "build_pool_sim"
+    CLUSTER_POOL = "cluster_pool"
 
 
 class JobService:

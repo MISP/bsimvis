@@ -8,6 +8,7 @@ class LuaScriptManager:
 
     _instance = None
     _scripts = {}
+    _initialized = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -18,8 +19,11 @@ class LuaScriptManager:
         """Initializes the manager and registers all scripts."""
         self.register_all()
 
-    def register_all(self):
+    def register_all(self, force=False):
         """Discovers and registers all .lua scripts from the lua directory."""
+        if self._initialized and not force:
+            return len(self._scripts)
+        self._initialized = True
         r = get_redis()
         lua_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "lua")
 
@@ -46,6 +50,8 @@ class LuaScriptManager:
 
     def get_script(self, name):
         """Returns the registered script object by name."""
+        if name not in self._scripts and not self._initialized:
+            self.register_all()
         return self._scripts.get(name)
 
     def execute(self, name, keys=(), args=()):

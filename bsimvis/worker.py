@@ -614,6 +614,23 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.BUILD_POOL_SIM.value:
+            pool_id = payload.get("pool_id")
+            return self.similarity_service.build_pool(
+                pool_id,
+                job_service=self.job_service,
+                job_id=job_id
+            )
+
+        elif jtype == JobType.CLUSTER_POOL.value:
+            pool_id = payload.get("pool_id")
+            # We will implement this in ClusterService later
+            return cluster_service.run_pool_clustering(
+                pool_id,
+                job_service=self.job_service,
+                job_id=job_id
+            )
+
         return False
 
 

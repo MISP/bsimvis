@@ -8,10 +8,14 @@ window.Breadcrumbs = {
 
         // Always start with the collection segment, if it's not the default view
         if (viewKey !== 'collections' && collection) {
+            const isPool = collection.startsWith('pool:');
+            const label = isPool ? collection.substring(5) : collection;
+            const icon = isPool ? 'fa-solid fa-diagram-project' : 'fa-solid fa-database';
+            const url = isPool ? '/pools' : '/collections';
             segments.push({
-                label: collection,
-                url: '/collections',
-                icon: 'fa-solid fa-database'
+                label: label,
+                url: url,
+                icon: icon
             });
         }
 

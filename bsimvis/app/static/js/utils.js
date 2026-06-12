@@ -104,9 +104,14 @@ function parseRestfulPath() {
     };
 
     const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+    const isPoolPath = parts[0] === 'pools' || parts[0] === 'pool';
 
-    if (hasCol && parts.length >= 2) {
-        params.collection = parts[1];
+    if ((hasCol || isPoolPath) && parts.length >= 2) {
+        if (isPoolPath) {
+            params.collection = 'pool:' + parts[1];
+        } else {
+            params.collection = parts[1];
+        }
 
         const p2 = parts[2];
         if (!p2) {
@@ -200,6 +205,8 @@ function parseRestfulPath() {
         params.view = 'jobs';
     } else if (parts[0] === 'upload') {
         params.view = 'upload';
+    } else if (parts[0] === 'pools') {
+        params.view = 'pools';
     } else if (parts[0] === 'collections' || parts.length === 0) {
         params.view = 'collections';
     }
@@ -285,3 +292,40 @@ function formatSigComponent(namespace, returnType, name, parameters = []) {
     return { ns, ret, params, fullSig };
 }
 window.formatSigComponent = formatSigComponent;
+
+// Global fetch interceptor to transparently migrate pool API collection parameter to pool query/body parameter
+(function() {
+    const originalFetch = window.fetch;
+    window.fetch = function(input, init) {
+        let fetchInput = input;
+        let fetchInit = init;
+
+        if (typeof fetchInput === 'string') {
+            try {
+                const url = new URL(fetchInput, window.location.origin);
+                if (url.searchParams.has('collection')) {
+                    const col = url.searchParams.get('collection');
+                    if (col && col.startsWith('pool:')) {
+                        const poolId = col.substring(5);
+                        url.searchParams.delete('collection');
+                        url.searchParams.set('pool', poolId);
+                        fetchInput = url.pathname + url.search;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        if (fetchInit && fetchInit.body && typeof fetchInit.body === 'string') {
+            try {
+                const data = JSON.parse(fetchInit.body);
+                if (data && data.collection && data.collection.startsWith('pool:')) {
+                    data.pool = data.collection.substring(5);
+                    delete data.collection;
+                    fetchInit = { ...fetchInit, body: JSON.stringify(data) };
+                }
+            } catch (e) {}
+        }
+
+        return originalFetch(fetchInput, fetchInit);
+    };
+})();

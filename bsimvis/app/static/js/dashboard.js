@@ -176,6 +176,12 @@ const routes = {
         headers: ['Name', 'Batches', 'Files', 'Functions', 'Last Updated', 'Actions'],
         renderer: renderCollections
     },
+    'pools': {
+        title: 'Pools',
+        api: '/api/pool',
+        headers: ['Pool ID', 'Name', 'Collections', 'Created At', 'Actions'],
+        renderer: renderPools
+    },
     'batches': {
         title: 'Batches',
         api: '/api/batch/search',
@@ -440,7 +446,7 @@ function showDashboardActions() {
     });
 }
 
-async function refreshData(appendArg = false, force = false) {
+async function refreshData(appendArg = false, force = false, skipHeader = false) {
     const append = (appendArg === true);
     const { viewKey, collection, params } = getRoutingState();
 
@@ -491,7 +497,6 @@ async function refreshData(appendArg = false, force = false) {
         if (!isSilent) {
             currentOffset = 0;
             isEndOfResults = false;
-
             // Only clear if switching view types, otherwise just show loader
             if (viewKey !== lastViewPath) {
                 document.getElementById('table-body').innerHTML = '';
@@ -503,6 +508,13 @@ async function refreshData(appendArg = false, force = false) {
         }
     }
     lastPathName = currentUrlPath;
+    if (viewKey === 'pools') {
+        if (!skipHeader) renderPoolCreationForm();
+    } else {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) gridHeader.innerHTML = '';
+    }
+
 
     if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
         const viewMode = params.get('view') || 'table';
@@ -554,15 +566,17 @@ async function refreshData(appendArg = false, force = false) {
     }
 
     // Ensure collection is in params for the API call
-    if (viewKey !== 'jobs') {
+    if (viewKey !== 'jobs' && viewKey !== 'pools') {
         params.set('collection', collection);
-    } else {
+    } else if (viewKey === 'jobs') {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('collection')) {
             params.set('collection', urlParams.get('collection'));
         } else {
             params.delete('collection');
         }
+    } else {
+        params.delete('collection');
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
@@ -584,7 +598,7 @@ async function refreshData(appendArg = false, force = false) {
         const data = await response.json();
 
         // Extract the list of items based on the API response structure
-        const items = data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
+        const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
         const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
         const totalEl = document.getElementById('view-total');
@@ -675,29 +689,58 @@ function updateNavbarLinks(col) {
         if (!el) return;
         const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
 
-        let url = `/collections/${encodeURIComponent(col)}/${targetView}`;
-        if (targetView === 'collections') {
-            url = `/collections`;
-        } else if (targetView === 'jobs') {
-            url = `/jobs?collection=${encodeURIComponent(col)}`;
-        } else if (targetView === 'files') {
-            url = `/collections/${encodeURIComponent(col)}/files`;
-        } else if (targetView === 'functions') {
-            url = `/collections/${encodeURIComponent(col)}/functions`;
-        } else if (targetView === 'batches') {
-            url = `/collections/${encodeURIComponent(col)}/batches`;
-        } else if (targetView === 'features-global') {
-            url = `/collections/${encodeURIComponent(col)}/features`;
-        } else if (targetView === 'upload') {
-            url = `/collections/${encodeURIComponent(col)}/upload`;
-        } else if (targetView === 'function-similarity') {
-            url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
-        } else if (targetView === 'binary-similarity') {
-            url = `/collections/${encodeURIComponent(col)}/files/similarities`;
-        } else if (targetView === 'clusters') {
-            url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
-        } else if (targetView === 'bin-clusters') {
-            url = `/collections/${encodeURIComponent(col)}/files/clusters`;
+        let url;
+        if (col && col.startsWith('pool:')) {
+            const poolId = col.substring(5);
+            url = `/pools/${encodeURIComponent(poolId)}/${targetView}`;
+            if (targetView === 'collections') {
+                url = `/collections`;
+            } else if (targetView === 'jobs') {
+                url = `/jobs?collection=${encodeURIComponent(col)}`;
+            } else if (targetView === 'files') {
+                url = `/pools/${encodeURIComponent(poolId)}/files`;
+            } else if (targetView === 'functions') {
+                url = `/pools/${encodeURIComponent(poolId)}/functions`;
+            } else if (targetView === 'batches') {
+                url = `/pools/${encodeURIComponent(poolId)}/batches`;
+            } else if (targetView === 'features-global') {
+                url = `/pools/${encodeURIComponent(poolId)}/features`;
+            } else if (targetView === 'upload') {
+                url = `/pools/${encodeURIComponent(poolId)}/upload`;
+            } else if (targetView === 'function-similarity') {
+                url = `/pools/${encodeURIComponent(poolId)}/functions/similarities`;
+            } else if (targetView === 'binary-similarity') {
+                url = `/pools/${encodeURIComponent(poolId)}/files/similarities`;
+            } else if (targetView === 'clusters') {
+                url = `/pools/${encodeURIComponent(poolId)}/functions/clusters`;
+            } else if (targetView === 'bin-clusters') {
+                url = `/pools/${encodeURIComponent(poolId)}/files/clusters`;
+            }
+        } else {
+            url = `/collections/${encodeURIComponent(col)}/${targetView}`;
+            if (targetView === 'collections') {
+                url = `/collections`;
+            } else if (targetView === 'jobs') {
+                url = `/jobs?collection=${encodeURIComponent(col)}`;
+            } else if (targetView === 'files') {
+                url = `/collections/${encodeURIComponent(col)}/files`;
+            } else if (targetView === 'functions') {
+                url = `/collections/${encodeURIComponent(col)}/functions`;
+            } else if (targetView === 'batches') {
+                url = `/collections/${encodeURIComponent(col)}/batches`;
+            } else if (targetView === 'features-global') {
+                url = `/collections/${encodeURIComponent(col)}/features`;
+            } else if (targetView === 'upload') {
+                url = `/collections/${encodeURIComponent(col)}/upload`;
+            } else if (targetView === 'function-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
+            } else if (targetView === 'binary-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/files/similarities`;
+            } else if (targetView === 'clusters') {
+                url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
+            } else if (targetView === 'bin-clusters') {
+                url = `/collections/${encodeURIComponent(col)}/files/clusters`;
+            }
         }
 
         if (saved) {
@@ -2225,34 +2268,64 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     const restful = parseRestfulPath();
     const path = window.location.pathname;
     const parts = path.split('/').filter(Boolean);
-    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections' || parts[0] === 'pool' || parts[0] === 'pools';
     const col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || 'main';
     const params = queryParams || currentParams;
 
 
-    let url = `/collections/${col}/${viewKey}`;
-    if (viewKey === 'files') {
-        url = `/collections/${col}/files`;
-    } else if (viewKey === 'functions') {
-        url = `/collections/${col}/functions`;
-    } else if (viewKey === 'batches') {
-        url = `/collections/${col}/batches`;
-    } else if (viewKey === 'features-global') {
-        url = `/collections/${col}/features`;
-    } else if (viewKey === 'clusters') {
-        url = `/collections/${col}/functions/clusters`;
-    } else if (viewKey === 'bin-clusters') {
-        url = `/collections/${col}/files/clusters`;
-    } else if (viewKey === 'binary-similarity') {
-        url = `/collections/${col}/files/similarities`;
-    } else if (viewKey === 'function-similarity') {
-        url = `/collections/${col}/functions/similarities`;
-    } else if (viewKey === 'upload') {
-        url = `/collections/${col}/upload`;
-    } else if (viewKey === 'collections') {
+    let url;
+    if (col && col.startsWith('pool:')) {
+        const poolId = col.substring(5);
+        url = `/pools/${encodeURIComponent(poolId)}/${viewKey}`;
+        if (viewKey === 'files') {
+            url = `/pools/${encodeURIComponent(poolId)}/files`;
+        } else if (viewKey === 'functions') {
+            url = `/pools/${encodeURIComponent(poolId)}/functions`;
+        } else if (viewKey === 'batches') {
+            url = `/pools/${encodeURIComponent(poolId)}/batches`;
+        } else if (viewKey === 'features-global') {
+            url = `/pools/${encodeURIComponent(poolId)}/features`;
+        } else if (viewKey === 'clusters') {
+            url = `/pools/${encodeURIComponent(poolId)}/functions/clusters`;
+        } else if (viewKey === 'bin-clusters') {
+            url = `/pools/${encodeURIComponent(poolId)}/files/clusters`;
+        } else if (viewKey === 'binary-similarity') {
+            url = `/pools/${encodeURIComponent(poolId)}/files/similarities`;
+        } else if (viewKey === 'function-similarity') {
+            url = `/pools/${encodeURIComponent(poolId)}/functions/similarities`;
+        } else if (viewKey === 'upload') {
+            url = `/pools/${encodeURIComponent(poolId)}/upload`;
+        } else if (viewKey === 'pools') {
+            url = `/pools`;
+        }
+    } else {
+        url = `/collections/${col}/${viewKey}`;
+        if (viewKey === 'files') {
+            url = `/collections/${col}/files`;
+        } else if (viewKey === 'functions') {
+            url = `/collections/${col}/functions`;
+        } else if (viewKey === 'batches') {
+            url = `/collections/${col}/batches`;
+        } else if (viewKey === 'features-global') {
+            url = `/collections/${col}/features`;
+        } else if (viewKey === 'clusters') {
+            url = `/collections/${col}/functions/clusters`;
+        } else if (viewKey === 'bin-clusters') {
+            url = `/collections/${col}/files/clusters`;
+        } else if (viewKey === 'binary-similarity') {
+            url = `/collections/${col}/files/similarities`;
+        } else if (viewKey === 'function-similarity') {
+            url = `/collections/${col}/functions/similarities`;
+        } else if (viewKey === 'upload') {
+            url = `/collections/${col}/upload`;
+        }
+    }
+    if (viewKey === 'collections') {
         url = `/collections`;
     } else if (viewKey === 'jobs') {
         url = `/jobs`;
+    } else if (viewKey === 'pools') {
+        url = `/pools`;
     }
 
     // Clean up params as collection is in the path (except for jobs)
@@ -2408,6 +2481,9 @@ window.addEventListener('load', () => {
         const pathParts = window.location.pathname.split('/').filter(Boolean);
         if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && collection) {
             history.replaceState(null, '', `/collections/${encodeURIComponent(collection)}/files`);
+        } else if ((pathParts[0] === 'pool' || pathParts[0] === 'pools') && pathParts.length === 2 && collection) {
+            const poolId = collection.startsWith('pool:') ? collection.substring(5) : collection;
+            history.replaceState(null, '', `/pools/${encodeURIComponent(poolId)}/files`);
         }
     }
 
@@ -3787,3 +3863,401 @@ async function refreshFunctionRow(funcId) {
 }
 
 window.refreshFunctionRow = refreshFunctionRow;
+
+async function renderPoolCreationForm() {
+    const gridHeader = document.getElementById('grid-header');
+    if (!gridHeader) return;
+
+    // Fetch existing collections to select from
+    let collections = [];
+    try {
+        const res = await fetch('/api/collection/search');
+        if (res.ok) {
+            const data = await res.json();
+            collections = data.collections || data || [];
+        }
+    } catch (e) {
+        console.error("Failed to fetch collections for pool creation", e);
+    }
+
+    const colCheckboxes = collections.map(col => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
+            <input type="checkbox" name="pool-collections" value="${col.name}">
+            <span>${col.name} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
+        </label>
+    `).join('');
+
+    gridHeader.innerHTML = `
+        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); overflow:hidden;">
+            <!-- COLLAPSIBLE HEADER -->
+            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:rgba(255,255,255,0.02); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+                <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
+                    <i class="fa-solid fa-diagram-project"></i> Create New Pool
+                </h3>
+                <div id="pool-toggle-icon" style="color:var(--dim); font-size:0.9rem; transition: transform 0.3s ease;">
+                    <i class="fa-solid fa-chevron-up"></i>
+                </div>
+            </div>
+
+            <div id="pool-creation-content" style="padding:0 25px 25px 25px;">
+                <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom: 25px;">
+                        <div>
+                            <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool ID (slug)</label>
+                            <input type="text" id="new-pool-id" placeholder="e.g. shared_pool_1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
+                            <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                        </div>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
+                        <!-- LEFT COLUMN: COLLECTIONS -->
+                        <div style="display:flex; flex-direction:column; gap:12px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <label style="font-size:0.75rem; color:var(--dim); font-weight:600; text-transform:uppercase;">Collections</label>
+                                <div style="display:flex; gap:10px;">
+                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = true)" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--accent); cursor:pointer; font-weight:600;">All</button>
+                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = false)" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--dim); cursor:pointer; font-weight:600;">None</button>
+                                </div>
+                            </div>
+                            <div style="position:relative;">
+                                <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:0.8rem; color:var(--dim);"></i>
+                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
+                            </div>
+                            <div id="pool-collections-list" style="background:rgba(0,0,0,0.15); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
+                                ${colCheckboxes.length ? colCheckboxes : '<div style="padding:20px; font-size:0.85rem; color:var(--dim); text-align:center;">No collections found.</div>'}
+                            </div>
+                        </div>
+                        
+                        <!-- RIGHT COLUMN: CONFIGURATION -->
+                        <div style="display:flex; flex-direction:column; gap:15px;">
+                            <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
+                                <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.2); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
+                                    <input type="checkbox" id="pool-cross-only" checked style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
+                                    <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
+                                        <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
+                                    </label>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="font-size:0.75rem; color:var(--text); font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:8px;">
+                                        <i class="fa-solid fa-bolt" style="color:var(--accent);"></i> Analysis Scope
+                                    </div>
+                                    <div style="font-size:0.7rem; color:var(--dim);">Discovery focused on cross-collection pairs only.</div>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                                <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
+                                    <i class="fa-solid fa-microchip"></i> Function-Level
+                                </div>
+                                
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+                                    <div>
+                                        <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
+                                            <div>
+                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
+                                                <select id="pool-func-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <option value="unweighted_cosine">Unweighted Cosine</option>
+                                                    <option value="weighted_cosine">Weighted Cosine</option>
+                                                    <option value="jaccard">Jaccard</option>
+                                                </select>
+                                            </div>
+                                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
+                                                    <input type="number" id="pool-func-topk" value="1000" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="0.1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
+                                            <input type="number" id="pool-cluster-min-size" value="2" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
+                                            <input type="number" id="pool-cluster-min-samples" value="1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
+                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="0.1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
+                                            <select id="pool-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <option value="eom">EOM</option>
+                                                <option value="leaf">Leaf</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
+                                        <i class="fa-solid fa-file-code"></i> File-Level
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); padding:2px 10px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                                        <input type="checkbox" id="pool-enable-files" checked onchange="document.getElementById('file-params-grid').style.opacity = this.checked ? '1' : '0.4'; document.getElementById('file-params-grid').style.pointerEvents = this.checked ? 'auto' : 'none';" style="cursor:pointer; width:12px; height:12px; accent-color:var(--accent);">
+                                        <label for="pool-enable-files" style="font-size:0.7rem; cursor:pointer; font-weight:600; color:var(--text);">Enabled</label>
+                                    </div>
+                                </div>
+                                
+                                <div id="file-params-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; transition: opacity 0.3s ease;">
+                                    <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
+                                            <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <option value="unweighted_cosine">Unweighted Cosine</option>
+                                                <option value="jaccard">Jaccard</option>
+                                            </select>
+                                        </div>
+                                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                            <div>
+                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
+                                                <input type="number" id="pool-file-topk" value="100" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            </div>
+                                            <div>
+                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
+                                                <input type="number" id="pool-file-minscore" step="0.05" value="0.5" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
+                                            <input type="number" id="pool-file-cluster-min-size" value="2" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
+                                            <input type="number" id="pool-file-cluster-min-samples" value="1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
+                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="0.1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
+                                            <select id="pool-file-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
+                                                <option value="eom">EOM</option>
+                                                <option value="leaf">Leaf</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top:auto; padding-top:15px; display:flex; justify-content:flex-end; gap:12px;">
+                                <button onclick="renderPoolCreationForm()" class="btn-secondary" style="padding:10px 20px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer;">Reset</button>
+                                <button onclick="submitCreatePool(this)" class="btn-primary" style="padding:10px 25px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; box-shadow: 0 4px 10px rgba(255,171,46,0.15);">
+                                    <i class="fa-solid fa-plus-circle"></i> Create Pool
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="pool-create-error" style="color:#ef4444; font-size:0.85rem; margin-top:20px; padding:12px 18px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); border-radius:8px; display:none;"></div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+window.renderPoolCreationForm = renderPoolCreationForm;
+
+function togglePoolCreationForm() {
+    const content = document.getElementById('pool-creation-content');
+    const icon = document.getElementById('pool-toggle-icon');
+    if (!content || !icon) return;
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.style.transform = 'rotate(0deg)';
+    } else {
+        content.style.display = 'none';
+        icon.style.transform = 'rotate(180deg)';
+    }
+}
+window.togglePoolCreationForm = togglePoolCreationForm;
+
+function filterPoolCollections(val) {
+    const list = document.getElementById('pool-collections-list');
+    if (!list) return;
+    const labels = list.querySelectorAll('label');
+    const query = val.toLowerCase();
+    labels.forEach(lbl => {
+        const text = lbl.innerText.toLowerCase();
+        lbl.style.display = text.includes(query) ? 'flex' : 'none';
+    });
+}
+window.filterPoolCollections = filterPoolCollections;
+
+async function submitCreatePool(btn) {
+    const poolIdEl = document.getElementById('new-pool-id');
+    const poolNameEl = document.getElementById('new-pool-name');
+    const errEl = document.getElementById('pool-create-error');
+    
+    // Function settings
+    const crossOnly = document.getElementById('pool-cross-only')?.checked ?? false;
+    const funcAlgo = document.getElementById('pool-func-algo')?.value ?? 'unweighted_cosine';
+    const funcTopK = parseInt(document.getElementById('pool-func-topk')?.value || '1000');
+    const funcMinScore = parseFloat(document.getElementById('pool-func-minscore')?.value || '0.1');
+    const funcClusterMinSize = parseInt(document.getElementById('pool-cluster-min-size')?.value || '2');
+    const funcClusterMinSamples = parseInt(document.getElementById('pool-cluster-min-samples')?.value || '1');
+    const funcClusterEpsilon = parseFloat(document.getElementById('pool-cluster-epsilon')?.value || '0.1');
+    const funcClusterMethod = document.getElementById('pool-cluster-method')?.value ?? 'eom';
+    
+    // File settings
+    const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
+    const fileAlgo = document.getElementById('pool-file-algo')?.value ?? 'unweighted_cosine';
+    const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
+    const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
+    const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
+    const fileClusterMinSamples = parseInt(document.getElementById('pool-file-cluster-min-samples')?.value || '1');
+    const fileClusterEpsilon = parseFloat(document.getElementById('pool-file-cluster-epsilon')?.value || '0.1');
+    const fileClusterMethod = document.getElementById('pool-file-cluster-method')?.value ?? 'eom';
+
+    if (errEl) errEl.style.display = 'none';
+
+    const poolId = poolIdEl ? poolIdEl.value.trim() : '';
+    const poolName = poolNameEl ? poolNameEl.value.trim() : '';
+    
+    const checkedBoxes = document.querySelectorAll('input[name="pool-collections"]:checked');
+    const collections = Array.from(checkedBoxes).map(cb => cb.value);
+
+    if (!poolId || !poolName || !collections.length) {
+        if (errEl) {
+            errEl.innerText = "Error: Pool ID, Pool Name, and at least one Collection are required.";
+            errEl.style.display = 'block';
+        }
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating...';
+    }
+
+    try {
+        const res = await fetch('/api/pool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                pool_id: poolId,
+                name: poolName,
+                collections: collections,
+                config: {
+                    only_cross_collection: crossOnly,
+                    func_sim_params: {
+                        algo: funcAlgo,
+                        top_k: funcTopK,
+                        min_score: funcMinScore
+                    },
+                    func_cluster_params: {
+                        min_cluster_size: funcClusterMinSize,
+                        min_samples: funcClusterMinSamples,
+                        epsilon: funcClusterEpsilon,
+                        selection_method: funcClusterMethod
+                    },
+                    file_sim_params: { 
+                        enabled: enableFiles,
+                        algo: fileAlgo,
+                        top_k: fileTopK,
+                        min_score: fileMinScore
+                    },
+                    file_cluster_params: { 
+                        enabled: enableFiles,
+                        min_cluster_size: fileClusterMinSize,
+                        min_samples: fileClusterMinSamples,
+                        epsilon: fileClusterEpsilon,
+                        selection_method: fileClusterMethod
+                    }
+                }
+            })
+        });
+
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        
+        // Show success message with "Go to Pool" button
+        const formContainer = document.getElementById('pool-creation-form-container');
+        if (formContainer) {
+            formContainer.innerHTML = `
+                <div style="background:rgba(34,197,94,0.1); border:1px solid rgba(34,197,94,0.2); border-radius:8px; padding:30px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:20px;">
+                    <div style="width:60px; height:60px; background:rgba(34,197,94,0.2); color:#22c55e; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.5rem;">
+                        <i class="fa-solid fa-check"></i>
+                    </div>
+                    <div>
+                        <h4 style="margin:0 0 8px 0; color:#22c55e;">Pool Created Successfully!</h4>
+                        <p style="margin:0; font-size:0.85rem; color:var(--dim);">Pipeline <b>${data.job_id}</b> has been scheduled to process the pool.</p>
+                    </div>
+                    <div style="display:flex; gap:12px;">
+                        <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}')" class="btn-primary" style="padding:10px 20px; font-weight:600; display:flex; align-items:center; gap:8px;">
+                            <i class="fa-solid fa-arrow-right"></i> Go to Pool
+                        </button>
+                        <button onclick="renderPoolCreationForm()" class="top-action-btn" style="padding:10px 20px; height:auto;">
+                            Create Another
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else {
+            alert(`Pool created! scheduled job pipeline ID: ${data.job_id}`);
+        }
+        
+        // Refresh the pools list without re-rendering the header creation form
+        refreshData(false, true, true);
+
+    } catch (e) {
+        if (errEl) {
+            errEl.innerText = `Error: ${e.message}`;
+            errEl.style.display = 'block';
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-plus"></i> Create & Process Pool';
+        }
+    }
+}
+window.submitCreatePool = submitCreatePool;
+
+async function deletePool(poolId, btn) {
+    if (!confirm(`Are you sure you want to delete pool "${poolId}"?`)) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {
+            method: 'DELETE'
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to delete pool: ${e.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        }
+    }
+}
+window.deletePool = deletePool;
+

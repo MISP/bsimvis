@@ -61,6 +61,7 @@ window.UI = {
 
             const buildNavUrl = (view) => {
                 if (view === 'collections') return '/collections';
+                if (view === 'pools') return '/pools';
                 if (view === 'jobs') return `/jobs?collection=${encodeURIComponent(collection)}`;
                 if (view === 'upload') return `/collections/${encodeURIComponent(collection)}/upload`;
                 if (view === 'batches') return `/collections/${encodeURIComponent(collection)}/batches`;
@@ -104,6 +105,7 @@ window.UI = {
                         <a href="${buildNavUrl('features-global')}" id="nav-features-global" title="Features" class="${isActive('features-global')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
                     </div>
                     <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
+                        <a href="${buildNavUrl('pools')}" id="nav-pools" title="Pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> <span>Pools</span></a>
                         <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
                         <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>

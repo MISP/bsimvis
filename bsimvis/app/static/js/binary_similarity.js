@@ -47,14 +47,20 @@ function renderBinarySimilarityView(params) {
     let md5b = params.get('md5_b');
 
     // Parse new RESTful URL: /collections/{coll}/files/{md5_a}/vs/{coll_b}/{md5_b}
+    let collB = null;
     if (!md5a || !md5b) {
         const parts = window.location.pathname.split('/').filter(Boolean);
         const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
         const hasFile = parts[2] === 'file' || parts[2] === 'files';
         if (hasCol && hasFile && parts[4] === 'vs') {
             md5a = md5a || decodeURIComponent(parts[3]);
+            collB = parts[5] ? decodeURIComponent(parts[5]) : null;
             md5b = md5b || decodeURIComponent(parts[6]);
         }
+    } else {
+        // Parse coll_b from URL even if md5s were in params
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        if (parts[4] === 'vs' && parts[5]) collB = decodeURIComponent(parts[5]);
     }
     
     // Set up layout: Header (Selection/Summary) + Body (Sankey / Tables)
@@ -160,7 +166,10 @@ function renderBinarySimilarityView(params) {
     initResizableCards();
     
     if (md5a && md5b) {
-        fetchAndRenderBinaryDiff(collection, md5a, md5b);
+        // pool_id is encoded as a query param in the diff URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const poolId = params.get('pool_id') || urlParams.get('pool_id') || null;
+        fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId);
     }
 }
 
@@ -207,12 +216,15 @@ function initResizableCards() {
             });
             }
 
-            async function fetchAndRenderBinaryDiff(collection, md5a, md5b) {
+            async function fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId) {
 
     const resultsEl = document.getElementById('bin-sim-results');
     
     try {
-        const res = await fetch(`/api/bin_sim/diff?collection=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`);
+        let apiUrl = `/api/bin_sim/diff?collection=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
+        if (collB) apiUrl += `&coll_b=${encodeURIComponent(collB)}`;
+        if (poolId) apiUrl += `&pool_id=${encodeURIComponent(poolId)}`;
+        const res = await fetch(apiUrl);
         if (!res.ok) {
             let errMsg = "Failed to fetch similarity comparison";
             try {
@@ -1315,7 +1327,12 @@ function renderBinSimPairs(items) {
         let tagsB = Array.isArray(item.file_tags_b) ? item.file_tags_b : [];
         let userTagsB = Array.isArray(item.file_user_tags_b) ? item.file_user_tags_b : [];
         
-        const diffUrl = `/collection/${collection}/file/${item.md5_a}/vs/${collection}/${item.md5_b}`;
+        const collA = item.coll_a || (collection.startsWith('pool:') ? collection.substring(5) : collection);
+        const collB = item.coll_b || collA;
+        const poolId = collection.startsWith('pool:') ? collection.substring(5) : null;
+        let diffUrl = `/collection/${collA}/file/${item.md5_a}/vs/${collB}/${item.md5_b}`;
+        if (poolId) diffUrl += `?pool_id=${encodeURIComponent(poolId)}`;
+
         const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' });`;

@@ -41,7 +41,12 @@ window.Nav = {
             mapped = ['features', mapped[1]];
         }
 
-        let url = `/collections/${encodeURIComponent(collection)}`;
+        let url;
+        if (collection && collection.startsWith('pool:')) {
+            url = `/pools/${encodeURIComponent(collection.substring(5))}`;
+        } else {
+            url = `/collections/${encodeURIComponent(collection)}`;
+        }
         if (mapped.length > 0) {
             url += '/' + mapped.map(encodeURIComponent).join('/');
         }
@@ -77,14 +82,19 @@ window.Nav = {
 
         // Normalize URL on the fly to support the new plural hierarchical RESTful structure
         let targetPath = path;
-        if (typeof path === 'string' && (path.startsWith('/collection/') || path.startsWith('/collections/'))) {
+        const isCollectionPath = typeof path === 'string' && (path.startsWith('/collection/') || path.startsWith('/collections/'));
+        const isPoolPath = typeof path === 'string' && (path.startsWith('/pool/') || path.startsWith('/pools/'));
+        if (isCollectionPath || isPoolPath) {
             // Strip fragment (#...) before splitting so # is not encoded as %23 in path segments
             const hashIdx = path.indexOf('#');
             const fragment = hashIdx !== -1 ? path.slice(hashIdx) : '';
             const pathNoFrag = hashIdx !== -1 ? path.slice(0, hashIdx) : path;
             const pathParts = pathNoFrag.split('?')[0].split('/').filter(Boolean);
             const query = pathNoFrag.split('?')[1] ? ('?' + pathNoFrag.split('?')[1]) : '';
-            const coll = pathParts[1];
+            let coll = pathParts[1];
+            if (isPoolPath && coll && !coll.startsWith('pool:')) {
+                coll = 'pool:' + coll;
+            }
             const p2 = pathParts[2];
             
             if (p2 === 'files' || p2 === 'file') {
@@ -168,6 +178,10 @@ window.Nav = {
             } else if (pathParts[0] === 'collection') {
                 targetPath = `/collections/${encodeURIComponent(coll)}${query}`;
             }
+        }
+
+        if (typeof targetPath === 'string') {
+            targetPath = targetPath.replace(/\/collections\/pool(:|%3A)/g, '/pools/');
         }
 
         // Window Manager integration (only if enabled in UI settings)

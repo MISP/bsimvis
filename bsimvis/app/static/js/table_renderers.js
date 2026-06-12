@@ -42,6 +42,38 @@ function createNav(view, collection, params = {}) {
 }
 
 window.TableRenderers = {
+    renderPools: function(data) {
+        if (!data || !data.length) return '<tr><td colspan="5" style="text-align:center">No pools found.</td></tr>';
+
+        return data.map(pool => {
+            const collectionsList = (pool.collections || []).map(c => `
+                <a ${createNav('files', c)} style="font-size:0.75rem; background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3); color:#60a5fa; padding:2px 8px; border-radius:4px; margin-right:4px; text-decoration:none; cursor:pointer;" class="clickable-count">${c}</a>
+            `).join('');
+
+            const crossCollectionOnlyIndicator = pool.only_cross_collection ? `
+                <span style="font-size:0.75rem; background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.3); color:#f59e0b; padding:2px 8px; border-radius:4px; margin-right:4px; display:inline-flex; align-items:center; gap:4px;" title="Cross-Collection Only">
+                    <i class="fa-solid fa-arrow-right-arrow-left"></i> Cross-Only
+                </span>
+            ` : '';
+
+            return `
+            <tr data-id="${pool.id}">
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/files" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
+                <td><b>${pool.name || 'Unnamed'}</b></td>
+                <td><div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">${collectionsList}${crossCollectionOnlyIndicator}</div></td>
+                <td class="dim">${formatDate(pool.created_at)}</td>
+                <td>
+                    <div style="display:flex; gap:15px; align-items:center;">
+                        <button onclick="deletePool('${pool.id}', this)" class="btn-action" title="Delete Pool" style="background:none; border:none; color:#ef4444; cursor:pointer;">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+            `;
+        }).join('');
+    },
+
     renderCollections: function(data) {
         if (!data.length) return '<tr><td colspan="6" style="text-align:center">No collections found.</td></tr>';
 
@@ -351,6 +383,7 @@ window.TableRenderers = {
 // Map original function names to the new TableRenderers object for backward compatibility
 // or just export them to window directly if desired.
 window.renderCollections = TableRenderers.renderCollections;
+window.renderPools = TableRenderers.renderPools;
 window.renderBatches = TableRenderers.renderBatches;
 window.renderFiles = TableRenderers.renderFiles;
 window.renderFunctions = TableRenderers.renderFunctions;

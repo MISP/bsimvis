@@ -38,6 +38,24 @@ class JobType(Enum):
     CLUSTER_POOL = "cluster_pool"
 
 
+
+def safe_int(val, default=0):
+    if val is None:
+        return default
+    if isinstance(val, bytes):
+        try:
+            val = val.decode("utf-8")
+        except:
+            return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
+            return default
+
+
 class JobService:
     def __init__(self):
         self.r = get_queue_redis()
@@ -58,8 +76,11 @@ class JobService:
             "parent_id": parent_id or "",
             "error": "",
         }
-        if isinstance(payload, dict) and "collection" in payload:
-            job_data["collection"] = payload["collection"]
+        if isinstance(payload, dict):
+            if "collection" in payload:
+                job_data["collection"] = payload["collection"]
+            elif "pool_id" in payload:
+                job_data["collection"] = f"pool:{payload['pool_id']}"
 
         # Store job metadata as a Hash
         self.r.hset(f"job:{job_id}", mapping=job_data)
@@ -349,7 +370,7 @@ class JobService:
                             "id": tid,
                             "type": st.get("type"),
                             "status": st.get("status"),
-                            "progress": int(st.get("progress", 0)),
+                            "progress": safe_int(st.get("progress", 0)),
                             "perf_total": float(st.get("perf_total", 0)),
                             "perf_python": float(st.get("perf_python", 0)),
                             "perf_db": float(st.get("perf_db", 0)),
@@ -466,7 +487,7 @@ class JobService:
         total_p = 0
         for tid in tids:
             p = self.r.hget(f"job:{tid}", "progress")
-            total_p += int(p or 0)
+            total_p += safe_int(p, 0)
 
         agg_progress = total_p // len(tids)
         self.r.hset(f"job:{pipeline_id}", "progress", agg_progress)
@@ -501,8 +522,8 @@ class JobService:
             if speed > 0:
                 total_speed += speed
 
-            total = int(job.get("total_items", 0))
-            done = int(job.get("processed_items", 0))
+            total = safe_int(job.get("total_items", 0))
+            done = safe_int(job.get("processed_items", 0))
             remaining_items += max(0, total - done)
 
         # Average speed
@@ -580,6 +601,8 @@ class JobService:
                     try:
                         payload = json.loads(payload_raw)
                         coll = payload.get("collection", "")
+                        if not coll and "pool_id" in payload:
+                            coll = f"pool:{payload['pool_id']}"
                         target = (
                             payload.get("md5")
                             or payload.get("file_id")
@@ -624,16 +647,16 @@ class JobService:
 
             top_level_jobs.append(
                 {
-                    "id": jid,
-                    "type": job.get("type"),
-                    "status": job.get("status"),
-                    "progress": int(job.get("progress", 0)),
-                    "collection": coll,
-                    "target": target,
-                    "created_at": int(job.get("created_at", 0)),
-                    "updated_at": int(job.get("updated_at", 0)),
-                    "parent_id": parent_id,
-                    "task_ids": task_ids,
+                     "id": jid,
+                     "type": job.get("type"),
+                     "status": job.get("status"),
+                     "progress": safe_int(job.get("progress", 0)),
+                     "collection": coll,
+                     "target": target,
+                     "created_at": safe_int(job.get("created_at", 0)),
+                     "updated_at": safe_int(job.get("updated_at", 0)),
+                     "parent_id": parent_id,
+                     "task_ids": task_ids,
                 }
             )
 
@@ -713,11 +736,11 @@ class JobService:
                     "id": tid,
                     "type": sub_job.get("type"),
                     "status": sub_job.get("status"),
-                    "progress": int(sub_job.get("progress", 0)),
+                    "progress": safe_int(sub_job.get("progress", 0)),
                     "collection": coll,
                     "target": target,
-                    "created_at": int(sub_job.get("created_at", 0)),
-                    "updated_at": int(sub_job.get("updated_at", 0)),
+                    "created_at": safe_int(sub_job.get("created_at", 0)),
+                    "updated_at": safe_int(sub_job.get("updated_at", 0)),
                     "parent_id": sub_job.get("parent_id", ""),
                     "task_ids": task_ids,
                 }

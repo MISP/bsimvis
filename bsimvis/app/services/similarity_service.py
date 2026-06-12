@@ -1042,7 +1042,276 @@ class SimilarityService:
         # 2. Update Sync Snapshots
         pool_service.update_sync_snapshots(pool_id)
         
+        # Automatically trigger pool clustering (which includes function clustering, bin_sim, and bin_clustering)
+        from bsimvis.app.services.cluster_service import cluster_service
+        if job_service and job_id:
+            job_service.add_log(job_id, f"[*] Triggering Pool Clustering automatically at the end of build...")
+        cluster_service.run_pool_clustering(pool_id, job_service=job_service, job_id=job_id)
+
         if job_service and job_id:
             job_service.add_log(job_id, f"Pool build {pool_id} completed in {time.time() - start_time:.2f}s")
         
+        return True
+
+    def build_pool_bin_sim(self, pool_id, job_service=None, job_id=None):
+        """
+        Orchestrates cross-collection binary similarity calculations for a pool.
+        """
+        from bsimvis.app.services.pool_service import pool_service
+        import math
+        import time
+        from collections import defaultdict
+        
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            logging.error(f"Pool {pool_id} not found")
+            return False
+
+        collections = pool.get("collections", [])
+        algo = pool.get("algo", "unweighted_cosine")
+        cluster_params = pool.get("cluster_params", {})
+        if isinstance(cluster_params, str):
+            try:
+                cluster_params = json.loads(cluster_params)
+            except Exception:
+                cluster_params = {}
+        min_cohesion = float(cluster_params.get("min_cohesion", 0.5))
+
+        r = self.r
+        start_time = time.time()
+
+        if job_service and job_id:
+            job_service.add_log(job_id, f"[*] Starting Pool Binary Similarity Build for pool {pool_id}")
+
+        # 1. Fetch function-level pool clusters and map function ID -> cluster UUID
+        cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+        cluster_uuids = [c.decode() if isinstance(c, bytes) else c for c in r.smembers(cluster_list_key)]
+
+        fid_to_cid = {}
+        cluster_meta = {}
+        if cluster_uuids:
+            pipe = r.pipeline()
+            for c_uuid in cluster_uuids:
+                pipe.smembers(f"global:pool:{pool_id}:cluster:{c_uuid}:members")
+                pipe.json().get(f"global:pool:{pool_id}:cluster:{c_uuid}:meta", "$")
+            results = pipe.execute()
+            for idx, c_uuid in enumerate(cluster_uuids):
+                members = results[idx * 2]
+                meta_raw = results[idx * 2 + 1]
+                meta = (meta_raw[0] if isinstance(meta_raw, list) else meta_raw) if meta_raw else {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        pass
+                cluster_meta[c_uuid] = meta
+                for m in members:
+                    fid = m.decode() if isinstance(m, bytes) else m
+                    fid_to_cid[fid] = c_uuid
+
+        # 2. Fetch all binaries across all collections in the pool
+        binaries = []  # List of tuples (collection, md5)
+        binary_func_counts = {}
+        binary_fids = {}
+        binary_cluster_maps = {}
+        cluster_binary_count_job = defaultdict(int)
+
+        for coll in collections:
+            all_files_key = f"{coll}:all_files"
+            file_keys = [d.decode() if isinstance(d, bytes) else str(d) for d in r.smembers(all_files_key)]
+            for k in file_keys:
+                if k.endswith(":meta"):
+                    continue
+                parts = k.split(":")
+                if len(parts) >= 3:
+                    md5 = parts[2]
+                    binaries.append((coll, md5))
+
+        num_binaries = len(binaries)
+        if num_binaries < 2:
+            msg = "Not enough binaries to compare."
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+            return True
+
+        # Precompute file function sets and map to pool clusters
+        for coll, md5 in binaries:
+            func_set_key = f"{coll}:idx:file:functions:{md5}"
+            raw_ids = r.smembers(func_set_key)
+            fids = [
+                (fid.decode().replace(":meta", "") if isinstance(fid, bytes) else str(fid).replace(":meta", ""))
+                for fid in raw_ids
+            ]
+            
+            b_cluster_map = defaultdict(set)
+            binary_fids[(coll, md5)] = set(fids)
+            binary_func_counts[(coll, md5)] = len(fids)
+
+            for fid in fids:
+                full_fid = fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
+                if full_fid in fid_to_cid:
+                    cid = fid_to_cid[full_fid]
+                    b_cluster_map[cid].add(full_fid)
+
+            binary_cluster_maps[(coll, md5)] = b_cluster_map
+            for cid in b_cluster_map.keys():
+                cluster_binary_count_job[cid] += 1
+
+        def get_col_rarity(cid):
+            global_count = cluster_meta.get(cid, {}).get(
+                "unique_files_count", cluster_binary_count_job.get(cid, 0)
+            )
+            return 1.0 / math.log(1 + global_count + 1)
+
+        # Pre-fetch file metadata
+        file_meta_cache = {}
+        pipe_meta = r.pipeline()
+        for coll, md5 in binaries:
+            pipe_meta.json().get(f"{coll}:file:{md5}:meta", "$")
+        meta_results = pipe_meta.execute()
+        for (coll, md5), res in zip(binaries, meta_results):
+            if res:
+                m = res[0] if isinstance(res, list) else res
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except Exception:
+                        pass
+                file_meta_cache[(coll, md5)] = m if isinstance(m, dict) else {}
+            else:
+                file_meta_cache[(coll, md5)] = {}
+
+        # 3. Generate Pairs (all combinations cross-collection/in pool)
+        pairs = []
+        for i in range(len(binaries)):
+            for j in range(i + 1, len(binaries)):
+                b1, b2 = binaries[i], binaries[j]
+                if b1 < b2:
+                    pairs.append((b1, b2))
+                else:
+                    pairs.append((b2, b1))
+
+        # 4. Process Pairs (Greedy Sweep)
+        persist_pipe = r.pipeline()
+        now = int(time.time() * 1000)
+
+        for b1, b2 in pairs:
+            coll_a, md5_a = b1
+            coll_b, md5_b = b2
+
+            cmap_a = binary_cluster_maps[b1]
+            cmap_b = binary_cluster_maps[b2]
+
+            def get_pair_sim_rarity(cid):
+                count_in_pair = len(cmap_a.get(cid, [])) + len(cmap_b.get(cid, []))
+                return 1.0 / math.log(1 + count_in_pair + 1)
+
+            shared_cids = set(cmap_a.keys()).intersection(set(cmap_b.keys()))
+            shared_cids_sorted = sorted(
+                list(shared_cids),
+                key=lambda c: float(cluster_meta.get(c, {}).get("cohesion_score", 0.0)),
+                reverse=True,
+            )
+
+            assigned_a = set()
+            assigned_b = set()
+            diff_matched = []
+
+            sum_weighted_cohesion_sim = 0.0
+            sum_weights_sim = 0.0
+            sum_weighted_cohesion_col = 0.0
+            sum_weights_col = 0.0
+            sum_weighted_cohesion_unweighted = 0.0
+            sum_weights_unweighted = 0.0
+
+            for cid in shared_cids_sorted:
+                pool_a = cmap_a[cid] - assigned_a
+                pool_b = cmap_b[cid] - assigned_b
+
+                if pool_a and pool_b:
+                    cohesion = float(cluster_meta.get(cid, {}).get("cohesion_score", 0.0))
+                    if cohesion < min_cohesion:
+                        continue
+
+                    s_rarity = get_pair_sim_rarity(cid)
+                    c_rarity = get_col_rarity(cid)
+                    cluster_feat = float(cluster_meta.get(cid, {}).get("avg_features", 1.0))
+                    if cluster_feat <= 0:
+                        cluster_feat = 1.0
+
+                    count_a = len(pool_a)
+                    count_b = len(pool_b)
+                    match_ratio = min(count_a, count_b) / max(count_a, count_b)
+
+                    diff_matched.append({
+                        "cluster_id": cid,
+                        "cluster_uuid": cluster_meta.get(cid, {}).get("cluster_uuid", ""),
+                        "cluster_name": cluster_meta.get(cid, {}).get("cluster_name", str(cid)),
+                        "cohesion": cohesion,
+                        "sim_rarity": s_rarity,
+                        "collection_rarity": c_rarity,
+                        "avg_features": cluster_feat,
+                        "funcs_a": list(pool_a),
+                        "funcs_b": list(pool_b),
+                        "count_a": count_a,
+                        "count_b": count_b,
+                        "match_ratio": match_ratio,
+                    })
+
+                    assigned_a.update(pool_a)
+                    assigned_b.update(pool_b)
+
+                    num_matched = min(count_a, count_b)
+                    num_total = count_a + count_b
+
+                    sum_weighted_cohesion_sim += 2.0 * num_matched * cohesion * s_rarity * cluster_feat
+                    sum_weights_sim += num_total * s_rarity * cluster_feat
+
+                    sum_weighted_cohesion_col += 2.0 * num_matched * cohesion * c_rarity * cluster_feat
+                    sum_weights_col += num_total * c_rarity * cluster_feat
+
+                    sum_weighted_cohesion_unweighted += 2.0 * num_matched * cohesion * cluster_feat
+                    sum_weights_unweighted += num_total * cluster_feat
+
+            sim_score = (sum_weighted_cohesion_sim / sum_weights_sim) if sum_weights_sim > 0 else 0.0
+            col_weighted_score = (sum_weighted_cohesion_col / sum_weights_col) if sum_weights_col > 0 else 0.0
+            unweighted_score = (sum_weighted_cohesion_unweighted / sum_weights_unweighted) if sum_weights_unweighted > 0 else 0.0
+
+            final_score = sim_score
+            if algo == "unweighted_cosine":
+                final_score = unweighted_score
+            elif algo == "weighted_cosine":
+                final_score = col_weighted_score
+
+            final_score = round(final_score, 4)
+
+            # Persist pool bin_sim
+            sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
+            doc = {
+                "type": "bin_sim",
+                "pool_id": pool_id,
+                "algo": algo,
+                "score": final_score,
+                "md5_1": md5_a,
+                "md5_2": md5_b,
+                "coll_1": coll_a,
+                "coll_2": coll_b,
+                "sim_weighted_score": round(sim_score, 4),
+                "collection_weighted_score": round(col_weighted_score, 4),
+                "unweighted_score": round(unweighted_score, 4),
+                "matched_clusters_count": len(diff_matched),
+                "matched_clusters": diff_matched,
+                "entry_date": now,
+            }
+
+            persist_pipe.json().set(sid, "$", doc)
+            persist_pipe.zadd(f"global:pool:{pool_id}:bin_sim:score:{algo}", {sid: final_score})
+            persist_pipe.sadd(f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}", sid)
+            persist_pipe.sadd(f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}", sid)
+            persist_pipe.sadd(f"global:pool:{pool_id}:bin_sim:built:{algo}", sid)
+
+        persist_pipe.execute()
+        if job_service and job_id:
+            job_service.add_log(job_id, f"Pool binary similarity build finished. Found {len(pairs)} comparisons.")
+
         return True

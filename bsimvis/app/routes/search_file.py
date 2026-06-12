@@ -175,11 +175,16 @@ def search_files():
         cluster_meta_map = {}
         min_cohesion = float(request.args.get("min_cohesion", 0.95))  # Default to 0.95
         if unique_cluster_ids:
+            is_pool = col.startswith("pool:")
+            pool_id = col[5:] if is_pool else None
             algo = "unweighted_cosine"  # Assuming default algo
             c_pipe = r.pipeline()
             c_list = list(unique_cluster_ids)
             for cid in c_list:
-                c_pipe.json().get(f"{col}:bin_cluster:{algo}:{cid}:meta", "$")
+                if is_pool:
+                    c_pipe.json().get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta", "$")
+                else:
+                    c_pipe.json().get(f"{col}:bin_cluster:{algo}:{cid}:meta", "$")
             c_results = c_pipe.execute()
             for cid, res in zip(c_list, c_results):
                 cm = (res[0] if isinstance(res, list) and res else res) or {}

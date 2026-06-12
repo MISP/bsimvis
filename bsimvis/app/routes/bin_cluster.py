@@ -165,50 +165,65 @@ def list_bin_clusters():
 
     r = get_redis()
 
-    cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
+    is_pool = collection.startswith("pool:")
+    pool_id = collection[5:] if is_pool else None
+
+    if is_pool:
+        cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list"
+    else:
+        cluster_list_key = f"{collection}:bin_cluster:list:{algo}"
+
     cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
 
     if cids_raw:
-        all_meta_keys = [
-            f"{collection}:bin_cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-            for cid in cids_raw
-        ]
-    else:
-        pattern = f"{collection}:bin_cluster:{algo}:*:meta"
-        cursor = 0
-        while True:
-            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-            all_meta_keys.extend(
-                [k.decode() if isinstance(k, bytes) else k for k in keys]
-            )
-            if cursor == 0:
-                break
-
-        if all_meta_keys:
-            cids_to_add = [
-                k[len(f"{collection}:bin_cluster:{algo}:") : -len(":meta")]
-                for k in all_meta_keys
+        if is_pool:
+            all_meta_keys = [
+                f"global:pool:{pool_id}:bin_cluster:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                for cid in cids_raw
             ]
-            if cids_to_add:
-                r.sadd(cluster_list_key, *cids_to_add)
+        else:
+            all_meta_keys = [
+                f"{collection}:bin_cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                for cid in cids_raw
+            ]
+    else:
+        if not is_pool:
+            pattern = f"{collection}:bin_cluster:{algo}:*:meta"
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+                all_meta_keys.extend(
+                    [k.decode() if isinstance(k, bytes) else k for k in keys]
+                )
+                if cursor == 0:
+                    break
 
-    # Fetch tree links for parent info
-    links_key = f"{collection}:bin_cluster:tree_links:{algo}"
-    links_raw = r.get(links_key)
+            if all_meta_keys:
+                cids_to_add = [
+                    k[len(f"{collection}:bin_cluster:{algo}:") : -len(":meta")]
+                    for k in all_meta_keys
+                ]
+                if cids_to_add:
+                    r.sadd(cluster_list_key, *cids_to_add)
+
     child_to_parent = {}
     parent_to_children = {}
-    if links_raw:
-        try:
-            links = json.loads(links_raw)
-            child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
-            for l in links:
-                p = str(l["parent"])
-                if p not in parent_to_children:
-                    parent_to_children[p] = []
-                parent_to_children[p].append(str(l["child"]))
-        except Exception:
-            pass
+    if not is_pool:
+        # Fetch tree links for parent info
+        links_key = f"{collection}:bin_cluster:tree_links:{algo}"
+        links_raw = r.get(links_key)
+        if links_raw:
+            try:
+                links = json.loads(links_raw)
+                child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
+                for l in links:
+                    p = str(l["parent"])
+                    if p not in parent_to_children:
+                        parent_to_children[p] = []
+                    parent_to_children[p].append(str(l["child"]))
+            except Exception:
+                pass
 
     results = []
     total = 0
@@ -564,7 +579,13 @@ def list_bin_cluster_members():
         return {"error": "cluster_id required"}, 400
 
     r = get_redis()
-    cluster_set_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:members"
+    is_pool = collection.startswith("pool:")
+    pool_id = collection[5:] if is_pool else None
+
+    if is_pool:
+        cluster_set_key = f"global:pool:{pool_id}:bin_cluster:{cluster_id}:members"
+    else:
+        cluster_set_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:members"
 
     total = r.scard(cluster_set_key)
     members_raw = r.smembers(cluster_set_key)
@@ -576,7 +597,13 @@ def list_bin_cluster_members():
     results = []
     pipe = r.pipeline()
     for mid in page:
-        pipe.json().get(f"{mid}:meta", "$")
+        # If it's a pool, the members are formatted as {coll}:{md5}
+        if is_pool and ":" in mid:
+            parts = mid.split(":")
+            coll, md5 = parts[0], parts[1]
+            pipe.json().get(f"{coll}:file:{md5}:meta", "$")
+        else:
+            pipe.json().get(f"{collection}:file:{mid}:meta", "$")
     raw_metas = pipe.execute()
 
     for i, meta in enumerate(raw_metas):

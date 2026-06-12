@@ -53,6 +53,13 @@ class PoolService:
         meta = {k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v for k, v in meta.items()}
         meta["collections"] = [c.decode() if isinstance(c, bytes) else c for c in r.smembers(f"global:pool:{pool_id}:collections_list")]
         
+        # Parse cluster_params if present
+        if "cluster_params" in meta and isinstance(meta["cluster_params"], str):
+            try:
+                meta["cluster_params"] = json.loads(meta["cluster_params"])
+            except Exception:
+                pass
+
         # Get sync state snapshots
         sync_snapshots = r.hgetall(f"global:pool:{pool_id}:collections")
         meta["sync_snapshots"] = {k.decode() if isinstance(k, bytes) else k: json.loads(v) for k, v in sync_snapshots.items()}

@@ -216,9 +216,30 @@ def list_bin_sims():
 
     r = get_redis()
 
+    is_pool = collection.startswith("pool:")
+    pool_id = collection[5:] if is_pool else None
+
     # To efficiently list, we check involves set
-    involves_key = f"{collection}:bin_sim:involves:{md5}"
-    sids = list(r.smembers(involves_key))
+    if is_pool:
+        cursor = 0
+        matching_keys = []
+        while True:
+            cursor, found_keys = r.scan(cursor=cursor, match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5}", count=1000)
+            matching_keys.extend(found_keys)
+            if cursor == 0:
+                break
+        sids = set()
+        if matching_keys:
+            pipe = r.pipeline()
+            for k in matching_keys:
+                pipe.smembers(k)
+            res = pipe.execute()
+            for s_set in res:
+                sids.update(s_set)
+        sids = list(sids)
+    else:
+        involves_key = f"{collection}:bin_sim:involves:{md5}"
+        sids = list(r.smembers(involves_key))
 
     if not sids:
         return {"total": 0, "results": [], "offset": offset, "limit": limit}
@@ -227,7 +248,10 @@ def list_bin_sims():
 
     # We should get scores for these from the zset
     # Actually, we can just ZSCORE the zset to sort them
-    zset_key = f"{collection}:bin_sim:score:{algo}"
+    if is_pool:
+        zset_key = f"global:pool:{pool_id}:bin_sim:score:{algo}"
+    else:
+        zset_key = f"{collection}:bin_sim:score:{algo}"
 
     scored_sids = []
     pipe = r.pipeline()

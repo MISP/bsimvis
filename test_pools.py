@@ -8,7 +8,7 @@ from bsimvis.app.services.redis_client import get_redis
 
 logging.basicConfig(level=logging.INFO)
 
-COLLECTIONS = ["main", "main2"]  # Ensure these collections exist with data
+COLLECTIONS = ["main2", "main3"]  # Ensure these collections exist with data
 POOL_ID = "test_pool_1"
 ALGO = "unweighted_cosine"
 
@@ -27,11 +27,12 @@ def test_pool_lifecycle():
         "algo": ALGO,
         "top_k": 10,
         "min_score": 0.1,
-        "cluster_params": {"min_cluster_size": 2, "min_samples": 1, "epsilon": 0.1},
+        "cluster_params": {"min_cluster_size": 2, "min_samples": 1, "epsilon": 0.001},
     }
 
     # ------------------------------------------------------------------
     section("Step 1: Create Pool")
+    pool_service.delete_pool(POOL_ID)
     success, msg = pool_service.create_pool(POOL_ID, "Test Pool", COLLECTIONS, config)
     print(f"  create_pool → {success}, {msg}")
 
@@ -246,6 +247,108 @@ def test_pool_lifecycle():
         print(
             "  [WARN] No pool-level function clusters produced. (Check min_score / min_cluster_size config)"
         )
+
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    section("Step 5.5: Pool File Similarity and Clustering")
+
+    # Assert pool file similarities are built and store in `global:pool:test_pool_1:bin_sim:score:{algo}`
+    bin_sim_score_key = f"global:pool:{POOL_ID}:bin_sim:score:{ALGO}"
+    total_bin_sims = r.zcard(bin_sim_score_key)
+    print(f"  Pool file similarities stored : {total_bin_sims}")
+    assert total_bin_sims > 0, "No pool file similarities were stored in DB"
+
+    # Assert pool file clusters (`global:pool:test_pool_1:bin_cluster:list`) are built
+    bin_cluster_list_key = f"global:pool:{POOL_ID}:bin_cluster:list"
+    total_bin_clusters = r.scard(bin_cluster_list_key)
+    print(f"  Pool file clusters produced : {total_bin_clusters}")
+    assert total_bin_clusters >= 0, "No pool file clusters key found"
+
+    # Query API /api/bin_sim/search with collection="pool:test_pool_1"
+    print(f"  Querying bin_sim search API for pool: {POOL_ID}...")
+    try:
+        resp = requests.get(
+            f"{api_url}/api/bin_sim/search",
+            params={"collection": f"pool:{POOL_ID}", "min_cohesion": 0.0, "limit": 100},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # The HTTP API search endpoint uses the key "results" in its response
+            api_bin_sims = data.get("results", [])
+            print(f"  API returned {len(api_bin_sims)} file similarities")
+            assert len(api_bin_sims) > 0, "API returned 0 file similarities but DB has them"
+            if len(api_bin_sims) > 0:
+                print(f"    Sample API File Sim score: {api_bin_sims[0].get('score')}")
+                print(f"    Sample API File Sim files: {api_bin_sims[0].get('md5_1')} vs {api_bin_sims[0].get('md5_2')}")
+
+                # Try simple filters on file similarity search
+                # Filter 1: min_score filter
+                if len(api_bin_sims) > 1:
+                    mid_score = api_bin_sims[-1].get("score", 0.0)
+                    if mid_score > 0.0:
+                        filter_score = (api_bin_sims[0].get("score") + mid_score) / 2.0
+                        resp_filtered = requests.get(
+                            f"{api_url}/api/bin_sim/search",
+                            params={
+                                "collection": f"pool:{POOL_ID}",
+                                "min_score": filter_score,
+                                "limit": 100,
+                            },
+                            timeout=10,
+                        )
+                        if resp_filtered.status_code == 200:
+                            filtered_sims = resp_filtered.json().get("results", [])
+                            print(f"    Filtered by min_score={filter_score:.4f} → {len(filtered_sims)} results")
+                            for s in filtered_sims:
+                                assert s.get("score") >= filter_score, f"Similarity score {s.get('score')} < {filter_score}"
+
+                # Filter 2: md5 filter
+                sample_md5 = api_bin_sims[0].get("md5_1")
+                if sample_md5:
+                    resp_md5 = requests.get(
+                        f"{api_url}/api/bin_sim/search",
+                        params={
+                            "collection": f"pool:{POOL_ID}",
+                            "md5": sample_md5,
+                            "limit": 100,
+                        },
+                        timeout=10,
+                    )
+                    if resp_md5.status_code == 200:
+                        md5_sims = resp_md5.json().get("results", [])
+                        print(f"    Filtered by md5={sample_md5} → {len(md5_sims)} results")
+                        for s in md5_sims:
+                            assert sample_md5 in [s.get("md5_1"), s.get("md5_2")], f"MD5 {sample_md5} not in similarity pair {s}"
+        else:
+            print(f"  [ERROR] bin_sim search API returned status code {resp.status_code}: {resp.text}")
+            assert False, "bin_sim search API request failed"
+    except Exception as e:
+        print(f"  [ERROR] Failed to query or assert bin_sim search API: {e}")
+        raise e
+
+    # Query API /api/bin_cluster/list with collection="pool:test_pool_1"
+    print(f"  Querying bin_cluster list API for pool: {POOL_ID}...")
+    try:
+        resp = requests.get(
+            f"{api_url}/api/bin_cluster/list",
+            params={"collection": f"pool:{POOL_ID}"},
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # The API returns a dictionary with key "results" containing the list of clusters
+            api_clusters = data.get("results", [])
+            print(f"  API returned {len(api_clusters)} file clusters")
+            assert len(api_clusters) >= 0, "No pool file clusters key found in API response"
+            if len(api_clusters) > 0:
+                print(f"    Sample API File Cluster: {api_clusters[0]}")
+        else:
+            print(f"  [ERROR] bin_cluster list API returned status code {resp.status_code}: {resp.text}")
+            assert False, "bin_cluster list API request failed"
+    except Exception as e:
+        print(f"  [ERROR] Failed to query or assert bin_cluster list API: {e}")
+        raise e
 
     # ------------------------------------------------------------------
     section("Step 6: Delete Pool")

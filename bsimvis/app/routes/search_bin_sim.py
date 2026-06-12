@@ -93,18 +93,40 @@ def search_bin_sims():
         ]
 
         # 1. Fetch Candidate SIDs
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
+
         t0 = time.perf_counter()
         if md5_filter:
-            sids = r.smembers(f"{collection}:bin_sim:involves:{md5_filter}")
+            if is_pool:
+                cursor = 0
+                matching_keys = []
+                while True:
+                    cursor, found_keys = r.scan(cursor=cursor, match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5_filter}", count=1000)
+                    matching_keys.extend(found_keys)
+                    if cursor == 0:
+                        break
+                sids = set()
+                if matching_keys:
+                    pipe = r.pipeline()
+                    for k in matching_keys:
+                        pipe.smembers(k)
+                    res = pipe.execute()
+                    for s_set in res:
+                        sids.update(s_set)
+            else:
+                sids = r.smembers(f"{collection}:bin_sim:involves:{md5_filter}")
         else:
-            sids = r.smembers(f"{collection}:bin_sim:built:{algo}")
+            if is_pool:
+                sids = r.smembers(f"global:pool:{pool_id}:bin_sim:built:{algo}")
+            else:
+                sids = r.smembers(f"{collection}:bin_sim:built:{algo}")
         t1 = time.perf_counter()
 
         if not sids:
             return {"total": 0, "offset": offset, "limit": limit, "results": []}
 
         candidates = [s.decode() if isinstance(s, bytes) else s for s in sids]
-        # Filter out mismatching algorithms just in case
         candidates = [s for s in candidates if f":bin_sim:{algo}:" in s]
 
         if not candidates:
@@ -114,83 +136,124 @@ def search_bin_sims():
         t2 = time.perf_counter()
         light_docs = []
         unique_md5s = set()
+        
+        # Pipeline fetch JSON for ALL candidates to run in-memory filters
+        pipe = r.pipeline()
         for sid in candidates:
-            try:
-                parts = sid.split(f"{collection}:bin_sim:{algo}:")[1].split("::")
-                m_a, m_b = parts[0], parts[1]
-                unique_md5s.add(m_a)
-                unique_md5s.add(m_b)
-                light_docs.append({"sid": sid, "m_a": m_a, "m_b": m_b})
-            except Exception:
+            pipe.json().get(sid, "$")
+        raw_json_docs = pipe.execute()
+
+        for sid, res in zip(candidates, raw_json_docs):
+            if not res:
                 continue
+            doc = res[0] if isinstance(res, list) else res
+            if isinstance(doc, str):
+                try:
+                    doc = json.loads(doc)
+                except Exception:
+                    continue
+            
+            m_a = doc.get("md5_a") or doc.get("md5_1", "")
+            m_b = doc.get("md5_b") or doc.get("md5_2", "")
+            coll_a = doc.get("coll_1") or (collection[5:] if is_pool else collection)
+            coll_b = doc.get("coll_2") or (collection[5:] if is_pool else collection)
+
+            unique_md5s.add((coll_a, m_a))
+            unique_md5s.add((coll_b, m_b))
+
+            ld = {
+                "sid": sid,
+                "m_a": m_a,
+                "m_b": m_b,
+                "coll_a": coll_a,
+                "coll_b": coll_b,
+                "score": doc.get("score", 0.0),
+                "score_sim_weighted": doc.get("sim_weighted_score") or doc.get("score", 0.0),
+                "score_collection_weighted": doc.get("collection_weighted_score") or doc.get("score", 0.0),
+                "coverage_a": doc.get("coverage_a") or (doc.get("matched_clusters_count", 0) / max(1, doc.get("matched_clusters_count", 1))),
+                "coverage_b": doc.get("coverage_b") or (doc.get("matched_clusters_count", 0) / max(1, doc.get("matched_clusters_count", 1))),
+                "shared_clusters": doc.get("shared_clusters") or doc.get("matched_clusters_count", 0),
+                "doc": doc
+            }
+            light_docs.append(ld)
 
         file_meta_cache = {}
         file_funcs_count = {}
         if unique_md5s:
             md5_list = list(unique_md5s)
             pipe = r.pipeline()
-            for md5 in md5_list:
-                pipe.json().get(f"{collection}:file:{md5}:meta", "$")
-                pipe.scard(f"{collection}:idx:file:functions:{md5}")
+            for coll, md5 in md5_list:
+                pipe.json().get(f"{coll}:file:{md5}:meta", "$")
+                pipe.scard(f"{coll}:idx:file:functions:{md5}")
             results = pipe.execute()
-            for i, md5 in enumerate(md5_list):
+            for i, (coll, md5) in enumerate(md5_list):
                 res = results[2 * i]
                 func_count = results[2 * i + 1]
                 if res:
                     m = res[0] if isinstance(res, list) else res
                     if isinstance(m, str):
                         m = json.loads(m)
-                    file_meta_cache[md5] = m if isinstance(m, dict) else {}
+                    file_meta_cache[(coll, md5)] = m if isinstance(m, dict) else {}
                 else:
-                    file_meta_cache[md5] = {}
-                file_funcs_count[md5] = func_count or 0
+                    file_meta_cache[(coll, md5)] = {}
+                file_funcs_count[(coll, md5)] = func_count or 0
         t3 = time.perf_counter()
 
-        # 3. Fetch Required Numeric Fields via Pipeline
-        numeric_fields_to_fetch = set()
+        if not is_pool:
+            numeric_fields_to_fetch = set()
+            sort_field_map = {
+                "score": "score",
+                "score_sim_weighted": "score_sim_weighted",
+                "score_collection_weighted": "score_collection_weighted",
+                "coverage": "coverage_a",
+                "shared_clusters": "shared_clusters",
+                "architecture": None,
+                "functions_count": None,
+                "computed_at": "computed_at",
+            }
+            sort_zset_field = sort_field_map.get(sort_by, "score")
+            if sort_zset_field:
+                numeric_fields_to_fetch.add(sort_zset_field)
 
-        sort_field_map = {
-            "score": "score",
-            "score_sim_weighted": "score_sim_weighted",
-            "score_collection_weighted": "score_collection_weighted",
-            "coverage": "coverage_a",
-            "shared_clusters": "shared_clusters",
-            "architecture": None,
-            "functions_count": None,
-            "computed_at": "computed_at",
-        }
-        sort_zset_field = sort_field_map.get(sort_by, "score")
-        if sort_zset_field:
-            numeric_fields_to_fetch.add(sort_zset_field)
+            score_filter_field = "score_collection_weighted"
+            if sort_by in ["score", "score_sim_weighted", "score_collection_weighted"]:
+                score_filter_field = sort_by
 
-        score_filter_field = "score_collection_weighted"
-        if sort_by in ["score", "score_sim_weighted", "score_collection_weighted"]:
-            score_filter_field = sort_by
+            if min_score is not None or max_score is not None:
+                numeric_fields_to_fetch.add(score_filter_field)
+            if min_cov is not None or max_cov is not None:
+                numeric_fields_to_fetch.add("coverage_a")
+                numeric_fields_to_fetch.add("coverage_b")
+            if min_shared is not None or max_shared is not None:
+                numeric_fields_to_fetch.add("shared_clusters")
 
-        if min_score is not None or max_score is not None:
-            numeric_fields_to_fetch.add(score_filter_field)
-        if min_cov is not None or max_cov is not None:
-            numeric_fields_to_fetch.add("coverage_a")
-            numeric_fields_to_fetch.add("coverage_b")
-        if min_shared is not None or max_shared is not None:
-            numeric_fields_to_fetch.add("shared_clusters")
+            if numeric_fields_to_fetch:
+                pipe = r.pipeline()
+                fields_list = list(numeric_fields_to_fetch)
+                for ld in light_docs:
+                    sid = ld["sid"]
+                    for field in fields_list:
+                        pipe.zscore(f"{collection}:idx:bin_sim:{field}", sid)
 
-        if numeric_fields_to_fetch:
-            pipe = r.pipeline()
-            fields_list = list(numeric_fields_to_fetch)
-            for ld in light_docs:
-                sid = ld["sid"]
-                for field in fields_list:
-                    pipe.zscore(f"{collection}:idx:bin_sim:{field}", sid)
+                zscore_res = pipe.execute()
 
-            zscore_res = pipe.execute()
+                idx = 0
+                for ld in light_docs:
+                    for field in fields_list:
+                        val = zscore_res[idx]
+                        ld[field] = float(val) if val is not None else 0.0
+                        idx += 1
+        else:
+            sort_field_map = {
+                "score": "score",
+                "score_sim_weighted": "score_sim_weighted",
+                "score_collection_weighted": "score_collection_weighted",
+                "coverage": "coverage_a",
+                "shared_clusters": "shared_clusters",
+            }
+            sort_zset_field = sort_field_map.get(sort_by, "score")
+            score_filter_field = sort_by if sort_by in ["score", "score_sim_weighted", "score_collection_weighted"] else "score_collection_weighted"
 
-            idx = 0
-            for ld in light_docs:
-                for field in fields_list:
-                    val = zscore_res[idx]
-                    ld[field] = float(val) if val is not None else 0.0
-                    idx += 1
         t4 = time.perf_counter()
 
         # 4. Filter
@@ -200,8 +263,10 @@ def search_bin_sims():
         for ld in light_docs:
             m_a = ld["m_a"]
             m_b = ld["m_b"]
-            meta_a = file_meta_cache.get(m_a, {})
-            meta_b = file_meta_cache.get(m_b, {})
+            coll_a = ld["coll_a"]
+            coll_b = ld["coll_b"]
+            meta_a = file_meta_cache.get((coll_a, m_a), {})
+            meta_b = file_meta_cache.get((coll_b, m_b), {})
 
             ld["file_name_a"] = meta_a.get("file_name", m_a)
             ld["file_name_b"] = meta_b.get("file_name", m_b)
@@ -211,8 +276,8 @@ def search_bin_sims():
             ld["file_user_tags_b"] = meta_b.get("user_tags", [])
             ld["architecture_a"] = meta_a.get("language_id", "")
             ld["architecture_b"] = meta_b.get("language_id", "")
-            ld["functions_count_a"] = file_funcs_count.get(m_a, 0)
-            ld["functions_count_b"] = file_funcs_count.get(m_b, 0)
+            ld["functions_count_a"] = file_funcs_count.get((coll_a, m_a), 0)
+            ld["functions_count_b"] = file_funcs_count.get((coll_b, m_b), 0)
 
             # Filters
             if file_name_filter:
@@ -329,111 +394,102 @@ def search_bin_sims():
 
         # 6. Paginate SIDs
         paged_light = filtered_docs[offset : offset + limit]
-        paged_sids = [d["sid"] for d in paged_light]
-
-        # 7. Fetch FULL JSON for the page
+        
+        # 7. Format FULL response
         final_docs = []
-        if paged_sids:
-            pipe = r.pipeline()
-            for sid in paged_sids:
-                pipe.json().get(sid, "$")
-            page_raw = pipe.execute()
+        for ld in paged_light:
+            sid = ld["sid"]
+            doc = ld["doc"] if is_pool else None
+            
+            if not doc:
+                res = r.json().get(sid, "$")
+                if res:
+                    doc = res[0] if isinstance(res, list) else res
+                    if isinstance(doc, str):
+                        doc = json.loads(doc)
+            
+            if not doc:
+                continue
 
-            for sid, res in zip(paged_sids, page_raw):
-                if not res:
+            doc["_id"] = sid
+            doc.pop("diff", None)
+
+            m_a = doc.get("md5_a") or doc.get("md5_1", "")
+            m_b = doc.get("md5_b") or doc.get("md5_2", "")
+            coll_a = ld["coll_a"]
+            coll_b = ld["coll_b"]
+
+            meta_a = file_meta_cache.get((coll_a, m_a), {})
+            meta_b = file_meta_cache.get((coll_b, m_b), {})
+
+            doc["file_name_a"] = meta_a.get("file_name", m_a)
+            doc["file_name_b"] = meta_b.get("file_name", m_b)
+            doc["file_tags_a"] = meta_a.get("tags", [])
+            doc["file_tags_b"] = meta_b.get("tags", [])
+            doc["file_user_tags_a"] = meta_a.get("user_tags", [])
+            doc["file_user_tags_b"] = meta_b.get("user_tags", [])
+
+            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get("language_id", "")
+            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get("language_id", "")
+            doc["functions_count_a"] = doc.get("functions_count_a") or file_funcs_count.get((coll_a, m_a), 0)
+            doc["functions_count_b"] = doc.get("functions_count_b") or file_funcs_count.get((coll_b, m_b), 0)
+
+            doc["compiler_a"] = meta_a.get("compiler") or meta_a.get("compiler_id", "")
+            doc["compiler_b"] = meta_b.get("compiler") or meta_b.get("compiler_id", "")
+            doc["entry_date_a"] = meta_a.get("entry_date", 0)
+            doc["entry_date_b"] = meta_b.get("entry_date", 0)
+
+            normalize_tags(doc)
+            normalize_tags(
+                doc,
+                tag_fields=[
+                    "file_tags_a",
+                    "file_user_tags_a",
+                    "file_tags_b",
+                    "file_user_tags_b",
+                ],
+            )
+
+            # Re-apply sim_tag_filters if provided
+            if sim_tag_filters:
+                combined_sim_tags = set(
+                    t.lower()
+                    for t in doc.get("tags", []) + doc.get("user_tags", [])
+                )
+                if not all(tf in combined_sim_tags for tf in sim_tag_filters):
+                    total -= 1
                     continue
-                doc = res[0] if isinstance(res, list) else res
-                if isinstance(doc, str):
-                    doc = json.loads(doc)
 
-                doc["_id"] = sid
-                doc.pop("diff", None)
-
-                m_a = doc.get("md5_a", "")
-                m_b = doc.get("md5_b", "")
-                meta_a = file_meta_cache.get(m_a, {})
-                meta_b = file_meta_cache.get(m_b, {})
-
-                doc["file_name_a"] = meta_a.get("file_name", m_a)
-                doc["file_name_b"] = meta_b.get("file_name", m_b)
-                doc["file_tags_a"] = meta_a.get("tags", [])
-                doc["file_tags_b"] = meta_b.get("tags", [])
-                doc["file_user_tags_a"] = meta_a.get("user_tags", [])
-                doc["file_user_tags_b"] = meta_b.get("user_tags", [])
-
-                doc["architecture_a"] = doc.get("architecture_a") or meta_a.get(
-                    "language_id", ""
+            if exclude_sim_tag_filters:
+                combined_sim_tags = set(
+                    t.lower()
+                    for t in doc.get("tags", []) + doc.get("user_tags", [])
                 )
-                doc["architecture_b"] = doc.get("architecture_b") or meta_b.get(
-                    "language_id", ""
+                if any(tf in combined_sim_tags for tf in exclude_sim_tag_filters):
+                    total -= 1
+                    continue
+            if exclude_sim_static_tag_filters:
+                combined_sim_static_tags = set(
+                    t.lower() for t in doc.get("tags", [])
                 )
-                doc["functions_count_a"] = doc.get(
-                    "functions_count_a"
-                ) or file_funcs_count.get(m_a, 0)
-                doc["functions_count_b"] = doc.get(
-                    "functions_count_b"
-                ) or file_funcs_count.get(m_b, 0)
-
-                doc["compiler_a"] = meta_a.get("compiler") or meta_a.get(
-                    "compiler_id", ""
+                if any(
+                    tf in combined_sim_static_tags
+                    for tf in exclude_sim_static_tag_filters
+                ):
+                    total -= 1
+                    continue
+            if exclude_sim_user_tag_filters:
+                combined_sim_user_tags = set(
+                    t.lower() for t in doc.get("user_tags", [])
                 )
-                doc["compiler_b"] = meta_b.get("compiler") or meta_b.get(
-                    "compiler_id", ""
-                )
-                doc["entry_date_a"] = meta_a.get("entry_date", 0)
-                doc["entry_date_b"] = meta_b.get("entry_date", 0)
+                if any(
+                    tf in combined_sim_user_tags
+                    for tf in exclude_sim_user_tag_filters
+                ):
+                    total -= 1
+                    continue
 
-                normalize_tags(doc)
-                normalize_tags(
-                    doc,
-                    tag_fields=[
-                        "file_tags_a",
-                        "file_user_tags_a",
-                        "file_tags_b",
-                        "file_user_tags_b",
-                    ],
-                )
-
-                # Re-apply sim_tag_filters if provided
-                if sim_tag_filters:
-                    combined_sim_tags = set(
-                        t.lower()
-                        for t in doc.get("tags", []) + doc.get("user_tags", [])
-                    )
-                    if not all(tf in combined_sim_tags for tf in sim_tag_filters):
-                        total -= 1
-                        continue
-
-                if exclude_sim_tag_filters:
-                    combined_sim_tags = set(
-                        t.lower()
-                        for t in doc.get("tags", []) + doc.get("user_tags", [])
-                    )
-                    if any(tf in combined_sim_tags for tf in exclude_sim_tag_filters):
-                        total -= 1
-                        continue
-                if exclude_sim_static_tag_filters:
-                    combined_sim_static_tags = set(
-                        t.lower() for t in doc.get("tags", [])
-                    )
-                    if any(
-                        tf in combined_sim_static_tags
-                        for tf in exclude_sim_static_tag_filters
-                    ):
-                        total -= 1
-                        continue
-                if exclude_sim_user_tag_filters:
-                    combined_sim_user_tags = set(
-                        t.lower() for t in doc.get("user_tags", [])
-                    )
-                    if any(
-                        tf in combined_sim_user_tags
-                        for tf in exclude_sim_user_tag_filters
-                    ):
-                        total -= 1
-                        continue
-
-                final_docs.append(doc)
+            final_docs.append(doc)
 
         t7 = time.perf_counter()
         logging.info(

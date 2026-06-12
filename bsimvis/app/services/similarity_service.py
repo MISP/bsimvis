@@ -948,9 +948,14 @@ class SimilarityService:
             return False
 
         collections = pool.get("collections", [])
-        algo = pool.get("algo", "unweighted_cosine")
-        top_k = int(pool.get("top_k", 1000))
-        min_score = float(pool.get("min_score", 0.3))
+        
+        # New structured config handling
+        only_cross_collection = pool.get("only_cross_collection", False)
+        func_sim_params = pool.get("func_sim_params", {})
+        
+        algo = func_sim_params.get("algo", pool.get("algo", "unweighted_cosine"))
+        top_k = int(func_sim_params.get("top_k", pool.get("top_k", 1000)))
+        min_score = float(func_sim_params.get("min_score", pool.get("min_score", 0.3)))
         
         r = self.r
         
@@ -979,7 +984,7 @@ class SimilarityService:
                 elapsed = time.time() - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
-                job_service.update_progress(job_id, done / total, {"speed": round(speed, 2)})
+                job_service.update_progress(job_id, int(done / total * 100), f"Building pool: {done}/{total} functions ({speed:.1f} fn/s)")
 
             discovery_results = []
             for fid in chunk:
@@ -1003,6 +1008,10 @@ class SimilarityService:
                 # Search in EACH collection of the pool
                 candidates = []
                 for search_coll in collections:
+                    # ONLY_CROSS_COLLECTION FILTER: Skip Lua if query FID is from search_coll
+                    if only_cross_collection and fid.startswith(f"{search_coll}:"):
+                        continue
+
                     # LUA discovery for each collection
                     lua_args = [
                         fid,
@@ -1066,16 +1075,19 @@ class SimilarityService:
         if not pool:
             logging.error(f"Pool {pool_id} not found")
             return False
+            
+        # New structured config handling
+        file_sim_params = pool.get("file_sim_params", {})
+        if not file_sim_params.get("enabled", True):
+            if job_service and job_id:
+                job_service.add_log(job_id, f"[*] File similarity disabled for pool {pool_id}, skipping build_pool_bin_sim")
+            return True
 
         collections = pool.get("collections", [])
         algo = pool.get("algo", "unweighted_cosine")
         cluster_params = pool.get("cluster_params", {})
-        if isinstance(cluster_params, str):
-            try:
-                cluster_params = json.loads(cluster_params)
-            except Exception:
-                cluster_params = {}
-        min_cohesion = float(cluster_params.get("min_cohesion", 0.5))
+        
+        min_cohesion = float(file_sim_params.get("min_cohesion", cluster_params.get("min_cohesion", 0.5)))
 
         r = self.r
         start_time = time.time()

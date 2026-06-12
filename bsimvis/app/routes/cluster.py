@@ -247,18 +247,37 @@ def list_clusters():
 
     r = get_redis()
 
-    cluster_list_key = f"{collection}:cluster:list:{algo}"
+    pool_id = request.args.get("pool")
+    is_pool = pool_id is not None
+    if not is_pool:
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
+
+    if is_pool:
+        cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+    else:
+        cluster_list_key = f"{collection}:cluster:list:{algo}"
+
     cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
 
     if cids_raw:
-        all_meta_keys = [
-            f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-            for cid in cids_raw
-        ]
+        if is_pool:
+            all_meta_keys = [
+                f"global:pool:{pool_id}:cluster:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                for cid in cids_raw
+            ]
+        else:
+            all_meta_keys = [
+                f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+                for cid in cids_raw
+            ]
     else:
         # 1. Fallback to discover all cluster meta keys
-        pattern = f"{collection}:cluster:{algo}:*:meta"
+        if is_pool:
+            pattern = f"global:pool:{pool_id}:cluster:*:meta"
+        else:
+            pattern = f"{collection}:cluster:{algo}:*:meta"
         cursor = 0
         while True:
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
@@ -270,8 +289,12 @@ def list_clusters():
 
         # Populate the set for future fast lookups
         if all_meta_keys:
+            if is_pool:
+                prefix = f"global:pool:{pool_id}:cluster:"
+            else:
+                prefix = f"{collection}:cluster:{algo}:"
             cids_to_add = [
-                k[len(f"{collection}:cluster:{algo}:") : -len(":meta")]
+                k[len(prefix) : -len(":meta")]
                 for k in all_meta_keys
             ]
             if cids_to_add:
@@ -282,7 +305,10 @@ def list_clusters():
     total = 0
 
     # Fetch tree links to provide parent information
-    links_key = f"{collection}:cluster:tree_links:{algo}"
+    if is_pool:
+        links_key = f"global:pool:{pool_id}:cluster:tree_links"
+    else:
+        links_key = f"{collection}:cluster:tree_links:{algo}"
     links_raw = r.get(links_key)
     child_to_parent = {}
     parent_to_children = {}
@@ -582,8 +608,17 @@ def get_cluster_tree():
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
 
+    pool_id = request.args.get("pool")
+    is_pool = pool_id is not None
+    if not is_pool:
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
+
     r = get_redis()
-    tree_key = f"{collection}:cluster:tree:{algo}"
+    if is_pool:
+        tree_key = f"global:pool:{pool_id}:cluster:tree"
+    else:
+        tree_key = f"{collection}:cluster:tree:{algo}"
     tree_data = r.get(tree_key)
 
     if not tree_data:
@@ -602,11 +637,22 @@ def update_cluster_meta():
     cluster_id = data.get("cluster_id")
     cluster_name = data.get("cluster_name")
 
+    pool_id = data.get("pool")
+    is_pool = pool_id is not None
+    if not is_pool:
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
+
     if not cluster_id or not cluster_name:
         return {"error": "cluster_id and cluster_name required"}, 400
 
     r = get_redis()
-    meta_key = f"{collection}:cluster:{algo}:{cluster_id}:meta"
+    if is_pool:
+        meta_key = f"global:pool:{pool_id}:cluster:{cluster_id}:meta"
+        collection_for_tags = f"pool:{pool_id}"
+    else:
+        meta_key = f"{collection}:cluster:{algo}:{cluster_id}:meta"
+        collection_for_tags = collection
 
     if not r.exists(meta_key):
         return {"error": "Cluster meta not found"}, 404
@@ -616,7 +662,10 @@ def update_cluster_meta():
     # Propagate name to all member functions for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
-    members_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
+    if is_pool:
+        members_key = f"global:pool:{pool_id}:cluster:{cluster_id}:members"
+    else:
+        members_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
     members = r.smembers(members_key)
 
     # Get old name to unindex
@@ -631,8 +680,8 @@ def update_cluster_meta():
     for mid in members:
         mid_str = mid.decode() if isinstance(mid, bytes) else mid
         if old_name:
-            _unindex_tag(pipe, collection, "func", "cluster_name", old_name, mid_str)
-        _index_tag(pipe, collection, "func", "cluster_name", cluster_name, mid_str)
+            _unindex_tag(pipe, collection_for_tags, "func", "cluster_name", old_name, mid_str)
+        _index_tag(pipe, collection_for_tags, "func", "cluster_name", cluster_name, mid_str)
         # Also update the function's metadata JSON for consistency
         pipe.json().set(f"{mid_str}:meta", "$.cluster_name", cluster_name)
     pipe.execute()
@@ -648,11 +697,20 @@ def list_cluster_members():
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
 
+    pool_id = request.args.get("pool")
+    is_pool = pool_id is not None
+    if not is_pool:
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
+
     if not cluster_id:
         return {"error": "cluster_id required"}, 400
 
     r = get_redis()
-    cluster_set_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
+    if is_pool:
+        cluster_set_key = f"global:pool:{pool_id}:cluster:{cluster_id}:members"
+    else:
+        cluster_set_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
 
     total = r.scard(cluster_set_key)
     # Sets don't support offset/limit natively, so we fetch and slice or use SRANDMEMBER
@@ -688,47 +746,62 @@ def get_cluster_functions():
     collection = request.args.get("collection")
     cluster_uuid = request.args.get("cluster_uuid")
     algo = request.args.get("algo", "unweighted_cosine")
-    if not collection or not cluster_uuid:
-        return {"error": "collection and cluster_uuid required"}, 400
+
+    pool_id = request.args.get("pool")
+    is_pool = pool_id is not None
+    if not is_pool and collection:
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
+
+    if not collection and not pool_id:
+        return {"error": "collection or pool required"}, 400
+    if not cluster_uuid:
+        return {"error": "cluster_uuid required"}, 400
 
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
 
     r = get_redis()
-    # Resolve the cluster_uuid by reading the Redis index set directly
-    bucket_key = f"{collection}:idx:func:cluster_uuid:{cluster_uuid.lower()}"
-    fids_raw = r.smembers(bucket_key)
+    fids_raw = None
 
-    # Fallback to scanning metadata if the index is not populated
-    if not fids_raw:
-        pattern = f"{collection}:cluster:{algo}:*:meta"
-        cursor = 0
-        matching_cluster_id = None
-        while True:
-            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
-            if keys:
-                pipe = r.pipeline()
-                for k in keys:
-                    pipe.json().get(k, "$.cluster_uuid")
-                uuids = pipe.execute()
-                for k, u_res in zip(keys, uuids):
-                    u = u_res[0] if isinstance(u_res, list) and u_res else u_res
-                    if isinstance(u, bytes):
-                        u = u.decode()
-                    if u == cluster_uuid:
-                        k_str = k.decode() if isinstance(k, bytes) else k
-                        parts = k_str.split(":")
-                        if len(parts) >= 4:
-                            matching_cluster_id = parts[3]
-                            break
-            if matching_cluster_id or cursor == 0:
-                break
+    if is_pool:
+        cluster_set_key = f"global:pool:{pool_id}:cluster:{cluster_uuid}:members"
+        fids_raw = r.smembers(cluster_set_key)
+    else:
+        # Resolve the cluster_uuid by reading the Redis index set directly
+        bucket_key = f"{collection}:idx:func:cluster_uuid:{cluster_uuid.lower()}"
+        fids_raw = r.smembers(bucket_key)
 
-        if matching_cluster_id:
-            cluster_set_key = (
-                f"{collection}:cluster:{algo}:{matching_cluster_id}:members"
-            )
-            fids_raw = r.smembers(cluster_set_key)
+        # Fallback to scanning metadata if the index is not populated
+        if not fids_raw:
+            pattern = f"{collection}:cluster:{algo}:*:meta"
+            cursor = 0
+            matching_cluster_id = None
+            while True:
+                cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+                if keys:
+                    pipe = r.pipeline()
+                    for k in keys:
+                        pipe.json().get(k, "$.cluster_uuid")
+                    uuids = pipe.execute()
+                    for k, u_res in zip(keys, uuids):
+                        u = u_res[0] if isinstance(u_res, list) and u_res else u_res
+                        if isinstance(u, bytes):
+                            u = u.decode()
+                        if u == cluster_uuid:
+                            k_str = k.decode() if isinstance(k, bytes) else k
+                            parts = k_str.split(":")
+                            if len(parts) >= 4:
+                                matching_cluster_id = parts[3]
+                                break
+                if matching_cluster_id or cursor == 0:
+                    break
+
+            if matching_cluster_id:
+                cluster_set_key = (
+                    f"{collection}:cluster:{algo}:{matching_cluster_id}:members"
+                )
+                fids_raw = r.smembers(cluster_set_key)
 
     if not fids_raw:
         return {"functions": [], "total": 0}

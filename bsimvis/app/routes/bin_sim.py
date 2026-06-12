@@ -109,17 +109,43 @@ def get_bin_sim():
     algo = request.args.get("algo", "unweighted_cosine")
     md5_a = request.args.get("md5_a")
     md5_b = request.args.get("md5_b")
+    coll_b = request.args.get("coll_b", collection)
+    pool_id = request.args.get("pool_id")
 
     if not md5_a or not md5_b:
         abort(400, "Both md5_a and md5_b are required")
 
     r = get_redis()
+    coll_a = collection
 
-    # ensure a < b
-    if md5_a > md5_b:
-        md5_a, md5_b = md5_b, md5_a
+    if pool_id:
+        # For pool pairs, look up the SID via the 'involves' index to avoid
+        # guessing the ordering used at storage time.
+        involves_a = f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}"
+        involves_b = f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}"
+        pipe = r.pipeline()
+        pipe.smembers(involves_a)
+        pipe.smembers(involves_b)
+        res_a, res_b = pipe.execute()
 
-    sid = f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+        sids_a = {s.decode() if isinstance(s, bytes) else s for s in (res_a or set())}
+        sids_b = {s.decode() if isinstance(s, bytes) else s for s in (res_b or set())}
+        common = sids_a & sids_b
+
+        if not common:
+            return {
+                "status": "not_found",
+                "message": "Similarity not calculated for this pair",
+            }, 404
+
+        sid = next(iter(common))
+    else:
+        # Non-pool: canonical ordering md5_a < md5_b
+        if md5_a > md5_b:
+            md5_a, md5_b = md5_b, md5_a
+            coll_a, coll_b = coll_b, coll_a
+        sid = f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
+
     data = r.json().get(sid, "$")
 
     if not data:
@@ -129,6 +155,22 @@ def get_bin_sim():
         }, 404
 
     diff_data = data[0] if isinstance(data, list) else data
+
+    # Resolve actual coll_a/coll_b from the stored doc for metadata lookups
+    if pool_id:
+        coll_a = diff_data.get("coll_1") or coll_a
+        coll_b = diff_data.get("coll_2") or coll_b
+        md5_a = diff_data.get("md5_1") or md5_a
+        md5_b = diff_data.get("md5_2") or md5_b
+
+        # Pool docs store clusters in `matched_clusters` with no `diff` wrapper.
+        # Normalize into the same shape the renderer expects.
+        if "diff" not in diff_data and "matched_clusters" in diff_data:
+            diff_data["diff"] = {
+                "matched": diff_data["matched_clusters"],
+                "unique_to_a": [],
+                "unique_to_b": [],
+            }
 
     # Extract all unique function IDs
     fids = set()
@@ -141,10 +183,11 @@ def get_bin_sim():
     for u in diff.get("unique_to_b", []):
         fids.update(u.get("funcs", []))
 
-    # Fetch File Metadata for both sides
+
+    # Fetch File Metadata for both sides (each from their own collection)
     pipe = r.pipeline()
-    pipe.json().get(f"{collection}:file:{md5_a}:meta", "$")
-    pipe.json().get(f"{collection}:file:{md5_b}:meta", "$")
+    pipe.json().get(f"{coll_a}:file:{md5_a}:meta", "$")
+    pipe.json().get(f"{coll_b}:file:{md5_b}:meta", "$")
     file_meta_res = pipe.execute()
 
     if file_meta_res[0]:
@@ -160,7 +203,7 @@ def get_bin_sim():
             else file_meta_res[1]
         )
 
-    # Retrieve metadata from pipeline
+    # Retrieve function metadata
     fids = list(fids)
     if fids:
         pipe = r.pipeline()
@@ -216,8 +259,11 @@ def list_bin_sims():
 
     r = get_redis()
 
-    is_pool = collection.startswith("pool:")
-    pool_id = collection[5:] if is_pool else None
+    pool_id = request.args.get("pool")
+    is_pool = pool_id is not None
+    if not is_pool:
+        is_pool = collection.startswith("pool:")
+        pool_id = collection[5:] if is_pool else None
 
     # To efficiently list, we check involves set
     if is_pool:

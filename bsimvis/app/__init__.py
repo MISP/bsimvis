@@ -34,6 +34,24 @@ def create_app():
     def start_timer():
         g.start_time = time.time()
 
+    @app.before_request
+    def normalize_pool_params():
+        # Support ?pool=pool_id by converting it to collection=pool:pool_id internally
+        if "pool" in request.args and "collection" not in request.args:
+            pool_id = request.args.get("pool")
+            from werkzeug.datastructures import MultiDict
+            new_args = MultiDict(request.args)
+            new_args["collection"] = f"pool:{pool_id}"
+            request.args = new_args
+
+        if request.is_json:
+            try:
+                data = request.get_json(silent=True)
+                if data and "pool" in data and "collection" not in data:
+                    data["collection"] = f"pool:{data['pool']}"
+            except Exception:
+                pass
+
     @app.after_request
     def log_response(response):
         # Prevent proxy and browser caching of all assets/responses to ensure fresh reload
@@ -67,6 +85,9 @@ def create_app():
     @app.route("/collection/<collection>")
     @app.route("/collections/<collection>")
     @app.route("/collections")
+    @app.route("/pools/<collection>/<path:rest>")
+    @app.route("/pools/<collection>")
+    @app.route("/pools")
     @app.route("/jobs")
     @app.route("/upload")
     def dashboard_ui(collection=None, rest=None):

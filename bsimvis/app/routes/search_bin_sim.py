@@ -93,8 +93,11 @@ def search_bin_sims():
         ]
 
         # 1. Fetch Candidate SIDs
-        is_pool = collection.startswith("pool:")
-        pool_id = collection[5:] if is_pool else None
+        pool_id = request.args.get("pool")
+        is_pool = pool_id is not None
+        if not is_pool:
+            is_pool = collection.startswith("pool:")
+            pool_id = collection[5:] if is_pool else None
 
         t0 = time.perf_counter()
         if md5_filter:
@@ -418,6 +421,12 @@ def search_bin_sims():
             m_b = doc.get("md5_b") or doc.get("md5_2", "")
             coll_a = ld["coll_a"]
             coll_b = ld["coll_b"]
+
+            # Normalize field names so frontend always receives md5_a/md5_b/coll_a/coll_b
+            doc["md5_a"] = m_a
+            doc["md5_b"] = m_b
+            doc["coll_a"] = coll_a
+            doc["coll_b"] = coll_b
 
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})

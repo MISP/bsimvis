@@ -18,7 +18,13 @@ def create_pool():
     if not success:
         return {"error": message}, 400
         
-    return {"message": message, "pool_id": pool_id}, 201
+    # Schedule similarity building followed by clustering in a unified pipeline
+    pipeline_id = job_service.create_pipeline([
+        (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+        (JobType.CLUSTER_POOL, {"pool_id": pool_id})
+    ])
+    
+    return {"message": message, "pool_id": pool_id, "job_id": pipeline_id}, 201
 
 def get_pool(pool_id):
     pool = pool_service.get_pool(pool_id)

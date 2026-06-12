@@ -2068,14 +2068,52 @@ class LLMSummarizeFile(Resource):
 
 # --- Pool Namespace ---
 
-pool_config_model = api.model(
-    "PoolConfig",
+pool_func_sim_params_model = api.model(
+    "PoolFuncSimParams",
     {
         "algo": fields.String(default="unweighted_cosine"),
         "top_k": fields.Integer(default=1000),
         "min_score": fields.Float(default=0.3),
+    },
+)
+
+pool_func_cluster_params_model = api.model(
+    "PoolFuncClusterParams",
+    {
         "cluster_algo": fields.String(default="hdbscan"),
-        "cluster_params": fields.Raw(description="Dictionary of clustering parameters"),
+        "min_cluster_size": fields.Integer(default=2),
+        "min_samples": fields.Integer(default=1),
+        "epsilon": fields.Float(default=0.1),
+        "selection_method": fields.String(default="eom"),
+    },
+)
+
+pool_file_sim_params_model = api.model(
+    "PoolFileSimParams",
+    {
+        "enabled": fields.Boolean(default=True),
+        "min_cohesion": fields.Float(default=0.5),
+    },
+)
+
+pool_file_cluster_params_model = api.model(
+    "PoolFileClusterParams",
+    {
+        "min_cluster_size": fields.Integer(default=2),
+        "min_samples": fields.Integer(default=1),
+        "epsilon": fields.Float(default=0.1),
+        "selection_method": fields.String(default="eom"),
+    },
+)
+
+pool_config_model = api.model(
+    "PoolConfig",
+    {
+        "only_cross_collection": fields.Boolean(default=False),
+        "func_sim_params": fields.Nested(pool_func_sim_params_model),
+        "func_cluster_params": fields.Nested(pool_func_cluster_params_model),
+        "file_sim_params": fields.Nested(pool_file_sim_params_model),
+        "file_cluster_params": fields.Nested(pool_file_cluster_params_model),
     },
 )
 

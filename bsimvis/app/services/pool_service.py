@@ -10,7 +10,7 @@ class PoolService:
     def create_pool(self, pool_id, name, collections, config):
         """
         Creates a new pool definition.
-        config: {algo, top_k, min_score, cluster_algo, cluster_params}
+        config: {only_cross_collection, func_sim_params, func_cluster_params, file_sim_params, file_cluster_params, ...}
         """
         r = self.r
         pool_meta_key = f"global:pool:{pool_id}:meta"
@@ -19,12 +19,26 @@ class PoolService:
             return False, "Pool ID already exists"
 
         now = int(time.time() * 1000)
+        
+        # New structured config storage
+        only_cross_collection = "1" if config.get("only_cross_collection", False) else "0"
+        func_sim_params = config.get("func_sim_params", {})
+        func_cluster_params = config.get("func_cluster_params", {})
+        file_sim_params = config.get("file_sim_params", {})
+        file_cluster_params = config.get("file_cluster_params", {})
+
         meta = {
             "name": name,
             "created_at": now,
             "status": "created",
             "last_built_at": 0,
             "sync_status": "outdated",
+            "only_cross_collection": only_cross_collection,
+            "func_sim_params": json.dumps(func_sim_params),
+            "func_cluster_params": json.dumps(func_cluster_params),
+            "file_sim_params": json.dumps(file_sim_params),
+            "file_cluster_params": json.dumps(file_cluster_params),
+            # Keep old fields as fallback for backward compatibility
             "algo": config.get("algo", "unweighted_cosine"),
             "top_k": config.get("top_k", 1000),
             "min_score": config.get("min_score", 0.3),
@@ -53,12 +67,17 @@ class PoolService:
         meta = {k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v for k, v in meta.items()}
         meta["collections"] = [c.decode() if isinstance(c, bytes) else c for c in r.smembers(f"global:pool:{pool_id}:collections_list")]
         
-        # Parse cluster_params if present
-        if "cluster_params" in meta and isinstance(meta["cluster_params"], str):
-            try:
-                meta["cluster_params"] = json.loads(meta["cluster_params"])
-            except Exception:
-                pass
+        if "only_cross_collection" in meta:
+            meta["only_cross_collection"] = (meta["only_cross_collection"] == "1")
+
+        # Parse nested JSON fields
+        json_fields = ["cluster_params", "func_sim_params", "func_cluster_params", "file_sim_params", "file_cluster_params"]
+        for field in json_fields:
+            if field in meta and isinstance(meta[field], str):
+                try:
+                    meta[field] = json.loads(meta[field])
+                except Exception:
+                    meta[field] = {}
 
         # Get sync state snapshots
         sync_snapshots = r.hgetall(f"global:pool:{pool_id}:collections")

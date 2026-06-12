@@ -19,7 +19,7 @@ def section(title):
     print(f"{'='*60}")
 
 
-def test_pool_lifecycle():
+def test_pool_lifecycle(no_delete=False):
     r = get_redis()
     sim_service = SimilarityService(r)
 
@@ -109,7 +109,7 @@ def test_pool_lifecycle():
     try:
         resp = requests.get(
             f"{api_url}/api/similarity/search",
-            params={"collection": f"pool:{POOL_ID}", "min_score": 0.1, "limit": 100},
+            params={"pool": POOL_ID, "min_score": 0.1, "limit": 100},
             timeout=10,
         )
         if resp.status_code == 200:
@@ -144,7 +144,7 @@ def test_pool_lifecycle():
                         resp_filtered = requests.get(
                             f"{api_url}/api/similarity/search",
                             params={
-                                "collection": f"pool:{POOL_ID}",
+                                "pool": POOL_ID,
                                 "min_score": filter_score,
                                 "limit": 100,
                             },
@@ -167,7 +167,7 @@ def test_pool_lifecycle():
                     resp_lang = requests.get(
                         f"{api_url}/api/similarity/search",
                         params={
-                            "collection": f"pool:{POOL_ID}",
+                            "pool": POOL_ID,
                             "min_score": 0.1,
                             "language": lang1,
                             "limit": 100,
@@ -191,7 +191,7 @@ def test_pool_lifecycle():
                 resp_cb = requests.get(
                     f"{api_url}/api/similarity/search",
                     params={
-                        "collection": f"pool:{POOL_ID}",
+                        "pool": POOL_ID,
                         "min_score": 0.1,
                         "cross_binary": "true",
                         "limit": 100,
@@ -269,7 +269,7 @@ def test_pool_lifecycle():
     try:
         resp = requests.get(
             f"{api_url}/api/bin_sim/search",
-            params={"collection": f"pool:{POOL_ID}", "min_cohesion": 0.0, "limit": 100},
+            params={"pool": POOL_ID, "min_cohesion": 0.0, "limit": 100},
             timeout=10,
         )
         if resp.status_code == 200:
@@ -291,7 +291,8 @@ def test_pool_lifecycle():
                         resp_filtered = requests.get(
                             f"{api_url}/api/bin_sim/search",
                             params={
-                                "collection": f"pool:{POOL_ID}",
+                                "pool": POOL_ID,
+                                "algo": ALGO,
                                 "min_score": filter_score,
                                 "limit": 100,
                             },
@@ -309,7 +310,7 @@ def test_pool_lifecycle():
                     resp_md5 = requests.get(
                         f"{api_url}/api/bin_sim/search",
                         params={
-                            "collection": f"pool:{POOL_ID}",
+                            "pool": POOL_ID,
                             "md5": sample_md5,
                             "limit": 100,
                         },
@@ -332,7 +333,7 @@ def test_pool_lifecycle():
     try:
         resp = requests.get(
             f"{api_url}/api/bin_cluster/list",
-            params={"collection": f"pool:{POOL_ID}"},
+            params={"pool": POOL_ID},
             timeout=10,
         )
         if resp.status_code == 200:
@@ -350,6 +351,10 @@ def test_pool_lifecycle():
         print(f"  [ERROR] Failed to query or assert bin_cluster list API: {e}")
         raise e
 
+    if no_delete:
+        print("\n✓ Pool kept for testing (--no-delete flag active).\n")
+        return
+
     # ------------------------------------------------------------------
     section("Step 6: Delete Pool")
     success, msg = pool_service.delete_pool(POOL_ID)
@@ -365,4 +370,8 @@ def test_pool_lifecycle():
 
 
 if __name__ == "__main__":
-    test_pool_lifecycle()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-delete", action="store_true", help="Keep the created pool after testing")
+    args = parser.parse_args()
+    test_pool_lifecycle(no_delete=args.no_delete)

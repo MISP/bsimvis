@@ -84,11 +84,11 @@ class SimilarityService:
             return True
 
         logging.info(
-            f"[*] Building similarities for {total} functions in {batch_uuid or md5} (chunk_size=20, yield={sleep_time}s)..."
+            f"[*] Building similarities for {total} functions in {batch_uuid or md5} (chunk_size=100, yield={sleep_time}s)..."
         )
 
         start_time = time.time()
-        chunk_size = 5
+        chunk_size = 100
 
         for i in range(0, total, chunk_size):
             chunk = function_ids[i : i + chunk_size]
@@ -974,7 +974,7 @@ class SimilarityService:
             job_service.add_log(job_id, f"Building pool {pool_id} for {total} functions...")
 
         start_time = time.time()
-        chunk_size = 5
+        chunk_size = 100
         
         for i in range(0, total, chunk_size):
             chunk = all_function_ids[i : i + chunk_size]

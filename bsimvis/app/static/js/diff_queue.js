@@ -77,19 +77,19 @@ function normalizeFuncId(id) {
 }
 
 function buildDiffUrl(id1, id2) {
-    const f1 = stripFuncId(id1) || { collection: 'main', md5: '', address: '' };
-    const f2 = stripFuncId(id2) || { collection: 'main', md5: '', address: '' };
+    const f1 = stripFuncId(id1) || { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '' };
+    const f2 = stripFuncId(id2) || { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '' };
 
-    let collA = f1.collection ? stripPoolPrefix(f1.collection) : 'main';
-    let collB = f2.collection ? stripPoolPrefix(f2.collection) : 'main';
+    let collA = f1.collection_a ? stripPoolPrefix(f1.collection_a) : 'main';
+    let collB = f2.collection_a ? stripPoolPrefix(f2.collection_a) : 'main';
 
     const pool = window.getRoutingState ? window.getRoutingState().pool : null;
     if (pool) {
         const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
-        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5)}/functions/${encodeURIComponent(f1.address)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5)}/${encodeURIComponent(f2.address)}`;
+        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}`;
     }
 
-    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5)}/functions/${encodeURIComponent(f1.address)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5)}/${encodeURIComponent(f2.address)}`;
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}`;
 }
 
 function buildFileDiffUrl(collA, md5A, collB, md5B) {
@@ -158,6 +158,13 @@ function addToDiff(a1, a2) {
         addr_b: '',
         pool: window.getRoutingState?.()?.pool || null
     };
+
+    // For single-item IDs (no second function provided), side-B = side-A
+    if (!obj.md5_b || !obj.addr_b) {
+        obj.collection_b = obj.collection_a;
+        obj.md5_b = obj.md5_a;
+        obj.addr_b = obj.addr_a;
+    }
 
     const existing = diffSelection.findIndex(item => normalizeFuncId(item.id) === id);
     if (existing !== -1) {

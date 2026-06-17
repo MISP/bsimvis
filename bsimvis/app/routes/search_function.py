@@ -6,7 +6,12 @@ import time
 import uuid
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import parse_timestamp, normalize_tags
+from bsimvis.app.services.index_service import (
+    parse_timestamp,
+    normalize_tags,
+    enrich_pool_data,
+    get_pool_id,
+)
 from bsimvis.app.services.lua_manager import lua_manager
 
 DEFAULT_LIMIT = 100
@@ -17,9 +22,15 @@ MAX_POOL_LIMIT = 1000000
 def search_functions():
     try:
         t_req_start = time.perf_counter()
+        pool_id = request.args.get("pool")
         col = request.args.get("collection")
-        if not col:
-            return {"error": "No collection specified"}, 400
+        if not col and not pool_id:
+            return {"error": "No collection or pool specified"}, 400
+
+        if pool_id:
+            col = f"global:pool:{pool_id}"
+        else:
+            pool_id = get_pool_id(col)
 
         session_id = str(uuid.uuid4())[:8]
 
@@ -436,7 +447,10 @@ def search_functions():
         f_pipe = r.pipeline()
         for doc_id in doc_ids:
             f_pipe.json().get(f"{doc_id}:meta", "$")
-            f_pipe.hgetall(f"{doc_id}:cluster_scores")
+            if col.startswith("global:pool:"):
+                f_pipe.hgetall(f"{col}:{doc_id}:cluster_scores")
+            else:
+                f_pipe.hgetall(f"{doc_id}:cluster_scores")
 
         f_results_raw = f_pipe.execute()
 
@@ -506,6 +520,8 @@ def search_functions():
             # File tags enrichment
             md5 = meta.get("file_md5")
             file_meta = file_meta_map.get(md5, {})
+            if pool_id:
+                enrich_pool_data(file_meta, pool_id)
             meta["file_tags"] = file_meta.get("tags", [])
             meta["file_user_tags"] = file_meta.get("user_tags", [])
 
@@ -521,6 +537,9 @@ def search_functions():
 
             normalize_tags(meta)
             normalize_tags(meta, tag_fields=["file_tags", "file_user_tags"])
+
+            if pool_id:
+                enrich_pool_data(meta, pool_id)
 
             # Enforce Unix timestamps
             for field in ["entry_date", "file_date"]:

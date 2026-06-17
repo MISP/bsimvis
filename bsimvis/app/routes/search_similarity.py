@@ -9,6 +9,8 @@ from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
     normalize_tags,
+    enrich_pool_data,
+    get_pool_id,
 )
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
@@ -21,10 +23,17 @@ MAX_CACHED_RESULTS = 10000
 def autocomplete():
     try:
         col = request.args.get("collection")
+        pool_id = request.args.get("pool")
         level = request.args.get("level", "func")
         field = request.args.get("field")
         query = request.args.get("q", "").lower().strip()
         limit = int(request.args.get("limit", 50))
+
+        if pool_id:
+            col = f"global:pool:{pool_id}"
+        elif col and (col.startswith("pool:") or col.startswith("global:pool:")):
+            pool_id = get_pool_id(col)
+            col = f"global:pool:{pool_id}"
 
         if not all([col, level, field]):
             return {"error": "Missing parameters"}, 400
@@ -153,6 +162,7 @@ def similarity_search():
 
     try:
         t_req_all_start = time.perf_counter()
+        pool_id = request.args.get("pool")
         col = request.args.get("collection")
         algo = request.args.get("algo", "unweighted_cosine")
 
@@ -241,16 +251,14 @@ def similarity_search():
         sort_by = request.args.get("sort_by", "score")
         sort_order = request.args.get("sort_order", "desc").lower()
 
-        if not col:
-            return {"error": "Missing collection"}, 400
+        if not col and not pool_id:
+            return {"error": "Missing collection or pool"}, 400
 
         r = get_redis()
 
-        is_pool = False
-        pool_id = None
-        if col.startswith("pool:"):
-            is_pool = True
-            pool_id = col[5:]
+        is_pool = pool_id is not None
+        if is_pool:
+            col = f"global:pool:{pool_id}"
             algo_zset = f"global:pool:{pool_id}:sim:score"
             min_features_zset = f"global:pool:{pool_id}:sim:min_features"
         else:
@@ -1039,7 +1047,10 @@ def similarity_search():
             f_pipe = r.pipeline()
             for fid in unique_fids_list:
                 f_pipe.json().get(f"{fid}:meta", "$")
-                f_pipe.hgetall(f"{fid}:cluster_scores")
+                if is_pool:
+                    f_pipe.hgetall(f"global:pool:{pool_id}:{fid}:cluster_scores")
+                else:
+                    f_pipe.hgetall(f"{fid}:cluster_scores")
 
             f_results = f_pipe.execute()
 
@@ -1053,14 +1064,15 @@ def similarity_search():
                 meta = (m_json[0] if isinstance(m_json, list) else m_json) or {}
                 if isinstance(meta, str):
                     meta = json.loads(meta)
-                
+
                 meta["collection"] = fid.split(":")[0]
 
                 scores = {}
                 for k, v in scores_raw.items():
                     k_str = k.decode() if isinstance(k, bytes) else k
                     scores[k_str] = float(v)
-                    unique_cluster_ids.add((meta["collection"], k_str))
+                    c_coll = f"global:pool:{pool_id}" if is_pool else meta["collection"]
+                    unique_cluster_ids.add((c_coll, k_str))
 
                 f_meta_map[fid] = {"meta": meta, "scores": scores}
                 if meta.get("file_md5"):
@@ -1116,8 +1128,25 @@ def similarity_search():
                 m1, s1 = f1_data["meta"], f1_data["scores"]
                 m2, s2 = f2_data["meta"], f2_data["scores"]
 
-                f1 = file_meta_map.get(f"{m1.get('collection')}:{m1.get('file_md5')}", {})
-                f2 = file_meta_map.get(f"{m2.get('collection')}:{m2.get('file_md5')}", {})
+                f1 = file_meta_map.get(
+                    f"{m1.get('collection')}:{m1.get('file_md5')}", {}
+                )
+                f2 = file_meta_map.get(
+                    f"{m2.get('collection')}:{m2.get('file_md5')}", {}
+                )
+
+                if is_pool:
+                    enrich_pool_data(f1, pool_id)
+                    enrich_pool_data(f2, pool_id)
+                    enrich_pool_data(m1, pool_id)
+                    enrich_pool_data(m2, pool_id)
+                    if s_data.get("sim_doc"):
+                        enrich_pool_data(s_data["sim_doc"], pool_id)
+
+                m1["file_tags"] = f1.get("tags", [])
+                m1["file_user_tags"] = f1.get("user_tags", [])
+                m2["file_tags"] = f2.get("tags", [])
+                m2["file_user_tags"] = f2.get("user_tags", [])
 
                 sim_score = (
                     float(s_data["sort_sc"])

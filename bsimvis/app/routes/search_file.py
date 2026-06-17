@@ -8,6 +8,8 @@ from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
     normalize_tags,
+    enrich_pool_data,
+    get_pool_id,
 )
 
 DEFAULT_LIMIT = 100
@@ -15,9 +17,15 @@ DEFAULT_LIMIT = 100
 
 def search_files():
     try:
+        pool_id = request.args.get("pool")
         col = request.args.get("collection")
-        if not col:
-            return {"error": "No collection specified"}, 400
+        if not col and not pool_id:
+            return {"error": "No collection or pool specified"}, 400
+
+        if pool_id:
+            col = f"global:pool:{pool_id}"
+        else:
+            pool_id = get_pool_id(col)
 
         r = get_redis()
         offset = int(request.args.get("offset", 0))
@@ -139,8 +147,13 @@ def search_files():
         pipe = r.pipeline()
         for doc_id in paged_ids:
             pipe.json().get(f"{doc_id}:meta", "$")
-            pipe.scard(f"{col}:idx:file:functions:{doc_id.split(':')[-1]}")
-            pipe.smembers(f"{doc_id}:bin_clusters")
+            actual_col = doc_id.split(":")[0]
+            md5 = doc_id.split(":")[-1]
+            pipe.scard(f"{actual_col}:idx:file:functions:{md5}")
+            if pool_id:
+                pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters")
+            else:
+                pipe.smembers(f"{doc_id}:bin_clusters")
 
         results = pipe.execute()
         files_list = []
@@ -175,14 +188,15 @@ def search_files():
         cluster_meta_map = {}
         min_cohesion = float(request.args.get("min_cohesion", 0.95))  # Default to 0.95
         if unique_cluster_ids:
-            is_pool = col.startswith("pool:")
-            pool_id = col[5:] if is_pool else None
+            is_pool = pool_id is not None
             algo = "unweighted_cosine"  # Assuming default algo
             c_pipe = r.pipeline()
             c_list = list(unique_cluster_ids)
             for cid in c_list:
                 if is_pool:
-                    c_pipe.json().get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta", "$")
+                    c_pipe.json().get(
+                        f"global:pool:{pool_id}:bin_cluster:{cid}:meta", "$"
+                    )
                 else:
                     c_pipe.json().get(f"{col}:bin_cluster:{algo}:{cid}:meta", "$")
             c_results = c_pipe.execute()
@@ -199,8 +213,10 @@ def search_files():
         for data in raw_files_data:
             # Map IDs to metadata
             # We don't map it here anymore, we send the map separately
-
             normalize_tags(data)
+
+            if pool_id:
+                enrich_pool_data(data, pool_id)
             # Ensure dates are Unix timestamps
             for date_field in ["entry_date", "file_date"]:
                 if date_field in data:
@@ -374,14 +390,35 @@ def query_files_advanced(r, collection, filters):
 
 def get_file_details(collection, file_md5):
     try:
+        pool_id = request.args.get("pool") or get_pool_id(collection)
+        sub_collection = collection
+        if collection:
+            if collection.startswith("global:pool:"):
+                parts = collection.split(":")
+                if len(parts) >= 5 and parts[3] == "col":
+                    sub_collection = parts[4]
+                elif len(parts) >= 3:
+                    sub_collection = parts[2]
+            elif collection.startswith("pool:"):
+                parts = collection.split(":")
+                if len(parts) >= 4 and parts[2] == "col":
+                    sub_collection = parts[3]
+                elif len(parts) >= 2:
+                    sub_collection = parts[1]
+
         r = get_redis()
-        file_id = f"{collection}:file:{file_md5}"
+        file_id = f"{sub_collection}:file:{file_md5}"
+        
+        if pool_id:
+            clusters_key = f"pool:{pool_id}:file:{file_md5}:bin_clusters"
+        else:
+            clusters_key = f"{collection}:file:{file_md5}:bin_clusters"
 
         # 1. Fetch full JSON, function counts, and cluster assignments
         pipe = r.pipeline()
         pipe.json().get(f"{file_id}:meta", "$")
-        pipe.scard(f"{collection}:idx:file:functions:{file_md5}")
-        pipe.smembers(f"{file_id}:bin_clusters")
+        pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
+        pipe.smembers(clusters_key)
         results = pipe.execute()
 
         res = results[0]
@@ -396,7 +433,11 @@ def get_file_details(collection, file_md5):
             data = json.loads(data)
 
         data["function_count"] = func_count
-        data["file_id"] = file_id
+        data["file_id"] = f"{collection}:file:{file_md5}"
+
+        if pool_id:
+            enrich_pool_data(data, pool_id)
+
         cluster_ids = list(cluster_res) if isinstance(cluster_res, (list, set)) else []
 
         # Ensure array fields are set to actual arrays instead of strings, etc.

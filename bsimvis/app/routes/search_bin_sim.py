@@ -4,7 +4,7 @@ import time
 
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import normalize_tags
+from bsimvis.app.services.index_service import normalize_tags, enrich_pool_data
 
 DEFAULT_LIMIT = 50
 
@@ -18,9 +18,10 @@ def search_bin_sims():
         t_start = time.perf_counter()
         r = get_redis()
 
+        pool_id = request.args.get("pool")
         collection = request.args.get("collection")
-        if not collection:
-            return {"error": "No collection specified"}, 400
+        if not collection and not pool_id:
+            return {"error": "No collection or pool specified"}, 400
 
         algo = request.args.get("algo", "unweighted_cosine")
 
@@ -93,11 +94,7 @@ def search_bin_sims():
         ]
 
         # 1. Fetch Candidate SIDs
-        pool_id = request.args.get("pool")
         is_pool = pool_id is not None
-        if not is_pool:
-            is_pool = collection.startswith("pool:")
-            pool_id = collection[5:] if is_pool else None
 
         t0 = time.perf_counter()
         if md5_filter:
@@ -105,7 +102,11 @@ def search_bin_sims():
                 cursor = 0
                 matching_keys = []
                 while True:
-                    cursor, found_keys = r.scan(cursor=cursor, match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5_filter}", count=1000)
+                    cursor, found_keys = r.scan(
+                        cursor=cursor,
+                        match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5_filter}",
+                        count=1000,
+                    )
                     matching_keys.extend(found_keys)
                     if cursor == 0:
                         break
@@ -139,7 +140,7 @@ def search_bin_sims():
         t2 = time.perf_counter()
         light_docs = []
         unique_md5s = set()
-        
+
         # Pipeline fetch JSON for ALL candidates to run in-memory filters
         pipe = r.pipeline()
         for sid in candidates:
@@ -155,7 +156,7 @@ def search_bin_sims():
                     doc = json.loads(doc)
                 except Exception:
                     continue
-            
+
             m_a = doc.get("md5_a") or doc.get("md5_1", "")
             m_b = doc.get("md5_b") or doc.get("md5_2", "")
             coll_a = doc.get("coll_1") or (collection[5:] if is_pool else collection)
@@ -171,12 +172,23 @@ def search_bin_sims():
                 "coll_a": coll_a,
                 "coll_b": coll_b,
                 "score": doc.get("score", 0.0),
-                "score_sim_weighted": doc.get("sim_weighted_score") or doc.get("score", 0.0),
-                "score_collection_weighted": doc.get("collection_weighted_score") or doc.get("score", 0.0),
-                "coverage_a": doc.get("coverage_a") or (doc.get("matched_clusters_count", 0) / max(1, doc.get("matched_clusters_count", 1))),
-                "coverage_b": doc.get("coverage_b") or (doc.get("matched_clusters_count", 0) / max(1, doc.get("matched_clusters_count", 1))),
-                "shared_clusters": doc.get("shared_clusters") or doc.get("matched_clusters_count", 0),
-                "doc": doc
+                "score_sim_weighted": doc.get("sim_weighted_score")
+                or doc.get("score", 0.0),
+                "score_collection_weighted": doc.get("collection_weighted_score")
+                or doc.get("score", 0.0),
+                "coverage_a": doc.get("coverage_a")
+                or (
+                    doc.get("matched_clusters_count", 0)
+                    / max(1, doc.get("matched_clusters_count", 1))
+                ),
+                "coverage_b": doc.get("coverage_b")
+                or (
+                    doc.get("matched_clusters_count", 0)
+                    / max(1, doc.get("matched_clusters_count", 1))
+                ),
+                "shared_clusters": doc.get("shared_clusters")
+                or doc.get("matched_clusters_count", 0),
+                "doc": doc,
             }
             light_docs.append(ld)
 
@@ -255,7 +267,12 @@ def search_bin_sims():
                 "shared_clusters": "shared_clusters",
             }
             sort_zset_field = sort_field_map.get(sort_by, "score")
-            score_filter_field = sort_by if sort_by in ["score", "score_sim_weighted", "score_collection_weighted"] else "score_collection_weighted"
+            score_filter_field = (
+                sort_by
+                if sort_by
+                in ["score", "score_sim_weighted", "score_collection_weighted"]
+                else "score_collection_weighted"
+            )
 
         t4 = time.perf_counter()
 
@@ -270,6 +287,11 @@ def search_bin_sims():
             coll_b = ld["coll_b"]
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})
+
+            if pool_id:
+                enrich_pool_data(meta_a, pool_id)
+                enrich_pool_data(meta_b, pool_id)
+                enrich_pool_data(ld, pool_id)
 
             ld["file_name_a"] = meta_a.get("file_name", m_a)
             ld["file_name_b"] = meta_b.get("file_name", m_b)
@@ -397,20 +419,20 @@ def search_bin_sims():
 
         # 6. Paginate SIDs
         paged_light = filtered_docs[offset : offset + limit]
-        
+
         # 7. Format FULL response
         final_docs = []
         for ld in paged_light:
             sid = ld["sid"]
             doc = ld["doc"] if is_pool else None
-            
+
             if not doc:
                 res = r.json().get(sid, "$")
                 if res:
                     doc = res[0] if isinstance(res, list) else res
                     if isinstance(doc, str):
                         doc = json.loads(doc)
-            
+
             if not doc:
                 continue
 
@@ -431,6 +453,11 @@ def search_bin_sims():
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})
 
+            if pool_id:
+                enrich_pool_data(meta_a, pool_id)
+                enrich_pool_data(meta_b, pool_id)
+                enrich_pool_data(doc, pool_id)
+
             doc["file_name_a"] = meta_a.get("file_name", m_a)
             doc["file_name_b"] = meta_b.get("file_name", m_b)
             doc["file_tags_a"] = meta_a.get("tags", [])
@@ -438,10 +465,18 @@ def search_bin_sims():
             doc["file_user_tags_a"] = meta_a.get("user_tags", [])
             doc["file_user_tags_b"] = meta_b.get("user_tags", [])
 
-            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get("language_id", "")
-            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get("language_id", "")
-            doc["functions_count_a"] = doc.get("functions_count_a") or file_funcs_count.get((coll_a, m_a), 0)
-            doc["functions_count_b"] = doc.get("functions_count_b") or file_funcs_count.get((coll_b, m_b), 0)
+            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get(
+                "language_id", ""
+            )
+            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get(
+                "language_id", ""
+            )
+            doc["functions_count_a"] = doc.get(
+                "functions_count_a"
+            ) or file_funcs_count.get((coll_a, m_a), 0)
+            doc["functions_count_b"] = doc.get(
+                "functions_count_b"
+            ) or file_funcs_count.get((coll_b, m_b), 0)
 
             doc["compiler_a"] = meta_a.get("compiler") or meta_a.get("compiler_id", "")
             doc["compiler_b"] = meta_b.get("compiler") or meta_b.get("compiler_id", "")
@@ -462,8 +497,7 @@ def search_bin_sims():
             # Re-apply sim_tag_filters if provided
             if sim_tag_filters:
                 combined_sim_tags = set(
-                    t.lower()
-                    for t in doc.get("tags", []) + doc.get("user_tags", [])
+                    t.lower() for t in doc.get("tags", []) + doc.get("user_tags", [])
                 )
                 if not all(tf in combined_sim_tags for tf in sim_tag_filters):
                     total -= 1
@@ -471,16 +505,13 @@ def search_bin_sims():
 
             if exclude_sim_tag_filters:
                 combined_sim_tags = set(
-                    t.lower()
-                    for t in doc.get("tags", []) + doc.get("user_tags", [])
+                    t.lower() for t in doc.get("tags", []) + doc.get("user_tags", [])
                 )
                 if any(tf in combined_sim_tags for tf in exclude_sim_tag_filters):
                     total -= 1
                     continue
             if exclude_sim_static_tag_filters:
-                combined_sim_static_tags = set(
-                    t.lower() for t in doc.get("tags", [])
-                )
+                combined_sim_static_tags = set(t.lower() for t in doc.get("tags", []))
                 if any(
                     tf in combined_sim_static_tags
                     for tf in exclude_sim_static_tag_filters
@@ -492,8 +523,7 @@ def search_bin_sims():
                     t.lower() for t in doc.get("user_tags", [])
                 )
                 if any(
-                    tf in combined_sim_user_tags
-                    for tf in exclude_sim_user_tag_filters
+                    tf in combined_sim_user_tags for tf in exclude_sim_user_tag_filters
                 ):
                     total -= 1
                     continue

@@ -36,19 +36,29 @@ def create_app():
 
     @app.before_request
     def normalize_pool_params():
-        # Support ?pool=pool_id by converting it to collection=pool:pool_id internally
-        if "pool" in request.args and "collection" not in request.args:
+        if "pool" in request.args:
             pool_id = request.args.get("pool")
+            coll_id = request.args.get("collection")
             from werkzeug.datastructures import MultiDict
             new_args = MultiDict(request.args)
-            new_args["collection"] = f"pool:{pool_id}"
+            if coll_id:
+                if not coll_id.startswith("pool:") and not coll_id.startswith("global:pool:"):
+                    new_args["collection"] = f"global:pool:{pool_id}:col:{coll_id}"
+            else:
+                new_args["collection"] = f"global:pool:{pool_id}"
             request.args = new_args
 
         if request.is_json:
             try:
                 data = request.get_json(silent=True)
-                if data and "pool" in data and "collection" not in data:
-                    data["collection"] = f"pool:{data['pool']}"
+                if data and "pool" in data:
+                    pool_id = data.get("pool")
+                    coll_id = data.get("collection")
+                    if coll_id:
+                        if not coll_id.startswith("pool:") and not coll_id.startswith("global:pool:"):
+                            data["collection"] = f"global:pool:{pool_id}:col:{coll_id}"
+                    else:
+                        data["collection"] = f"global:pool:{pool_id}"
             except Exception:
                 pass
 
@@ -85,12 +95,19 @@ def create_app():
     @app.route("/collection/<collection>")
     @app.route("/collections/<collection>")
     @app.route("/collections")
+    @app.route("/pools/<pool_id>/collections/<collection>/<path:rest>")
+    @app.route("/pools/<pool_id>/collections/<collection>")
     @app.route("/pools/<collection>/<path:rest>")
     @app.route("/pools/<collection>")
     @app.route("/pools")
+    @app.route("/pool/<pool_id>/collections/<collection>/<path:rest>")
+    @app.route("/pool/<pool_id>/collections/<collection>")
+    @app.route("/pool/<collection>/<path:rest>")
+    @app.route("/pool/<collection>")
+    @app.route("/pool")
     @app.route("/jobs")
     @app.route("/upload")
-    def dashboard_ui(collection=None, rest=None):
+    def dashboard_ui(collection=None, rest=None, pool_id=None):
         return send_from_directory(app.static_folder, "index.html")
 
     # Serve the Bare JS frontend

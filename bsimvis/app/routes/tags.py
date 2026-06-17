@@ -14,8 +14,15 @@ def add_tag():
         "tag": str
     }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     etype = data.get("entity_type")
     entry_id = data.get("entity_id")
     tag = data.get("tag")
@@ -43,8 +50,15 @@ def add_bulk_tags():
         "tag": str
     }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     etype = data.get("entity_type")
     entity_ids = data.get("entity_ids")
     tag = data.get("tag")
@@ -63,8 +77,15 @@ def add_bulk_tags():
 
 def remove_tag():
     """Removes a user_tag from an entity."""
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     etype = data.get("entity_type")
     entry_id = data.get("entity_id")
     tag = data.get("tag")
@@ -81,8 +102,15 @@ def remove_tag():
 
 def remove_bulk_tags():
     """Removes a user_tag from multiple entities."""
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     etype = data.get("entity_type")
     entity_ids = data.get("entity_ids")
     tag = data.get("tag")
@@ -102,6 +130,13 @@ def remove_bulk_tags():
 def get_metadata():
     """Returns all tag metadata for a collection."""
     collection = request.args.get("collection")
+    pool = request.args.get("pool") or request.args.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     if not collection:
         return {"error": "Missing collection"}, 400
 
@@ -112,6 +147,13 @@ def get_metadata():
 def get_tag_stats():
     """Returns statistics for a specific tag."""
     collection = request.args.get("collection")
+    pool = request.args.get("pool") or request.args.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     tag = request.args.get("tag")
 
     if not collection or not tag:
@@ -124,14 +166,28 @@ def get_tag_stats():
 def get_tags():
     """Returns the global tag index for a collection."""
     collection = request.args.get("collection", "main")
+    pool = request.args.get("pool") or request.args.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     tags = tag_service.get_tags(collection)
     return tags
 
 
 def set_color():
     """Sets a custom color for a tag."""
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     tag = data.get("tag")
     color = data.get("color")
 
@@ -144,8 +200,15 @@ def set_color():
 
 def set_priority():
     """Sets a custom priority for a tag."""
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
     tag = data.get("tag")
     priority = data.get("priority")
 

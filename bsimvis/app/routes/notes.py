@@ -13,8 +13,18 @@ def add_note():
         "owner": str (default "user")
     }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     func_id = data.get("func_id")
     text = data.get("text")
     owner = data.get("owner", "user")
@@ -39,8 +49,18 @@ def update_note():
         "text": str
     }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     func_id = data.get("func_id")
     note_id = data.get("note_id")
     text = data.get("text")
@@ -64,8 +84,18 @@ def remove_note():
         "note_id": str
     }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     func_id = data.get("func_id")
     note_id = data.get("note_id")
 
@@ -85,6 +115,16 @@ def get_notes():
     Query Params: collection, func_id
     """
     collection = request.args.get("collection")
+    pool = request.args.get("pool") or request.args.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     func_id = request.args.get("func_id")
 
     if not all([collection, func_id]):
@@ -102,8 +142,18 @@ def add_file_note():
     Adds a note to a file.
     Payload: { collection, file_id, text, owner }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     file_id = data.get("file_id")
     text = data.get("text")
     owner = data.get("owner", "user")
@@ -122,8 +172,18 @@ def update_file_note():
     Updates an existing file note.
     Payload: { collection, file_id, note_id, text }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     file_id = data.get("file_id")
     note_id = data.get("note_id")
     text = data.get("text")
@@ -142,8 +202,18 @@ def remove_file_note():
     Removes a note from a file.
     Payload: { collection, file_id, note_id }
     """
-    data = request.json
+    data = request.json or {}
     collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     file_id = data.get("file_id")
     note_id = data.get("note_id")
 
@@ -162,6 +232,16 @@ def get_file_notes():
     Query Params: collection, file_id
     """
     collection = request.args.get("collection")
+    pool = request.args.get("pool") or request.args.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        if collection:
+            collection = f"global:pool:{pool}:col:{collection}"
+        else:
+            collection = f"global:pool:{pool}"
+
     file_id = request.args.get("file_id")
 
     if not all([collection, file_id]):

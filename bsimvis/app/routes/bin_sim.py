@@ -103,14 +103,19 @@ def rebuild_bin_sim():
     }
 
 
-def get_bin_sim():
+def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=None):
     """Retrieve binary similarity diff for a pair."""
-    collection = request.args.get("collection", "main")
+    if collection is None:
+        collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
-    md5_a = request.args.get("md5_a")
-    md5_b = request.args.get("md5_b")
-    coll_b = request.args.get("coll_b", collection)
-    pool_id = request.args.get("pool_id")
+    if md5_a is None:
+        md5_a = request.args.get("md5_a")
+    if md5_b is None:
+        md5_b = request.args.get("md5_b")
+    if coll_b is None:
+        coll_b = request.args.get("coll_b", collection)
+    if pool_id is None:
+        pool_id = request.args.get("pool_id")
 
     if not md5_a or not md5_b:
         abort(400, "Both md5_a and md5_b are required")
@@ -182,7 +187,6 @@ def get_bin_sim():
         fids.update(u.get("funcs", []))
     for u in diff.get("unique_to_b", []):
         fids.update(u.get("funcs", []))
-
 
     # Fetch File Metadata for both sides (each from their own collection)
     pipe = r.pipeline()
@@ -261,16 +265,17 @@ def list_bin_sims():
 
     pool_id = request.args.get("pool")
     is_pool = pool_id is not None
-    if not is_pool:
-        is_pool = collection.startswith("pool:")
-        pool_id = collection[5:] if is_pool else None
 
     # To efficiently list, we check involves set
     if is_pool:
         cursor = 0
         matching_keys = []
         while True:
-            cursor, found_keys = r.scan(cursor=cursor, match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5}", count=1000)
+            cursor, found_keys = r.scan(
+                cursor=cursor,
+                match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5}",
+                count=1000,
+            )
             matching_keys.extend(found_keys)
             if cursor == 0:
                 break

@@ -172,8 +172,8 @@ class SimilarityService:
         if not targets_to_build:
             return
 
-        # Phase 3: Execute Discovery (Lua)
-        discovery_results = []
+        # Phase 3: Execute Discovery (Lua Pipelining)
+        prepared_targets = []
         for fid, features_raw in targets_to_build:
             parts = fid.split(":")
             if len(parts) < 4:
@@ -203,13 +203,20 @@ class SimilarityService:
                 top_k,
                 min_features,
             ] + lua_features_args
+            
+            prepared_targets.append((fid, md5, addr, target_feat_total, lua_args))
 
-            # Execute Discovery Script
-            try:
-                candidates_raw = self._find_script(args=lua_args)
-                logging.debug(
-                    f"Discovery for {fid}: {len(candidates_raw) if candidates_raw else 0} raw results"
-                )
+        discovery_results = []
+        if prepared_targets:
+            pipe = r.pipeline()
+            for fid, md5, addr, target_feat_total, lua_args in prepared_targets:
+                self._find_script(args=lua_args, client=pipe)
+                pipe.sadd(built_set_key, fid)
+            
+            pipe_results = pipe.execute()
+            
+            for idx, (fid, md5, addr, target_feat_total, lua_args) in enumerate(prepared_targets):
+                candidates_raw = pipe_results[idx * 2]
                 if candidates_raw:
                     # Parse flat array return into triples (id, score, c_total)
                     candidates = []
@@ -224,11 +231,6 @@ class SimilarityService:
                     discovery_results.append(
                         (fid, md5, addr, target_feat_total, candidates)
                     )
-
-                # Mark as built regardless of candidates found
-                r.sadd(built_set_key, fid)
-            except Exception as e:
-                logging.error(f"Discovery Error for {fid}: {e}")
 
         # Phase 4: Persistence and Indexing
         if discovery_results:

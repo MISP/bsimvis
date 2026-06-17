@@ -1,377 +1,327 @@
-import json
-import logging
+import os
+import sys
 import time
-from bsimvis.app.services.pool_service import pool_service
-from bsimvis.app.services.similarity_service import SimilarityService
-from bsimvis.app.services.cluster_service import cluster_service
-from bsimvis.app.services.redis_client import get_redis
+import requests
+import uuid
+from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
 
-logging.basicConfig(level=logging.INFO)
+# Load environment variables
+load_dotenv()
 
-COLLECTIONS = ["main2", "main3"]  # Ensure these collections exist with data
-POOL_ID = "test_pool_1"
-ALGO = "unweighted_cosine"
+# Config
+APP_HOST = os.getenv("APP_HOST", "localhost")
+if APP_HOST == "0.0.0.0":
+    APP_HOST = "localhost"
+APP_PORT = os.getenv("APP_PORT", "5001")
+BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
+
+# Paths
+FILE_ARM = "./data/test/v01_arm_x64"
+FILE_LINUX = "./data/test/v01_linux_x64"
+
+MD5_ARM = "843841580c262ba277de71dc57336f70"
+MD5_LINUX = "dbb7f163b18181227769d9769baf9407"
+
+# Unique collections & pool to avoid collisions
+run_id = uuid.uuid4().hex[:6]
+SINGLE_COLL = f"single_coll_{run_id}"
+SEP_COLL_ARM = f"sep_arm_{run_id}"
+SEP_COLL_LINUX = f"sep_linux_{run_id}"
+POOL_ID = f"pool_comp_{run_id}"
 
 
 def section(title):
-    print(f"\n{'='*60}")
+    print(f"\n{'='*70}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'='*70}")
 
 
-def test_pool_lifecycle(no_delete=False):
-    r = get_redis()
-    sim_service = SimilarityService(r)
-
-    config = {
-        "algo": ALGO,
-        "top_k": 10,
-        "min_score": 0.1,
-        "cluster_params": {"min_cluster_size": 2, "min_samples": 1, "epsilon": 0.001},
-    }
-
-    # ------------------------------------------------------------------
-    section("Step 1: Create Pool")
-    pool_service.delete_pool(POOL_ID)
-    success, msg = pool_service.create_pool(POOL_ID, "Test Pool", COLLECTIONS, config)
-    print(f"  create_pool → {success}, {msg}")
-
-    # ------------------------------------------------------------------
-    section("Step 2: Build Pool (function-level similarities)")
-    success = sim_service.build_pool(POOL_ID)
-    print(f"  build_pool  → {success}")
-
-    score_key = f"global:pool:{POOL_ID}:sim:score"
-    total_sims = r.zcard(score_key)
-    print(f"  Similarities stored : {total_sims}")
-
-    if total_sims > 0:
-        sample_sids = r.zrange(score_key, 0, 0)
-        sid = (
-            sample_sids[0].decode()
-            if isinstance(sample_sids[0], bytes)
-            else sample_sids[0]
-        )
-        sim_doc_raw = r.json().get(sid, "$")
-        if sim_doc_raw:
-            sim_doc = sim_doc_raw[0] if isinstance(sim_doc_raw, list) else sim_doc_raw
-            print(f"  Sample SID          : {sid}")
-            print(f"  Score               : {sim_doc.get('score')}")
-            print(
-                f"  coll_1 / coll_2     : {sim_doc.get('coll_1')} / {sim_doc.get('coll_2')}"
-            )
-            print(f"  is_cross_binary     : {sim_doc.get('is_cross_binary')}")
-
-    # ------------------------------------------------------------------
-    section("Step 3: Sync Status")
-    status = pool_service.check_sync_status(POOL_ID)
-    print(f"  sync_status → {status['sync_status']}")
-
-    # ------------------------------------------------------------------
-    section("Step 4: Involves Indexes (file + func)")
-
-    # File involves
-    file_inv_keys = []
-    cursor = 0
-    while True:
-        cursor, keys = r.scan(
-            cursor=cursor, match=f"global:pool:{POOL_ID}:sim:involves:file:*", count=500
-        )
-        file_inv_keys.extend(keys)
-        if cursor == 0:
-            break
-    print(f"  File involves keys  : {len(file_inv_keys)}")
-    for k in file_inv_keys:
-        k_str = k.decode() if isinstance(k, bytes) else k
-        label = k_str.split("involves:file:")[-1]
-        count = r.scard(k_str)
-        print(f"    [{label}] → {count} similarities")
-
-    # Func involves
-    func_inv_keys = []
-    cursor = 0
-    while True:
-        cursor, keys = r.scan(
-            cursor=cursor, match=f"global:pool:{POOL_ID}:sim:involves:func:*", count=500
-        )
-        func_inv_keys.extend(keys)
-        if cursor == 0:
-            break
-    print(f"  Func involves keys  : {len(func_inv_keys)}")
-
-    # ------------------------------------------------------------------
-    section("Step 4.5: Query Pool via Search API")
-    import requests
-    import os
-
-    api_url = os.getenv("API_URL", "http://localhost:5000")
-    print(f"  Querying similarity search API at {api_url} for pool: {POOL_ID}...")
-    try:
-        resp = requests.get(
-            f"{api_url}/api/similarity/search",
-            params={"pool": POOL_ID, "min_score": 0.1, "limit": 100},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            print(f"  API Response Keys: {list(data.keys())}")
-            if "pairs" in data:
-                api_sims = data["pairs"]
-            elif "results" in data:
-                api_sims = data["results"]
-            else:
-                api_sims = []
-            print(
-                f"  API returned {len(api_sims)} similarities (out of {total_sims} total in DB)"
-            )
-            if len(api_sims) == 0:
-                print(f"  Full API Response context: {json.dumps(data)[:1000]}")
-
-            if total_sims > 0:
-                assert len(api_sims) > 0, "API returned 0 similarities but DB has some"
-                sample_api_sim = api_sims[0]
-                print(f"    Sample API Similarity Score: {sample_api_sim.get('score')}")
-                print(
-                    f"    Sample API Similarity ID1/ID2: {sample_api_sim.get('id1')} / {sample_api_sim.get('id2')}"
-                )
-
-                # Try simple filters
-                # Filter 1: min_score filter
-                if len(api_sims) > 1:
-                    mid_score = api_sims[-1].get("score", 0.1)
-                    if mid_score > 0.1:
-                        filter_score = (api_sims[0].get("score") + mid_score) / 2.0
-                        resp_filtered = requests.get(
-                            f"{api_url}/api/similarity/search",
-                            params={
-                                "pool": POOL_ID,
-                                "min_score": filter_score,
-                                "limit": 100,
-                            },
-                            timeout=10,
-                        )
-                        if resp_filtered.status_code == 200:
-                            filtered_sims = resp_filtered.json().get("pairs", [])
-                            print(
-                                f"    Filtered by min_score={filter_score:.4f} → {len(filtered_sims)} results"
-                            )
-                            for s in filtered_sims:
-                                assert (
-                                    s.get("score") >= filter_score
-                                ), f"Similarity score {s.get('score')} < {filter_score}"
-
-                # Filter 2: language filter (if available)
-                lang1 = sample_api_sim.get("func1", {}).get("language_id")
-                if lang1:
-                    print(f"    Applying language filter: {lang1}")
-                    resp_lang = requests.get(
-                        f"{api_url}/api/similarity/search",
-                        params={
-                            "pool": POOL_ID,
-                            "min_score": 0.1,
-                            "language": lang1,
-                            "limit": 100,
-                        },
-                        timeout=10,
-                    )
-                    if resp_lang.status_code == 200:
-                        lang_sims = resp_lang.json().get("pairs", [])
-                        print(
-                            f"    Filtered by language={lang1} → {len(lang_sims)} results"
-                        )
-                        for s in lang_sims:
-                            f1_lang = s.get("func1", {}).get("language_id")
-                            f2_lang = s.get("func2", {}).get("language_id")
-                            assert lang1 in (
-                                f1_lang,
-                                f2_lang,
-                            ), f"Neither func1 ({f1_lang}) nor func2 ({f2_lang}) matches language {lang1}"
-
-                # Filter 3: cross-binary filter
-                resp_cb = requests.get(
-                    f"{api_url}/api/similarity/search",
-                    params={
-                        "pool": POOL_ID,
-                        "min_score": 0.1,
-                        "cross_binary": "true",
-                        "limit": 100,
-                    },
-                    timeout=10,
-                )
-                if resp_cb.status_code == 200:
-                    cb_sims = resp_cb.json().get("pairs", [])
-                    print(f"    Filtered by cross_binary=true → {len(cb_sims)} results")
-                    for s in cb_sims:
-                        is_cb = s.get("is_cross_binary")
-                        assert (
-                            is_cb is True or is_cb == "true" or is_cb == "True"
-                        ), f"Similarity {s.get('id')} is not cross binary"
-        else:
-            print(
-                f"  [ERROR] Similarity search API returned status code {resp.status_code}: {resp.text}"
-            )
-            assert False, "Similarity search API request failed"
-    except Exception as e:
-        print(f"  [SKIP/ERROR] Could not query search API: {e}")
+def upload_file_async(executor, file_path, collection):
+    def _upload():
         print(
-            "  (Make sure the API server is running on http://localhost:5000 or set API_URL)"
+            f"  Starting upload of {os.path.basename(file_path)} to collection '{collection}'..."
         )
-
-    # ------------------------------------------------------------------
-    section("Step 5: Pool Function Clustering")
-
-    print(f"  Running cluster_service.run_pool_clustering for pool {POOL_ID}...")
-    ok = cluster_service.run_pool_clustering(POOL_ID)
-    print(f"  run_pool_clustering → {ok}")
-
-    cluster_list_key = f"global:pool:{POOL_ID}:cluster:list"
-    total_clusters = r.scard(cluster_list_key)
-    print(f"  Pool clusters produced : {total_clusters}")
-
-    if total_clusters > 0:
-        sample_ids = list(r.smembers(cluster_list_key))[:3]
-        for cid_raw in sample_ids:
-            cid = cid_raw.decode() if isinstance(cid_raw, bytes) else cid_raw
-            meta_raw = r.json().get(f"global:pool:{POOL_ID}:cluster:{cid}:meta", "$")
-            meta = (
-                (meta_raw[0] if isinstance(meta_raw, list) else meta_raw)
-                if meta_raw
-                else {}
-            )
-            members_key = f"global:pool:{POOL_ID}:cluster:{cid}:members"
-            member_count = r.scard(members_key)
-            print(
-                f"    Cluster {cid}: {member_count} functions, name='{meta.get('name', 'N/A')}'"
-            )
-    else:
+        with open(file_path, "rb") as fh:
+            raw = fh.read()
+        params = {
+            "collection": collection,
+            "file_name": os.path.basename(file_path),
+            "batch_name": "Test Run",
+            "profile": "fast",
+            "min_func_len": 10,
+            "skip_sim": "false",
+        }
+        resp = requests.post(
+            f"{BASE_URL}/api/file/upload",
+            params=params,
+            data=raw,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        pid = body.get("pipeline_id")
         print(
-            "  [WARN] No pool-level function clusters produced. (Check min_score / min_cluster_size config)"
+            f"  Upload of {os.path.basename(file_path)} to '{collection}' submitted: {pid}"
         )
+        return pid
 
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    section("Step 5.5: Pool File Similarity and Clustering")
+    return executor.submit(_upload)
 
-    # Assert pool file similarities are built and store in `global:pool:test_pool_1:bin_sim:score:{algo}`
-    bin_sim_score_key = f"global:pool:{POOL_ID}:bin_sim:score:{ALGO}"
-    total_bin_sims = r.zcard(bin_sim_score_key)
-    print(f"  Pool file similarities stored : {total_bin_sims}")
-    assert total_bin_sims > 0, "No pool file similarities were stored in DB"
 
-    # Assert pool file clusters (`global:pool:test_pool_1:bin_cluster:list`) are built
-    bin_cluster_list_key = f"global:pool:{POOL_ID}:bin_cluster:list"
-    total_bin_clusters = r.scard(bin_cluster_list_key)
-    print(f"  Pool file clusters produced : {total_bin_clusters}")
-    assert total_bin_clusters >= 0, "No pool file clusters key found"
-
-    # Query API /api/bin_sim/search with collection="pool:test_pool_1"
-    print(f"  Querying bin_sim search API for pool: {POOL_ID}...")
-    try:
-        resp = requests.get(
-            f"{api_url}/api/bin_sim/search",
-            params={"pool": POOL_ID, "min_cohesion": 0.0, "limit": 100},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            # The HTTP API search endpoint uses the key "results" in its response
-            api_bin_sims = data.get("results", [])
-            print(f"  API returned {len(api_bin_sims)} file similarities")
-            assert len(api_bin_sims) > 0, "API returned 0 file similarities but DB has them"
-            if len(api_bin_sims) > 0:
-                print(f"    Sample API File Sim score: {api_bin_sims[0].get('score')}")
-                print(f"    Sample API File Sim files: {api_bin_sims[0].get('md5_1')} vs {api_bin_sims[0].get('md5_2')}")
-
-                # Try simple filters on file similarity search
-                # Filter 1: min_score filter
-                if len(api_bin_sims) > 1:
-                    mid_score = api_bin_sims[-1].get("score", 0.0)
-                    if mid_score > 0.0:
-                        filter_score = (api_bin_sims[0].get("score") + mid_score) / 2.0
-                        resp_filtered = requests.get(
-                            f"{api_url}/api/bin_sim/search",
-                            params={
-                                "pool": POOL_ID,
-                                "algo": ALGO,
-                                "min_score": filter_score,
-                                "limit": 100,
-                            },
-                            timeout=10,
-                        )
-                        if resp_filtered.status_code == 200:
-                            filtered_sims = resp_filtered.json().get("results", [])
-                            print(f"    Filtered by min_score={filter_score:.4f} → {len(filtered_sims)} results")
-                            for s in filtered_sims:
-                                assert s.get("score") >= filter_score, f"Similarity score {s.get('score')} < {filter_score}"
-
-                # Filter 2: md5 filter
-                sample_md5 = api_bin_sims[0].get("md5_1")
-                if sample_md5:
-                    resp_md5 = requests.get(
-                        f"{api_url}/api/bin_sim/search",
-                        params={
-                            "pool": POOL_ID,
-                            "md5": sample_md5,
-                            "limit": 100,
-                        },
-                        timeout=10,
-                    )
-                    if resp_md5.status_code == 200:
-                        md5_sims = resp_md5.json().get("results", [])
-                        print(f"    Filtered by md5={sample_md5} → {len(md5_sims)} results")
-                        for s in md5_sims:
-                            assert sample_md5 in [s.get("md5_1"), s.get("md5_2")], f"MD5 {sample_md5} not in similarity pair {s}"
-        else:
-            print(f"  [ERROR] bin_sim search API returned status code {resp.status_code}: {resp.text}")
-            assert False, "bin_sim search API request failed"
-    except Exception as e:
-        print(f"  [ERROR] Failed to query or assert bin_sim search API: {e}")
-        raise e
-
-    # Query API /api/bin_cluster/list with collection="pool:test_pool_1"
-    print(f"  Querying bin_cluster list API for pool: {POOL_ID}...")
-    try:
-        resp = requests.get(
-            f"{api_url}/api/bin_cluster/list",
-            params={"pool": POOL_ID},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            # The API returns a dictionary with key "results" containing the list of clusters
-            api_clusters = data.get("results", [])
-            print(f"  API returned {len(api_clusters)} file clusters")
-            assert len(api_clusters) >= 0, "No pool file clusters key found in API response"
-            if len(api_clusters) > 0:
-                print(f"    Sample API File Cluster: {api_clusters[0]}")
-        else:
-            print(f"  [ERROR] bin_cluster list API returned status code {resp.status_code}: {resp.text}")
-            assert False, "bin_cluster list API request failed"
-    except Exception as e:
-        print(f"  [ERROR] Failed to query or assert bin_cluster list API: {e}")
-        raise e
-
-    if no_delete:
-        print("\n✓ Pool kept for testing (--no-delete flag active).\n")
+def wait_for_pipelines(pipeline_ids):
+    pipeline_ids = [pid for pid in pipeline_ids if pid]
+    if not pipeline_ids:
         return
+    print(f"    Waiting for pipelines {pipeline_ids}...", end="", flush=True)
+    pending = set(pipeline_ids)
+    while pending:
+        time.sleep(2)
+        done = []
+        for pid in pending:
+            try:
+                resp = requests.get(f"{BASE_URL}/api/jobs/{pid}", timeout=10)
+                resp.raise_for_status()
+                status = resp.json().get("status", "unknown").lower()
+                if status in ("completed", "failed", "cancelled"):
+                    done.append(pid)
+                    print(
+                        f"\n    Pipeline {pid} → {status.upper()}", end="", flush=True
+                    )
+            except Exception:
+                pass
+        for pid in done:
+            pending.remove(pid)
+        if pending:
+            print(".", end="", flush=True)
+    print(" -> DONE")
 
-    # ------------------------------------------------------------------
-    section("Step 6: Delete Pool")
-    success, msg = pool_service.delete_pool(POOL_ID)
-    print(f"  delete_pool → {success}, {msg}")
 
-    remaining = r.keys(f"global:pool:{POOL_ID}:*")
-    print(f"  Remaining keys after delete : {len(remaining)}")
-    assert (
-        len(remaining) == 0
-    ), f"Pool keys not fully cleaned up: {[k.decode() for k in remaining[:5]]}"
+def delete_collection_async(executor, collection):
+    def _delete():
+        print(f"  Requesting cleanup of collection {collection}...")
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/api/collection/delete",
+                json={"collection": collection},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("job_id")
+        except Exception as e:
+            print(f"    Error deleting collection {collection}: {e}")
+        return None
 
-    print("\n✓ All pool assertions passed.\n")
+    return executor.submit(_delete)
+
+
+def get_collection_binary_similarity(collection, md5_1, md5_2):
+    print(f"  Fetching similarity for {collection} from DB...")
+    from bsimvis.app.services.redis_client import get_redis
+
+    r = get_redis()
+    algo = "unweighted_cosine"
+    score_key = f"{collection}:bin_sim:score:{algo}"
+
+    # Format of member in collection bin_sim is {collection}:bin_sim:{algo}:{md5_1}::{md5_2}
+    # ZSet stores keys in sorted order of md5. Ensure canonical ordering:
+    m1, m2 = sorted([md5_1, md5_2])
+    member_key = f"{collection}:bin_sim:{algo}:{m1}::{m2}"
+    score = r.zscore(score_key, member_key)
+    return score
+
+
+def get_pool_binary_similarity(pool_id, coll_1, md5_1, coll_2, md5_2):
+    print(f"  Fetching similarity for pool {pool_id} from DB...")
+    from bsimvis.app.services.redis_client import get_redis
+
+    r = get_redis()
+    algo = "unweighted_cosine"
+    score_key = f"global:pool:{pool_id}:bin_sim:score:{algo}"
+
+    # Format: global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}
+    b1 = (coll_1, md5_1)
+    b2 = (coll_2, md5_2)
+    if b1 > b2:
+        b1, b2 = b2, b1
+    coll_a, md5_a = b1
+    coll_b, md5_b = b2
+    member_key = (
+        f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
+    )
+    score = r.zscore(score_key, member_key)
+    return score
+
+
+def main():
+    section("1. Preparations & Cleanups")
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        f1 = delete_collection_async(executor, SINGLE_COLL)
+        f2 = delete_collection_async(executor, SEP_COLL_ARM)
+        f3 = delete_collection_async(executor, SEP_COLL_LINUX)
+
+        pids = [f1.result(), f2.result(), f3.result()]
+        wait_for_pipelines(pids)
+
+    from bsimvis.app.services.pool_service import pool_service
+
+    pool_service.delete_pool(POOL_ID)
+
+    try:
+        # Check files exist
+        assert os.path.exists(FILE_ARM), f"Missing file: {FILE_ARM}"
+        assert os.path.exists(FILE_LINUX), f"Missing file: {FILE_LINUX}"
+
+        # ==================================================================
+        section("2. Parallel Ingestion (All Collections)")
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # Upload to SINGLE_COLL
+            fu1 = upload_file_async(executor, FILE_ARM, SINGLE_COLL)
+            fu2 = upload_file_async(executor, FILE_LINUX, SINGLE_COLL)
+            # Upload to separate collections
+            fu3 = upload_file_async(executor, FILE_ARM, SEP_COLL_ARM)
+            fu4 = upload_file_async(executor, FILE_LINUX, SEP_COLL_LINUX)
+
+            pids = [fu1.result(), fu2.result(), fu3.result(), fu4.result()]
+            wait_for_pipelines(pids)
+
+        # ==================================================================
+        section("3. Single Collection Analysis")
+        # Trigger build_sim for collection
+        print("  Triggering function similarity build for collection...")
+        resp = requests.post(
+            f"{BASE_URL}/api/similarity/build",
+            json={"collection": SINGLE_COLL, "all": True},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        wait_for_pipelines([resp.json()["job_id"]])
+
+        # Trigger function clustering
+        print("  Triggering function clustering for collection...")
+        resp = requests.post(
+            f"{BASE_URL}/api/cluster/build",
+            json={"collection": SINGLE_COLL},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        wait_for_pipelines([resp.json()["job_id"]])
+
+        # Trigger binary similarity build
+        print("  Triggering binary similarity build for collection...")
+        resp = requests.post(
+            f"{BASE_URL}/api/bin_sim/build",
+            json={"collection": SINGLE_COLL},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        wait_for_pipelines([resp.json()["job_id"]])
+
+        # Fetch score
+        single_coll_score = get_collection_binary_similarity(
+            SINGLE_COLL, MD5_ARM, MD5_LINUX
+        )
+        print(f"  => Score in SINGLE COLLECTION: {single_coll_score}")
+
+        # Print single collection doc
+        from bsimvis.app.services.redis_client import get_redis
+
+        r = get_redis()
+        m1, m2 = sorted([MD5_ARM, MD5_LINUX])
+        single_doc_key = f"{SINGLE_COLL}:bin_sim:unweighted_cosine:{m1}::{m2}"
+        single_doc = r.json().get(single_doc_key, "$")
+        print(f"  [DEBUG] Single Collection Doc: {single_doc}")
+
+        # ==================================================================
+        section("4. Pool Analysis (Separated Collections)")
+        # Create pool
+        print("  Creating pool...")
+        config = {
+            "only_cross_collection": False,
+            "func_sim_params": {
+                "algo": "unweighted_cosine",
+                "top_k": 1000,
+                "min_score": 0.7,
+            },
+            "func_cluster_params": {
+                "min_cluster_size": 2,
+                "min_samples": 1,
+                "epsilon": 0.001,
+            },
+            "file_sim_params": {
+                "enabled": True,
+                "algo": "unweighted_cosine",
+                "top_k": 100,
+                "min_score": 0.1,
+                "min_cohesion": 0.5,
+            },
+            "file_cluster_params": {
+                "enabled": True,
+                "min_cluster_size": 2,
+                "min_samples": 1,
+                "epsilon": 0.001,
+            },
+        }
+        success, msg = pool_service.create_pool(
+            POOL_ID, "Comparison Pool", [SEP_COLL_ARM, SEP_COLL_LINUX], config
+        )
+        print(f"  Pool creation: {success} ({msg})")
+
+        print("  Triggering pool similarity build...")
+        resp = requests.post(f"{BASE_URL}/api/pool/{POOL_ID}/build", timeout=10)
+        resp.raise_for_status()
+        wait_for_pipelines([resp.json()["job_id"]])
+
+        print("  Triggering pool clustering (and pool binary similarity)...")
+        resp = requests.post(f"{BASE_URL}/api/pool/{POOL_ID}/cluster", timeout=10)
+        resp.raise_for_status()
+        wait_for_pipelines([resp.json()["job_id"]])
+
+        # Fetch score
+        pool_score = get_pool_binary_similarity(
+            POOL_ID, SEP_COLL_ARM, MD5_ARM, SEP_COLL_LINUX, MD5_LINUX
+        )
+        print(f"  => Score in POOL: {pool_score}")
+
+        # Print pool doc
+        b1 = (SEP_COLL_ARM, MD5_ARM)
+        b2 = (SEP_COLL_LINUX, MD5_LINUX)
+        if b1 > b2:
+            b1, b2 = b2, b1
+        pool_doc_key = f"global:pool:{POOL_ID}:bin_sim:unweighted_cosine:{b1[0]}:{b1[1]}::{b2[0]}:{b2[1]}"
+        pool_doc = r.json().get(pool_doc_key, "$")
+        print(f"  [DEBUG] Pool Doc: {pool_doc}")
+
+        # ==================================================================
+        section("5. Comparison Results")
+        print(f"  Single Collection Score: {single_coll_score}")
+        print(f"  Pool-specific Score:     {pool_score}")
+
+        if single_coll_score is not None and pool_score is not None:
+            diff = abs(single_coll_score - pool_score)
+            print(f"  Difference: {diff:.6f}")
+            assert diff < 1e-5, f"Scores do not match! Diff: {diff}"
+            print("\n  ✔ SUCCESS: The similarity scores match perfectly!")
+        else:
+            print("\n  ✗ FAILURE: One or both scores could not be resolved.")
+            assert False, "Scores not resolved."
+
+    finally:
+        section("6. Final Cleanups")
+        # with ThreadPoolExecutor(max_workers=3) as executor:
+        #     f1 = delete_collection_async(executor, SINGLE_COLL)
+        #     f2 = delete_collection_async(executor, SEP_COLL_ARM)
+        #     f3 = delete_collection_async(executor, SEP_COLL_LINUX)
+        #
+        #     pids = [f1.result(), f2.result(), f3.result()]
+        #     wait_for_pipelines(pids)
+        #
+        # pool_service.delete_pool(POOL_ID)
+        pass
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--no-delete", action="store_true", help="Keep the created pool after testing")
-    args = parser.parse_args()
-    test_pool_lifecycle(no_delete=args.no_delete)
+    main()

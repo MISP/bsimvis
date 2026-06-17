@@ -34,6 +34,59 @@ def normalize_tags(data, tag_fields=None):
     return data
 
 
+def get_pool_id(collection):
+    """Consistent helper to extract pool ID from collection/pool names."""
+    if not collection:
+        return None
+    if collection.startswith("global:pool:"):
+        rest = collection[len("global:pool:") :]
+        return rest.split(":")[0]
+    if collection.startswith("pool:"):
+        rest = collection[len("pool:") :]
+        return rest.split(":")[0]
+    return None
+
+
+def enrich_pool_data(data, pool_id):
+    """
+    Enriches a dictionary of metadata (representing a file, function, or similarity)
+    with pool-specific tags and notes if pool_id is active.
+    """
+    if not pool_id or not isinstance(data, dict):
+        return data
+
+    pool_tags_field = f"pool_tags_{pool_id}"
+    pool_notes_field = f"pool_notes_{pool_id}"
+    pool_note_owners_field = f"pool_note_owners_{pool_id}"
+    pool_note_count_field = f"pool_note_count_{pool_id}"
+
+    # Pool-specific user_tags
+    if pool_tags_field in data:
+        data["user_tags"] = data[pool_tags_field]
+    else:
+        data["user_tags"] = []
+
+    # Pool-specific notes
+    if pool_notes_field in data:
+        data["notes"] = data[pool_notes_field]
+    else:
+        data["notes"] = []
+
+    # Pool-specific note owners
+    if pool_note_owners_field in data:
+        data["note_owners"] = data[pool_note_owners_field]
+    else:
+        data["note_owners"] = []
+
+    # Pool-specific note count
+    if pool_note_count_field in data:
+        data["note_count"] = data[pool_note_count_field]
+    else:
+        data["note_count"] = len(data["notes"])
+
+    return data
+
+
 def parse_timestamp(val):
     """Normalize mixed UTC ISO strings and Unix integers to Unix Milliseconds."""
     if not val:
@@ -92,8 +145,16 @@ def _index_tag(pipe, coll, level, field, value, doc_id):
     """Add doc_id to the tag set for field=value in a standardized registry/bucket structure."""
     if value is None:
         return
-    # Handle list values (e.g. tags)
-    values = value if isinstance(value, list) else [value]
+    # Handle list values (e.g. tags) and deduplicate them
+    if isinstance(value, list):
+        seen = set()
+        values = []
+        for v in value:
+            if v not in seen:
+                seen.add(v)
+                values.append(v)
+    else:
+        values = [value]
     for v in values:
         if v is None or v == "":
             continue
@@ -128,7 +189,15 @@ def _unindex_tag(pipe, coll, level, field, value, doc_id):
     """Remove doc_id from the tag set for field=value."""
     if value is None:
         return
-    values = value if isinstance(value, list) else [value]
+    if isinstance(value, list):
+        seen = set()
+        values = []
+        for v in value:
+            if v not in seen:
+                seen.add(v)
+                values.append(v)
+    else:
+        values = [value]
     for v in values:
         if v is None or v == "":
             continue

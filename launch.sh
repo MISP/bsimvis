@@ -137,6 +137,14 @@ fi
 
 echo "--- Launching Services (Data: ${DATA_BASE_DIR}) ---"
 
+# Ensure directories exist
+mkdir -p "${DATA_BASE_DIR}/redis"
+mkdir -p "${DATA_BASE_DIR}/kvrocks"
+if [ "$ENABLE_MILVUS" = "true" ]; then
+    mkdir -p "${DATA_BASE_DIR}/etcd"
+    mkdir -p "${DATA_BASE_DIR}/minio"
+fi
+
 # Start Redis
 start_screen "${PROJECT_NAME}-redis" "redis-server --port ${REDIS_PORT} --dir ${DATA_BASE_DIR}/redis"
 

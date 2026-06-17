@@ -4,6 +4,8 @@ trash/
 archive/
 pyrightconfig.json
 .aiexclude
+.opencode/
+.hermes/
 
 __pycache__
 

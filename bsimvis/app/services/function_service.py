@@ -7,13 +7,28 @@ def fetch_function_data(collection, md5, addr):
     Returns: (source_dict, features_list, meta_dict, tf_map)
     """
     try:
+        sub_collection = collection
+        if collection:
+            if collection.startswith("global:pool:"):
+                parts = collection.split(":")
+                if len(parts) >= 5 and parts[3] == "col":
+                    sub_collection = parts[4]
+                elif len(parts) >= 3:
+                    sub_collection = parts[2]
+            elif collection.startswith("pool:"):
+                parts = collection.split(":")
+                if len(parts) >= 4 and parts[2] == "col":
+                    sub_collection = parts[3]
+                elif len(parts) >= 2:
+                    sub_collection = parts[1]
+
         r = get_redis()
         pipe = r.pipeline()
-        pipe.json().get(f"{collection}:func:{md5}:{addr}:source", "$")
-        pipe.json().get(f"{collection}:func:{md5}:{addr}:vec:meta", "$")
-        pipe.json().get(f"{collection}:func:{md5}:{addr}:meta", "$")
+        pipe.json().get(f"{sub_collection}:func:{md5}:{addr}:source", "$")
+        pipe.json().get(f"{sub_collection}:func:{md5}:{addr}:vec:meta", "$")
+        pipe.json().get(f"{sub_collection}:func:{md5}:{addr}:meta", "$")
 
-        tf_key = f"{collection}:func:{md5}:{addr}:vec:tf"
+        tf_key = f"{sub_collection}:func:{md5}:{addr}:vec:tf"
         pipe.zrange(tf_key, 0, -1, withscores=True)
 
         source, features, meta, tf_raw = pipe.execute()

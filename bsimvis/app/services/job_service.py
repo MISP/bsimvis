@@ -38,7 +38,6 @@ class JobType(Enum):
     CLUSTER_POOL = "cluster_pool"
 
 
-
 def safe_int(val, default=0):
     if val is None:
         return default
@@ -647,16 +646,16 @@ class JobService:
 
             top_level_jobs.append(
                 {
-                     "id": jid,
-                     "type": job.get("type"),
-                     "status": job.get("status"),
-                     "progress": safe_int(job.get("progress", 0)),
-                     "collection": coll,
-                     "target": target,
-                     "created_at": safe_int(job.get("created_at", 0)),
-                     "updated_at": safe_int(job.get("updated_at", 0)),
-                     "parent_id": parent_id,
-                     "task_ids": task_ids,
+                    "id": jid,
+                    "type": job.get("type"),
+                    "status": job.get("status"),
+                    "progress": safe_int(job.get("progress", 0)),
+                    "collection": coll,
+                    "target": target,
+                    "created_at": safe_int(job.get("created_at", 0)),
+                    "updated_at": safe_int(job.get("updated_at", 0)),
+                    "parent_id": parent_id,
+                    "task_ids": task_ids,
                 }
             )
 

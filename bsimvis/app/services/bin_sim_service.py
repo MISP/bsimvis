@@ -191,7 +191,10 @@ class BinSimService:
             if fids:
                 pipe = r.pipeline()
                 for fid in fids:
-                    pipe.smembers(f"{fid}:clusters")
+                    if collection.startswith("global:pool:"):
+                        pipe.smembers(f"{collection}:{fid}:clusters")
+                    else:
+                        pipe.smembers(f"{fid}:clusters")
 
                 results = pipe.execute()
 

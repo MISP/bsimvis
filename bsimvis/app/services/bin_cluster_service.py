@@ -671,6 +671,17 @@ class BinClusterService:
                 filename_freq = []
                 md5_freq = []
 
+            sample_members = []
+            for file_id in members[:5]:
+                m = all_member_meta.get(file_id, {})
+                sample_members.append(
+                    {
+                        "id": file_id,
+                        "name": m.get("file_name", "Unknown"),
+                        "file_name": m.get("file_name", "Unknown"),
+                    }
+                )
+
             rep_file_id = members[0] if members else None
             rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}
             snippet = rep_meta.get("file_name", "unknown")
@@ -684,7 +695,8 @@ class BinClusterService:
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
-                "sample_members": names_list[:5],
+                "sample_files": names_list[:5],
+                "sample_members": sample_members,
                 "yara_distribution": yara_freq,
                 "avtype_distribution": avtype_freq,
                 "filetype_distribution": filetype_freq,

@@ -59,8 +59,17 @@ class ClusterService:
             )
             return False
 
+        is_pool = collection.startswith("global:pool:")
+
+        if is_pool:
+            pool_id = collection[len("global:pool:") :]
+            sim_score_key = f"global:pool:{pool_id}:sim:score"
+            prefix = f"global:pool:{pool_id}:sim:"
+        else:
+            sim_score_key = f"{collection}:sim:score:{algo}"
+            prefix = f"{collection}:sim:{algo}:"
+
         r = self.r
-        sim_score_key = f"{collection}:sim:score:{algo}"
 
         # 1. Fetch all similarity pairs
         logging.info(f"[*] Fetching similarity pairs from {sim_score_key}...")
@@ -90,8 +99,6 @@ class ClusterService:
             logging.warning(f"No similarity pairs found for {collection}:{algo}")
             return True
 
-        prefix = f"{collection}:sim:{algo}:"
-
         # 1.5 Feature Filtering
         allowed_fids = None
         if min_features > 0:
@@ -104,12 +111,18 @@ class ClusterService:
             for sid, _ in pairs:
                 if not sid.startswith(prefix):
                     continue
+
                 ids_part = sid[len(prefix) :]
                 if "::" not in ids_part:
                     continue
+
                 c1, c2 = ids_part.split("::")
-                unique_fids.add(f"{collection}:func:{c1}")
-                unique_fids.add(f"{collection}:func:{c2}")
+                if is_pool:
+                    unique_fids.add(c1)
+                    unique_fids.add(c2)
+                else:
+                    unique_fids.add(f"{collection}:func:{c1}")
+                    unique_fids.add(f"{collection}:func:{c2}")
 
             allowed_fids = set()
             fids_list = list(unique_fids)
@@ -146,8 +159,12 @@ class ClusterService:
                 continue
 
             c1, c2 = ids_part.split("::")
-            fid1 = f"{collection}:func:{c1}"
-            fid2 = f"{collection}:func:{c2}"
+            if is_pool:
+                fid1 = c1
+                fid2 = c2
+            else:
+                fid1 = f"{collection}:func:{c1}"
+                fid2 = f"{collection}:func:{c2}"
 
             # Apply Feature Filter
             if allowed_fids is not None:
@@ -544,8 +561,12 @@ class ClusterService:
         # Ensure noise functions are cleared if they were previously noise
         for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
             fid = idx_to_id[leaf]
-            clusters_key = f"{fid}:clusters"
-            scores_key = f"{fid}:cluster_scores"
+            if is_pool:
+                clusters_key = f"{collection}:{fid}:clusters"
+                scores_key = f"{collection}:{fid}:cluster_scores"
+            else:
+                clusters_key = f"{fid}:clusters"
+                scores_key = f"{fid}:cluster_scores"
 
             if clusters:
                 pipe.delete(clusters_key)
@@ -625,17 +646,35 @@ class ClusterService:
             for fid in chunk:
                 m_pipe.json().get(f"{fid}:meta", "$.function_name")
                 m_pipe.json().get(f"{fid}:meta", "$.bsim_features_count")
+                m_pipe.json().get(f"{fid}:meta", "$.file_name")
+                m_pipe.json().get(f"{fid}:meta", "$.entrypoint_address")
+                m_pipe.json().get(f"{fid}:meta", "$.file_md5")
             results = m_pipe.execute()
             for idx, fid in enumerate(chunk):
-                name_res = results[idx * 2]
-                feat_res = results[idx * 2 + 1]
+                name_res = results[idx * 5]
+                feat_res = results[idx * 5 + 1]
+                filename_res = results[idx * 5 + 2]
+                addr_res = results[idx * 5 + 3]
+                md5_res = results[idx * 5 + 4]
+
                 name = name_res[0] if isinstance(name_res, list) and name_res else None
                 feat_count = (
                     feat_res[0] if isinstance(feat_res, list) and feat_res else 0
                 )
+                file_name = (
+                    filename_res[0]
+                    if isinstance(filename_res, list) and filename_res
+                    else None
+                )
+                addr = addr_res[0] if isinstance(addr_res, list) and addr_res else None
+                md5 = md5_res[0] if isinstance(md5_res, list) and md5_res else None
+
                 all_member_meta[fid] = {
                     "function_name": name,
                     "bsim_features_count": feat_count,
+                    "file_name": file_name,
+                    "entrypoint_address": addr,
+                    "file_md5": md5,
                 }
 
             if i % 5000 == 0:
@@ -720,6 +759,7 @@ class ClusterService:
                         "function_name": m.get("function_name", "Unknown"),
                         "entrypoint_address": m.get("entrypoint_address"),
                         "file_md5": m.get("file_md5"),
+                        "file_name": m.get("file_name"),
                         "collection": collection,
                         "bsim_features_count": m.get("bsim_features_count", 0),
                     }
@@ -736,7 +776,7 @@ class ClusterService:
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
                 "unique_files_count": len(unique_md5s),
-                "sample_members": samples,
+                "sample_functions": samples,
                 "created_at": int(time.time() * 1000),
             }
 
@@ -769,6 +809,10 @@ class ClusterService:
         r.delete(cluster_list_key)
         if cluster_members:
             r.sadd(cluster_list_key, *[str(k) for k in cluster_members.keys()])
+            if is_pool:
+                pool_cluster_list_key = f"global:pool:{pool_id}:cluster:list"
+                r.delete(pool_cluster_list_key)
+                r.sadd(pool_cluster_list_key, *[str(k) for k in cluster_members.keys()])
 
         logging.info(f"Update sim indexes...")
 
@@ -852,7 +896,12 @@ class ClusterService:
                     mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
 
                     _unindex_tag(pipe, collection, "func", "cluster_id", cid, mid)
-                    pipe.delete(f"{mid}:clusters")
+                    if collection.startswith("global:pool:"):
+                        pipe.delete(f"{collection}:{mid}:clusters")
+                        pipe.delete(f"{collection}:{mid}:cluster_scores")
+                    else:
+                        pipe.delete(f"{mid}:clusters")
+                        pipe.delete(f"{mid}:cluster_scores")
 
                     if j % 500 == 0:
                         pipe.execute()
@@ -1019,8 +1068,12 @@ class ClusterService:
             pipe = r.pipeline()
             for fid_raw in chunk:
                 fid = fid_raw.decode() if isinstance(fid_raw, bytes) else fid_raw
-                pipe.smembers(f"{fid}:clusters")
-                pipe.hgetall(f"{fid}:cluster_scores")
+                if collection.startswith("global:pool:"):
+                    pipe.smembers(f"{collection}:{fid}:clusters")
+                    pipe.hgetall(f"{collection}:{fid}:cluster_scores")
+                else:
+                    pipe.smembers(f"{fid}:clusters")
+                    pipe.hgetall(f"{fid}:cluster_scores")
 
             results = pipe.execute()
 
@@ -1239,229 +1292,96 @@ class ClusterService:
         job_id=None,
     ):
         """
-        Runs HDBSCAN clustering on pool-namespaced similarity pairs.
+        Runs HDBSCAN clustering on pool-namespaced similarity pairs by delegating to run_clustering.
         """
         from bsimvis.app.services.pool_service import pool_service
+        from bsimvis.app.services.config_service import config_service
 
         pool = pool_service.get_pool(pool_id)
         if not pool:
             logging.error(f"Pool {pool_id} not found")
             return False
 
-        # New structured config handling
         func_cluster_params = pool.get("func_cluster_params", {})
         cluster_params = pool.get("cluster_params", {})
 
         if min_cluster_size is None:
-            min_cluster_size = int(func_cluster_params.get("min_cluster_size", cluster_params.get("min_cluster_size", 2)))
-        if min_samples is None:
-            min_samples = int(func_cluster_params.get("min_samples", cluster_params.get("min_samples", 1)))
-        if cluster_selection_epsilon is None:
-            cluster_selection_epsilon = float(func_cluster_params.get("epsilon", cluster_params.get("epsilon", 0.1)))
-        if selection_method is None:
-            selection_method = func_cluster_params.get("selection_method", cluster_params.get("selection_method", "eom"))
-            
-        if min_sim is None:
-            func_sim_params = pool.get("func_sim_params", {})
-            min_sim = float(func_sim_params.get("min_score", pool.get("min_score", 0.0)))
-        if min_features is None:
-            min_features = int(pool.get("min_features", 0))
+            min_cluster_size = func_cluster_params.get("min_cluster_size")
+            if min_cluster_size is None:
+                min_cluster_size = cluster_params.get("min_cluster_size")
+            if min_cluster_size is None:
+                min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
+            min_cluster_size = int(min_cluster_size)
 
-        if hdbscan is None:
-            logging.error("hdbscan library not installed.")
+        if min_samples is None:
+            min_samples = func_cluster_params.get("min_samples")
+            if min_samples is None:
+                min_samples = cluster_params.get("min_samples")
+            if min_samples is None:
+                min_samples = config_service.get("clustering.min_samples", 1)
+            min_samples = int(min_samples)
+
+        if cluster_selection_epsilon is None:
+            cluster_selection_epsilon = func_cluster_params.get("epsilon")
+            if cluster_selection_epsilon is None:
+                cluster_selection_epsilon = cluster_params.get("epsilon")
+            if cluster_selection_epsilon is None:
+                cluster_selection_epsilon = config_service.get(
+                    "clustering.epsilon", 0.1
+                )
+            cluster_selection_epsilon = float(cluster_selection_epsilon)
+
+        if selection_method is None:
+            selection_method = func_cluster_params.get("selection_method")
+            if selection_method is None:
+                selection_method = cluster_params.get("selection_method")
+            if selection_method is None:
+                selection_method = config_service.get(
+                    "clustering.selection_method", "eom"
+                )
+
+        if min_sim is None:
+            min_sim = func_cluster_params.get("min_sim")
+            if min_sim is None:
+                min_sim = cluster_params.get("min_sim")
+            if min_sim is None:
+                min_sim = config_service.get("clustering.min_sim", 0.0)
+            min_sim = float(min_sim)
+
+        if min_features is None:
+            min_features = func_cluster_params.get("min_features")
+            if min_features is None:
+                min_features = cluster_params.get("min_features")
+            if min_features is None:
+                min_features = config_service.get("clustering.min_features", 0)
+            min_features = int(min_features)
+
+        algo = pool.get("algo", "unweighted_cosine")
+        pool_coll = f"global:pool:{pool_id}"
+
+        # Delegate to the robust run_clustering
+        success = self.run_clustering(
+            collection=pool_coll,
+            algo=algo,
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            cluster_selection_epsilon=cluster_selection_epsilon,
+            selection_method=selection_method,
+            min_sim=min_sim,
+            min_features=min_features,
+            job_service=job_service,
+            job_id=job_id,
+        )
+        if not success:
             return False
 
-        r = self.r
-        sim_score_key = f"global:pool:{pool_id}:sim:score"
-        prefix = f"global:pool:{pool_id}:sim:"
-
-        # 1. Fetch all similarity pairs
-        logging.info(f"[*] Fetching pool similarity pairs from {sim_score_key}...")
-        if job_service and job_id:
-            job_service.add_log(
-                job_id, f"Fetching pool similarity pairs for {pool_id}..."
-            )
-
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
-
-        if not pairs:
-            logging.warning(f"No similarity pairs found for pool {pool_id}")
-            return True
-
-        # 2. Build identity mapping and edge list
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
-
-        for sid, score in pairs:
-            if not sid.startswith(prefix):
-                continue
-
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
-
-            fid1, fid2 = ids_part.split("::")
-
-            # Numeric mapping
-            for fid in [fid1, fid2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[fid1], id_to_idx[fid2], dist))
-
-        if not edges:
-            return True
-
-        num_nodes = len(id_to_idx)
-
-        # 3. Clustering Logic (Reuse component-based HDBSCAN)
-        # For brevity, I'll assume we can use a similar logic as in run_clustering
-        # but targeting pool keys.
-
-        # NOTE: In a real implementation, we would DRY the clustering logic.
-        # Here I will focus on the persistence part.
-
-        # Simple clustering for now
-        # We need a dense distance matrix initialized to 1.0 (max distance)
-        # with 0.0 on the diagonal for precomputed HDBSCAN.
-        # We need a dense distance matrix initialized to 1.0 (max distance)
-        # with 0.0 on the diagonal for precomputed HDBSCAN.
-        dist_matrix = np.ones((num_nodes, num_nodes), dtype=np.float64)
-        np.fill_diagonal(dist_matrix, 0.0)
-        adj_sim = defaultdict(dict)
-        for u, v, d in edges:
-            dist_matrix[u, v] = d
-            dist_matrix[v, u] = d
-            score_val = 1.0 - d
-            adj_sim[u][v] = score_val
-            adj_sim[v][u] = score_val
-
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min(min_cluster_size, num_nodes),
-            min_samples=min(min_samples, num_nodes),
-            cluster_selection_epsilon=cluster_selection_epsilon,
-            cluster_selection_method=selection_method,
-            metric="precomputed",
-        )
-
-        labels = clusterer.fit_predict(dist_matrix)
-
-        # 4. Persistence
-        cluster_list_key = f"global:pool:{pool_id}:cluster:list"
-        pipe = r.pipeline()
-        pipe.delete(cluster_list_key)
-
-        clusters = {}
-        for idx, label in enumerate(labels):
-            if label == -1:
-                continue
-            if label not in clusters:
-                clusters[label] = []
-            clusters[label].append(idx_to_id[idx])
-
-        all_fids = []
-        for members in clusters.values():
-            all_fids.extend(members)
-        all_member_meta = {}
-        if all_fids:
-            meta_pipe = r.pipeline()
-            for fid in all_fids:
-                meta_pipe.json().get(f"{fid}:meta", "$")
-            meta_results = meta_pipe.execute()
-            for fid, res in zip(all_fids, meta_results):
-                if res:
-                    m = res[0] if isinstance(res, list) else res
-                    if isinstance(m, str):
-                        try:
-                            m = json.loads(m)
-                        except Exception:
-                            pass
-                    all_member_meta[fid] = m if isinstance(m, dict) else {}
-
-        for label, members in clusters.items():
-            c_uuid = str(uuid.uuid4())[:12]
-            meta_key = f"global:pool:{pool_id}:cluster:{c_uuid}:meta"
-            members_key = f"global:pool:{pool_id}:cluster:{c_uuid}:members"
-
-            n_members = len(members)
-            total_sim = 0.0
-            if n_members > 1:
-                member_indices = [id_to_idx[m] for m in members]
-                for i in range(n_members):
-                    u = member_indices[i]
-                    for j in range(i + 1, n_members):
-                        v = member_indices[j]
-                        total_sim += adj_sim[u].get(v, 0.0)
-                cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
-            else:
-                cohesion_score = 1.0
-
-            unique_md5s = set()
-            sum_features = 0.0
-            for fid in members:
-                parts = fid.split(":")
-                if len(parts) >= 3:
-                    unique_md5s.add(parts[2])
-                m = all_member_meta.get(fid, {})
-                sum_features += float(m.get("bsim_features_count", 0))
-
-            avg_features = sum_features / n_members if n_members > 0 else 0.0
-
-            rep_fid = members[0] if members else None
-            rep_meta = all_member_meta.get(rep_fid, {}) if rep_fid else {}
-            snippet = rep_meta.get("function_name", "unknown")
-
-            pipe.sadd(cluster_list_key, c_uuid)
-            pipe.json().set(
-                meta_key,
-                "$",
-                {
-                    "id": c_uuid,
-                    "cluster_uuid": c_uuid,
-                    "cluster_id": c_uuid,
-                    "snippet": snippet,
-                    "name": f"Pool Cluster {c_uuid}",
-                    "cluster_name": f"Pool Cluster {c_uuid}",
-                    "member_count": n_members,
-                    "cohesion_score": float(cohesion_score),
-                    "unique_files_count": len(unique_md5s),
-                    "avg_features": float(avg_features),
-                    "created_at": int(time.time() * 1000),
-                },
-            )
-            for m in members:
-                pipe.sadd(members_key, m)
-
-        pipe.execute()
-
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Pool function clustering {pool_id} completed. Found {len(clusters)} clusters.",
-            )
-
-        # 5. Automatically trigger pool binary similarity and pool binary clustering
+        # Automatically trigger pool binary similarity and pool binary clustering
         file_sim_params = pool.get("file_sim_params", {})
         if file_sim_params.get("enabled", True):
             try:
                 from bsimvis.app.services.similarity_service import SimilarityService
 
-                sim_service = SimilarityService(r)
+                sim_service = SimilarityService(self.r)
                 sim_service.build_pool_bin_sim(
                     pool_id, job_service=job_service, job_id=job_id
                 )
@@ -1480,7 +1400,8 @@ class ClusterService:
         else:
             if job_service and job_id:
                 job_service.add_log(
-                    job_id, f"[*] File similarity disabled for pool {pool_id}, skipping build_pool_bin_sim and run_pool_bin_clustering"
+                    job_id,
+                    f"[*] File similarity disabled for pool {pool_id}, skipping build_pool_bin_sim and run_pool_bin_clustering",
                 )
 
         return True
@@ -1493,6 +1414,7 @@ class ClusterService:
         cluster_selection_epsilon=None,
         selection_method=None,
         min_sim=None,
+        min_cohesion=None,
         job_service=None,
         job_id=None,
     ):
@@ -1500,6 +1422,7 @@ class ClusterService:
         Runs HDBSCAN clustering on pool-namespaced binary similarity pairs.
         """
         from bsimvis.app.services.pool_service import pool_service
+        from bsimvis.app.services.config_service import config_service
 
         pool = pool_service.get_pool(pool_id)
         if not pool:
@@ -1510,23 +1433,59 @@ class ClusterService:
         file_sim_params = pool.get("file_sim_params", {})
         if not file_sim_params.get("enabled", True):
             if job_service and job_id:
-                job_service.add_log(job_id, f"[*] File similarity disabled for pool {pool_id}, skipping run_pool_bin_clustering")
+                job_service.add_log(
+                    job_id,
+                    f"[*] File similarity disabled for pool {pool_id}, skipping run_pool_bin_clustering",
+                )
             return True
 
         file_cluster_params = pool.get("file_cluster_params", {})
         cluster_params = pool.get("cluster_params", {})
 
         if min_cluster_size is None:
-            min_cluster_size = int(file_cluster_params.get("min_cluster_size", cluster_params.get("min_cluster_size", 2)))
+            min_cluster_size = file_cluster_params.get("min_cluster_size")
+            if min_cluster_size is None:
+                min_cluster_size = cluster_params.get("min_cluster_size")
+            if min_cluster_size is None:
+                min_cluster_size = config_service.get("clustering.min_cluster_size", 2)
+            min_cluster_size = int(min_cluster_size)
+
         if min_samples is None:
-            min_samples = int(file_cluster_params.get("min_samples", cluster_params.get("min_samples", 1)))
+            min_samples = file_cluster_params.get("min_samples")
+            if min_samples is None:
+                min_samples = cluster_params.get("min_samples")
+            if min_samples is None:
+                min_samples = config_service.get("clustering.min_samples", 1)
+            min_samples = int(min_samples)
+
         if cluster_selection_epsilon is None:
-            cluster_selection_epsilon = float(file_cluster_params.get("epsilon", cluster_params.get("epsilon", 0.1)))
+            cluster_selection_epsilon = file_cluster_params.get("epsilon")
+            if cluster_selection_epsilon is None:
+                cluster_selection_epsilon = cluster_params.get("epsilon")
+            if cluster_selection_epsilon is None:
+                cluster_selection_epsilon = config_service.get(
+                    "clustering.epsilon", 0.001
+                )
+            cluster_selection_epsilon = float(cluster_selection_epsilon)
+
         if selection_method is None:
-            selection_method = file_cluster_params.get("selection_method", cluster_params.get("selection_method", "eom"))
-            
+            selection_method = file_cluster_params.get("selection_method")
+            if selection_method is None:
+                selection_method = cluster_params.get("selection_method")
+            if selection_method is None:
+                selection_method = config_service.get(
+                    "clustering.selection_method", "eom"
+                )
+
         if min_sim is None:
-            min_sim = float(pool.get("min_score", 0.0))
+            min_sim = file_cluster_params.get("min_sim")
+            if min_sim is None:
+                min_sim = cluster_params.get("min_sim")
+            if min_sim is None:
+                min_sim = pool.get("min_score")
+            if min_sim is None:
+                min_sim = config_service.get("clustering.min_sim", 0.0)
+            min_sim = float(min_sim)
 
         if hdbscan is None:
             logging.error("hdbscan library not installed.")
@@ -1574,8 +1533,14 @@ class ClusterService:
             if len(parts) != 2:
                 continue
 
-            f_id1, f_id2 = parts[0], parts[1]
-            for fid in [f_id1, f_id2]:
+            p1 = parts[0].split(":")
+            p2 = parts[1].split(":")
+            if len(p1) < 2 or len(p2) < 2:
+                continue
+            file_id1 = f"{p1[0]}:file:{p1[1]}"
+            file_id2 = f"{p2[0]}:file:{p2[1]}"
+
+            for fid in [file_id1, file_id2]:
                 if fid not in id_to_idx:
                     idx = len(id_to_idx)
                     id_to_idx[fid] = idx
@@ -1586,7 +1551,7 @@ class ClusterService:
                 continue
 
             dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[f_id1], id_to_idx[f_id2], dist))
+            edges.append((id_to_idx[file_id1], id_to_idx[file_id2], dist))
 
         if not edges:
             logging.warning(f"No valid edges for pool {pool_id} after filtering.")
@@ -1700,18 +1665,46 @@ class ClusterService:
 
         tree_df = pd.DataFrame(global_tree_rows)
 
+        # Extract Condensed Tree for UI and Hierarchical Storage
+        tree_json = tree_df.to_json(orient="records")
+        tree_key = f"global:pool:{pool_id}:bin_cluster:tree:{algo}"
+        r.set(tree_key, tree_json)
+
+        tree_links = []
+        for _, row in tree_df.iterrows():
+            if int(row["child_size"]) > 1:
+                tree_links.append(
+                    {
+                        "parent": int(row["parent"]),
+                        "child": int(row["child"]),
+                        "lambda": float(row["lambda_val"]),
+                        "size": int(row["child_size"]),
+                    }
+                )
+        r.set(
+            f"global:pool:{pool_id}:bin_cluster:tree_links:{algo}",
+            json.dumps(tree_links),
+        )
         # Extract cluster members from tree
         child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
-        cluster_members = {}
+        leaf_to_clusters = {}
         for leaf in range(num_nodes):
+            clusters = set()
             curr = leaf
             while curr in child_to_parent:
                 p = child_to_parent[curr]
-                cluster_members.setdefault(p, [])
-                fid = idx_to_id[leaf]
-                if fid not in cluster_members[p]:
-                    cluster_members[p].append(fid)
+                clusters.add(int(p))
                 curr = p
+            leaf_to_clusters[leaf] = list(clusters)
+
+        cluster_members = {}
+        for leaf, clusters in leaf_to_clusters.items():
+            for c in clusters:
+                if c not in cluster_members:
+                    cluster_members[c] = []
+                fid = idx_to_id[leaf]
+                if fid not in cluster_members[c]:
+                    cluster_members[c].append(fid)
 
         root_id = tree_df["parent"].min()
         cluster_members = {
@@ -1747,14 +1740,106 @@ class ClusterService:
             adj_sim[u][v] = sim
             adj_sim[v][u] = sim
 
+        # Generate cluster UUIDs first
+        label_to_uuid = {c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()}
+
+        # Bulk fetch all member metadata
+        all_member_file_ids = []
+        for members in cluster_members.values():
+            all_member_file_ids.extend(members)
+        all_member_file_ids = list(set(all_member_file_ids))
+
+        all_member_meta = {}
+        total_members = len(all_member_file_ids)
+        for i in range(0, total_members, 1000):
+            chunk = all_member_file_ids[i : i + 1000]
+            m_pipe = r.pipeline()
+            for fid in chunk:
+                parts = fid.split(":")
+                coll, md5 = parts[0], parts[2]
+                m_pipe.json().get(f"{coll}:file:{md5}:meta", "$")
+            results = m_pipe.execute()
+            for idx, fid in enumerate(chunk):
+                meta_res = results[idx]
+                m = meta_res[0] if isinstance(meta_res, list) and meta_res else {}
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except Exception:
+                        m = {}
+                all_member_meta[fid] = m
+
         cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list"
         pipe = r.pipeline()
         pipe.delete(cluster_list_key)
 
         for label, members in cluster_members.items():
-            c_uuid = str(uuid.uuid4())[:12]
+            c_uuid = label_to_uuid[label]
             meta_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:meta"
             members_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:members"
+
+            names_list = []
+            md5s_list = []
+            yara_list = []
+            avtype_list = []
+            filetype_list = []
+            ccip_list = []
+
+            for file_id in members:
+                m = all_member_meta.get(file_id, {})
+                if m.get("file_names"):
+                    names_list.extend(m["file_names"])
+                elif m.get("file_name"):
+                    names_list.append(m["file_name"])
+
+                if m.get("file_md5"):
+                    md5s_list.append(m["file_md5"])
+
+                if m.get("yara"):
+                    yara_list.extend(
+                        m["yara"] if isinstance(m["yara"], list) else [m["yara"]]
+                    )
+                if m.get("avtype"):
+                    avtype_list.extend(
+                        m["avtype"] if isinstance(m["avtype"], list) else [m["avtype"]]
+                    )
+                if m.get("filetype"):
+                    filetype_list.extend(
+                        m["filetype"]
+                        if isinstance(m["filetype"], list)
+                        else [m["filetype"]]
+                    )
+                if m.get("cc_ip"):
+                    ccip_list.extend(
+                        m["cc_ip"] if isinstance(m["cc_ip"], list) else [m["cc_ip"]]
+                    )
+
+            default_name = (
+                Counter(names_list).most_common(1)[0][0]
+                if names_list
+                else f"Pool File Cluster {c_uuid}"
+            )
+
+            def build_freq(items):
+                return (
+                    [
+                        {
+                            "value": k,
+                            "count": v,
+                            "percent": round((v / len(members)) * 100),
+                        }
+                        for k, v in Counter(items).most_common(5)
+                    ]
+                    if items
+                    else []
+                )
+
+            yara_freq = build_freq(yara_list)
+            avtype_freq = build_freq(avtype_list)
+            filetype_freq = build_freq(filetype_list)
+            ccip_freq = build_freq(ccip_list)
+            filename_freq = build_freq(names_list)
+            md5_freq = build_freq(md5s_list)
 
             n_members = len(members)
             if n_members > 1:
@@ -1768,25 +1853,126 @@ class ClusterService:
             else:
                 cohesion_score = 1.0
 
-            default_name = f"Pool File Cluster {c_uuid}"
+            # Default min_cohesion is set before the function call
+            min_cohesion_val = min_cohesion if min_cohesion is not None else 0.5
+            if cohesion_score < min_cohesion_val:
+                yara_freq = []
+                avtype_freq = []
+                filetype_freq = []
+                ccip_freq = []
+                filename_freq = []
+                md5_freq = []
+
+            rep_file_id = members[0] if members else None
+            rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}
+            snippet = rep_meta.get("file_name", "unknown")
+
+            sample_members = []
+            for member_fid in members[:5]:
+                m = all_member_meta.get(member_fid, {})
+                sample_members.append(
+                    {
+                        "id": member_fid,
+                        "name": m.get("file_name", "Unknown"),
+                        "file_name": m.get("file_name", "Unknown"),
+                    }
+                )
+
+            meta = {
+                "id": c_uuid,
+                "cluster_uuid": c_uuid,
+                "cluster_id": int(label),
+                "name": default_name,
+                "cluster_name": default_name,
+                "snippet": snippet,
+                "member_count": n_members,
+                "cohesion_score": float(cohesion_score),
+                "avg_stability": float(stabilities.get(label, 0.0)),
+                "cluster_stability": float(stabilities.get(label, 0.0)),
+                "created_at": int(time.time() * 1000),
+                "sample_files": names_list[:5],
+                "sample_members": sample_members,
+                "yara_distribution": yara_freq,
+                "avtype_distribution": avtype_freq,
+                "filetype_distribution": filetype_freq,
+                "ccip_distribution": ccip_freq,
+                "filename_distribution": filename_freq,
+                "md5_distribution": md5_freq,
+            }
+
+            for k, v in meta.items():
+                if isinstance(v, float):
+                    if not np.isfinite(v):
+                        meta[k] = 0.0
+
             pipe.sadd(cluster_list_key, c_uuid)
-            pipe.json().set(
-                meta_key,
-                "$",
-                {
-                    "id": c_uuid,
-                    "cluster_uuid": c_uuid,
-                    "cluster_id": c_uuid,
-                    "name": default_name,
-                    "cluster_name": default_name,
-                    "member_count": n_members,
-                    "cohesion_score": float(cohesion_score),
-                    "avg_stability": float(stabilities.get(label, 0.0)),
-                    "created_at": int(time.time() * 1000),
-                },
-            )
+            pipe.json().set(meta_key, "$", meta)
             pipe.sadd(members_key, *members)
 
+            # Secondary indexes for the pool
+            collection_coll = f"global:pool:{pool_id}"
+
+            # Index cluster_id
+            bucket_key = (
+                f"{collection_coll}:idx:file:bin_cluster_id:{str(label).lower()}"
+            )
+            pipe.sadd(bucket_key, *members)
+            pipe.sadd(f"{collection_coll}:reg:file:bin_cluster_id", bucket_key)
+
+            # Index cluster_uuid
+            bucket_key = f"{collection_coll}:idx:file:bin_cluster_uuid:{c_uuid.lower()}"
+            pipe.sadd(bucket_key, *members)
+            pipe.sadd(f"{collection_coll}:reg:file:bin_cluster_uuid", bucket_key)
+
+            # Index cluster_name
+            bucket_key = (
+                f"{collection_coll}:idx:file:bin_cluster_name:{default_name.lower()}"
+            )
+            pipe.sadd(bucket_key, *members)
+            pipe.sadd(f"{collection_coll}:reg:file:bin_cluster_name", bucket_key)
+
+            # Index top inferred metadata if cohesion is high enough
+            if cohesion_score >= min_cohesion_val:
+                inferred_mapping = {
+                    "yara_distribution": "inferred_yara",
+                    "avtype_distribution": "inferred_avtype",
+                    "filetype_distribution": "inferred_filetype",
+                    "ccip_distribution": "inferred_ccip",
+                    "filename_distribution": "inferred_filename",
+                    "md5_distribution": "inferred_md5",
+                }
+                for dist_key, meta_key in inferred_mapping.items():
+                    dist = meta.get(dist_key) or []
+                    if dist:
+                        top_val = dist[0].get("value")
+                        if top_val:
+                            bucket_key = f"{collection_coll}:idx:file:{meta_key}:{str(top_val).lower()}"
+                            pipe.sadd(bucket_key, *members)
+                            pipe.sadd(
+                                f"{collection_coll}:reg:file:{meta_key}", bucket_key
+                            )
+
+        pipe.execute()
+
+        # Write file-to-cluster assignments: pool:{pool_id}:file:{md5}:bin_clusters
+        pipe = r.pipeline()
+        for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
+            file_id = idx_to_id[leaf]
+            parts = file_id.split(":")
+            if len(parts) >= 3:
+                md5 = parts[2]
+                clusters_key = f"pool:{pool_id}:file:{md5}:bin_clusters"
+                if clusters:
+                    cluster_uuids = [
+                        label_to_uuid[c] for c in clusters if c in label_to_uuid
+                    ]
+                    if cluster_uuids:
+                        pipe.delete(clusters_key)
+                        pipe.sadd(clusters_key, *cluster_uuids)
+                    else:
+                        pipe.delete(clusters_key)
+                else:
+                    pipe.delete(clusters_key)
         pipe.execute()
 
         if job_service and job_id:

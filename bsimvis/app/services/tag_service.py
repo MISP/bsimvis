@@ -2,6 +2,12 @@ import json
 import random
 import logging
 from .redis_client import get_redis
+from bsimvis.app.services.index_service import get_pool_id
+
+
+def _normalize_collection(collection):
+    pool_id = get_pool_id(collection)
+    return f"global:pool:{pool_id}" if pool_id else collection
 
 
 class TagService:
@@ -10,6 +16,7 @@ class TagService:
 
     def _resolve_doc_id(self, collection, entity_type, entity_id):
         """Resolves a frontend ID into a backend Redis key."""
+        collection = _normalize_collection(collection)
         if entity_type in ["file", "function"]:
             # Standardized IDs: {col}:file:{id} or {col}:func:{id}
             resolved_id = entity_id.replace(":function:", ":func:")
@@ -50,6 +57,7 @@ class TagService:
         """
         Adds a user tag to an entity (file, function, or similarity).
         """
+        collection = _normalize_collection(collection)
         r = self.r
         tag = tag.strip()
         if not tag:
@@ -68,11 +76,16 @@ class TagService:
                 return False
 
             data = doc[0] if isinstance(doc, list) else doc
-            user_tags = data.get("user_tags", [])
+            json_field = "user_tags"
+            pool_id = get_pool_id(collection)
+            if pool_id:
+                json_field = f"pool_tags_{pool_id}"
+
+            user_tags = data.get(json_field, [])
 
             if tag not in user_tags:
                 user_tags.append(tag)
-                r.json().set(doc_id, "$.user_tags", user_tags)
+                r.json().set(doc_id, f"$.{json_field}", user_tags)
 
                 # 3. Update Secondary Index
                 tag_lower = tag.lower()
@@ -110,19 +123,25 @@ class TagService:
 
     def remove_user_tag(self, collection, entity_type, entity_id, tag):
         """Removes a user tag from an entity."""
+        collection = _normalize_collection(collection)
         r = self.r
         tag = tag.strip()
         try:
             doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
 
-            doc = r.json().get(doc_id, "$.user_tags")
+            json_field = "user_tags"
+            pool_id = get_pool_id(collection)
+            if pool_id:
+                json_field = f"pool_tags_{pool_id}"
+
+            doc = r.json().get(doc_id, f"$.{json_field}")
             if not doc or not isinstance(doc, list) or len(doc) == 0:
                 return False
 
             user_tags = doc[0]
             if tag in user_tags:
                 user_tags.remove(tag)
-                r.json().set(doc_id, "$.user_tags", user_tags)
+                r.json().set(doc_id, f"$.{json_field}", user_tags)
 
                 # Update Index
                 tag_lower = tag.lower()
@@ -151,6 +170,7 @@ class TagService:
 
     def bulk_add_user_tag(self, collection, entity_type, entity_ids, tag):
         """Adds a user tag to multiple entities."""
+        collection = _normalize_collection(collection)
         r = self.r
         tag = tag.strip()
         if not tag:
@@ -176,13 +196,18 @@ class TagService:
                     continue
 
                 data = doc[0] if isinstance(doc, list) else doc
-                user_tags = data.get("user_tags", [])
+                json_field = "user_tags"
+                pool_id = get_pool_id(collection)
+                if pool_id:
+                    json_field = f"pool_tags_{pool_id}"
+
+                user_tags = data.get(json_field, [])
                 if not isinstance(user_tags, list):
                     user_tags = []
 
                 if tag not in user_tags:
                     user_tags.append(tag)
-                    r.json().set(doc_id, "$.user_tags", user_tags)
+                    r.json().set(doc_id, f"$.{json_field}", user_tags)
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                     r.sadd(index_key, indexed_id)
@@ -201,6 +226,7 @@ class TagService:
 
     def bulk_remove_user_tag(self, collection, entity_type, entity_ids, tag):
         """Removes a user tag from multiple entities."""
+        collection = _normalize_collection(collection)
         r = self.r
         tag = tag.strip()
         try:
@@ -219,13 +245,18 @@ class TagService:
                     continue
 
                 data = doc[0] if isinstance(doc, list) else doc
-                user_tags = data.get("user_tags", [])
+                json_field = "user_tags"
+                pool_id = get_pool_id(collection)
+                if pool_id:
+                    json_field = f"pool_tags_{pool_id}"
+
+                user_tags = data.get(json_field, [])
                 if not isinstance(user_tags, list):
                     continue
 
                 if tag in user_tags:
                     user_tags.remove(tag)
-                    r.json().set(doc_id, "$.user_tags", user_tags)
+                    r.json().set(doc_id, f"$.{json_field}", user_tags)
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                     r.srem(index_key, indexed_id)
@@ -242,6 +273,7 @@ class TagService:
 
     def _ensure_tag_metadata(self, collection, tag):
         """Ensures a tag has metadata (color) in the global index."""
+        collection = _normalize_collection(collection)
         meta_key = f"{collection}:tags_metadata"
         if not self.r.hexists(meta_key, tag):
             # Deterministic color based on tag name if we want, or just a better palette
@@ -272,6 +304,7 @@ class TagService:
 
     def get_tags(self, collection):
         """Returns the global tag index for a collection."""
+        collection = _normalize_collection(collection)
         r = get_redis()
         # Tags are stored in a hash bsimvis:{collection}:tags:meta or similar
         # Based on routes, it seems we need to return metadata (color, priority)
@@ -279,6 +312,7 @@ class TagService:
 
     def get_collection_tags(self, collection):
         """Returns all tags (Analysis + User) and their metadata for a collection."""
+        collection = _normalize_collection(collection)
         r = self.r
         meta_key = f"{collection}:tags_metadata"
         raw_meta = r.hgetall(meta_key)
@@ -293,6 +327,7 @@ class TagService:
 
     def get_tag_stats(self, collection, tag):
         """Returns count breakdown by entity type for a given tag."""
+        collection = _normalize_collection(collection)
         r = self.r
         tag_lower = tag.lower()
         stats = {"function": 0, "file": 0, "similarity": 0}
@@ -313,6 +348,7 @@ class TagService:
         return stats
 
     def set_tag_color(self, collection, tag, color):
+        collection = _normalize_collection(collection)
         meta_key = f"{collection}:tags_metadata"
         raw = self.r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"priority": 0}
@@ -321,6 +357,7 @@ class TagService:
         return True
 
     def set_tag_priority(self, collection, tag, priority):
+        collection = _normalize_collection(collection)
         meta_key = f"{collection}:tags_metadata"
         raw = self.r.hget(meta_key, tag)
         meta = json.loads(raw) if raw else {"color": "#66d9ef"}
@@ -330,6 +367,7 @@ class TagService:
 
     def _propagate_user_tag(self, collection, entity_type, entity_id, tag, op="add"):
         """Propagates a user tag to other levels if configured in INDEX_CONFIG."""
+        collection = _normalize_collection(collection)
         from bsimvis.app.services.index_config import (
             get_propagation_targets,
             resolve_target_field,

@@ -143,6 +143,11 @@
                 norm.addr = norm.addr || parsed.address;
                 norm.md5 = norm.md5 || parsed.md5;
             }
+            // Ensure norm.id has a parseable collection:func:md5:addr format
+            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            if (col && norm.md5 && norm.addr) {
+                norm.id = col + ':func:' + norm.md5 + ':' + norm.addr;
+            }
         } else if (type === 'file') {
             resolvedType = 'file';
             norm.md5 = data.md5 || data.id;

@@ -111,7 +111,7 @@ def search_functions():
                     else:
                         try:
                             for bucket in r.sscan_iter(
-                                registry_key, match=f"*{val_lower}*"
+                                registry_key, match=f"*{val_lower}*", count=1000
                             ):
                                 bucket_str = (
                                     bucket.decode()

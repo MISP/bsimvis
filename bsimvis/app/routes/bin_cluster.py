@@ -106,7 +106,7 @@ def _get_matching_ids(r, collection, level, field, val):
 
     matching_buckets = []
     try:
-        for bucket in r.sscan_iter(reg_key, match=f"*{val_lower}*"):
+        for bucket in r.sscan_iter(reg_key, match=f"*{val_lower}*", count=1000):
             bucket_str = bucket.decode() if isinstance(bucket, bytes) else str(bucket)
             if val_lower in bucket_str.lower():
                 matching_buckets.append(bucket_str)

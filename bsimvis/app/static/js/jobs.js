@@ -4,7 +4,7 @@
 
 const collapsedPipelines = new Set(JSON.parse(localStorage.getItem('collapsedPipelines') || '[]'));
 
-window.togglePipelineCollapse = function(pipelineId) {
+window.togglePipelineCollapse = function (pipelineId) {
     if (collapsedPipelines.has(pipelineId)) {
         collapsedPipelines.delete(pipelineId);
     } else {
@@ -16,7 +16,7 @@ window.togglePipelineCollapse = function(pipelineId) {
 
 function renderJobs(jobs) {
     const jobsList = Array.isArray(jobs) ? jobs : (jobs.results || []);
-    
+
     if (jobsList.length === 0) {
         return '<tr><td colspan="8" style="text-align:center; padding: 60px; color: var(--dim);"><i class="fa-solid fa-wind" style="font-size: 2rem; opacity: 0.2; display: block; margin-bottom: 10px;"></i>No recent jobs found</td></tr>';
     }
@@ -94,7 +94,7 @@ function renderJobs(jobs) {
         const isPipeline = job.type === 'pipeline' || job.type === 'group';
         const progress = job.progress || 0;
         const status = job.status || 'pending';
-        
+
         let progressClass = '';
         if (status === 'running') progressClass = 'progress-running';
         if (status === 'completed') progressClass = 'progress-completed';
@@ -109,17 +109,17 @@ function renderJobs(jobs) {
                 <span class="job-progress-text">${progress}%</span>
             </div>
         `;
-        
+
         let statusIcon = 'fa-circle-notch fa-spin';
         if (status === 'completed') statusIcon = 'fa-check-circle';
         if (status === 'failed') statusIcon = 'fa-exclamation-circle';
         if (status === 'cancelled') statusIcon = 'fa-ban';
         if (status === 'pending') statusIcon = 'fa-clock';
-        
+
         const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`;
-        
+
         const createdDate = new Date(job.created_at).toLocaleString();
-        
+
         let actions = '<div class="job-actions">';
         if (status === 'pending' || status === 'running') {
             actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
@@ -131,7 +131,7 @@ function renderJobs(jobs) {
         actions += '</div>';
 
         const isCollapsed = isPipeline && collapsedPipelines.has(job.id);
-        
+
         let typeDisplay = '';
         if (isPipeline) {
             const chevron = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
@@ -148,11 +148,11 @@ function renderJobs(jobs) {
         }
 
         const indent = level > 0 ? `<span class="job-indent" style="margin-left: ${level * 15}px;"></span>` : '';
-        const collectionDisplay = job.collection ? `<div class="job-collection-cell"><i class="fa-solid fa-database"></i> ${job.collection}</div>` : '<span class="dim">-</span>';
+        const collectionDisplay = job.collection ? `<div class="job-collection-cell"><i class="fa-solid fa-layer-group"></i> ${job.collection}</div>` : '<span class="dim">-</span>';
         const targetDisplay = job.target ? `<code class="job-target-text">${job.target}</code>` : '<span class="dim">-</span>';
-        
+
         const rowStyle = shouldHide ? 'display: none;' : '';
-        
+
         return `
             <tr class="job-row ${isPipeline ? 'pipeline-row' : ''} ${parentId ? 'child-row' : ''}" ${parentId ? `data-parent-id="${parentId}"` : ''} style="${rowStyle}">
                 <td>
@@ -180,9 +180,9 @@ function renderJobs(jobs) {
         const amICollapsed = collapsedPipelines.has(item.id);
         // Hide if the immediate parent is collapsed or any ancestor is collapsed
         const shouldHide = (parentId !== null && collapsedPipelines.has(parentId)) || ancestorCollapsed;
-        
+
         rows.push(renderJobRow(item, parentId, level, shouldHide));
-        
+
         if (item.type === 'pipeline' || item.type === 'group') {
             const children = pipelineChildren.get(item.id) || [];
             children.forEach(child => {
@@ -200,31 +200,31 @@ function renderJobs(jobs) {
 
 window.renderJobs = renderJobs;
 
-window.cancelJob = async function(jobId) {
+window.cancelJob = async function (jobId) {
     try {
-        const resp = await fetch(`/api/jobs/${jobId}/cancel`, {method: 'POST'});
+        const resp = await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
         if (resp.ok) {
             if (window.refreshData) window.refreshData();
         } else {
             const data = await resp.json();
             alert('Failed to cancel job: ' + (data.error || 'Unknown error'));
         }
-    } catch(e) {
+    } catch (e) {
         console.error(e);
         alert('Error cancelling job');
     }
 };
 
-window.retryJob = async function(jobId) {
+window.retryJob = async function (jobId) {
     try {
-        const resp = await fetch(`/api/jobs/${jobId}/retry`, {method: 'POST'});
+        const resp = await fetch(`/api/jobs/${jobId}/retry`, { method: 'POST' });
         if (resp.ok) {
             if (window.refreshData) window.refreshData();
         } else {
             const data = await resp.json();
             alert('Failed to retry job: ' + (data.error || 'Unknown error'));
         }
-    } catch(e) {
+    } catch (e) {
         console.error(e);
         alert('Error retrying job');
     }
@@ -232,7 +232,7 @@ window.retryJob = async function(jobId) {
 
 let currentActiveJobId = null;
 
-window.showJobDetails = async function(jobId) {
+window.showJobDetails = async function (jobId) {
     currentActiveJobId = jobId;
     await refreshJobModal(jobId, true);
     document.getElementById('job-details-modal').style.display = 'flex';
@@ -242,11 +242,11 @@ async function refreshJobModal(jobId, isInitial = false) {
     try {
         const resp = await fetch(`/api/jobs/${jobId}`);
         const job = await resp.json();
-        
+
         if (currentActiveJobId !== jobId) return;
 
         document.getElementById('job-modal-title').innerText = `Job Details: ${job.type}`;
-        
+
         // Build subtasks HTML
         let subtasksHtml = '';
         if (job.sub_tasks && job.sub_tasks.length > 0) {
@@ -263,13 +263,13 @@ async function refreshJobModal(jobId, isInitial = false) {
                         </thead>
                         <tbody>
             `;
-            
+
             job.sub_tasks.forEach(st => {
                 let sColor = 'var(--dim)';
                 if (st.status === 'completed') sColor = 'var(--success)';
                 if (st.status === 'failed') sColor = 'var(--danger)';
                 if (st.status === 'running') sColor = 'var(--warning)';
-                
+
                 subtasksHtml += `
                     <tr>
                         <td style="padding: 8px;">${st.type}</td>
@@ -284,11 +284,11 @@ async function refreshJobModal(jobId, isInitial = false) {
             });
             subtasksHtml += '</tbody></table></div>';
         }
-        
+
         // Build Logs HTML
         const logContainerId = 'job-log-viewer';
         let logsInnerHtml = '';
-        
+
         if (job.logs && job.logs.length > 0) {
             const sortedLogs = [...job.logs].reverse();
             sortedLogs.forEach(log => {
@@ -337,7 +337,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                     <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Job Parameters & Metadata</h4>
                     <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
             `;
-            
+
             for (const [key, value] of Object.entries(job.payload)) {
                 let displayValue = value;
                 if (typeof value === 'object' && value !== null) {
@@ -357,13 +357,13 @@ async function refreshJobModal(jobId, isInitial = false) {
             }
             payloadHtml += '</div></div>';
         }
-        
+
         const modalBody = document.getElementById('job-modal-body');
-        
+
         // Try to preserve scroll position of log viewer
         const oldLogViewer = document.getElementById(logContainerId);
         const wasAtBottom = oldLogViewer ? (oldLogViewer.scrollHeight - oldLogViewer.scrollTop <= oldLogViewer.clientHeight + 10) : true;
-        
+
         modalBody.innerHTML = `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: rgba(255,255,255,0.02); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
                 <div>
@@ -380,20 +380,20 @@ async function refreshJobModal(jobId, isInitial = false) {
             ${subtasksHtml}
             ${logsHtml}
         `;
-        
+
         // Restore scroll or scroll to bottom if it was already at bottom
         const newLogViewer = document.getElementById(logContainerId);
         if (newLogViewer && wasAtBottom) {
             newLogViewer.scrollTop = newLogViewer.scrollHeight;
         }
-        
-    } catch(e) {
+
+    } catch (e) {
         console.error(e);
         if (isInitial) alert('Error fetching job details');
     }
 }
 
-window.closeJobModal = function() {
+window.closeJobModal = function () {
     document.getElementById('job-details-modal').style.display = 'none';
     currentActiveJobId = null;
 };
@@ -496,7 +496,7 @@ setInterval(() => {
     if (isJobsView) {
         const modal = document.getElementById('job-details-modal');
         const isModalOpen = modal && modal.style.display !== 'none';
-        
+
         if (isModalOpen && currentActiveJobId) {
             refreshJobModal(currentActiveJobId);
         } else {

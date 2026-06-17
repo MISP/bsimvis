@@ -448,7 +448,7 @@ function showDashboardActions() {
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
     const append = (appendArg === true);
-    const { viewKey, collection, params } = getRoutingState();
+    const { viewKey, collection, pool, params } = getRoutingState();
 
 
     // Check if we should load a module view
@@ -457,10 +457,16 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         stateParams.collection = collection;
         stateParams.view = viewKey;
         if (window.Breadcrumbs) {
-            const segments = window.Breadcrumbs.generate({ viewKey, collection, params }, null);
+            const segments = window.Breadcrumbs.generate({ viewKey, collection, pool, params }, null);
             window.Breadcrumbs.render(segments);
         }
         hideDashboardActions();
+        if (typeof updateNavbarLinks === 'function') {
+            updateNavbarLinks(collection);
+        }
+        if (typeof UI !== 'undefined' && UI.Sidebar && typeof UI.Sidebar.updateActiveState === 'function') {
+            UI.Sidebar.updateActiveState();
+        }
         await ModuleLoader.loadView(viewKey, stateParams);
         return;
     }
@@ -565,9 +571,15 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         params.set('limit', countLimit);
     }
 
-    // Ensure collection is in params for the API call
+    // Ensure collection and pool are in params for the API call
     if (viewKey !== 'jobs' && viewKey !== 'pools') {
         params.set('collection', collection);
+        const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+        if (pool) {
+            params.set('pool', pool);
+        } else {
+            params.delete('pool');
+        }
     } else if (viewKey === 'jobs') {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('collection')) {
@@ -575,8 +587,11 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         } else {
             params.delete('collection');
         }
+        const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+        if (pool) params.set('pool', pool);
     } else {
         params.delete('collection');
+        params.delete('pool');
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
@@ -682,7 +697,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 }
 
 function updateNavbarLinks(col) {
-    if (!col) return;
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (!col && !pool) return;
     
     const updateNavLink = (id, targetView) => {
         const el = document.getElementById(id);
@@ -690,13 +706,13 @@ function updateNavbarLinks(col) {
         const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
 
         let url;
-        if (col && col.startsWith('pool:')) {
-            const poolId = col.substring(5);
+        if (pool) {
+            const poolId = pool;
             url = `/pools/${encodeURIComponent(poolId)}/${targetView}`;
             if (targetView === 'collections') {
                 url = `/collections`;
             } else if (targetView === 'jobs') {
-                url = `/jobs?collection=${encodeURIComponent(col)}`;
+                url = col ? `/jobs?collection=${encodeURIComponent(col)}` : `/jobs?pool=${encodeURIComponent(poolId)}`;
             } else if (targetView === 'files') {
                 url = `/pools/${encodeURIComponent(poolId)}/files`;
             } else if (targetView === 'functions') {
@@ -747,9 +763,15 @@ function updateNavbarLinks(col) {
             const savedParams = new URLSearchParams(saved);
             if (targetView !== 'jobs') {
                 savedParams.delete('collection'); // Already in path
+                savedParams.delete('pool'); // Already in path
                 if (savedParams.toString()) url += `?${savedParams.toString()}`;
             } else {
-                savedParams.set('collection', col);
+                if (col) {
+                    savedParams.set('collection', col);
+                } else if (pool) {
+                    savedParams.delete('collection');
+                    savedParams.set('pool', pool);
+                }
                 url = `/jobs?${savedParams.toString()}`;
             }
         }
@@ -882,8 +904,12 @@ function updateUI(viewKey, collection, params, route, force = false) {
         }
     }
 
-    if (col) {
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (col || pool) {
         updateNavbarLinks(col);
+        if (typeof UI !== 'undefined' && UI.Sidebar && typeof UI.Sidebar.updateActiveState === 'function') {
+            UI.Sidebar.updateActiveState();
+        }
     }
 
     if (viewKey === 'function-similarity' && params.get('view') === 'graph') {
@@ -2142,14 +2168,45 @@ function showDiffPanel(force = false) {
 }
 
 function openDiffDirectly(id1, name1, id2, name2, e) {
-    const url = buildDiffUrl(id1, id2);
+    // Build RESTful UI path (not API URL)
+    const p1 = window.parseFuncIdFromStr ? window.parseFuncIdFromStr(id1) : null;
+    const p2 = window.parseFuncIdFromStr ? window.parseFuncIdFromStr(id2) : null;
+    if (!p1 || !p2) {
+        // Fallback: try buildDiffUrl
+        url = buildDiffUrl(id1, id2);
+        Nav.openPath(url, e, { title: `Diff: ${name1} vs ${name2}`, type: 'diff' });
+        return;
+    }
+
+    const pool = p1.pool || (window.getRoutingState ? window.getRoutingState().pool : null);
+    const url = (pool
+        ? `/pools/${encodeURIComponent(pool)}/collections/${encodeURIComponent(p1.collection_a)}/files/${encodeURIComponent(p1.md5_a)}/functions/${encodeURIComponent(p1.addr_a)}/vs/${encodeURIComponent(p2.collection_b || p2.collection_a)}/${encodeURIComponent(p2.md5_b)}/${encodeURIComponent(p2.addr_b)}`
+        : `/collections/${encodeURIComponent(p1.collection_a)}/files/${encodeURIComponent(p1.md5_a)}/functions/${encodeURIComponent(p1.addr_a)}/vs/${encodeURIComponent(p2.collection_b || p2.collection_a)}/${encodeURIComponent(p2.md5_b)}/${encodeURIComponent(p2.addr_b)}`
+    );
     Nav.openPath(url, e, { title: `Diff: ${name1} vs ${name2}`, type: 'diff' });
 }
 
 function showDiffView() {
     let url = '/collections/main/diff';
     if (diffSelection.length === 2) {
-        url = buildDiffUrl(diffSelection[0].id, diffSelection[1].id);
+        const p1 = diffSelection[0], p2 = diffSelection[1];
+        const pool = p1.pool || (window.getRoutingState ? window.getRoutingState().pool : null);
+
+        if (p1.md5_a && p1.addr_a && p2.md5_b && p2.addr_b) {
+            // Flat params format
+            const collA = encodeURIComponent(p1.collection_a || '');
+            const collB = encodeURIComponent(p2.collection_b || p1.collection_a || '');
+            const md5A = encodeURIComponent(p1.md5_a);
+            const md5B = encodeURIComponent(p2.md5_b);
+            const addrA = encodeURIComponent(p1.addr_a);
+            const addrB = encodeURIComponent(p2.addr_b);
+            url = pool
+                ? `/pools/${encodeURIComponent(pool)}/collections/${collA}/files/${md5A}/functions/${addrA}/vs/${collB}/${md5B}/${addrB}`
+                : `/collections/${collA}/files/${md5A}/functions/${addrA}/vs/${collB}/${md5B}/${addrB}`;
+        } else {
+            // Back-compat: legacy ID format
+            url = buildDiffUrl(p1.id, p2.id);
+        }
 
         // Reset queue after opening in new window
         diffSelection = [];
@@ -2163,11 +2220,8 @@ function showFunctionCodeById(id, name, lineHash = '', e) {
     if (window.getSelection && window.getSelection().toString().trim()) {
         return;
     }
-    const parts = id.split(':');
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
-    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}${lineHash}`;
+    const f = window.parseFuncId(id);
+    const url = Nav.buildUIUrl(f.collection, ['function', f.md5, f.address]) + lineHash;
     Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
 }
 
@@ -2190,10 +2244,10 @@ function seeSimilarFromCode() {
             const params = url.searchParams;
             const id = params.get('id');
             if (id) {
-                const parts = id.split(':');
-                col = parts[0];
-                md5 = parts[2];
-                addr = parts[3];
+                const f = window.parseFuncId(id);
+                col = f.collection;
+                md5 = f.md5;
+                addr = f.address;
             } else {
                 col = params.get('collection');
                 md5 = params.get('md5') || params.get('file_md5');
@@ -2205,10 +2259,10 @@ function seeSimilarFromCode() {
         const params = url.searchParams;
         const id = params.get('id');
         if (id) {
-            const parts = id.split(':');
-            col = parts[0];
-            md5 = parts[2];
-            addr = parts[3];
+            const f = window.parseFuncId(id);
+            col = f.collection;
+            md5 = f.md5;
+            addr = f.address;
         }
     }
 
@@ -2225,21 +2279,18 @@ function seeSimilarFromCode() {
 
 
 function showFileDetailsPanel(col, md5, name, e) {
-    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}`;
+    const url = Nav.buildUIUrl(col, ['file', md5]);
     Nav.openPath(url, e, { title: `File: ${name}`, type: 'file' });
 }
 
 function showFeaturePanel(id, e) {
-    const parts = id.split(':');
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
-    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}/features`;
-    Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
+    const f = window.parseFuncId(id);
+    const url = Nav.buildUIUrl(f.collection, ['function_features', f.md5, f.address]);
+    Nav.openPath(url, e, { title: `Features: ${f.address}`, type: 'features' });
 }
 
 function showGlobalFeaturePanel(hash, collection, e) {
-    const url = `/collections/${encodeURIComponent(collection)}/features/${encodeURIComponent(hash)}`;
+    const url = Nav.buildUIUrl(collection, ['feature', hash]);
     Nav.openPath(url, e, { title: `Feature Analysis: ${hash.substring(0, 12)}...`, type: 'global-feature' });
 }
 
@@ -2269,13 +2320,19 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     const path = window.location.pathname;
     const parts = path.split('/').filter(Boolean);
     const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections' || parts[0] === 'pool' || parts[0] === 'pools';
-    const col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || 'main';
+    let col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || null;
+    if (col === 'null' || col === 'undefined') {
+        col = null;
+    }
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if ((!col && !pool) || col === 'null' || col === 'undefined') {
+        showNullContextWarning(col, pool, viewKey);
+    }
     const params = queryParams || currentParams;
 
-
     let url;
-    if (col && col.startsWith('pool:')) {
-        const poolId = col.substring(5);
+    if (pool) {
+        const poolId = pool;
         url = `/pools/${encodeURIComponent(poolId)}/${viewKey}`;
         if (viewKey === 'files') {
             url = `/pools/${encodeURIComponent(poolId)}/files`;
@@ -2391,7 +2448,7 @@ window.addEventListener('hashchange', (e) => {
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
         const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || 'main';
+        const col = params.get('collection') || null;
 
         window.location.hash = ''; // Clear hash
         navigate(viewKey, params, col);
@@ -2473,7 +2530,7 @@ function loadUIParams() {
 window.addEventListener('load', () => {
     loadUIParams();
 
-    const { collection, viewKey } = getRoutingState();
+    const { collection, viewKey, pool } = getRoutingState();
     updateNavVisibility(collection);
     if (window.location.pathname === '/' || window.location.pathname === '') {
         history.replaceState(null, '', '/collections');
@@ -2481,9 +2538,8 @@ window.addEventListener('load', () => {
         const pathParts = window.location.pathname.split('/').filter(Boolean);
         if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && collection) {
             history.replaceState(null, '', `/collections/${encodeURIComponent(collection)}/files`);
-        } else if ((pathParts[0] === 'pool' || pathParts[0] === 'pools') && pathParts.length === 2 && collection) {
-            const poolId = collection.startsWith('pool:') ? collection.substring(5) : collection;
-            history.replaceState(null, '', `/pools/${encodeURIComponent(poolId)}/files`);
+        } else if ((pathParts[0] === 'pool' || pathParts[0] === 'pools') && pathParts.length === 2 && pool) {
+            history.replaceState(null, '', `/pools/${encodeURIComponent(pool)}/files`);
         }
     }
 
@@ -2492,7 +2548,7 @@ window.addEventListener('load', () => {
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
         const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || 'main';
+        const col = params.get('collection') || null;
         window.location.hash = ''; // Clear hash
         navigate(viewKey, params, col, true);
         return;
@@ -2715,10 +2771,11 @@ window.addEventListener('load', () => {
 });
 
 function updateNavVisibility(collection) {
+    const { pool } = getRoutingState();
     const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-bin-clusters', 'nav-binary-similarity', 'nav-chord-map'];
     navItems.forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.style.display = collection ? 'flex' : 'none';
+        if (el) el.style.display = (collection || pool) ? 'flex' : 'none';
     });
 }
 
@@ -2760,10 +2817,10 @@ function renderClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
                         <i class="fa-solid fa-code"></i>
                     </a>
-                    <a href="/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('function-similarity', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Similarities" style="color:var(--info)">
                         <i class="fa-solid fa-code-compare"></i>
                     </a>
                 </div>
@@ -2881,7 +2938,7 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
                         <i class="fa-solid fa-file-code"></i>
                     </a>
                 </div>
@@ -3421,7 +3478,7 @@ function addToHistory(path, queryString) {
     if (path === 'collections') return;
 
     const params = new URLSearchParams(queryString);
-    const col = params.get('collection') || 'main';
+    const col = params.get('collection') || '';
     const view = params.get('view') || 'table';
     const summary = getFilterSummary(path, params);
 
@@ -3468,7 +3525,7 @@ function addToHistory(path, queryString) {
                 }
             });
         }
-        return `${item.collection || 'main'}:${item.path || ''}:${item.view || 'table'}:${JSON.stringify(sortedParams)}`;
+        return `${item.collection || ''}:${item.path || ''}:${item.view || 'table'}:${JSON.stringify(sortedParams)}`;
     };
 
     const newItemFingerprint = getFingerprint(newItem);
@@ -3880,6 +3937,36 @@ async function renderPoolCreationForm() {
         console.error("Failed to fetch collections for pool creation", e);
     }
 
+    // Fetch default config parameters dynamically
+    let config = null;
+    try {
+        const res = await fetch('/api/index/config');
+        if (res.ok) {
+            config = await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to fetch default config for pool creation", e);
+    }
+
+    const clustering = config?.clustering || {};
+    const similarity = config?.similarity || {};
+
+    const funcAlgo = similarity.algo || 'unweighted_cosine';
+    const funcTopK = similarity.top_k !== undefined ? similarity.top_k : 1000;
+    const funcMinScore = similarity.min_score !== undefined ? similarity.min_score : 0.1;
+    const funcClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
+    const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
+    const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
+    const funcClusterMethod = clustering.selection_method || 'eom';
+
+    const fileAlgo = similarity.algo || 'unweighted_cosine';
+    const fileTopK = 100; // default for file-level similarity
+    const fileMinScore = 0.5; // default for file-level similarity
+    const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
+    const fileClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
+    const fileClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.001;
+    const fileClusterMethod = clustering.selection_method || 'eom';
+
     const colCheckboxes = collections.map(col => `
         <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
             <input type="checkbox" name="pool-collections" value="${col.name}">
@@ -3894,12 +3981,12 @@ async function renderPoolCreationForm() {
                 <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
                     <i class="fa-solid fa-diagram-project"></i> Create New Pool
                 </h3>
-                <div id="pool-toggle-icon" style="color:var(--dim); font-size:0.9rem; transition: transform 0.3s ease;">
+                <div id="pool-toggle-icon" style="color:var(--dim); font-size:0.9rem; transition: transform 0.3s ease; transform: rotate(180deg);">
                     <i class="fa-solid fa-chevron-up"></i>
                 </div>
             </div>
 
-            <div id="pool-creation-content" style="padding:0 25px 25px 25px;">
+            <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
                 <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom: 25px;">
                         <div>
@@ -3959,19 +4046,19 @@ async function renderPoolCreationForm() {
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
                                                 <select id="pool-func-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                    <option value="unweighted_cosine">Unweighted Cosine</option>
-                                                    <option value="weighted_cosine">Weighted Cosine</option>
-                                                    <option value="jaccard">Jaccard</option>
+                                                    <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                                                    <option value="weighted_cosine" ${funcAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
+                                                    <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-func-topk" value="1000" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-func-minscore" step="0.05" value="0.1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -3979,21 +4066,21 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-cluster-min-size" value="2" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-cluster-min-samples" value="1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="0.1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
                                             <select id="pool-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                <option value="eom">EOM</option>
-                                                <option value="leaf">Leaf</option>
+                                                <option value="eom" ${funcClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
+                                                <option value="leaf" ${funcClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>
                                         </div>
                                     </div>
@@ -4016,39 +4103,39 @@ async function renderPoolCreationForm() {
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
                                             <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                <option value="unweighted_cosine">Unweighted Cosine</option>
-                                                <option value="jaccard">Jaccard</option>
+                                                <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                                                <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                             </select>
                                         </div>
                                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                <input type="number" id="pool-file-topk" value="100" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                             </div>
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                <input type="number" id="pool-file-minscore" step="0.05" value="0.5" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                             </div>
                                         </div>
                                     </div>
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-file-cluster-min-size" value="2" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-file-cluster-min-samples" value="1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="0.1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
                                             <select id="pool-file-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
-                                                <option value="eom">EOM</option>
-                                                <option value="leaf">Leaf</option>
+                                                <option value="eom" ${fileClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
+                                                <option value="leaf" ${fileClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>
                                         </div>
                                     </div>

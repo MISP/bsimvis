@@ -271,7 +271,8 @@
                 // Fetch tag metadata first to render tags correctly
                 await fetchTagMetadata(collection);
 
-                const res = await fetch(`/api/file/details/${file_md5}?collection=${encodeURIComponent(collection)}`);
+                const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+                const res = await fetch(`/api/file/details/${file_md5}?${apiParams}`);
                 if (!res.ok) throw new Error("File not found or backend error");
                 const data = await res.json();
 
@@ -443,8 +444,8 @@
                         const confObj = mapObj[k];
                         const confScore = confObj.percent;
                         const confColor = d3.interpolateRdYlGn(confScore / 100);
-                        const clusterLink = `/#files?collection=${encodeURIComponent(collection)}&bin_cluster_uuid=${confObj.cluster_uuid}`;
-                        return `<a href="${clusterLink}" target="_parent" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+                        const path = (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(confObj.cluster_uuid);
+                        return `<a href="#" onclick="event.preventDefault(); (window.Nav || window.parent.Nav).openPath('${path.replace(/'/g, "\\'")}', event);" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                     }).join('');
                     return `
                         <div class="meta-label" style="align-items: flex-start; margin-top: 4px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>

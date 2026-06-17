@@ -91,7 +91,8 @@ function parseRestfulPath() {
     const path = window.location.pathname;
     const parts = path.split('/').filter(Boolean);
     const params = {
-        collection: 'main',
+        pool: null,
+        collection: null,
         view: 'dashboard',
         md5: null,
         address: null,
@@ -103,117 +104,207 @@ function parseRestfulPath() {
         id2: null
     };
 
-    const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
-    const isPoolPath = parts[0] === 'pools' || parts[0] === 'pool';
-
-    if ((hasCol || isPoolPath) && parts.length >= 2) {
-        if (isPoolPath) {
-            params.collection = 'pool:' + parts[1];
-        } else {
-            params.collection = parts[1];
-        }
-
-        const p2 = parts[2];
-        if (!p2) {
-            params.view = 'files';
-        } else if (p2 === 'batches') {
-            params.view = 'batches';
-        } else if (p2 === 'files' || p2 === 'file') {
-            if (parts.length === 3) {
-                params.view = 'files';
-            } else if (parts[3] === 'similarities') {
-                params.view = 'binary-similarity';
-            } else if (parts[3] === 'clusters') {
-                params.view = 'bin-clusters';
-            } else if (parts.length >= 4) {
-                if (parts[4] === 'vs') {
-                    // File diff: /collections/{coll}/files/{md5}/vs/{coll_b}/{md5_b}
-                    params.view = 'bin_sim';
-                    params.md5 = parts[3];
-                    params.coll_b = parts[5];
-                    params.md5_b = parts[6];
-                } else {
-                    params.md5 = parts[3];
-                    if (parts.length === 4) {
-                        params.view = 'file';
-                    } else if (parts[4] === 'functions' || parts[4] === 'function') {
-                        if (parts.length === 5) {
-                            params.view = 'call_graph';
-                        } else if (parts.length >= 6) {
-                            params.address = parts[5];
-                            if (parts.length === 6) {
-                                params.view = 'function';
-                            } else if (parts[6] === 'vs') {
-                                // Function diff: /collections/{coll}/files/{md5}/functions/{addr}/vs/{coll_b}/{md5_b}/{addr_b}
-                                params.view = 'diff';
-                                params.coll_b = parts[7];
-                                params.md5_b = parts[8];
-                                params.addr_b = parts[9];
-                                params.id1 = `${params.collection}:func:${params.md5}:${params.address}`;
-                                params.id2 = `${params.coll_b}:func:${params.md5_b}:${params.addr_b}`;
-                            } else if (parts[6] === 'features') {
-                                params.view = 'function_features';
-                            }
-                        }
-                    } else if (parts[4] === 'vs') {
-                        params.view = 'bin_sim';
-                        params.coll_b = parts[5];
-                        params.md5_b = parts[6];
-                    }
-                }
-            }
-        } else if (p2 === 'functions' || p2 === 'function') {
-            if (parts.length === 3) {
-                params.view = 'functions';
-            } else if (parts[3] === 'similarities') {
-                params.view = 'function-similarity';
-            } else if (parts[3] === 'clusters') {
-                params.view = 'clusters';
-            } else if (parts.length >= 4) {
-                if (parts[4] && parts[5] === 'vs') {
-                    params.view = 'diff';
-                    if (parts.length >= 9) {
-                        params.id1 = `${params.collection}:func:${parts[3]}:${parts[4]}`;
-                        params.id2 = `${parts[6]}:func:${parts[7]}:${parts[8]}`;
-                    }
-                } else if (parts[3] && parts[4]) {
-                    params.view = 'function';
-                    params.md5 = parts[3];
-                    params.address = parts[4];
-                    if (parts[5] === 'features') params.view = 'function_features';
-                } else if (parts[3]) {
-                    params.view = 'function';
-                    params.md5 = parts[3];
-                }
-            }
-        } else if (p2 === 'features' || p2 === 'feature') {
-            if (parts.length === 3) {
-                params.view = 'features-global';
-            } else if (parts.length >= 4) {
-                params.view = 'feature';
-                params.hash = parts[3];
-            }
-        } else if (p2 === 'bin_sim' && parts[3]) {
-            params.view = 'bin_sim';
-            params.md5 = parts[3];
-        } else if (p2 === 'diff') {
-            params.view = 'diff';
-        } else if (p2) {
-            params.view = p2;
-        }
-    } else if (parts[0] === 'jobs') {
-        params.view = 'jobs';
-    } else if (parts[0] === 'upload') {
-        params.view = 'upload';
-    } else if (parts[0] === 'pools') {
-        params.view = 'pools';
-    } else if (parts[0] === 'collections' || parts.length === 0) {
+    if (parts.length === 0) {
         params.view = 'collections';
+        return params;
+    }
+
+    let pIdx = 0;
+
+    if (parts[pIdx] === 'pool' || parts[pIdx] === 'pools') {
+        params.pool = decodeURIComponent(parts[pIdx + 1] || '');
+        pIdx += 2;
+        if (parts[pIdx] === 'collections' || parts[pIdx] === 'collection') {
+            params.collection = decodeURIComponent(parts[pIdx + 1] || '');
+            pIdx += 2;
+        } else {
+            params.collection = null;
+        }
+    } else if (parts[pIdx] === 'collections' || parts[pIdx] === 'collection') {
+        params.collection = decodeURIComponent(parts[pIdx + 1] || '');
+        pIdx += 2;
+    } else if (parts[pIdx] === 'jobs') {
+        params.view = 'jobs';
+        return params;
+    } else if (parts[pIdx] === 'upload') {
+        params.view = 'upload';
+        return params;
+    }
+
+    const p2 = parts[pIdx];
+
+    if (!p2) {
+        if (params.pool && !params.collection) {
+            params.view = 'files';
+        } else {
+            params.view = 'collections';
+        }
+    } else if (p2 === 'batches') {
+        params.view = 'batches';
+    } else if (p2 === 'files' || p2 === 'file') {
+        pIdx++;
+        if (parts.length === pIdx) {
+            params.view = 'files';
+        } else if (parts[pIdx] === 'similarities') {
+            params.view = 'binary-similarity';
+        } else if (parts[pIdx] === 'clusters') {
+            params.view = 'bin-clusters';
+        } else {
+            params.md5 = parts[pIdx];
+            pIdx++;
+            if (parts.length === pIdx) {
+                params.view = 'file';
+            } else if (parts[pIdx] === 'vs') {
+                params.view = 'bin_sim';
+                params.coll_b = parts[pIdx + 1];
+                params.md5_b = parts[pIdx + 2];
+            } else if (parts[pIdx] === 'functions' || parts[pIdx] === 'function') {
+                pIdx++;
+                if (parts.length === pIdx) {
+                    params.view = 'call_graph';
+                } else {
+                    params.address = parts[pIdx];
+                    pIdx++;
+                    if (parts.length === pIdx) {
+                        params.view = 'function';
+                    } else if (parts[pIdx] === 'features') {
+                        params.view = 'function_features';
+                    } else if (parts[pIdx] === 'vs') {
+                        params.view = 'diff';
+                        params.coll_b = parts[pIdx + 1];
+                        params.md5_b = parts[pIdx + 2];
+                        params.addr_b = parts[pIdx + 3];
+                        params.id1 = `${stripPoolPrefix(params.collection || '')}:func:${params.md5}:${params.address}`;
+                        params.id2 = `${stripPoolPrefix(params.coll_b || '')}:func:${params.md5_b}:${params.addr_b}`;
+                    }
+                }
+            }
+        }
+    } else if (p2 === 'functions' || p2 === 'function') {
+        pIdx++;
+        if (parts.length === pIdx) {
+            params.view = 'functions';
+        } else if (parts[pIdx] === 'similarities') {
+            params.view = 'function-similarity';
+        } else if (parts[pIdx] === 'clusters') {
+            params.view = 'clusters';
+        } else {
+            params.md5 = parts[pIdx];
+            pIdx++;
+            if (parts.length === pIdx) {
+                params.view = 'function';
+            } else {
+                params.address = parts[pIdx];
+                pIdx++;
+                if (parts.length === pIdx) {
+                    params.view = 'function';
+                } else if (parts[pIdx] === 'features') {
+                    params.view = 'function_features';
+                } else if (parts[pIdx] === 'vs') {
+                    params.view = 'diff';
+                    params.id1 = `${stripPoolPrefix(params.collection || '')}:func:${params.md5}:${params.address}`;
+                    params.coll_b = stripPoolPrefix(parts[pIdx + 1]) || '';
+                    params.md5_b = parts[pIdx + 2];
+                    params.addr_b = parts[pIdx + 3];
+                    params.id2 = `${stripPoolPrefix(params.coll_b || '')}:func:${params.md5_b}:${params.addr_b}`;
+                }
+            }
+        }
+    } else if (p2 === 'features' || p2 === 'feature') {
+        pIdx++;
+        if (parts.length === pIdx) {
+            params.view = 'features-global';
+        } else {
+            params.view = 'feature';
+            params.hash = parts[pIdx];
+        }
+    } else if (p2 === 'bin_sim') {
+        params.view = 'bin_sim';
+        params.md5 = parts[pIdx + 1];
+    } else if (p2 === 'diff') {
+        params.view = 'diff';
+    } else {
+        params.view = p2;
+    }
+
+    if (parts[0] === 'pools' && parts.length === 1) {
+        params.view = 'pools';
     }
 
     return params;
 }
 window.parseRestfulPath = parseRestfulPath;
+
+window.getCollectionFromId = function(id) {
+    if (!id || typeof id !== 'string') return '';
+    if (id.includes(':func:')) return stripPoolPrefix(id.split(':func:')[0]) || '';
+    if (id.includes(':function:')) return stripPoolPrefix(id.split(':function:')[0]) || '';
+    if (id.includes(':file:')) return stripPoolPrefix(id.split(':file:')[0]) || '';
+    
+    const parts = id.split(':');
+    if (parts.length >= 4 && (parts[parts.length - 1].startsWith('00') || parts[parts.length - 1].length < 10)) {
+        return stripPoolPrefix(parts.slice(0, parts.length - 2).join(':')) || '';
+    }
+    if (parts.length >= 2) {
+        return stripPoolPrefix(parts.slice(0, parts.length - 1).join(':')) || '';
+    }
+    return '';
+};
+
+window.parseFuncId = function(id) {
+    if (!id || typeof id !== 'string') return { collection: '', md5: '', address: '' };
+    const delimiter = id.includes(':func:') ? ':func:' : (id.includes(':function:') ? ':function:' : null);
+    if (delimiter) {
+        const parts = id.split(delimiter);
+        const col = stripPoolPrefix(parts[0]) || '';
+        const rest = parts[1].split(':');
+        return {
+            collection: col,
+            md5: rest[0],
+            address: rest[1] || ''
+        };
+    }
+    const parts = id.split(':');
+    if (parts.length >= 4) {
+        return {
+            collection: stripPoolPrefix(parts[0]) || '',
+            md5: parts[2],
+            address: parts[3] || ''
+        };
+    }
+    return { collection: '', md5: parts[2] || '', address: parts[3] || parts[parts.length - 1] || '' };
+};
+
+window.parseFileId = function(id) {
+    if (!id || typeof id !== 'string') return { collection: '', md5: '' };
+    if (id.includes(':file:')) {
+        const parts = id.split(':file:');
+        return {
+            collection: parts[0] || '',
+            md5: parts[1]
+        };
+    }
+    const parts = id.split(':');
+    if (parts.length >= 2) {
+        const md5 = parts[parts.length - 1];
+        const collection = parts.slice(0, parts.length - 1).join(':') || '';
+        return { collection, md5 };
+    }
+    return { collection: '', md5: id };
+};
+
+window.getApiParams = function(collection) {
+    if (!collection) {
+        throw new Error("getApiParams: collection is required and cannot be null/empty.");
+    }
+    let params = `collection=${encodeURIComponent(collection)}`;
+    const routingState = window.getRoutingState ? window.getRoutingState() : {};
+    if (routingState.pool) {
+        params += `&pool=${encodeURIComponent(routingState.pool)}`;
+    }
+    return params;
+};
+
 
 /**
  * Gets the current routing state from the URL.
@@ -223,11 +314,11 @@ function getRoutingState() {
     const params = new URLSearchParams(window.location.search);
     const viewKey = restful.view || params.get('view') || (window.location.hash ? window.location.hash.substring(1).split('?')[0] : 'dashboard');
     
-    const path = window.location.pathname;
-    const parts = path.split('/').filter(Boolean);
-    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
-    const collection = (hasColInPath ? restful.collection : null) || params.get('collection') || 'main';
-
+    let collection = restful.collection || params.get('collection') || null;
+    if (collection === 'null' || collection === 'undefined') {
+        collection = null;
+    }
+    const pool = restful.pool || params.get('pool');
 
     // Bridge restful params to search params for backward compatibility
     if (restful.md5 && !params.has('md5')) params.set('md5', restful.md5);
@@ -238,18 +329,16 @@ function getRoutingState() {
     if (restful.hash && !params.has('hash_val')) params.set('hash_val', restful.hash);
     if (restful.id1 && !params.has('id1')) params.set('id1', restful.id1);
     if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
+    if (restful.coll_b && !params.has('coll_b')) params.set('coll_b', restful.coll_b);
+    if (restful.pool && !params.has('pool_id')) params.set('pool_id', restful.pool);
 
-    return { viewKey, collection, params, ...restful };
+    return { viewKey, collection, pool, params, ...restful };
 }
 window.getRoutingState = getRoutingState;
 
 function getCollectionFromHash() {
-    const path = window.location.pathname;
-    const parts = path.split('/').filter(Boolean);
-    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
-
     const pathParams = parseRestfulPath();
-    if (hasColInPath && pathParams.collection) return pathParams.collection;
+    if (pathParams.collection) return pathParams.collection;
 
     const searchParams = new URLSearchParams(window.location.search);
     if (searchParams.has('collection')) return searchParams.get('collection');
@@ -269,7 +358,7 @@ function getCollectionFromHash() {
         }
     }
     
-    return 'main';
+    throw new Error("Navigation error: collection context could not be resolved.");
 }
 window.getCollectionFromHash = getCollectionFromHash;
 
@@ -293,39 +382,83 @@ function formatSigComponent(namespace, returnType, name, parameters = []) {
 }
 window.formatSigComponent = formatSigComponent;
 
-// Global fetch interceptor to transparently migrate pool API collection parameter to pool query/body parameter
-(function() {
-    const originalFetch = window.fetch;
-    window.fetch = function(input, init) {
-        let fetchInput = input;
-        let fetchInit = init;
+// Global fetch interceptor removed.
 
-        if (typeof fetchInput === 'string') {
-            try {
-                const url = new URL(fetchInput, window.location.origin);
-                if (url.searchParams.has('collection')) {
-                    const col = url.searchParams.get('collection');
-                    if (col && col.startsWith('pool:')) {
-                        const poolId = col.substring(5);
-                        url.searchParams.delete('collection');
-                        url.searchParams.set('pool', poolId);
-                        fetchInput = url.pathname + url.search;
-                    }
-                }
-            } catch (e) {}
+/**
+ * Parses an entity ID (function_id or file_id) robustly, supporting collections/pools containing colons.
+ */
+function parseEntityId(id) {
+    if (!id || typeof id !== 'string') {
+        return { collection: '', type: null, md5: '', address: '' };
+    }
+    const funcIdx = id.indexOf(':func:');
+    const fileIdx = id.indexOf(':file:');
+    
+    if (funcIdx !== -1) {
+        const collection = id.substring(0, funcIdx);
+        const rest = id.substring(funcIdx + 6);
+        const parts = rest.split(':');
+        return {
+            collection: collection || '',
+            type: 'func',
+            md5: parts[0] || '',
+            address: parts[1] || ''
+        };
+    } else if (fileIdx !== -1) {
+        const collection = id.substring(0, fileIdx);
+        const rest = id.substring(fileIdx + 6);
+        const parts = rest.split(':');
+        return {
+            collection: collection || '',
+            type: 'file',
+            md5: parts[0] || '',
+            address: ''
+        };
+    } else {
+        const parts = id.split(':');
+        if (parts.length >= 4) {
+            const col = parts.slice(0, parts.length - 2).join(':');
+            return {
+                collection: col || '',
+                type: 'func',
+                md5: parts[parts.length - 2],
+                address: parts[parts.length - 1]
+            };
+        } else {
+            return {
+                collection: parts[0] || '',
+                type: null,
+                md5: parts[2] || parts[1] || '',
+                address: parts[3] || parts[2] || ''
+            };
         }
+    }
+}
+window.parseEntityId = parseEntityId;
 
-        if (fetchInit && fetchInit.body && typeof fetchInit.body === 'string') {
-            try {
-                const data = JSON.parse(fetchInit.body);
-                if (data && data.collection && data.collection.startsWith('pool:')) {
-                    data.pool = data.collection.substring(5);
-                    delete data.collection;
-                    fetchInit = { ...fetchInit, body: JSON.stringify(data) };
-                }
-            } catch (e) {}
-        }
+function assertValidCollection(ctx) {
+    if (!ctx.collection || ctx.collection === 'null' || ctx.collection === 'undefined' || ctx.collection === 'main') {
+        let msg = `Navigation error: Invalid collection context: ${ctx.collection || 'null'}`;
+        if (ctx.pool) msg += ` (within pool "${ctx.pool}", view "${ctx.viewKey || ''}")`;
+        showNullContextWarning(ctx.collection, ctx.pool, ctx.viewKey);
+        throw new Error(msg);
+    }
+    return ctx.collection;
+}
+window.assertValidCollection = assertValidCollection;
 
-        return originalFetch(fetchInput, fetchInit);
-    };
-})();
+function showNullContextWarning(collection, pool, viewKey) {
+    let banner = document.getElementById('null-context-warning');
+    if (banner) {
+        banner.remove();
+    }
+    banner = document.createElement('div');
+    banner.id = 'null-context-warning';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:#fff;text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;box-shadow:0 2px 8px rgba(249,38,114,0.4);cursor:pointer;';
+    banner.textContent = `⚠️ Navigation error: Invalid collection or pool context. Please navigate directly to a valid collection or pool.`;
+    banner.onclick = () => banner.remove();
+    document.body.prepend(banner);
+    console.error(banner.textContent);
+    setTimeout(() => banner.remove(), 10000); // dismiss after 10s
+}
+window.showNullContextWarning = showNullContextWarning;

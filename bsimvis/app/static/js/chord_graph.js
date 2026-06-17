@@ -257,7 +257,7 @@ class ChordGraph {
                 const n2 = nodes[d.target.index];
                 // Navigate to binary similarity diff view
                 const { collection } = getRoutingState();
-                const diffUrl = `/collection/${encodeURIComponent(collection)}/file/${encodeURIComponent(n1.md5)}/vs/${encodeURIComponent(collection)}/${encodeURIComponent(n2.md5)}`;
+                const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(collection, n1.md5, collection, n2.md5);
                 const safeNameA = (n1.name || n1.md5.substring(0,8)).replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 const safeNameB = (n2.name || n2.md5.substring(0,8)).replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 

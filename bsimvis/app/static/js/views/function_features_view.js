@@ -16,7 +16,7 @@ window.FunctionFeaturesView = {
         this.params = params;
         this.container = document.getElementById(containerId);
         
-        const collection = params.collection || 'main';
+        const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
         const address = params.address;
 
@@ -338,7 +338,7 @@ window.FunctionFeaturesView = {
         const data = this.globalTips[idx];
         if (!data || !data[2]) return;
 
-        const collection = this.id.split(':')[0] || 'main';
+        const collection = this.id.split(':')[0] || '';
 
         let menu = document.getElementById('token-context-menu');
         if (!menu) {

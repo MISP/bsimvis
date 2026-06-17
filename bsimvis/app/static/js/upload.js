@@ -4,7 +4,7 @@ let selectedFiles = [];
 
 function renderUploadView(params) {
     const container = document.getElementById('upload-view-container');
-    const collection = params.get('collection') || 'main';
+    const collection = params.get('collection') || '';
     
     // Hide search area for upload
     const searchArea = document.getElementById('search-area');
@@ -222,7 +222,7 @@ async function startBatchUpload() {
         return;
     }
 
-    let collection = document.getElementById('upload-collection').value || 'main';
+    let collection = document.getElementById('upload-collection').value || '';
     if (collection === '__NEW__') {
         collection = document.getElementById('upload-new-collection').value.trim();
         if (!collection) {

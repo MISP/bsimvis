@@ -11,7 +11,7 @@ window.CallGraphView = {
         this.params = params;
         this.container = document.getElementById(containerId);
         
-        const collection = params.collection || 'main';
+        const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
         if (!file_md5) {
@@ -57,7 +57,8 @@ window.CallGraphView = {
 
             // Fetch file details for metadata and breadcrumb updates
             try {
-                const detailsRes = await fetch(`/api/file/details/${file_md5}?collection=${encodeURIComponent(collection)}`);
+                const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+                const detailsRes = await fetch(`/api/file/details/${file_md5}?${apiParams}`);
                 if (detailsRes.ok) {
                     const detailsData = await detailsRes.json();
                     if (detailsData && detailsData.file) {

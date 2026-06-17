@@ -56,9 +56,10 @@ window.TableRenderers = {
                 </span>
             ` : '';
 
+            const poolUrl = '/pools/' + encodeURIComponent(pool.id) + '/files';
             return `
             <tr data-id="${pool.id}">
-                <td><a href="/pools/${encodeURIComponent(pool.id)}/files" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
+                <td><a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
                 <td><b>${pool.name || 'Unnamed'}</b></td>
                 <td><div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">${collectionsList}${crossCollectionOnlyIndicator}</div></td>
                 <td class="dim">${formatDate(pool.created_at)}</td>
@@ -149,9 +150,10 @@ window.TableRenderers = {
 
     renderFiles: function(data, clustersMap = {}) {
         const { collection } = getRoutingState();
-        const col = collection;
         return data.map(f => {
+            const col = f.collection || collection; // Base collection to use if not specified
             const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
+            let targetCol = col;
             const tags = f['tags'] || [];
             const user_tags = f['user_tags'] || [];
             const rowStyle = getRowTagColor(tags, user_tags);
@@ -171,7 +173,7 @@ window.TableRenderers = {
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; gap:8px;">
-                        <b style="color:var(--accent); cursor:pointer;" onclick="showFileDetailsPanel('${col}', '${f['file_md5']}', '${(f['file_name'] || '').replace(/'/g, "\\'")}', event)">${f['file_name']}</b>
+                        <b style="color:var(--accent); cursor:pointer;" onclick="showFileDetailsPanel('${targetCol}', '${f['file_md5']}', '${(f['file_name'] || '').replace(/'/g, "\\'")}', event)">${f['file_name']}</b>
                     </div>
                 </td>
                 <td class="sim-cell">
@@ -224,14 +226,14 @@ window.TableRenderers = {
                 </td>
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
-                        <a ${createNav('functions', col, { file_md5: f['file_md5'] })} class="clickable-count" style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</a>
+                        <a ${createNav('functions', targetCol, { file_md5: f['file_md5'] })} class="clickable-count" style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</a>
                         <button class="btn-file-diff-action ${fileDiffSelection.some(item => item.id === fileId) ? 'active' : ''}"
                                 data-file-id="${fileId}"
                                 onclick="addToFileDiff('${fileId}', '${f['file_name'].replace(/'/g, "'")}', event)"
                                 title="Add to File Diff">
                             <span>±</span>
                         </button>
-                        <a class="btn-action" onclick="Nav.openPath('${Nav.buildUIUrl(col, ['call_graph', f['file_md5']])}', event, { title: 'Call Graph: ${f['file_md5']}', type: 'call_graph' })" title="Call Graph" style="color: var(--accent); cursor: pointer;">
+                        <a class="btn-action" onclick="Nav.openPath('${Nav.buildUIUrl(targetCol, ['call_graph', f['file_md5']])}', event, { title: 'Call Graph: ${f['file_md5']}', type: 'call_graph' })" title="Call Graph" style="color: var(--accent); cursor: pointer;">
                             <i class="fa-solid fa-network-wired"></i>
                         </a>
                     </div>
@@ -252,6 +254,7 @@ window.TableRenderers = {
     },
 
     renderFunctions: function(data, clustersMap = {}) {
+        const { collection } = getRoutingState();
         return data.map(f => {
             const entry = f['entrypoint_address'] || '';
             const tags = f['tags'] || [];
@@ -260,7 +263,9 @@ window.TableRenderers = {
             const file_md5 = f['file_md5'] || '';
             const language = f['language_id'] || '---';
             const featCount = f['bsim_features_count'] || 0;
-            const funcId = f['function_id'] || `${f.collection}:func:${file_md5}:${entry}`;
+            const fColl = f.collection || collection;
+            const funcId = f['function_id'] || `${fColl}:func:${file_md5}:${entry}`;
+            let targetCol = fColl;
             const rowStyle = getRowTagColor(tags, user_tags);
             const clusters = (f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean);
 
@@ -284,10 +289,10 @@ window.TableRenderers = {
                     ${EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f })}
                 </td>
 
-                <td class="sim-cell"><div style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${f.collection || 'main'}', '${file_md5}', '${fileName.replace(/'/g, "\\'")}', event); }">${fileName}</b></div></td>
+                <td class="sim-cell"><div style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${targetCol}', '${file_md5}', '${fileName.replace(/'/g, "\\'")}', event); }">${fileName}</b></div></td>
 
                 <td class="sim-cell">${EntityRenderer.renderMd5(file_md5)}</td>
-                <td>${EntityRenderer.renderTag('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
+                <td>${EntityRenderer.renderTag('file', `${fColl}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
                 <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
                 <td class="sim-cell"></td>

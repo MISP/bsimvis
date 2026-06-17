@@ -11,7 +11,7 @@ window.FileView = {
         this.params = params;
         this.container = document.getElementById(containerId);
         
-        const collection = params.collection || 'main';
+        const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
         if (!file_md5) {
@@ -67,7 +67,8 @@ window.FileView = {
         try {
             if (window.fetchTagMetadata) await window.fetchTagMetadata(collection);
 
-            const res = await fetch(`/api/file/details/${file_md5}?collection=${encodeURIComponent(collection)}`);
+            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+            const res = await fetch(`/api/file/details/${file_md5}?${apiParams}`);
             if (!res.ok) throw new Error("File not found");
             const data = await res.json();
 
@@ -90,6 +91,11 @@ window.FileView = {
             // Update breadcrumb to show actual filename in the global breadcrumbs container
             const bcCurrent = document.querySelector('#breadcrumbs-container .breadcrumb-item.current');
             if (bcCurrent) bcCurrent.innerHTML = `<i class="fa-solid fa-file-code"></i><span>${fileName}</span>`;
+            
+            const bc = window.Breadcrumbs || (window.parent && window.parent.Breadcrumbs);
+            if (bc && typeof bc.refresh === 'function') {
+                bc.refresh();
+            }
 
             document.getElementById('file-quick-actions').innerHTML = `
                 <a href="#" class="quick-action-btn" onclick="FileView.openFunctions(event)"><i class="fa-solid fa-code"></i> View Functions</a>

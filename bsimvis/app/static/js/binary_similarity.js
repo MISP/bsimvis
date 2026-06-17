@@ -42,26 +42,35 @@ function handleIframeMouseLeave(event) {
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
-    const collection = params.get('collection') || 'main';
+    const collection = params.get('collection');
+    if (!collection) {
+        throw new Error("renderBinarySimilarityView: collection is required.");
+    }
     let md5a = params.get('md5_a');
     let md5b = params.get('md5_b');
+    let collB = params.get('coll_b');
+    let poolId = params.get('pool_id');
 
-    // Parse new RESTful URL: /collections/{coll}/files/{md5_a}/vs/{coll_b}/{md5_b}
-    let collB = null;
-    if (!md5a || !md5b) {
-        const parts = window.location.pathname.split('/').filter(Boolean);
-        const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
-        const hasFile = parts[2] === 'file' || parts[2] === 'files';
-        if (hasCol && hasFile && parts[4] === 'vs') {
-            md5a = md5a || decodeURIComponent(parts[3]);
-            collB = parts[5] ? decodeURIComponent(parts[5]) : null;
-            md5b = md5b || decodeURIComponent(parts[6]);
+    // Parse new RESTful URL using routing state or fallback
+    if (!md5a || !md5b || !collB || !poolId) {
+        if (window.getRoutingState) {
+            const state = window.getRoutingState();
+            md5a = md5a || state.md5;
+            md5b = md5b || state.md5_b;
+            collB = collB || state.coll_b;
+            poolId = poolId || state.pool;
         }
-    } else {
-        // Parse coll_b from URL even if md5s were in params
-        const parts = window.location.pathname.split('/').filter(Boolean);
-        if (parts[4] === 'vs' && parts[5]) collB = decodeURIComponent(parts[5]);
     }
+
+    // Index-based fallback for coll_b
+    if (!collB) {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        const vsIdx = parts.indexOf('vs');
+        if (vsIdx !== -1 && vsIdx + 1 < parts.length) {
+            collB = decodeURIComponent(parts[vsIdx + 1]);
+        }
+    }
+
     
     // Set up layout: Header (Selection/Summary) + Body (Sankey / Tables)
     let html = `
@@ -221,10 +230,10 @@ function initResizableCards() {
     const resultsEl = document.getElementById('bin-sim-results');
     
     try {
-        let apiUrl = `/api/bin_sim/diff?collection=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
-        if (collB) apiUrl += `&coll_b=${encodeURIComponent(collB)}`;
-        if (poolId) apiUrl += `&pool_id=${encodeURIComponent(poolId)}`;
-        const res = await fetch(apiUrl);
+        let url = `/api/diff?collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
+        if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
+        if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
+        const res = await fetch(url);
         if (!res.ok) {
             let errMsg = "Failed to fetch similarity comparison";
             try {
@@ -243,10 +252,11 @@ function initResizableCards() {
         const nameA = window.filenameCache[md5a];
         const nameB = window.filenameCache[md5b];
         const breadcrumbItems = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
-        if (breadcrumbItems.length >= 4) {
-            const sourceSpan = breadcrumbItems[2].querySelector('span');
+        if (breadcrumbItems.length >= 3) {
+            // The last item is the VS target, and the second-to-last item is the source file
+            const sourceSpan = breadcrumbItems[breadcrumbItems.length - 2].querySelector('span');
             if (sourceSpan) sourceSpan.innerText = nameA;
-            const vsSpan = breadcrumbItems[3].querySelector('span');
+            const vsSpan = breadcrumbItems[breadcrumbItems.length - 1].querySelector('span');
             if (vsSpan) vsSpan.innerText = `VS ${nameB}`;
         }
         
@@ -1327,11 +1337,11 @@ function renderBinSimPairs(items) {
         let tagsB = Array.isArray(item.file_tags_b) ? item.file_tags_b : [];
         let userTagsB = Array.isArray(item.file_user_tags_b) ? item.file_user_tags_b : [];
         
-        const collA = item.coll_a || (collection.startsWith('pool:') ? collection.substring(5) : collection);
+        const collA = item.coll_a || collection;
         const collB = item.coll_b || collA;
-        const poolId = collection.startsWith('pool:') ? collection.substring(5) : null;
-        let diffUrl = `/collection/${collA}/file/${item.md5_a}/vs/${collB}/${item.md5_b}`;
-        if (poolId) diffUrl += `?pool_id=${encodeURIComponent(poolId)}`;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        let diffUrl = `/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
+        if (poolId) diffUrl = `/pools/${encodeURIComponent(poolId)}/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
 
         const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
@@ -1350,10 +1360,10 @@ function renderBinSimPairs(items) {
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collection}', '${item.md5_a}', '${safeNameA}', event)">${item.file_name_a || 'Unknown'}</b>
+                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collA}', '${item.md5_a}', '${safeNameA}', event)">${item.file_name_a || 'Unknown'}</b>
                         </div>
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collection}', '${item.md5_b}', '${safeNameB}', event)">${item.file_name_b || 'Unknown'}</b>
+                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collB}', '${item.md5_b}', '${safeNameB}', event)">${item.file_name_b || 'Unknown'}</b>
                         </div>
                     </div>
                 </td>
@@ -1409,7 +1419,7 @@ if (typeof window.showFunctionCodeById === 'undefined') {
                 return;
             }
             const parts = id.split(':');
-            const col = parts[0] || 'main';
+            const col = parts[0] || '';
             const md5 = parts[2];
             const addr = parts[3];
             const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;

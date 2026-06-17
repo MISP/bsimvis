@@ -18,7 +18,9 @@ window.EntityRenderer = {
         const entry = f['entrypoint_address'] || '';
         const file_md5 = f['file_md5'] || '';
         const featCount = f['bsim_features_count'] || 0;
-        const collection = f['collection'] || 'main';
+        
+        let collection = stripPoolPrefix(f['collection'] || '');
+        
         const funcId = f['function_id'] || `${collection}:func:${file_md5}:${entry}`;
         
         const safeName = (name || '').replace(/'/g, "\\'");

@@ -18,7 +18,7 @@ window.FeatureView = {
         this.params = params;
         this.container = document.getElementById(containerId);
         
-        this.collection = params.collection || 'main';
+        this.collection = params.collection || '';
         this.featureHash = params.hash || params.hash_val;
         this.currentOffset = 0;
         this.totalOccurrences = 0;

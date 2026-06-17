@@ -57,11 +57,30 @@ window.UI = {
      */
     Sidebar: {
         render: function() {
-            const { viewKey, collection } = getRoutingState();
+            const { viewKey, collection, pool } = getRoutingState();
+            if (!collection && !pool && viewKey !== 'collections' && viewKey !== 'pools') {
+                throw new Error("Navigation error: collection context is missing.");
+            }
 
             const buildNavUrl = (view) => {
                 if (view === 'collections') return '/collections';
                 if (view === 'pools') return '/pools';
+
+                const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
+                if (pool) {
+                    if (view === 'jobs') return `/jobs?collection=${encodeURIComponent(collection)}&pool=${encodeURIComponent(pool)}`;
+                    if (view === 'upload') return `/${prefix}/${encodeURIComponent(pool)}/upload`;
+                    if (view === 'batches') return `/${prefix}/${encodeURIComponent(pool)}/batches`;
+                    if (view === 'files') return `/${prefix}/${encodeURIComponent(pool)}/files`;
+                    if (view === 'functions') return `/${prefix}/${encodeURIComponent(pool)}/functions`;
+                    if (view === 'features-global') return `/${prefix}/${encodeURIComponent(pool)}/features`;
+                    if (view === 'function-similarity') return `/${prefix}/${encodeURIComponent(pool)}/functions/similarities`;
+                    if (view === 'binary-similarity') return `/${prefix}/${encodeURIComponent(pool)}/files/similarities`;
+                    if (view === 'clusters') return `/${prefix}/${encodeURIComponent(pool)}/functions/clusters`;
+                    if (view === 'bin-clusters') return `/${prefix}/${encodeURIComponent(pool)}/files/clusters`;
+                    return `/${prefix}/${encodeURIComponent(pool)}/${view}`;
+                }
+
                 if (view === 'jobs') return `/jobs?collection=${encodeURIComponent(collection)}`;
                 if (view === 'upload') return `/collections/${encodeURIComponent(collection)}/upload`;
                 if (view === 'batches') return `/collections/${encodeURIComponent(collection)}/batches`;
@@ -105,7 +124,9 @@ window.UI = {
                         <a href="${buildNavUrl('features-global')}" id="nav-features-global" title="Features" class="${isActive('features-global')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-fingerprint"></i> <span>Features</span></a>
                     </div>
                     <div style="margin-top:auto; padding-top:20px; border-top: 1px solid var(--border);">
+                        <a href="${buildNavUrl('collections')}" id="nav-collections" title="Collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> <span>Collections</span></a>
                         <a href="${buildNavUrl('pools')}" id="nav-pools" title="Pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> <span>Pools</span></a>
+                        <div style="margin: 10px 0; border-top: 1px solid var(--border); opacity: 0.5;"></div>
                         <a href="${buildNavUrl('upload')}" id="nav-upload" title="Upload" class="${isActive('upload')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-cloud-arrow-up"></i> <span>Upload</span></a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" title="Jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> <span>Jobs</span></a>
                         <a href="/api/" target="_blank" id="nav-api" title="API"><i class="fa-solid fa-book"></i> <span>API</span></a>

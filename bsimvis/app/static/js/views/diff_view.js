@@ -172,35 +172,19 @@ window.DiffView = {
 
         document.getElementById('meta-container').addEventListener('click', (e) => {
             if (e.target.closest('#swap-btn')) {
-                let id1 = this.params.id1 || new URLSearchParams(window.location.search).get('id1');
-                let id2 = this.params.id2 || new URLSearchParams(window.location.search).get('id2');
-                
-                const path = window.location.pathname;
-                const parts = path.split('/').filter(Boolean);
-                const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
-                
-                if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
-                    const collA = decodeURIComponent(parts[1]);
-                    const md5A = decodeURIComponent(parts[3]);
-                    const addrA = decodeURIComponent(parts[5]);
-                    const collB = decodeURIComponent(parts[7]);
-                    const md5B = decodeURIComponent(parts[8]);
-                    const addrB = decodeURIComponent(parts[9]);
-                    id1 = `${collA}:func:${md5A}:${addrA}`;
-                    id2 = `${collB}:func:${md5B}:${addrB}`;
-                } else if (hasCol && parts[2] === 'function' && parts[5] === 'vs') {
-                    const collA = decodeURIComponent(parts[1]);
-                    const md5A = decodeURIComponent(parts[3]);
-                    const addrA = decodeURIComponent(parts[4]);
-                    const collB = decodeURIComponent(parts[6]);
-                    const md5B = decodeURIComponent(parts[7]);
-                    const addrB = decodeURIComponent(parts[8]);
-                    id1 = `${collA}:func:${md5A}:${addrA}`;
-                    id2 = `${collB}:func:${md5B}:${addrB}`;
-                }
-
-                if (id1 && id2) {
-                    const newUrl = buildDiffUrl(id2, id1);
+                // Extract current params from URL or from parsed path
+                const p = this._getCurrentP();
+                if (p) {
+                    const newP = { ...p };
+                    const tmp = { collection_a: p.collection_a, md5_a: p.md5_a, addr_a: p.addr_a };
+                    newP.collection_a = p.collection_b;
+                    newP.md5_a = p.md5_b;
+                    newP.addr_a = p.addr_b;
+                    newP.collection_b = tmp.collection_a;
+                    newP.md5_b = tmp.md5_a;
+                    newP.addr_b = tmp.addr_a;
+                    
+                    const newUrl = `/api/diff${window.encodeDiffParams ? window.encodeDiffParams(newP) : ''}`;
                     Nav.openPath(newUrl);
                 }
             }
@@ -209,37 +193,124 @@ window.DiffView = {
         await this.fetchData();
     },
 
-    async fetchData() {
-        let id1 = this.params.id1 || new URLSearchParams(window.location.search).get('id1');
-        let id2 = this.params.id2 || new URLSearchParams(window.location.search).get('id2');
-        
+    _getCurrentP() {
         const path = window.location.pathname;
         const parts = path.split('/').filter(Boolean);
-        const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
-
-        if (hasCol && (parts[2] === 'files' || parts[2] === 'file') && parts[4] === 'functions' && parts[6] === 'vs') {
-            const collA = decodeURIComponent(parts[1]);
-            const md5A = decodeURIComponent(parts[3]);
-            const addrA = decodeURIComponent(parts[5]);
-            const collB = decodeURIComponent(parts[7]);
-            const md5B = decodeURIComponent(parts[8]);
-            const addrB = decodeURIComponent(parts[9]);
-            id1 = `${collA}:func:${md5A}:${addrA}`;
-            id2 = `${collB}:func:${md5B}:${addrB}`;
-        } else if (hasCol && parts[2] === 'function') {
-            if (parts.length >= 9 && parts[5] === 'vs') {
-                const collA = decodeURIComponent(parts[1]);
-                const md5A = decodeURIComponent(parts[3]);
-                const addrA = decodeURIComponent(parts[4]);
-                const collB = decodeURIComponent(parts[6]);
-                const md5B = decodeURIComponent(parts[7]);
-                const addrB = decodeURIComponent(parts[8]);
-                id1 = `${collA}:func:${md5A}:${addrA}`;
-                id2 = `${collB}:func:${md5B}:${addrB}`;
-            } else if (parts.length >= 5) {
-                id1 = id1 || decodeURIComponent(parts[3]);
-                id2 = id2 || decodeURIComponent(parts[4]);
+        let hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+        let offset = 0;
+        let poolId = null;
+        if (parts[0] === 'pool' || parts[0] === 'pools') {
+            poolId = parts[1];
+            if (parts[2] === 'collection' || parts[2] === 'collections') {
+                hasCol = true;
+                offset = 2;
             }
+        }
+        if (hasCol && (parts[offset + 2] === 'files' || parts[offset + 2] === 'file') && parts[offset + 4] === 'functions' && parts[offset + 6] === 'vs') {
+            const rawCollA = decodeURIComponent(parts[offset + 1]);
+            const collA = poolId ? `pool:${poolId}:col:${rawCollA}` : rawCollA;
+            const md5A = decodeURIComponent(parts[offset + 3]);
+            const addrA = decodeURIComponent(parts[offset + 5]);
+            const rawCollB = decodeURIComponent(parts[offset + 7]);
+            const collB = poolId ? `pool:${poolId}:col:${rawCollB}` : rawCollB;
+            const md5B = decodeURIComponent(parts[offset + 8]);
+            const addrB = decodeURIComponent(parts[offset + 9]);
+            return { collection_a: collA, md5_a: md5A, addr_a: addrA, collection_b: collB, md5_b: md5B, addr_b: addrB };
+        }
+        return null;
+    },
+
+    _parsePathUrl() {
+        const path = window.location.pathname;
+        const parts = path.split('/').filter(Boolean);
+        let hasCol = parts[0] === 'collection' || parts[0] === 'collections';
+        let offset = 0;
+        let poolId = null;
+        if (parts[0] === 'pool' || parts[0] === 'pools') {
+            poolId = parts[1];
+            if (parts[2] === 'collection' || parts[2] === 'collections') {
+                hasCol = true;
+                offset = 2;
+            }
+        }
+        if (hasCol && (parts[offset + 2] === 'files' || parts[offset + 2] === 'file') && parts[offset + 4] === 'functions' && parts[offset + 6] === 'vs') {
+            const rawCollA = stripPoolPrefix(decodeURIComponent(parts[offset + 1]));
+            const rawCollB = stripPoolPrefix(decodeURIComponent(parts[offset + 7]));
+            return {
+                collection_a: rawCollA || 'main',
+                md5_a: decodeURIComponent(parts[offset + 3]),
+                addr_a: decodeURIComponent(parts[offset + 5]),
+                collection_b: rawCollB || rawCollA || 'main',
+                md5_b: decodeURIComponent(parts[offset + 8]),
+                addr_b: decodeURIComponent(parts[offset + 9]),
+                pool: poolId
+            };
+        } else if (hasCol && parts[offset + 2] === 'function') {
+            if (parts.length >= (offset + 9) && parts[offset + 5] === 'vs') {
+                const rawCollA = stripPoolPrefix(decodeURIComponent(parts[offset + 1]));
+                const rawCollB = stripPoolPrefix(decodeURIComponent(parts[offset + 6]));
+                return {
+                    collection_a: rawCollA || 'main',
+                    md5_a: decodeURIComponent(parts[offset + 3]),
+                    addr_a: decodeURIComponent(parts[offset + 4]),
+                    collection_b: rawCollB || rawCollA || 'main',
+                    md5_b: decodeURIComponent(parts[offset + 7]),
+                    addr_b: decodeURIComponent(parts[offset + 8]),
+                    pool: poolId
+                };
+            }
+        }
+        return {};
+    },
+
+    async fetchData() {
+        let p;
+        // Try URL query params first
+        const urlParams = new URLSearchParams(window.location.search);
+        const collection_a = urlParams.get('collection_a');
+        const md5_a = urlParams.get('md5_a');
+        const addr_a = urlParams.get('addr_a');
+        const collection_b = urlParams.get('collection_b') || urlParams.get('coll_b');
+        const md5_b = urlParams.get('md5_b');
+        const addr_b = urlParams.get('addr_b');
+        
+        if (collection_a && md5_a && addr_a && collection_b && md5_b && addr_b) {
+            p = { collection_a, md5_a, addr_a, collection_b, md5_b, addr_b };
+        } else {
+            p = this._parsePathUrl();
+        }
+
+        // If still no flat params, try legacy id1/id2
+        if (!p || !p.collection_a || !p.md5_a) {
+            const legacyId1 = this.params.id1 || urlParams.get('id1');
+            const legacyId2 = this.params.id2 || urlParams.get('id2');
+            if (legacyId1 && legacyId2) {
+                function parseLegacyId(id) {
+                    if (!id) return { collection: '', md5: '', addr: '' };
+                    if (id.includes(':func:')) {
+                        const [c, rest] = id.split(':func:');
+                        const [md5, addr] = rest.split(':');
+                        return { collection: c || '', md5, addr };
+                    }
+                    if (id.includes(':function:')) {
+                        const [c, rest] = id.split(':function:');
+                        const [md5, addr] = rest.split(':');
+                        return { collection: c || '', md5, addr };
+                    }
+                    const parts = id.split(':');
+                    if (parts[0] === 'idx') {
+                        return { collection: parts[1] || '', md5: parts[3], addr: parts[4] };
+                    }
+                    return { collection: parts[0] || '', md5: parts[2], addr: parts[3] };
+                }
+                const a = parseLegacyId(legacyId1);
+                const b = parseLegacyId(legacyId2);
+                p = { collection_a: a.collection, md5_a: a.md5, addr_a: a.addr, collection_b: b.collection, md5_b: b.md5, addr_b: b.addr };
+            }
+        }
+
+        if (!p) {
+            p = this._parsePathUrl();
         }
 
         const loader = document.getElementById('diff-view-loader');
@@ -248,7 +319,7 @@ window.DiffView = {
         const selectionTool = document.getElementById('selection-tool');
         const simBar = document.getElementById('similarity-bar');
 
-        if (!id1 || !id2) {
+        if (!p.collection_a || !p.md5_a || !p.addr_a || !p.collection_b || !p.md5_b || !p.addr_b) {
             if (loader) loader.style.display = 'none';
             if (scrollContainer) scrollContainer.style.display = 'none';
             if (metaContainer) metaContainer.style.display = 'none';
@@ -266,14 +337,19 @@ window.DiffView = {
         if (metaContainer) metaContainer.style.display = 'flex';
 
         try {
-            const response = await fetch(`/api/diff?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+            const pool = urlParams.get('pool') || this.params.pool || null;
+            const apiUrl = `/api/diff?collection_a=${encodeURIComponent(p.collection_a)}&md5_a=${encodeURIComponent(p.md5_a)}&addr_a=${encodeURIComponent(p.addr_a)}&collection_b=${encodeURIComponent(p.collection_b)}&md5_b=${encodeURIComponent(p.md5_b)}&addr_b=${encodeURIComponent(p.addr_b)}${pool ? '&pool=' + encodeURIComponent(pool) : ''}`;
+            
+            const response = await fetch(apiUrl);
             if (!response.ok) throw new Error("API Network error");
             const data = await response.json();
 
             if (window.fetchTagMetadata) {
-                await window.fetchTagMetadata(id1.split(':')[0]);
+                await window.fetchTagMetadata(p.collection_a.split(':')[0]);
             }
             
+            const id1 = `${p.collection_a}:func:${p.md5_a}:${p.addr_a}`;
+            const id2 = `${p.collection_b}:func:${p.md5_b}:${p.addr_b}`;
             metaContainer.innerHTML = this.formatMetaCard(data.meta1, id1, true) + this.formatMetaCard(data.meta2, id2, false);
             this.fetchSimilarity(id1, id2);
             if (typeof window.updateDiffQueueUI === 'function') window.updateDiffQueueUI();
@@ -287,9 +363,9 @@ window.DiffView = {
 
                 const items = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
                 if (items.length >= 4) {
-                    const sourceSpan = items[2].querySelector('span');
+                    const sourceSpan = items[items.length - 2].querySelector('span');
                     if (sourceSpan) sourceSpan.innerText = name1;
-                    const vsSpan = items[3].querySelector('span');
+                    const vsSpan = items[items.length - 1].querySelector('span');
                     if (vsSpan) vsSpan.innerText = `VS ${name2} (${md52.substring(0, 8)}@${addr2})`;
                 }
             }
@@ -755,7 +831,7 @@ window.DiffView = {
         }
 
         const id1 = this.params.id1 || new URLSearchParams(window.location.search).get('id1') || '';
-        const collection = id1.split(':')[0] || 'main';
+        const collection = id1.split(':')[0] || '';
 
         let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
         data[2].forEach(f => {
@@ -813,10 +889,28 @@ window.DiffView = {
 
     navigateToFunction(funcId, e) {
         const parts = funcId.split(':');
-        const col = parts[0] || 'main';
-        const md5 = parts[2];
-        const addr = parts[3];
-        const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
+        let col = parts[0] || '';
+        let md5 = parts[2];
+        let addr = parts[3];
+        
+        let url;
+        if (col.startsWith('pool:')) {
+            const colParts = col.split(':');
+            const poolId = colParts[1];
+            if (colParts.length >= 4 && colParts[2] === 'col') {
+                const subCol = colParts[3];
+                url = `/pools/${encodeURIComponent(poolId)}/collections/${encodeURIComponent(subCol)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
+            } else {
+                url = `/pools/${encodeURIComponent(poolId)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
+            }
+        } else {
+            const routingState = window.getRoutingState ? window.getRoutingState() : {};
+            if (routingState.pool) {
+                url = `/pools/${encodeURIComponent(routingState.pool)}/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
+            } else {
+                url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}`;
+            }
+        }
         
         Nav.openPath(url, e, { title: `Code: ${addr}`, type: 'function' });
     },
@@ -853,8 +947,30 @@ window.DiffView = {
 
     async fetchSimilarity(id1, id2) {
         const bar = document.getElementById('similarity-bar');
+        if (!id1 || !id2) {
+            if (bar) bar.style.display = 'none';
+            return;
+        }
+
+        // Parse flat params from id1/id2
+        const parseFunc = window.parseFuncIdFromStr;
+        if (!parseFunc) {
+            if (bar) bar.style.display = 'none';
+            return;
+        }
+        const p1 = parseFunc(id1);
+        const p2 = parseFunc(id2);
+        if (!p1.md5_a || !p2.md5_b) {
+            // Can't parse, use legacy
+            if (bar) bar.style.display = 'none';
+            return;
+        }
+
+        const pool = window.getRoutingState?.()?.pool || null;
+        const simUrl = `/api/similarity?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b || p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}${pool ? '&pool=' + encodeURIComponent(pool) : ''}`;
+
         try {
-            const res = await fetch(`/api/similarity?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+            const res = await fetch(simUrl);
             if (!res.ok) throw new Error("Failed to fetch similarity");
             const data = await res.json();
             this.currentScores = data.scores || {};

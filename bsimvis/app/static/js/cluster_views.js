@@ -7,9 +7,11 @@ function getCurrentCollection() {
     } else if (window.parseRestfulPath) {
         restful = parseRestfulPath();
     }
-    if (restful && restful.collection) {
-        return restful.collection;
+    if (restful) {
+        if (restful.collection) return restful.collection;
+        if (restful.pool) return 'pool:' + restful.pool;
     }
+
 
     // Fallback for old system
     const params = new URLSearchParams(window.location.search);
@@ -22,7 +24,7 @@ function getCurrentCollection() {
     const id = params.get('id') || params.get('id1') || params.get('id2') || window.currentFuncId;
     if (id && id.includes(':')) return id.split(':')[0];
 
-    return 'main';
+    return '';
 }
 function getHierarchyTooltip() {
     let el = document.getElementById('hierarchy-tooltip');
@@ -50,10 +52,10 @@ function getHierarchyTooltip() {
                             showFunctionCodeById(func.function_id, name, '', event);
                         } else {
                             const parts = func.function_id.split(':');
-                            const col = parts[0] || 'main';
+                            const col = parts[0] || '';
                             const md5 = parts[2];
                             const addr = parts[3];
-                            const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}`;
+                            const url = Nav.buildUIUrl(col, ['function', md5, addr]);
                             Nav.openPath(url, event, { title: `Code: ${name}`, type: 'code' });
                         }
                     }
@@ -617,14 +619,14 @@ class ClusterHierarchy extends D3BaseLayout {
                     } else if (typeof showFunctionCodeById === 'function') {
                         showFunctionCodeById(d.data.id, d.data.name, '', event);
                     } else {
-                        const url = `/collection/${col}/functions?q=${encodeURIComponent(d.data.name)}`;
+                        const url = Nav.buildUIUrl(col, ['functions']) + '?q=' + encodeURIComponent(d.data.name);
                         Nav.openPath(url, event);
                     }
                     return;
                 }
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
-                    const url = `/collection/${col}/functions?cluster_uuid=${uuid}`;
+                    const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
                     Nav.openPath(url, event);
                 }
             })
@@ -997,7 +999,7 @@ class ClusterHierarchy extends D3BaseLayout {
                 binNodesMerge
                     .on("click", (event, d) => {
                         const col = getCollectionFromHash();
-                        const url = `/collection/${encodeURIComponent(col)}/files?q=${encodeURIComponent(d.name)}`;
+                        const url = Nav.buildUIUrl(col, ['files']) + '?q=' + encodeURIComponent(d.name);
                         Nav.openPath(url, event, { title: 'Files: ' + d.name, type: 'files' });
                     })
                     .on("mouseover", function(event, d) {
@@ -1108,7 +1110,7 @@ class ClusterHierarchy extends D3BaseLayout {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = `/collection/${encodeURIComponent(col)}/functions?cluster_uuid=${uuid}`;
+            const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
             Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
         };
     }
@@ -2125,7 +2127,7 @@ class ClusterPacking {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = `/collection/${encodeURIComponent(col)}/functions?cluster_uuid=${uuid}`;
+            const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
             Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
         };
     }

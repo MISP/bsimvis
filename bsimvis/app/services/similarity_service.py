@@ -45,6 +45,8 @@ class SimilarityService:
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
         """
+        self._func_meta_cache = {}
+        self._file_meta_cache = {}
         from bsimvis.app.services.config_service import config_service
 
         if algo is None:
@@ -453,55 +455,58 @@ class SimilarityService:
             len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
         )
 
-        func_meta_cache = {}
-        file_meta_cache = {}
+        if not hasattr(self, "_func_meta_cache"):
+            self._func_meta_cache = {}
+        if not hasattr(self, "_file_meta_cache"):
+            self._file_meta_cache = {}
 
         if needs_func_meta or needs_file_meta:
             func_ids_needed = set()
             file_ids_needed = set()
 
             for fid, t_md5, t_addr, t_total, candidates in discovery_results:
-                func_ids_needed.add(fid)
+                if fid not in self._func_meta_cache:
+                    func_ids_needed.add(fid)
                 if needs_file_meta:
                     md5 = fid.split(":")[2] if ":" in fid else "unknown"
-                    file_ids_needed.add(f"{extract_coll(fid)}:file:{md5}")
+                    file_key = f"{extract_coll(fid)}:file:{md5}"
+                    if file_key not in self._file_meta_cache:
+                        file_ids_needed.add(file_key)
 
                 for item in candidates:
-                    func_ids_needed.add(item["id"])
+                    if item["id"] not in self._func_meta_cache:
+                        func_ids_needed.add(item["id"])
                     if needs_file_meta:
                         md5 = (
                             item["id"].split(":")[2] if ":" in item["id"] else "unknown"
                         )
-                        file_ids_needed.add(f"{extract_coll(item['id'])}:file:{md5}")
+                        file_key = f"{extract_coll(item['id'])}:file:{md5}"
+                        if file_key not in self._file_meta_cache:
+                            file_ids_needed.add(file_key)
 
-            meta_pipe = r.pipeline()
-            func_ids_list = list(func_ids_needed)
-            for fid in func_ids_list:
-                meta_pipe.json().get(f"{fid}:meta", "$")
+            if func_ids_needed:
+                func_ids_list = list(func_ids_needed)
+                raw_func_metas = r.json().mget([f"{fid}:meta" for fid in func_ids_list], "$")
+                for fid, raw in zip(func_ids_list, raw_func_metas):
+                    if raw:
+                        m = raw[0] if isinstance(raw, list) else raw
+                        if isinstance(m, str):
+                            m = json.loads(m)
+                        self._func_meta_cache[fid] = m
+                    else:
+                        self._func_meta_cache[fid] = None
 
-            file_ids_list = list(file_ids_needed)
-            for fid in file_ids_list:
-                meta_pipe.json().get(f"{fid}:meta", "$")
-
-            raw_metas = meta_pipe.execute()
-
-            # Unpack func metas
-            raw_func = raw_metas[: len(func_ids_list)]
-            for fid, raw in zip(func_ids_list, raw_func):
-                if raw:
-                    m = raw[0] if isinstance(raw, list) else raw
-                    if isinstance(m, str):
-                        m = json.loads(m)
-                    func_meta_cache[fid] = m
-
-            # Unpack file metas
-            raw_file = raw_metas[len(func_ids_list) :]
-            for fid, raw in zip(file_ids_list, raw_file):
-                if raw:
-                    m = raw[0] if isinstance(raw, list) else raw
-                    if isinstance(m, str):
-                        m = json.loads(m)
-                    file_meta_cache[fid] = m
+            if file_ids_needed:
+                file_ids_list = list(file_ids_needed)
+                raw_file_metas = r.json().mget([f"{fid}:meta" for fid in file_ids_list], "$")
+                for fid, raw in zip(file_ids_list, raw_file_metas):
+                    if raw:
+                        m = raw[0] if isinstance(raw, list) else raw
+                        if isinstance(m, str):
+                            m = json.loads(m)
+                        self._file_meta_cache[fid] = m
+                    else:
+                        self._file_meta_cache[fid] = None
 
         idx_pipe = r.pipeline()
         for fid, t_md5, t_addr, t_total, candidates in discovery_results:
@@ -545,10 +550,10 @@ class SimilarityService:
                     target_coll,
                     sid,
                     sim_doc_for_idx,
-                    func_meta1=func_meta_cache.get(id_a),
-                    func_meta2=func_meta_cache.get(id_b),
-                    file_meta1=file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
-                    file_meta2=file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
+                    func_meta1=self._func_meta_cache.get(id_a),
+                    func_meta2=self._func_meta_cache.get(id_b),
+                    file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
+                    file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
                 )
 
         idx_pipe.execute()
@@ -963,6 +968,8 @@ class SimilarityService:
         """
         Orchestrates cross-collection similarity discovery for a pool.
         """
+        self._func_meta_cache = {}
+        self._file_meta_cache = {}
         from bsimvis.app.services.pool_service import pool_service
 
         pool = pool_service.get_pool(pool_id)

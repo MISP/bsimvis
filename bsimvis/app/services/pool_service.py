@@ -120,6 +120,8 @@ class PoolService:
 
         pools = []
         for pid in pool_ids:
+            # Dynamically verify sync status on list to show accurate state
+            self.check_sync_status(pid)
             meta = self.get_pool(pid)
             if meta:
                 meta["id"] = pid
@@ -151,6 +153,42 @@ class PoolService:
 
         pipe.execute()
         return True, "Pool deleted successfully"
+
+    def wipe_pool_data(self, pool_id):
+        """Wipes all generated similarity & clustering data but preserves pool configuration."""
+        r = self.r
+        meta = self.get_pool(pool_id)
+        if not meta:
+            return False, "Pool not found"
+
+        pipe = r.pipeline()
+        
+        # Cleanup keys in pool namespace except meta and collections_list keys
+        cursor = 0
+        pattern = f"global:pool:{pool_id}:*"
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
+            if keys:
+                keys_to_delete = []
+                for k in keys:
+                    k_str = k.decode() if isinstance(k, bytes) else k
+                    if k_str not in [
+                        f"global:pool:{pool_id}:meta",
+                        f"global:pool:{pool_id}:collections_list"
+                    ]:
+                        keys_to_delete.append(k)
+                if keys_to_delete:
+                    pipe.delete(*keys_to_delete)
+            if cursor == 0:
+                break
+
+        # Reset sync status and last built timestamps in metadata
+        pipe.hset(
+            f"global:pool:{pool_id}:meta",
+            mapping={"sync_status": "outdated", "last_built_at": 0},
+        )
+        pipe.execute()
+        return True, "Pool data wiped successfully"
 
     def check_sync_status(self, pool_id):
         """

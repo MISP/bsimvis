@@ -43,7 +43,7 @@ function createNav(view, collection, params = {}) {
 
 window.TableRenderers = {
     renderPools: function(data) {
-        if (!data || !data.length) return '<tr><td colspan="5" style="text-align:center">No pools found.</td></tr>';
+        if (!data || !data.length) return '<tr><td colspan="6" style="text-align:center">No pools found.</td></tr>';
 
         return data.map(pool => {
             const collectionsList = (pool.collections || []).map(c => `
@@ -56,17 +56,45 @@ window.TableRenderers = {
                 </span>
             ` : '';
 
+            let syncStatusBadge = '';
+            if (pool.sync_status === 'current') {
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(16, 185, 129, 0.15); border:1px solid rgba(16, 185, 129, 0.3); color:#10b981; padding:2px 8px; border-radius:4px; font-weight:bold;">Current</span>`;
+            } else if (pool.sync_status === 'outdated') {
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.3); color:#f59e0b; padding:2px 8px; border-radius:4px; font-weight:bold;">Outdated</span>`;
+            } else {
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(156, 163, 175, 0.15); border:1px solid rgba(156, 163, 175, 0.3); color:#9ca3af; padding:2px 8px; border-radius:4px; font-weight:bold;">${pool.sync_status || 'created'}</span>`;
+            }
+
+            const buildBtn = pool.sync_status === 'outdated' ? `
+                <button onclick="buildPool('${pool.id}', this)" class="btn-action" title="Build/Sync Pool" style="background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); border-radius:4px; color:#60a5fa; cursor:pointer; padding:3px 8px !important; font-size:0.75rem; display:inline-flex; align-items:center; gap:4px; margin-left:6px; font-weight:bold; height:24px; box-sizing:border-box; white-space:nowrap; width:auto !important; min-width:max-content !important;">
+                    <i class="fa-solid fa-play" style="font-size:0.7rem;"></i> Build
+                </button>
+            ` : '';
+
+            const rebuildBtn = `
+                <button onclick="rebuildPool('${pool.id}', this)" class="btn-action" title="Wipe & Rebuild Pool" style="background:rgba(168,85,247,0.15); border:1px solid rgba(168,85,247,0.3); border-radius:4px; color:#c084fc; cursor:pointer; padding:3px 8px !important; font-size:0.75rem; display:inline-flex; align-items:center; gap:4px; font-weight:bold; height:24px; box-sizing:border-box; white-space:nowrap; width:auto !important; min-width:max-content !important;">
+                    <i class="fa-solid fa-rotate" style="font-size:0.7rem;"></i> Rebuild
+                </button>
+            `;
+
             const poolUrl = '/pools/' + encodeURIComponent(pool.id) + '/files';
             return `
             <tr data-id="${pool.id}">
                 <td><a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
                 <td><b>${pool.name || 'Unnamed'}</b></td>
                 <td><div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">${collectionsList}${crossCollectionOnlyIndicator}</div></td>
+                <td>
+                    <div style="display:inline-flex; align-items:center;">
+                        ${syncStatusBadge}
+                        ${buildBtn}
+                    </div>
+                </td>
                 <td class="dim">${formatDate(pool.created_at)}</td>
                 <td>
-                    <div style="display:flex; gap:15px; align-items:center;">
-                        <button onclick="deletePool('${pool.id}', this)" class="btn-action" title="Delete Pool" style="background:none; border:none; color:#ef4444; cursor:pointer;">
-                            <i class="fa-solid fa-trash-can"></i>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                        ${rebuildBtn}
+                        <button onclick="deletePool('${pool.id}', this)" class="btn-action" title="Delete Pool" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:4px; color:#f87171; cursor:pointer; padding:3px 8px !important; font-size:0.75rem; display:inline-flex; align-items:center; gap:4px; font-weight:bold; height:24px; box-sizing:border-box; white-space:nowrap; width:auto !important; min-width:max-content !important;">
+                            <i class="fa-solid fa-trash-can" style="font-size:0.7rem;"></i> Delete
                         </button>
                     </div>
                 </td>

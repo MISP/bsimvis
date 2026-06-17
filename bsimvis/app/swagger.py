@@ -2167,7 +2167,7 @@ pool_config_model = api.model(
 pool_create_model = api.model(
     "PoolCreate",
     {
-        "pool_id": fields.String(required=True, example="my_pool"),
+        "pool_id": fields.String(required=False, example="my_pool"),
         "name": fields.String(required=True, example="My Cross-Collection Pool"),
         "collections": fields.List(
             fields.String, required=True, example=["main", "bench"]
@@ -2235,3 +2235,12 @@ class PoolSyncCheck(Resource):
         from bsimvis.app.routes.pools import sync_check
 
         return sync_check(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/rebuild")
+class PoolRebuild(Resource):
+    def post(self, pool_id):
+        """Wipes all pool data and enqueues jobs to rebuild similarities and clusters."""
+        from bsimvis.app.routes.pools import rebuild_pool
+
+        return rebuild_pool(pool_id)

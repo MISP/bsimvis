@@ -179,7 +179,7 @@ const routes = {
     'pools': {
         title: 'Pools',
         api: '/api/pool',
-        headers: ['Pool ID', 'Name', 'Collections', 'Created At', 'Actions'],
+        headers: ['Pool ID', 'Name', 'Collections', 'Sync Status', 'Created At', 'Actions'],
         renderer: renderPools
     },
     'batches': {
@@ -3969,7 +3969,7 @@ async function renderPoolCreationForm() {
 
     const colCheckboxes = collections.map(col => `
         <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
-            <input type="checkbox" name="pool-collections" value="${col.name}">
+            <input type="checkbox" name="pool-collections" value="${col.name}" onchange="updateAutoPoolName()">
             <span>${col.name} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
         </label>
     `).join('');
@@ -3988,15 +3988,9 @@ async function renderPoolCreationForm() {
 
             <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
                 <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; margin-bottom: 25px;">
-                        <div>
-                            <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool ID (slug)</label>
-                            <input type="text" id="new-pool-id" placeholder="e.g. shared_pool_1" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
-                        </div>
-                        <div>
-                            <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
-                            <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
-                        </div>
+                    <div style="margin-bottom: 25px;">
+                        <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
+                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
                     </div>
 
                     <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
@@ -4005,8 +3999,8 @@ async function renderPoolCreationForm() {
                             <div style="display:flex; justify-content:space-between; align-items:center;">
                                 <label style="font-size:0.75rem; color:var(--dim); font-weight:600; text-transform:uppercase;">Collections</label>
                                 <div style="display:flex; gap:10px;">
-                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = true)" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--accent); cursor:pointer; font-weight:600;">All</button>
-                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = false)" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--dim); cursor:pointer; font-weight:600;">None</button>
+                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = true); updateAutoPoolName();" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--accent); cursor:pointer; font-weight:600;">All</button>
+                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = false); updateAutoPoolName();" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--dim); cursor:pointer; font-weight:600;">None</button>
                                 </div>
                             </div>
                             <div style="position:relative;">
@@ -4022,7 +4016,7 @@ async function renderPoolCreationForm() {
                         <div style="display:flex; flex-direction:column; gap:15px;">
                             <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
                                 <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.2); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
-                                    <input type="checkbox" id="pool-cross-only" checked style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
+                                    <input type="checkbox" id="pool-cross-only" style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
                                     <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
                                         <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
                                     </label>
@@ -4098,23 +4092,26 @@ async function renderPoolCreationForm() {
                                     </div>
                                 </div>
                                 
-                                <div id="file-params-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; transition: opacity 0.3s ease;">
-                                    <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
-                                        <div>
-                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                            <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                            </select>
-                                        </div>
-                                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                <div id="file-params-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; transition: opacity 0.2s;">
+                                    <div>
+                                        <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
-                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
+                                                <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                                                    <option value="weighted_cosine" ${fileAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
+                                                    <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                                                </select>
                                             </div>
-                                            <div>
-                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
+                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
+                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -4155,8 +4152,30 @@ async function renderPoolCreationForm() {
             </div>
         </div>
     `;
+
+    window.isPoolNameManuallyEdited = false;
+    const nameInput = document.getElementById('new-pool-name');
+    if (nameInput) {
+        nameInput.addEventListener('input', () => {
+            window.isPoolNameManuallyEdited = true;
+        });
+    }
 }
 window.renderPoolCreationForm = renderPoolCreationForm;
+
+function updateAutoPoolName() {
+    if (window.isPoolNameManuallyEdited) return;
+    const checked = Array.from(document.querySelectorAll('input[name="pool-collections"]:checked')).map(cb => cb.value);
+    const poolNameEl = document.getElementById('new-pool-name');
+    if (poolNameEl) {
+        if (checked.length === 0) {
+            poolNameEl.value = '';
+        } else {
+            poolNameEl.value = checked.join(', ') + ' Pool';
+        }
+    }
+}
+window.updateAutoPoolName = updateAutoPoolName;
 
 function togglePoolCreationForm() {
     const content = document.getElementById('pool-creation-content');
@@ -4186,7 +4205,6 @@ function filterPoolCollections(val) {
 window.filterPoolCollections = filterPoolCollections;
 
 async function submitCreatePool(btn) {
-    const poolIdEl = document.getElementById('new-pool-id');
     const poolNameEl = document.getElementById('new-pool-name');
     const errEl = document.getElementById('pool-create-error');
     
@@ -4212,15 +4230,14 @@ async function submitCreatePool(btn) {
 
     if (errEl) errEl.style.display = 'none';
 
-    const poolId = poolIdEl ? poolIdEl.value.trim() : '';
     const poolName = poolNameEl ? poolNameEl.value.trim() : '';
     
     const checkedBoxes = document.querySelectorAll('input[name="pool-collections"]:checked');
     const collections = Array.from(checkedBoxes).map(cb => cb.value);
 
-    if (!poolId || !poolName || !collections.length) {
+    if (!poolName || !collections.length) {
         if (errEl) {
-            errEl.innerText = "Error: Pool ID, Pool Name, and at least one Collection are required.";
+            errEl.innerText = "Error: Pool Name and at least one Collection are required.";
             errEl.style.display = 'block';
         }
         return;
@@ -4236,7 +4253,6 @@ async function submitCreatePool(btn) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                pool_id: poolId,
                 name: poolName,
                 collections: collections,
                 config: {
@@ -4289,7 +4305,7 @@ async function submitCreatePool(btn) {
                         <p style="margin:0; font-size:0.85rem; color:var(--dim);">Pipeline <b>${data.job_id}</b> has been scheduled to process the pool.</p>
                     </div>
                     <div style="display:flex; gap:12px;">
-                        <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}')" class="btn-primary" style="padding:10px 20px; font-weight:600; display:flex; align-items:center; gap:8px;">
+                        <button onclick="Nav.openPath('/pools/${encodeURIComponent(data.pool_id)}')" class="btn-primary" style="padding:10px 20px; font-weight:600; display:flex; align-items:center; gap:8px;">
                             <i class="fa-solid fa-arrow-right"></i> Go to Pool
                         </button>
                         <button onclick="renderPoolCreationForm()" class="top-action-btn" style="padding:10px 20px; height:auto;">
@@ -4347,4 +4363,65 @@ async function deletePool(poolId, btn) {
     }
 }
 window.deletePool = deletePool;
+
+async function buildPool(poolId, btn) {
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/build`, {
+            method: 'POST'
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        alert(`Pool build enqueued! Job ID: ${data.job_id}`);
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to build pool: ${e.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-play"></i> Build';
+        }
+    }
+}
+window.buildPool = buildPool;
+
+async function rebuildPool(poolId, btn) {
+    if (!confirm(`Are you sure you want to WIPE and rebuild all data for pool "${poolId}"?`)) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/rebuild`, {
+            method: 'POST'
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        alert(`Pool wipe and rebuild enqueued! Job ID: ${data.job_id}`);
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to rebuild pool: ${e.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Rebuild';
+        }
+    }
+}
+window.rebuildPool = rebuildPool;
+
 

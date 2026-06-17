@@ -6,14 +6,17 @@ job_service = JobService()
 
 
 def create_pool():
+    import uuid
     data = request.json
     pool_id = data.get("pool_id")
+    if not pool_id:
+        pool_id = str(uuid.uuid4())
     name = data.get("name")
     collections = data.get("collections", [])
     config = data.get("config", {})
 
-    if not pool_id or not name or not collections:
-        return {"error": "Missing required fields (pool_id, name, collections)"}, 400
+    if not name or not collections:
+        return {"error": "Missing required fields (name, collections)"}, 400
 
     success, message = pool_service.create_pool(pool_id, name, collections, config)
     if not success:
@@ -75,3 +78,25 @@ def sync_check(pool_id):
     if not status:
         return {"error": "Pool not found"}, 404
     return status
+
+
+def rebuild_pool(pool_id):
+    """Wipes all computed pool similarity & cluster data, then triggers rebuilding pipeline."""
+    pool = pool_service.get_pool(pool_id)
+    if not pool:
+        return {"error": "Pool not found"}, 404
+
+    pool_service.wipe_pool_data(pool_id)
+
+    # Schedule similarity building followed by clustering in a unified pipeline
+    pipeline_id = job_service.create_pipeline(
+        [
+            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+            (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
+        ]
+    )
+    return {
+        "message": "Pool data wiped and rebuild pipeline enqueued",
+        "pool_id": pool_id,
+        "job_id": pipeline_id,
+    }

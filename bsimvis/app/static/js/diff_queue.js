@@ -22,20 +22,27 @@ window.stripPoolPrefix = stripPoolPrefix;
 function parseFuncIdFromStr(id) {
     const def = { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '', pool: null };
     if (!id) return def;
-    if (id.includes(':func:')) {
-        const parts = id.split(':func:');
+
+    // Strip leading 'idx:' if present for simplicity
+    let cleanId = id;
+    if (cleanId.startsWith('idx:')) {
+        cleanId = cleanId.substring(4);
+    }
+
+    if (cleanId.includes(':func:')) {
+        const parts = cleanId.split(':func:');
         const col = stripPoolPrefix(parts[0]);
         const rest = parts[1] ? parts[1].split(':') : [];
         return { ...def, collection_a: col || '', md5_a: rest[0] || '', addr_a: rest[1] || '', collection_b: col || '', md5_b: rest[0] || '', addr_b: rest[1] || '' };
     }
-    if (id.includes(':function:')) {
-        const parts = id.split(':function:');
+    if (cleanId.includes(':function:')) {
+        const parts = cleanId.split(':function:');
         const col = parts[0];
         const rest = parts[1] ? parts[1].split(':') : [];
         const cleanedCol = stripPoolPrefix(col);
         return { ...def, collection_a: cleanedCol || '', md5_a: rest[0] || '', addr_a: rest[1] || '', collection_b: cleanedCol || '', md5_b: rest[0] || '', addr_b: rest[1] || '' };
     }
-    const parts = id.split(':');
+    const parts = cleanId.split(':');
     if (parts.length >= 4) {
         if (parts[0] === 'idx') {
             const cleanedCol = stripPoolPrefix(parts[1]);
@@ -146,25 +153,18 @@ function addToDiff(a1, a2) {
     const name = a2 || id.split(':').pop();
 
     // Parse flat params from the ID
-    const parts = id.split(':');
+    const p = parseFuncIdFromStr(id);
     const obj = {
         id: id,
         name: name,
-        collection_a: stripPoolPrefix(parts[0]) || 'main',
-        md5_a: parts[2] || '',
-        addr_a: parts[3] || '',
-        collection_b: '',
-        md5_b: '',
-        addr_b: '',
+        collection_a: p.collection_a || 'main',
+        md5_a: p.md5_a || '',
+        addr_a: p.addr_a || '',
+        collection_b: p.collection_b || p.collection_a || 'main',
+        md5_b: p.md5_b || p.md5_a || '',
+        addr_b: p.addr_b || p.addr_a || '',
         pool: window.getRoutingState?.()?.pool || null
     };
-
-    // For single-item IDs (no second function provided), side-B = side-A
-    if (!obj.md5_b || !obj.addr_b) {
-        obj.collection_b = obj.collection_a;
-        obj.md5_b = obj.md5_a;
-        obj.addr_b = obj.addr_a;
-    }
 
     const existing = diffSelection.findIndex(item => normalizeFuncId(item.id) === id);
     if (existing !== -1) {
@@ -514,7 +514,7 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
             try {
                 const p1 = parseFuncIdFromStr(id1);
                 const p2 = parseFuncIdFromStr(id2);
-                const simUrl = `/api/similarity?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b) || encodeURIComponent(p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}`;
+                const simUrl = `/api/similarity?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b || p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}`;
                 const simRes = await fetch(simUrl);
                 if (simRes.ok) {
                     const simData = await simRes.json();
@@ -526,7 +526,7 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
         try {
             const p1 = parseFuncIdFromStr(id1);
             const p2 = parseFuncIdFromStr(id2);
-            const diffUrl = `/api/diff?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b) || encodeURIComponent(p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}`;
+            const diffUrl = `/api/diff?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b || p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}`;
             const res = await fetch(diffUrl);
             if (!res.ok) throw new Error("Diff failed");
             const data = await res.json();

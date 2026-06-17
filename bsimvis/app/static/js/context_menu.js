@@ -138,13 +138,15 @@
             norm.name = data.name || data.function_name;
             norm.addr = data.entrypoint || data.entrypoint_address || data.addr;
             norm.md5 = data.md5 || data.file_md5;
-            if (norm.id && (!norm.addr || !norm.md5)) {
+            let parsedCol = '';
+            if (norm.id) {
                 const parsed = window.parseFuncId(norm.id);
                 norm.addr = norm.addr || parsed.address;
                 norm.md5 = norm.md5 || parsed.md5;
+                parsedCol = parsed.collection;
             }
             // Ensure norm.id has a parseable collection:func:md5:addr format
-            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            const col = parsedCol || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
             if (col && norm.md5 && norm.addr) {
                 norm.id = col + ':func:' + norm.md5 + ':' + norm.addr;
             }

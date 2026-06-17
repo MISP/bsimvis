@@ -19,7 +19,7 @@ window.EntityRenderer = {
         const file_md5 = f['file_md5'] || '';
         const featCount = f['bsim_features_count'] || 0;
         
-        let collection = stripPoolPrefix(f['collection'] || '');
+        let collection = stripPoolPrefix(f['collection'] || '') || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
         
         const funcId = f['function_id'] || `${collection}:func:${file_md5}:${entry}`;
         

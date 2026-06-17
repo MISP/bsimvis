@@ -12,7 +12,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     const addr = m['entrypoint_address'] || parsed.address || 'N/A';
     const fileMd5 = m['file_md5'] || parsed.md5 || 'N/A';
 
-    const collection = parsed.collection || '';
+    const collection = parsed.collection || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
     const fileId = m['file_md5'] ? `${collection}:file:${m['file_md5']}` : (fileMd5 !== 'N/A' ? `${collection}:file:${fileMd5}` : null);
     
     // Tags and Clusters

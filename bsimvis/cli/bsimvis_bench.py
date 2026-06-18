@@ -4,6 +4,7 @@ import time
 import argparse
 import requests
 import sys
+import concurrent.futures
 from tqdm import tqdm
 from dotenv import load_dotenv
 
@@ -259,6 +260,88 @@ def print_comparison(baseline, current):
     print(f"{'GRAND TOTAL':<20} | {b_tot:>12.4f} | {c_tot:>12.4f} | {diff_tot:>+10.4f} | {tot_change_str:>8}\n")
 
 
+def run_single_file(data_dir, filename, collection, top_k, min_score, min_features):
+    """Process a single file and return results. Thread-safe."""
+    path = os.path.join(data_dir, filename)
+    size_mb, lines = get_file_stats(path)
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        # Rewrite collection and add parameters
+        data["collection"] = collection
+        if top_k:
+            data["top_k"] = top_k
+        if min_score:
+            data["min_score"] = min_score
+        if min_features:
+            data["min_features"] = min_features
+        num_funcs_in_file = len(data.get("functions", []))
+
+        print(f"\n[*] Processing {filename}")
+        print(
+            f"    - Size: {size_mb:.2f} MB | Lines: {lines:,} | Functions: {num_funcs_in_file}"
+        )
+
+        # Post to API
+        resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
+        resp.raise_for_status()
+        res = resp.json()
+        pipeline_id = res.get("pipeline_id")
+
+        if not pipeline_id:
+            print(f"[!] No pipeline ID returned for {filename}")
+            return None
+
+        # Wait for completion with a small progress bar
+        print(f"[*] Waiting for pipeline {pipeline_id} to complete...")
+        finished_job = poll_job(pipeline_id)
+
+        if finished_job:
+            status = finished_job.get("status")
+
+            # Fetch collection stats AFTER completion
+            stats = get_collection_stats(collection)
+
+            # Retrieve structured performance metrics
+            perf_metrics = get_pipeline_perf_metrics(pipeline_id)
+
+            result = {
+                "filename": filename,
+                "pipeline_id": pipeline_id,
+                "status": status,
+                "size_mb": size_mb,
+                "lines": lines,
+                "funcs": stats.get("num_functions", 0),
+                "indexed": stats.get("num_indexed", 0),
+                "features": stats.get("num_features", 0),
+                "sims": stats.get("num_sim_meta", 0),
+                "perf_metrics": perf_metrics,
+            }
+
+            if status == "completed":
+                print(f"[+ ]{filename} finished successfully.")
+                # Automatically show performance report
+                os.system(f"uv run bsimvis job perf {pipeline_id}")
+
+                print(f"\n[i] Collection State after {filename}:")
+                print(
+                    f"    - Total Functions: {stats.get('num_functions')} ({stats.get('num_indexed')} indexed)"
+                )
+                print(f"    - Total Features : {stats.get('num_features')}")
+                print(f"    - Total Similarities: {stats.get('num_sim_meta', 0)}")
+            else:
+                print(f"[!] {filename} failed with status: {status}")
+            print("-" * 60)
+
+            return result
+    except Exception as e:
+        print(f"[!] Failed to process {filename}: {e}")
+
+    return None
+
+
 def run_bench(
     data_dir,
     collection,
@@ -290,113 +373,74 @@ def run_bench(
     print(f"[*] Starting Benchmark on collection: {collection}")
     print(f"[*] Found {len(json_files)} binaries to process.")
 
+    # 2. Parallel Upload using ThreadPoolExecutor
+    start_time = time.time()
+    max_workers = len(json_files)  # One thread per file
     results = []
-    perf_metrics = None
+    all_perf_metrics = []
 
-    # 2. Sequential Upload
-    for filename in json_files:
-        path = os.path.join(data_dir, filename)
-        size_mb, lines = get_file_stats(path)
+    print(f"\n[*] Uploading {len(json_files)} files concurrently...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {
+            executor.submit(run_single_file, data_dir, f, collection, top_k, min_score, min_features): f
+            for f in json_files
+        }
+        for future in concurrent.futures.as_completed(future_to_file):
+            result = future.result()
+            if result:
+                results.append(result)
+                all_perf_metrics.append(result["perf_metrics"])
 
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
+    total_elapsed = time.time() - start_time
 
-            # Rewrite collection and add parameters
-            data["collection"] = collection
-            if top_k:
-                data["top_k"] = top_k
-            if min_score:
-                data["min_score"] = min_score
-            if min_features:
-                data["min_features"] = min_features
-            num_funcs_in_file = len(data.get("functions", []))
-
-            print(f"\n[*] Processing {filename}")
-            print(
-                f"    - Size: {size_mb:.2f} MB | Lines: {lines:,} | Functions: {num_funcs_in_file}"
-            )
-
-            # Post to API
-            resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
-            resp.raise_for_status()
-            res = resp.json()
-            pipeline_id = res.get("pipeline_id")
-
-            if not pipeline_id:
-                print(f"[!] No pipeline ID returned for {filename}")
-                continue
-
-            # Wait for completion with a small progress bar
-            print(f"[*] Waiting for pipeline {pipeline_id} to complete...")
-            finished_job = poll_job(pipeline_id)
-
-            if finished_job:
-                status = finished_job.get("status")
-
-                # Fetch collection stats AFTER completion
-                stats = get_collection_stats(collection)
-                
-                # Retrieve structured performance metrics
-                perf_metrics = get_pipeline_perf_metrics(pipeline_id)
-
-                results.append(
-                    {
-                        "filename": filename,
-                        "pipeline_id": pipeline_id,
-                        "status": status,
-                        "size_mb": size_mb,
-                        "lines": lines,
-                        "funcs": stats.get("num_functions", 0),
-                        "indexed": stats.get("num_indexed", 0),
-                        "features": stats.get("num_features", 0),
-                        "sims": stats.get("num_sim_meta", 0),
-                    }
-                )
-
-                if status == "completed":
-                    print(f"[+ ]{filename} finished successfully.")
-                    # Automatically show performance report
-                    os.system(f"uv run bsimvis job perf {pipeline_id}")
-
-                    print(f"\n[i] Collection State after {filename}:")
-                    print(
-                        f"    - Total Functions: {stats.get('num_functions')} ({stats.get('num_indexed')} indexed)"
-                    )
-                    print(f"    - Total Features : {stats.get('num_features')}")
-                    print(f"    - Total Similarities: {stats.get('num_sim_meta', 0)}")
-                else:
-                    print(f"[!] {filename} failed with status: {status}")
-                print("-" * 60)
-
-        except Exception as e:
-            print(f"[!] Failed to process {filename}: {e}")
+    # Use the last non-None perf metrics (they may differ per file in parallel mode)
+    all_perfs = [m for m in all_perf_metrics if m is not None]
+    perf_metrics = all_perfs[-1] if all_perfs else None
 
     print("\n=== BENCHMARK SUMMARY ===")
     header = f"{'Filename':<20} | {'Pipeline ID':<25} | {'Size':>7} | {'Funcs':>6} | {'Features':>8} | {'Sims':>8}"
     print(header)
     print("-" * len(header))
-    for r in results:
+    for r in sorted(results, key=lambda x: x["filename"]):
         print(
             f"{r['filename']:<20} | {r['pipeline_id']:<25} | {r['size_mb']:>6.1f}M | {r['funcs']:>6} | {r['features']:>8} | {r['sims']:>8}"
         )
+    print(f"\n[+] Total elapsed time: {total_elapsed:.2f}s")
 
     # Handle Save
     if save_path and perf_metrics:
         try:
             with open(save_path, "w") as f:
                 json.dump(perf_metrics, f, indent=2)
-            print(f"\n[+] Saved performance metrics to {save_path}")
+            print(f"[+] Saved performance metrics to {save_path}")
         except Exception as e:
             print(f"[!] Failed to save metrics: {e}")
 
     # Handle Compare
-    if compare_path and perf_metrics:
+    if compare_path and all_perfs:
+        # For parallel runs, average the perf metrics across all completed pipelines
+        avg_metrics = {
+            "grand_total": sum(m["grand_total"] for m in all_perfs) / len(all_perfs),
+            "sub_tasks": {},
+        }
+        for m in all_perfs:
+            for k, v in m["sub_tasks"].items():
+                if k not in avg_metrics["sub_tasks"]:
+                    avg_metrics["sub_tasks"][k] = {"total": 0, "python": 0, "db": 0, "lua": 0}
+                avg_metrics["sub_tasks"][k]["total"] += v["total"]
+                avg_metrics["sub_tasks"][k]["python"] += v["python"]
+                avg_metrics["sub_tasks"][k]["db"] += v["db"]
+                avg_metrics["sub_tasks"][k]["lua"] += v["lua"]
+        for k in avg_metrics["sub_tasks"]:
+            n = len(all_perfs)
+            for vv in ("total", "python", "db", "lua"):
+                avg_metrics["sub_tasks"][k][vv] /= n
+
         try:
             if os.path.exists(compare_path):
                 with open(compare_path, "r") as f:
                     baseline = json.load(f)
-                print_comparison(baseline, perf_metrics)
+                print_comparison(baseline, avg_metrics)
             else:
                 print(f"[!] Baseline file not found: {compare_path}")
         except Exception as e:

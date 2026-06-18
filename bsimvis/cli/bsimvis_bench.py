@@ -447,6 +447,194 @@ def run_bench(
             print(f"[!] Error comparing baseline: {e}")
 
 
+def run_single_file_for_pool(data_dir, filename, collection, top_k, min_score, min_features):
+    """Process a single file for pool benchmark by uploading it with skip_sim=True."""
+    path = os.path.join(data_dir, filename)
+    size_mb, lines = get_file_stats(path)
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+
+        # Rewrite collection and add parameters
+        data["collection"] = collection
+        data["skip_sim"] = True
+        if top_k is not None:
+            data["top_k"] = top_k
+        if min_score is not None:
+            data["min_score"] = min_score
+        if min_features is not None:
+            data["min_features"] = min_features
+        num_funcs_in_file = len(data.get("functions", []))
+
+        print(f"\n[*] Processing {filename} -> Collection: {collection}")
+        print(
+            f"    - Size: {size_mb:.2f} MB | Lines: {lines:,} | Functions: {num_funcs_in_file}"
+        )
+
+        # Post to API
+        resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
+        resp.raise_for_status()
+        res = resp.json()
+        pipeline_id = res.get("pipeline_id")
+
+        if not pipeline_id:
+            print(f"[!] No pipeline ID returned for {filename}")
+            return None
+
+        # Wait for completion
+        print(f"[*] Waiting for ingestion pipeline {pipeline_id} to complete...")
+        finished_job = poll_job(pipeline_id)
+
+        if finished_job:
+            status = finished_job.get("status")
+            return {
+                "filename": filename,
+                "collection": collection,
+                "status": status,
+            }
+    except Exception as e:
+        print(f"[!] Failed to process {filename} into {collection}: {e}")
+
+    return None
+
+
+def run_bench_pools(
+    data_dir,
+    collection,
+    clear_first=False,
+    limit=None,
+    top_k=None,
+    min_score=None,
+    min_features=None,
+    save_path=None,
+    compare_path=None,
+):
+    """Run benchmark by creating a pool across separate collections."""
+    if not os.path.exists(data_dir):
+        print(f"Error: Directory {data_dir} not found.")
+        return
+
+    json_files = sorted([f for f in os.listdir(data_dir) if f.endswith(".json")])
+    if limit:
+        json_files = json_files[:limit]
+
+    if not json_files:
+        print(f"No JSON files found in {data_dir}")
+        return
+
+    # Map filename -> target collection name
+    file_collections = [f"{collection}_{idx + 1}" for idx, _ in enumerate(json_files)]
+    pool_id = f"pool_{collection}"
+
+    # 1. Optional Clear
+    if clear_first:
+        for col_name in file_collections:
+            clear_collection(col_name)
+        try:
+            requests.delete(f"{API_BASE}/pool/{pool_id}")
+            print(f"[+] Deleted existing pool '{pool_id}'")
+        except Exception:
+            pass
+
+    print(f"[*] Starting Pool Benchmark: {pool_id}")
+    print(f"[*] Collections in pool: {file_collections}")
+
+    # 2. Ingest files concurrently with skip_sim=True
+    start_time = time.time()
+    max_workers = len(json_files)
+    results = []
+
+    print(f"\n[*] Ingesting {len(json_files)} files concurrently...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_file = {
+            executor.submit(
+                run_single_file_for_pool,
+                data_dir,
+                f,
+                col_name,
+                top_k,
+                min_score,
+                min_features
+            ): f
+            for f, col_name in zip(json_files, file_collections)
+        }
+        for future in concurrent.futures.as_completed(future_to_file):
+            res = future.result()
+            if res:
+                results.append(res)
+
+    if len(results) < len(json_files):
+        print("[!] Not all files completed ingestion. Aborting pool similarity benchmark.")
+        return
+
+    # 3. Create the pool and trigger building
+    print(f"\n[*] Creating Pool '{pool_id}'...")
+    pool_payload = {
+        "pool_id": pool_id,
+        "name": f"Benchmark Pool for {collection}",
+        "collections": file_collections,
+        "config": {
+            "skip_clustering": True
+        }
+    }
+    
+    try:
+        resp = requests.post(f"{API_BASE}/pool", json=pool_payload)
+        resp.raise_for_status()
+        pool_res = resp.json()
+        job_id = pool_res.get("job_id")
+        
+        if not job_id:
+            print("[!] No job ID returned from pool creation API.")
+            return
+        
+        print(f"[*] Waiting for pool build pipeline {job_id} to complete...")
+        finished_job = poll_job(job_id)
+        
+        if finished_job:
+            status = finished_job.get("status")
+            total_elapsed = time.time() - start_time
+            
+            # Fetch performance metrics for this pipeline
+            perf_metrics = get_pipeline_perf_metrics(job_id)
+            
+            print("\n=== POOL BENCHMARK SUMMARY ===")
+            print(f"Pool ID:     {pool_id}")
+            print(f"Status:      {status}")
+            print(f"Total time:  {total_elapsed:.2f}s")
+            
+            if perf_metrics:
+                # We can print the subtask details
+                print("\n=== SUBTASK DETAILS ===")
+                for task_type, vals in perf_metrics.get("sub_tasks", {}).items():
+                    print(f"  - {task_type:<20}: {vals['total']:.4f}s (Lua: {vals['lua']:.4f}s, DB: {vals['db']:.4f}s, Python: {vals['python']:.4f}s)")
+            
+            # Handle Save
+            if save_path and perf_metrics:
+                try:
+                    with open(save_path, "w") as f:
+                        json.dump(perf_metrics, f, indent=2)
+                    print(f"\n[+] Saved performance metrics to {save_path}")
+                except Exception as e:
+                    print(f"[!] Failed to save metrics: {e}")
+
+            # Handle Compare
+            if compare_path and perf_metrics:
+                try:
+                    if os.path.exists(compare_path):
+                        with open(compare_path, "r") as f:
+                            baseline = json.load(f)
+                        print_comparison(baseline, perf_metrics)
+                    else:
+                        print(f"[!] Baseline file not found: {compare_path}")
+                except Exception as e:
+                    print(f"[!] Error comparing baseline: {e}")
+                    
+    except Exception as e:
+        print(f"[!] Failed to run pool benchmark: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="BSimVis Pipeline Benchmarker")
     parser.add_argument(
@@ -479,20 +667,36 @@ def main():
     parser.add_argument(
         "--compare", type=str, help="Path to baseline performance metrics JSON for comparison"
     )
+    parser.add_argument(
+        "--bench-pools", action="store_true", help="Benchmark pool-level similarities instead of standard pipeline"
+    )
 
     args = parser.parse_args()
 
-    run_bench(
-        args.dir,
-        args.collection,
-        args.clear,
-        args.limit,
-        args.top_k,
-        args.min_score,
-        args.min_features,
-        args.save,
-        args.compare,
-    )
+    if args.bench_pools:
+        run_bench_pools(
+            args.dir,
+            args.collection,
+            args.clear,
+            args.limit,
+            args.top_k,
+            args.min_score,
+            args.min_features,
+            args.save,
+            args.compare,
+        )
+    else:
+        run_bench(
+            args.dir,
+            args.collection,
+            args.clear,
+            args.limit,
+            args.top_k,
+            args.min_score,
+            args.min_features,
+            args.save,
+            args.compare,
+        )
 
 
 if __name__ == "__main__":

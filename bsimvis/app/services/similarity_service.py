@@ -986,6 +986,7 @@ class SimilarityService:
         algo = func_sim_params.get("algo", pool.get("algo", "unweighted_cosine"))
         top_k = int(func_sim_params.get("top_k", pool.get("top_k", 1000)))
         min_score = float(func_sim_params.get("min_score", pool.get("min_score", 0.3)))
+        min_features = int(func_sim_params.get("min_features", pool.get("min_features", 0)))
 
         r = self.r
 
@@ -1067,10 +1068,13 @@ class SimilarityService:
                         target_feat_total,
                         target_feat_norm,
                         top_k,
-                        0,  # min_features
+                        min_features,
                     ] + lua_features_args
 
                     targets_with_lua.append((fid, target_feat_total, lua_args))
+
+            if not targets_with_lua:
+                continue
 
             # Pipeline all EVAL calls across all functions × collections → 1 RTT
             pipe = r.pipeline()

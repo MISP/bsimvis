@@ -148,7 +148,20 @@ function renderJobs(jobs) {
         }
 
         const indent = level > 0 ? `<span class="job-indent" style="margin-left: ${level * 15}px;"></span>` : '';
-        const collectionDisplay = job.collection ? `<div class="job-collection-cell"><i class="fa-solid fa-layer-group"></i> ${job.collection}</div>` : '<span class="dim">-</span>';
+
+        let collectionDisplay;
+        if (job.collection) {
+            const isPool = job.collection.startsWith('pool:');
+            if (isPool) {
+                const poolId = job.collection.slice(5);
+                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;"><i class="fa-solid fa-layer-group"></i> <a onclick="window.Nav && window.Nav.openPath('/pools/${poolId}');"><i class="fa-solid fa-sitemap"></i> ${poolId}</a></div>`;
+            } else {
+                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;"><i class="fa-solid fa-layer-group"></i> <a onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl('${job.collection}', []));">${job.collection}</a></div>`;
+            }
+        } else {
+            collectionDisplay = '<span class="dim">-</span>';
+        }
+
         const targetDisplay = job.target ? `<code class="job-target-text">${job.target}</code>` : '<span class="dim">-</span>';
 
         const rowStyle = shouldHide ? 'display: none;' : '';
@@ -340,7 +353,14 @@ async function refreshJobModal(jobId, isInitial = false) {
 
             for (const [key, value] of Object.entries(job.payload)) {
                 let displayValue = value;
-                if (typeof value === 'object' && value !== null) {
+                const isNavigable = key === 'collection' && typeof value === 'string' && value !== '' && !job.payload.pool_id;
+                const isPoolValue = key === 'pool_id' && typeof value === 'string' && value !== '';
+
+                if (isNavigable) {
+                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl('${escapeHtml(value)}', []));">${value}</a>`;
+                } else if (isPoolValue) {
+                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="void(0); window.Nav && window.Nav.openPath('/pools/${value}');">${value}</a>`;
+                } else if (typeof value === 'object' && value !== null) {
                     displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${JSON.stringify(value)}</code>`;
                 } else if (typeof value === 'string' && value.length > 30) {
                     displayValue = `<code title="${value}" style="font-size: 0.75rem;">${value.substring(0, 12)}...${value.substring(value.length - 8)}</code>`;

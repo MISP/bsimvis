@@ -90,123 +90,6 @@ def get_collection_stats(collection):
     return {}
 
 
-def run_bench(
-    data_dir,
-    collection,
-    clear_first=False,
-    limit=None,
-    top_k=None,
-    min_score=None,
-    min_features=None,
-):
-    """Run benchmark by uploading all JSON files in a directory."""
-    if not os.path.exists(data_dir):
-        print(f"Error: Directory {data_dir} not found.")
-        return
-
-    json_files = sorted([f for f in os.listdir(data_dir) if f.endswith(".json")])
-    if limit:
-        json_files = json_files[:limit]
-
-    if not json_files:
-        print(f"No JSON files found in {data_dir}")
-        return
-
-    # 1. Optional Clear
-    if clear_first:
-        clear_collection(collection)
-
-    print(f"[*] Starting Benchmark on collection: {collection}")
-    print(f"[*] Found {len(json_files)} binaries to process.")
-
-    results = []
-
-    # 2. Sequential Upload
-    for filename in json_files:
-        path = os.path.join(data_dir, filename)
-        size_mb, lines = get_file_stats(path)
-
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-
-            # Rewrite collection and add parameters
-            data["collection"] = collection
-            if top_k:
-                data["top_k"] = top_k
-            if min_score:
-                data["min_score"] = min_score
-            if min_features:
-                data["min_features"] = min_features
-            num_funcs_in_file = len(data.get("functions", []))
-
-            print(f"\n[*] Processing {filename}")
-            print(
-                f"    - Size: {size_mb:.2f} MB | Lines: {lines:,} | Functions: {num_funcs_in_file}"
-            )
-
-            # Post to API
-            resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
-            resp.raise_for_status()
-            res = resp.json()
-            pipeline_id = res.get("pipeline_id")
-
-            if not pipeline_id:
-                print(f"[!] No pipeline ID returned for {filename}")
-                continue
-
-            # Wait for completion with a small progress bar
-            print(f"[*] Waiting for pipeline {pipeline_id} to complete...")
-            finished_job = poll_job(pipeline_id)
-
-            if finished_job:
-                status = finished_job.get("status")
-
-                # Fetch collection stats AFTER completion
-                stats = get_collection_stats(collection)
-
-                results.append(
-                    {
-                        "filename": filename,
-                        "pipeline_id": pipeline_id,
-                        "status": status,
-                        "size_mb": size_mb,
-                        "lines": lines,
-                        "funcs": stats.get("num_functions", 0),
-                        "indexed": stats.get("num_indexed", 0),
-                        "features": stats.get("num_features", 0),
-                        "sims": stats.get("num_sim_meta", 0),
-                    }
-                )
-
-                if status == "completed":
-                    print(f"[+ ]{filename} finished successfully.")
-                    # Automatically show performance report
-                    os.system(f"uv run bsimvis job perf {pipeline_id}")
-
-                    print(f"\n[i] Collection State after {filename}:")
-                    print(
-                        f"    - Total Functions: {stats.get('num_functions')} ({stats.get('num_indexed')} indexed)"
-                    )
-                    print(f"    - Total Features : {stats.get('num_features')}")
-                    print(f"    - Total Similarities: {stats.get('num_sim_meta', 0)}")
-                else:
-                    print(f"[!] {filename} failed with status: {status}")
-                print("-" * 60)
-
-        except Exception as e:
-            print(f"[!] Failed to process {filename}: {e}")
-
-    print("\n=== BENCHMARK SUMMARY ===")
-    header = f"{'Filename':<20} | {'Pipeline ID':<25} | {'Size':>7} | {'Funcs':>6} | {'Features':>8} | {'Sims':>8}"
-    print(header)
-    print("-" * len(header))
-    for r in results:
-        print(
-            f"{r['filename']:<20} | {r['pipeline_id']:<25} | {r['size_mb']:>6.1f}M | {r['funcs']:>6} | {r['features']:>8} | {r['sims']:>8}"
-        )
-
-
 def get_pipeline_perf_metrics(pipeline_id):
     """Retrieve detailed execution time metrics for a pipeline."""
     try:
@@ -352,6 +235,7 @@ def run_bench(
     min_features=None,
     save_path=None,
     compare_path=None,
+    sequential=False,
 ):
     """Run benchmark by uploading all JSON files in a directory."""
     if not os.path.exists(data_dir):
@@ -373,23 +257,31 @@ def run_bench(
     print(f"[*] Starting Benchmark on collection: {collection}")
     print(f"[*] Found {len(json_files)} binaries to process.")
 
-    # 2. Parallel Upload using ThreadPoolExecutor
+    # 2. Upload using ThreadPoolExecutor or sequentially
     start_time = time.time()
-    max_workers = len(json_files)  # One thread per file
     results = []
     all_perf_metrics = []
 
-    print(f"\n[*] Uploading {len(json_files)} files concurrently...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {
-            executor.submit(run_single_file, data_dir, f, collection, top_k, min_score, min_features): f
-            for f in json_files
-        }
-        for future in concurrent.futures.as_completed(future_to_file):
-            result = future.result()
+    if sequential:
+        print(f"\n[*] Uploading {len(json_files)} files sequentially...")
+        for f in json_files:
+            result = run_single_file(data_dir, f, collection, top_k, min_score, min_features)
             if result:
                 results.append(result)
                 all_perf_metrics.append(result["perf_metrics"])
+    else:
+        print(f"\n[*] Uploading {len(json_files)} files concurrently...")
+        max_workers = len(json_files)  # One thread per file
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_file = {
+                executor.submit(run_single_file, data_dir, f, collection, top_k, min_score, min_features): f
+                for f in json_files
+            }
+            for future in concurrent.futures.as_completed(future_to_file):
+                result = future.result()
+                if result:
+                    results.append(result)
+                    all_perf_metrics.append(result["perf_metrics"])
 
     total_elapsed = time.time() - start_time
 
@@ -509,6 +401,7 @@ def run_bench_pools(
     min_features=None,
     save_path=None,
     compare_path=None,
+    sequential=False,
 ):
     """Run benchmark by creating a pool across separate collections."""
     if not os.path.exists(data_dir):
@@ -527,46 +420,73 @@ def run_bench_pools(
     file_collections = [f"{collection}_{idx + 1}" for idx, _ in enumerate(json_files)]
     pool_id = f"pool_{collection}"
 
-    # 1. Optional Clear
+    from bsimvis.app.services.redis_client import get_redis
+    r_client = get_redis()
+
+    # Check if all collections already have functions indexed
+    collections_exist = False
+    if not clear_first:
+        collections_exist = True
+        for col_name in file_collections:
+            try:
+                if r_client.scard(f"{col_name}:all_functions") == 0:
+                    collections_exist = False
+                    break
+            except Exception:
+                collections_exist = False
+                break
+
+    # 1. Unconditionally delete the pool definition so we can recreate it
+    try:
+        requests.delete(f"{API_BASE}/pool/{pool_id}")
+    except Exception:
+        pass
+
+    # 2. Optional Clear for collections
     if clear_first:
         for col_name in file_collections:
             clear_collection(col_name)
-        try:
-            requests.delete(f"{API_BASE}/pool/{pool_id}")
-            print(f"[+] Deleted existing pool '{pool_id}'")
-        except Exception:
-            pass
 
     print(f"[*] Starting Pool Benchmark: {pool_id}")
     print(f"[*] Collections in pool: {file_collections}")
 
-    # 2. Ingest files concurrently with skip_sim=True
+    # 2. Ingest files concurrently or sequentially (only if they don't exist)
     start_time = time.time()
-    max_workers = len(json_files)
     results = []
 
-    print(f"\n[*] Ingesting {len(json_files)} files concurrently...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {
-            executor.submit(
-                run_single_file_for_pool,
-                data_dir,
-                f,
-                col_name,
-                top_k,
-                min_score,
-                min_features
-            ): f
-            for f, col_name in zip(json_files, file_collections)
-        }
-        for future in concurrent.futures.as_completed(future_to_file):
-            res = future.result()
-            if res:
-                results.append(res)
+    if collections_exist:
+        print("\n[*] Target collections are already populated. Skipping ingestion/indexing phase.")
+    else:
+        if sequential:
+            print(f"\n[*] Ingesting {len(json_files)} files sequentially...")
+            for f, col_name in zip(json_files, file_collections):
+                res = run_single_file_for_pool(data_dir, f, col_name, top_k, min_score, min_features)
+                if res:
+                    results.append(res)
+        else:
+            print(f"\n[*] Ingesting {len(json_files)} files concurrently...")
+            max_workers = len(json_files)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_file = {
+                    executor.submit(
+                        run_single_file_for_pool,
+                        data_dir,
+                        f,
+                        col_name,
+                        top_k,
+                        min_score,
+                        min_features
+                    ): f
+                    for f, col_name in zip(json_files, file_collections)
+                }
+                for future in concurrent.futures.as_completed(future_to_file):
+                    res = future.result()
+                    if res:
+                        results.append(res)
 
-    if len(results) < len(json_files):
-        print("[!] Not all files completed ingestion. Aborting pool similarity benchmark.")
-        return
+        if len(results) < len(json_files):
+            print("[!] Not all files completed ingestion. Aborting pool similarity benchmark.")
+            return
 
     # 3. Create the pool and trigger building
     print(f"\n[*] Creating Pool '{pool_id}'...")
@@ -670,6 +590,9 @@ def main():
     parser.add_argument(
         "--bench-pools", action="store_true", help="Benchmark pool-level similarities instead of standard pipeline"
     )
+    parser.add_argument(
+        "--sequential", action="store_true", help="Run file uploads sequentially rather than concurrently"
+    )
 
     args = parser.parse_args()
 
@@ -684,6 +607,7 @@ def main():
             args.min_features,
             args.save,
             args.compare,
+            args.sequential,
         )
     else:
         run_bench(
@@ -696,6 +620,7 @@ def main():
             args.min_features,
             args.save,
             args.compare,
+            args.sequential,
         )
 
 

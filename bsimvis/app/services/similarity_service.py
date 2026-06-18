@@ -1026,9 +1026,9 @@ class SimilarityService:
                     f"Building pool: {done}/{total} functions ({speed:.1f} fn/s)",
                 )
 
-            discovery_results = []
+            # Build list of (fid, target_feat_total, lua_args) tuples for pipeline
+            targets_with_lua = []
             for fid in chunk:
-                # Get vector
                 vec_key = f"{fid}:vec:tf"
                 features_raw = r.zrange(vec_key, 0, -1, withscores=True)
                 if not features_raw:
@@ -1054,14 +1054,11 @@ class SimilarityService:
 
                 target_feat_norm = math.sqrt(target_feat_norm_sq)
 
-                # Search in EACH collection of the pool
-                candidates = []
                 for search_coll in collections:
                     # ONLY_CROSS_COLLECTION FILTER: Skip Lua if query FID is from search_coll
                     if only_cross_collection and fid.startswith(f"{search_coll}:"):
                         continue
 
-                    # LUA discovery for each collection
                     lua_args = [
                         fid,
                         search_coll,
@@ -1073,35 +1070,46 @@ class SimilarityService:
                         0,  # min_features
                     ] + lua_features_args
 
-                    try:
-                        coll_candidates_raw = self._find_script(args=lua_args)
-                        if coll_candidates_raw:
-                            for k in range(0, len(coll_candidates_raw), 3):
-                                candidates.append(
-                                    {
-                                        "id": (
-                                            coll_candidates_raw[k].decode()
-                                            if isinstance(coll_candidates_raw[k], bytes)
-                                            else coll_candidates_raw[k]
-                                        ),
-                                        "score": float(coll_candidates_raw[k + 1]),
-                                        "c_total": float(coll_candidates_raw[k + 2]),
-                                    }
-                                )
-                    except Exception as e:
-                        logging.error(
-                            f"LUA search failed for {fid} in {search_coll}: {e}"
-                        )
+                    targets_with_lua.append((fid, target_feat_total, lua_args))
 
+            # Pipeline all EVAL calls across all functions × collections → 1 RTT
+            pipe = r.pipeline()
+            for fid, _, lua_args in targets_with_lua:
+                self._find_script(args=lua_args, client=pipe)
+            raw_results = pipe.execute()
+
+            # Parse pipeline results back into per-function groups
+            # pipeline.execute() returns results in same order as commands were queued
+            candidates_by_fid = []
+            for (fid, t_total, lua_args), raw in zip(targets_with_lua, raw_results):
+                if not raw:
+                    continue
+                fid_candidates = []
+                for k in range(0, len(raw), 3):
+                    fid_candidates.append(
+                        {
+                            "id": (
+                                raw[k].decode()
+                                if isinstance(raw[k], bytes)
+                                else raw[k]
+                            ),
+                            "score": float(raw[k + 1]),
+                            "c_total": float(raw[k + 2]),
+                        }
+                    )
+                candidates_by_fid.append((fid, t_total, fid_candidates))
+
+            discovery_results = []
+            for fid, t_total, candidates in candidates_by_fid:
                 if candidates:
-                    # Sort and limit combined candidates
+                    # Sort and limit combined candidates (from all collections)
                     candidates.sort(key=lambda x: x["score"], reverse=True)
                     candidates = candidates[:top_k]
 
                     parts = fid.split(":")
                     md5 = parts[2] if len(parts) >= 3 else "unknown"
                     discovery_results.append(
-                        (fid, md5, "", target_feat_total, candidates)
+                        (fid, md5, "", t_total, candidates)
                     )
 
             if discovery_results:

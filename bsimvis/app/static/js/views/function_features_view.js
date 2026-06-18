@@ -184,9 +184,25 @@ window.FunctionFeaturesView = {
             const res = await fetch(`/api/function/features?id=${encodeURIComponent(this.id)}`);
             if (!res.ok) throw new Error("Failed to load features");
             const data = await res.json();
-            
-            this.globalTips = data.tips || {};
+
+            this.globalTips = data.tips || [];
             this.featureName = this.id.split(':').pop();
+
+            // Fetch function metadata for breadcrumb labels
+            try {
+                const funcRes = await fetch(`/api/function/code?id=${encodeURIComponent(this.id)}`);
+                if (funcRes.ok) {
+                    const funcData = await funcRes.json();
+                    if (funcData.meta) {
+                        const fn = funcData.meta.file_name || 'File';
+                        const fname = funcData.meta.function_name || 'Function';
+                        const col = this.id.split(':')[0];
+                        Breadcrumbs.setFilename(this.params.md5 || this.params.file_md5, fn);
+                        Breadcrumbs.setFuncName(col, this.params.md5 || this.params.file_md5, this.params.address, fname);
+                        Breadcrumbs.refresh();
+                    }
+                }
+            } catch(e) {}
 
             this.renderFeatures(data.features || []);
 

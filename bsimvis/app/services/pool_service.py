@@ -90,7 +90,9 @@ class PoolService:
             "file_cluster_params",
         ]
         for field in json_fields:
-            if field in meta and isinstance(meta[field], str):
+            if field not in meta:
+                meta[field] = {}
+            elif isinstance(meta[field], str):
                 try:
                     meta[field] = json.loads(meta[field])
                 except Exception:
@@ -102,6 +104,20 @@ class PoolService:
             k.decode() if isinstance(k, bytes) else k: json.loads(v)
             for k, v in sync_snapshots.items()
         }
+
+        # Retrieve pool-wide similarities & clusters counts
+        # Function similarities
+        meta["total_func_similarities"] = r.zcard(f"global:pool:{pool_id}:sim:score")
+        
+        # Function clusters
+        meta["total_func_clusters"] = r.scard(f"global:pool:{pool_id}:cluster:list")
+
+        # File similarities
+        file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
+        meta["total_file_similarities"] = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
+
+        # File clusters (if any list exists, otherwise default 0 or check algorithm clusters)
+        meta["total_file_clusters"] = r.scard(f"global:pool:{pool_id}:bin_cluster:list")
 
         return meta
 

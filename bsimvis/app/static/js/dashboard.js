@@ -373,6 +373,8 @@ window.ModuleLoader = {
             'call_graph': window.CallGraphView,
             'feature': window.FeatureView,
             'function_features': window.FunctionFeaturesView,
+            'pool-detail': window.PoolDetailView,
+            'collection-detail': window.CollectionDetailView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -452,9 +454,10 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features'].includes(viewKey)) {
+    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
+        stateParams.pool = pool;
         stateParams.view = viewKey;
         if (window.Breadcrumbs) {
             const segments = window.Breadcrumbs.generate({ viewKey, collection, pool, params }, null);
@@ -2334,7 +2337,9 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     if (pool) {
         const poolId = pool;
         url = `/pools/${encodeURIComponent(poolId)}/${viewKey}`;
-        if (viewKey === 'files') {
+        if (viewKey === 'pool-detail') {
+            url = `/pools/${encodeURIComponent(poolId)}`;
+        } else if (viewKey === 'files') {
             url = `/pools/${encodeURIComponent(poolId)}/files`;
         } else if (viewKey === 'functions') {
             url = `/pools/${encodeURIComponent(poolId)}/functions`;
@@ -2357,7 +2362,9 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
         }
     } else {
         url = `/collections/${col}/${viewKey}`;
-        if (viewKey === 'files') {
+        if (viewKey === 'collection-detail') {
+            url = `/collections/${col}`;
+        } else if (viewKey === 'files') {
             url = `/collections/${col}/files`;
         } else if (viewKey === 'functions') {
             url = `/collections/${col}/functions`;
@@ -2534,15 +2541,8 @@ window.addEventListener('load', () => {
     updateNavVisibility(collection);
     if (window.location.pathname === '/' || window.location.pathname === '') {
         history.replaceState(null, '', '/collections');
-    } else {
-        const pathParts = window.location.pathname.split('/').filter(Boolean);
-        if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && collection) {
-            history.replaceState(null, '', `/collections/${encodeURIComponent(collection)}/files`);
-        } else if ((pathParts[0] === 'pool' || pathParts[0] === 'pools') && pathParts.length === 2 && pool) {
-            history.replaceState(null, '', `/pools/${encodeURIComponent(pool)}/files`);
-        }
     }
-
+    
     if (window.location.hash) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');

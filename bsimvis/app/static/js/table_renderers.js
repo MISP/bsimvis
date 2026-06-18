@@ -46,8 +46,9 @@ window.TableRenderers = {
         if (!data || !data.length) return '<tr><td colspan="6" style="text-align:center">No pools found.</td></tr>';
 
         return data.map(pool => {
+            Breadcrumbs.setPoolName(pool.id, pool.name || 'Unnamed Pool');
             const collectionsList = (pool.collections || []).map(c => `
-                <a ${createNav('files', c)} style="font-size:0.75rem; background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3); color:#60a5fa; padding:2px 8px; border-radius:4px; margin-right:4px; text-decoration:none; cursor:pointer;" class="clickable-count">${c}</a>
+                <a href="/collections/${encodeURIComponent(c)}" onclick="Nav.openPath(this.href, event)" style="font-size:0.75rem; background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3); color:#60a5fa; padding:2px 8px; border-radius:4px; margin-right:4px; text-decoration:none; cursor:pointer;" class="clickable-count">${c}</a>
             `).join('');
 
             const crossCollectionOnlyIndicator = pool.only_cross_collection ? `
@@ -58,7 +59,7 @@ window.TableRenderers = {
 
             let syncStatusBadge = '';
             if (pool.sync_status === 'current') {
-                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(16, 185, 129, 0.15); border:1px solid rgba(16, 185, 129, 0.3); color:#10b981; padding:2px 8px; border-radius:4px; font-weight:bold;">Current</span>`;
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(16, 185, 129, 0.15); border:1px solid rgba(16, 185, 129, 0.3); color:#10b981; padding:2px 8px; border-radius:4px; font-weight:bold;">Up to date</span>`;
             } else if (pool.sync_status === 'outdated') {
                 syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.3); color:#f59e0b; padding:2px 8px; border-radius:4px; font-weight:bold;">Outdated</span>`;
             } else {
@@ -77,7 +78,7 @@ window.TableRenderers = {
                 </button>
             `;
 
-            const poolUrl = '/pools/' + encodeURIComponent(pool.id) + '/files';
+            const poolUrl = '/pools/' + encodeURIComponent(pool.id);
             return `
             <tr data-id="${pool.id}">
                 <td><a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
@@ -108,7 +109,7 @@ window.TableRenderers = {
 
         return data.map(col => `
             <tr data-id="${col.name}">
-                <td><a ${createNav('files', col.name)} class="clickable-count" style="font-weight:bold;">${col.name}</a></td>
+                <td><a href="/collections/${encodeURIComponent(col.name)}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${col.name}</a></td>
                 <td>
                     <div style="display:inline-flex; align-items:center; gap:8px;">
                         <a ${createNav('batches', col.name)} class="clickable-count" style="font-weight: bold; min-width: 20px; text-align: right;">${col['total_batches'] || 0}</a>

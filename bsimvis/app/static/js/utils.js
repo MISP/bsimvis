@@ -132,9 +132,15 @@ function parseRestfulPath() {
     }
 
     const p2 = parts[pIdx];
+    const isPoolPath = parts[0] === 'pool' || parts[0] === 'pools';
+    const isCollPath = parts[0] === 'collection' || parts[0] === 'collections';
 
     if (!p2) {
-        if (params.pool && !params.collection) {
+        if (isPoolPath && params.pool) {
+            params.view = 'pool-detail';
+        } else if (isCollPath && params.collection) {
+            params.view = 'collection-detail';
+        } else if (params.pool && !params.collection) {
             params.view = 'files';
         } else {
             params.view = 'collections';

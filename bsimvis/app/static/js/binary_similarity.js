@@ -245,20 +245,12 @@ function initResizableCards() {
         const data = await res.json();
         
         window.filenameCache = window.filenameCache || {};
-        if (data.file_metadata_a) window.filenameCache[md5a] = data.file_metadata_a.file_name || 'unknown';
-        if (data.file_metadata_b) window.filenameCache[md5b] = data.file_metadata_b.file_name || 'unknown';
+        if (data.file_metadata_a) window.filenameCache[md5a] = data.file_metadata_a.file_name || 'File';
+        if (data.file_metadata_b) window.filenameCache[md5b] = data.file_metadata_b.file_name || 'File';
 
-        // Dynamically update breadcrumbs with actual file names
-        const nameA = window.filenameCache[md5a];
-        const nameB = window.filenameCache[md5b];
-        const breadcrumbItems = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
-        if (breadcrumbItems.length >= 3) {
-            // The last item is the VS target, and the second-to-last item is the source file
-            const sourceSpan = breadcrumbItems[breadcrumbItems.length - 2].querySelector('span');
-            if (sourceSpan) sourceSpan.innerText = nameA;
-            const vsSpan = breadcrumbItems[breadcrumbItems.length - 1].querySelector('span');
-            if (vsSpan) vsSpan.innerText = `VS ${nameB}`;
-        }
+        Breadcrumbs.setFilename(md5a, data.file_metadata_a?.file_name || 'File');
+        Breadcrumbs.setFilename(md5b, data.file_metadata_b?.file_name || 'File');
+        Breadcrumbs.refresh();
         
         // Render Summary
         const scoreVal = document.getElementById('bin-sim-score-val');

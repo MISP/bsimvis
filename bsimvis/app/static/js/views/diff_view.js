@@ -354,20 +354,14 @@ window.DiffView = {
             this.fetchSimilarity(id1, id2);
             if (typeof window.updateDiffQueueUI === 'function') window.updateDiffQueueUI();
 
-            // Dynamically update breadcrumbs with actual function names
             if (data.meta1 && data.meta2) {
-                const name1 = data.meta1.function_name || 'unknown';
-                const name2 = data.meta2.function_name || 'unknown';
-                const addr2 = data.meta2.entrypoint_address || data.meta2.address || '';
-                const md52 = data.meta2.file_md5 || '';
-
-                const items = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
-                if (items.length >= 4) {
-                    const sourceSpan = items[items.length - 2].querySelector('span');
-                    if (sourceSpan) sourceSpan.innerText = name1;
-                    const vsSpan = items[items.length - 1].querySelector('span');
-                    if (vsSpan) vsSpan.innerText = `VS ${name2} (${md52.substring(0, 8)}@${addr2})`;
-                }
+                const collA = p.collection_a.split(':')[0];
+                const collB = p.collection_b.split(':')[0];
+                Breadcrumbs.setFilename(p.md5_a, data.meta1.file_name || 'File');
+                Breadcrumbs.setFilename(p.md5_b, data.meta2.file_name || 'File');
+                Breadcrumbs.setFuncName(collA, p.md5_a, p.addr_a, data.meta1.function_name || 'Function');
+                Breadcrumbs.setFuncName(collB, p.md5_b, p.addr_b, data.meta2.function_name || 'Function');
+                Breadcrumbs.refresh();
             }
 
             this.bsimRows = data.rows || [];

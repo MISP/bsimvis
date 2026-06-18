@@ -70,19 +70,14 @@ window.FunctionView = {
                 window.filenameCache[file_md5] = data.meta.file_name;
             }
 
+            Breadcrumbs.setFilename(file_md5, data.meta?.file_name || 'File');
+            Breadcrumbs.setFuncName(collection, file_md5, address, window.currentFuncName);
+            Breadcrumbs.refresh();
+
             const loader = document.getElementById('function-loader');
             const content = document.getElementById('function-content');
             if (loader) loader.style.display = 'none';
             if (content) content.style.display = 'flex';
-
-            // Update breadcrumb with actual function name in the global breadcrumbs container
-            const bcCurrent = document.querySelector('#breadcrumbs-container .breadcrumb-item.current');
-            if (bcCurrent) bcCurrent.innerHTML = `<i class="fa-solid fa-code"></i><span>${window.currentFuncName}</span>`;
-
-            const bc = window.Breadcrumbs || (window.parent && window.parent.Breadcrumbs);
-            if (bc && typeof bc.refresh === 'function') {
-                bc.refresh();
-            }
 
             // Render Metadata
             if (typeof window.renderFunctionMetadata === 'function') {

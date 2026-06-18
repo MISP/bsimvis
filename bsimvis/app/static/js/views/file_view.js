@@ -88,14 +88,8 @@ window.FileView = {
             document.getElementById('file-name').innerText = fileName;
             document.getElementById('file-md5').innerText = `MD5: ${file.file_md5}`;
 
-            // Update breadcrumb to show actual filename in the global breadcrumbs container
-            const bcCurrent = document.querySelector('#breadcrumbs-container .breadcrumb-item.current');
-            if (bcCurrent) bcCurrent.innerHTML = `<i class="fa-solid fa-file-code"></i><span>${fileName}</span>`;
-            
-            const bc = window.Breadcrumbs || (window.parent && window.parent.Breadcrumbs);
-            if (bc && typeof bc.refresh === 'function') {
-                bc.refresh();
-            }
+            Breadcrumbs.setFilename(file.file_md5, fileName);
+            Breadcrumbs.refresh();
 
             document.getElementById('file-quick-actions').innerHTML = `
                 <a href="#" class="quick-action-btn" onclick="FileView.openFunctions(event)"><i class="fa-solid fa-code"></i> View Functions</a>

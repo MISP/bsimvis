@@ -90,18 +90,15 @@ def get_collection_stats(collection):
     return {}
 
 
-def get_pipeline_perf_metrics(pipeline_id):
-    """Retrieve detailed execution time metrics for a pipeline."""
+def get_pipeline_perf_metrics(pipeline_id, collection=None, pool_id=None):
+    """Retrieve detailed execution time metrics and stats for a pipeline."""
     try:
         resp = requests.get(f"{API_BASE}/jobs/{pipeline_id}")
         if resp.status_code != 200:
             return None
         job = resp.json()
-        metrics = {
-            "grand_total": 0.0,
-            "sub_tasks": {}
-        }
-        
+        metrics = {"grand_total": 0.0, "sub_tasks": {}, "stats": {}}
+
         if "sub_tasks" in job and job["sub_tasks"]:
             for st in job["sub_tasks"]:
                 t = float(st.get("perf_total", 0))
@@ -112,6 +109,29 @@ def get_pipeline_perf_metrics(pipeline_id):
                     "lua": float(st.get("perf_lua", 0)),
                 }
                 metrics["grand_total"] += t
+
+        # Fetch counts (similarities and clusters)
+        if pool_id:
+            try:
+                p_resp = requests.get(f"{API_BASE}/pools/{pool_id}")
+                if p_resp.status_code == 200:
+                    p_data = p_resp.json()
+                    metrics["stats"] = {
+                        "func_similarities": p_data.get("total_func_similarities", 0),
+                        "func_clusters": p_data.get("total_func_clusters", 0),
+                        "file_similarities": p_data.get("total_file_similarities", 0),
+                        "file_clusters": p_data.get("total_file_clusters", 0),
+                    }
+            except Exception as e:
+                print(f"[!] Failed to fetch pool stats: {e}")
+        elif collection:
+            stats = get_collection_stats(collection)
+            if stats:
+                metrics["stats"] = {
+                    "func_similarities": stats.get("num_sim_meta", 0),
+                    "func_clusters": stats.get("num_clusters", 0),
+                }
+
         return metrics
     except Exception as e:
         print(f"[!] Failed to fetch performance metrics: {e}")
@@ -124,23 +144,52 @@ def print_comparison(baseline, current):
     header = f"{'Sub-Task Type':<20} | {'Baseline (s)':>12} | {'Current (s)':>12} | {'Diff (s)':>10} | {'Change':>8}"
     print(header)
     print("-" * len(header))
-    
-    all_keys = sorted(list(set(baseline["sub_tasks"].keys()) | set(current["sub_tasks"].keys())))
+
+    all_keys = sorted(
+        list(
+            set(baseline.get("sub_tasks", {}).keys())
+            | set(current.get("sub_tasks", {}).keys())
+        )
+    )
     for k in all_keys:
-        b_val = baseline["sub_tasks"].get(k, {}).get("total", 0.0)
-        c_val = current["sub_tasks"].get(k, {}).get("total", 0.0)
+        b_val = baseline.get("sub_tasks", {}).get(k, {}).get("total", 0.0)
+        c_val = current.get("sub_tasks", {}).get(k, {}).get("total", 0.0)
         diff = c_val - b_val
         change_pct = (diff / b_val * 100) if b_val > 0 else 0.0
         change_str = f"{change_pct:+.1f}%" if b_val > 0 else "N/A"
-        print(f"{k:<20} | {b_val:>12.4f} | {c_val:>12.4f} | {diff:>+10.4f} | {change_str:>8}")
-        
+        print(
+            f"{k:<20} | {b_val:>12.4f} | {c_val:>12.4f} | {diff:>+10.4f} | {change_str:>8}"
+        )
+
     print("-" * len(header))
     b_tot = baseline.get("grand_total", 0.0)
     c_tot = current.get("grand_total", 0.0)
     diff_tot = c_tot - b_tot
     tot_change_pct = (diff_tot / b_tot * 100) if b_tot > 0 else 0.0
     tot_change_str = f"{tot_change_pct:+.1f}%" if b_tot > 0 else "N/A"
-    print(f"{'GRAND TOTAL':<20} | {b_tot:>12.4f} | {c_tot:>12.4f} | {diff_tot:>+10.4f} | {tot_change_str:>8}\n")
+    print(
+        f"{'GRAND TOTAL':<20} | {b_tot:>12.4f} | {c_tot:>12.4f} | {diff_tot:>+10.4f} | {tot_change_str:>8}\n"
+    )
+
+    # Compare generated counts/stats if available
+    b_stats = baseline.get("stats", {})
+    c_stats = current.get("stats", {})
+    if b_stats or c_stats:
+        print("=== GENERATED DATA COMPARISON ===")
+        stat_header = f"{'Metric Name':<20} | {'Baseline':>12} | {'Current':>12} | {'Diff':>10} | {'Change':>8}"
+        print(stat_header)
+        print("-" * len(stat_header))
+        all_stat_keys = sorted(list(set(b_stats.keys()) | set(c_stats.keys())))
+        for k in all_stat_keys:
+            b_val = b_stats.get(k, 0)
+            c_val = c_stats.get(k, 0)
+            diff = c_val - b_val
+            change_pct = (diff / b_val * 100) if b_val > 0 else 0.0
+            change_str = f"{change_pct:+.1f}%" if b_val > 0 else "N/A"
+            print(
+                f"{k:<20} | {b_val:>12} | {c_val:>12} | {diff:>+10} | {change_str:>8}"
+            )
+        print("-" * len(stat_header) + "\n")
 
 
 def run_single_file(data_dir, filename, collection, top_k, min_score, min_features):
@@ -188,7 +237,7 @@ def run_single_file(data_dir, filename, collection, top_k, min_score, min_featur
             stats = get_collection_stats(collection)
 
             # Retrieve structured performance metrics
-            perf_metrics = get_pipeline_perf_metrics(pipeline_id)
+            perf_metrics = get_pipeline_perf_metrics(pipeline_id, collection=collection)
 
             result = {
                 "filename": filename,
@@ -265,7 +314,9 @@ def run_bench(
     if sequential:
         print(f"\n[*] Uploading {len(json_files)} files sequentially...")
         for f in json_files:
-            result = run_single_file(data_dir, f, collection, top_k, min_score, min_features)
+            result = run_single_file(
+                data_dir, f, collection, top_k, min_score, min_features
+            )
             if result:
                 results.append(result)
                 all_perf_metrics.append(result["perf_metrics"])
@@ -274,7 +325,15 @@ def run_bench(
         max_workers = len(json_files)  # One thread per file
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_file = {
-                executor.submit(run_single_file, data_dir, f, collection, top_k, min_score, min_features): f
+                executor.submit(
+                    run_single_file,
+                    data_dir,
+                    f,
+                    collection,
+                    top_k,
+                    min_score,
+                    min_features,
+                ): f
                 for f in json_files
             }
             for future in concurrent.futures.as_completed(future_to_file):
@@ -314,15 +373,25 @@ def run_bench(
         avg_metrics = {
             "grand_total": sum(m["grand_total"] for m in all_perfs) / len(all_perfs),
             "sub_tasks": {},
+            "stats": {},
         }
         for m in all_perfs:
             for k, v in m["sub_tasks"].items():
                 if k not in avg_metrics["sub_tasks"]:
-                    avg_metrics["sub_tasks"][k] = {"total": 0, "python": 0, "db": 0, "lua": 0}
+                    avg_metrics["sub_tasks"][k] = {
+                        "total": 0,
+                        "python": 0,
+                        "db": 0,
+                        "lua": 0,
+                    }
                 avg_metrics["sub_tasks"][k]["total"] += v["total"]
                 avg_metrics["sub_tasks"][k]["python"] += v["python"]
                 avg_metrics["sub_tasks"][k]["db"] += v["db"]
                 avg_metrics["sub_tasks"][k]["lua"] += v["lua"]
+            # Accumulate stats counts (similarities and clusters) from all pipelines
+            for sk, sv in m.get("stats", {}).items():
+                avg_metrics["stats"][sk] = avg_metrics["stats"].get(sk, 0) + sv
+
         for k in avg_metrics["sub_tasks"]:
             n = len(all_perfs)
             for vv in ("total", "python", "db", "lua"):
@@ -339,7 +408,9 @@ def run_bench(
             print(f"[!] Error comparing baseline: {e}")
 
 
-def run_single_file_for_pool(data_dir, filename, collection, top_k, min_score, min_features):
+def run_single_file_for_pool(
+    data_dir, filename, collection, top_k, min_score, min_features
+):
     """Process a single file for pool benchmark by uploading it with skip_sim=True."""
     path = os.path.join(data_dir, filename)
     size_mb, lines = get_file_stats(path)
@@ -421,6 +492,7 @@ def run_bench_pools(
     pool_id = f"pool_{collection}"
 
     from bsimvis.app.services.redis_client import get_redis
+
     r_client = get_redis()
 
     # Check if all collections already have functions indexed
@@ -455,18 +527,24 @@ def run_bench_pools(
     results = []
 
     if collections_exist:
-        print("\n[*] Target collections are already populated. Skipping ingestion/indexing phase.")
+        print(
+            "\n[*] Target collections are already populated. Skipping ingestion/indexing phase."
+        )
     else:
         if sequential:
             print(f"\n[*] Ingesting {len(json_files)} files sequentially...")
             for f, col_name in zip(json_files, file_collections):
-                res = run_single_file_for_pool(data_dir, f, col_name, top_k, min_score, min_features)
+                res = run_single_file_for_pool(
+                    data_dir, f, col_name, top_k, min_score, min_features
+                )
                 if res:
                     results.append(res)
         else:
             print(f"\n[*] Ingesting {len(json_files)} files concurrently...")
             max_workers = len(json_files)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=max_workers
+            ) as executor:
                 future_to_file = {
                     executor.submit(
                         run_single_file_for_pool,
@@ -475,7 +553,7 @@ def run_bench_pools(
                         col_name,
                         top_k,
                         min_score,
-                        min_features
+                        min_features,
                     ): f
                     for f, col_name in zip(json_files, file_collections)
                 }
@@ -485,7 +563,9 @@ def run_bench_pools(
                         results.append(res)
 
         if len(results) < len(json_files):
-            print("[!] Not all files completed ingestion. Aborting pool similarity benchmark.")
+            print(
+                "[!] Not all files completed ingestion. Aborting pool similarity benchmark."
+            )
             return
 
     # 3. Create the pool and trigger building
@@ -494,42 +574,42 @@ def run_bench_pools(
         "pool_id": pool_id,
         "name": f"Benchmark Pool for {collection}",
         "collections": file_collections,
-        "config": {
-            "skip_clustering": True
-        }
+        "config": {"skip_clustering": True},
     }
-    
+
     try:
         resp = requests.post(f"{API_BASE}/pool", json=pool_payload)
         resp.raise_for_status()
         pool_res = resp.json()
         job_id = pool_res.get("job_id")
-        
+
         if not job_id:
             print("[!] No job ID returned from pool creation API.")
             return
-        
+
         print(f"[*] Waiting for pool build pipeline {job_id} to complete...")
         finished_job = poll_job(job_id)
-        
+
         if finished_job:
             status = finished_job.get("status")
             total_elapsed = time.time() - start_time
-            
+
             # Fetch performance metrics for this pipeline
-            perf_metrics = get_pipeline_perf_metrics(job_id)
-            
+            perf_metrics = get_pipeline_perf_metrics(job_id, pool_id=pool_id)
+
             print("\n=== POOL BENCHMARK SUMMARY ===")
             print(f"Pool ID:     {pool_id}")
             print(f"Status:      {status}")
             print(f"Total time:  {total_elapsed:.2f}s")
-            
+
             if perf_metrics:
                 # We can print the subtask details
                 print("\n=== SUBTASK DETAILS ===")
                 for task_type, vals in perf_metrics.get("sub_tasks", {}).items():
-                    print(f"  - {task_type:<20}: {vals['total']:.4f}s (Lua: {vals['lua']:.4f}s, DB: {vals['db']:.4f}s, Python: {vals['python']:.4f}s)")
-            
+                    print(
+                        f"  - {task_type:<20}: {vals['total']:.4f}s (Lua: {vals['lua']:.4f}s, DB: {vals['db']:.4f}s, Python: {vals['python']:.4f}s)"
+                    )
+
             # Handle Save
             if save_path and perf_metrics:
                 try:
@@ -550,7 +630,7 @@ def run_bench_pools(
                         print(f"[!] Baseline file not found: {compare_path}")
                 except Exception as e:
                     print(f"[!] Error comparing baseline: {e}")
-                    
+
     except Exception as e:
         print(f"[!] Failed to run pool benchmark: {e}")
 
@@ -585,13 +665,19 @@ def main():
         "--save", type=str, help="Path to save performance metrics JSON"
     )
     parser.add_argument(
-        "--compare", type=str, help="Path to baseline performance metrics JSON for comparison"
+        "--compare",
+        type=str,
+        help="Path to baseline performance metrics JSON for comparison",
     )
     parser.add_argument(
-        "--bench-pools", action="store_true", help="Benchmark pool-level similarities instead of standard pipeline"
+        "--bench-pools",
+        action="store_true",
+        help="Benchmark pool-level similarities instead of standard pipeline",
     )
     parser.add_argument(
-        "--sequential", action="store_true", help="Run file uploads sequentially rather than concurrently"
+        "--sequential",
+        action="store_true",
+        help="Run file uploads sequentially rather than concurrently",
     )
 
     args = parser.parse_args()

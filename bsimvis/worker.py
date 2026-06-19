@@ -614,16 +614,45 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.INIT_POOL_BUILD.value:
+            pool_id = payload.get("pool_id")
+            from bsimvis.app.services.pool_service import pool_service
+
+            return pool_service.init_pool_build(pool_id)
+
+        elif jtype == JobType.FINALIZE_POOL_BUILD.value:
+            pool_id = payload.get("pool_id")
+            from bsimvis.app.services.pool_service import pool_service
+
+            return pool_service.finalize_pool_build(pool_id)
+
         elif jtype == JobType.BUILD_POOL_SIM.value:
             pool_id = payload.get("pool_id")
-            return self.similarity_service.build_pool(
-                pool_id, job_service=self.job_service, job_id=job_id
-            )
+            file_md5 = payload.get("file_md5")
+            if file_md5:
+                return self.similarity_service.build_pool_file(
+                    pool_id, file_md5, job_service=self.job_service, job_id=job_id
+                )
+            else:
+                return self.similarity_service.build_pool(
+                    pool_id, job_service=self.job_service, job_id=job_id
+                )
 
         elif jtype == JobType.CLUSTER_POOL.value:
             pool_id = payload.get("pool_id")
-            # We will implement this in ClusterService later
             return cluster_service.run_pool_clustering(
+                pool_id, job_service=self.job_service, job_id=job_id
+            )
+
+        elif jtype == JobType.BUILD_POOL_BIN_SIM.value:
+            pool_id = payload.get("pool_id")
+            return self.similarity_service.build_pool_bin_sim(
+                pool_id, job_service=self.job_service, job_id=job_id
+            )
+
+        elif jtype == JobType.CLUSTER_POOL_BINARIES.value:
+            pool_id = payload.get("pool_id")
+            return cluster_service.run_pool_bin_clustering(
                 pool_id, job_service=self.job_service, job_id=job_id
             )
 

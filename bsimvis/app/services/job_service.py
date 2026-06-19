@@ -36,6 +36,10 @@ class JobType(Enum):
     PROPAGATE_METADATA = "propagate_metadata"
     BUILD_POOL_SIM = "build_pool_sim"
     CLUSTER_POOL = "cluster_pool"
+    INIT_POOL_BUILD = "init_pool_build"
+    FINALIZE_POOL_BUILD = "finalize_pool_build"
+    BUILD_POOL_BIN_SIM = "build_pool_bin_sim"
+    CLUSTER_POOL_BINARIES = "cluster_pool_binaries"
 
 
 def safe_int(val, default=0):

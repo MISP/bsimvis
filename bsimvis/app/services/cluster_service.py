@@ -1375,35 +1375,6 @@ class ClusterService:
         if not success:
             return False
 
-        # Automatically trigger pool binary similarity and pool binary clustering
-        file_sim_params = pool.get("file_sim_params", {})
-        if file_sim_params.get("enabled", True):
-            try:
-                from bsimvis.app.services.similarity_service import SimilarityService
-
-                sim_service = SimilarityService(self.r)
-                sim_service.build_pool_bin_sim(
-                    pool_id, job_service=job_service, job_id=job_id
-                )
-                self.run_pool_bin_clustering(
-                    pool_id, job_service=job_service, job_id=job_id
-                )
-            except Exception as e:
-                logging.error(
-                    f"Error executing pool binary similarity and clustering steps: {e}",
-                    exc_info=True,
-                )
-                if job_service and job_id:
-                    job_service.add_log(
-                        job_id, f"[WARN] Pool binary similarity/clustering failed: {e}"
-                    )
-        else:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    f"[*] File similarity disabled for pool {pool_id}, skipping build_pool_bin_sim and run_pool_bin_clustering",
-                )
-
         return True
 
     def run_pool_bin_clustering(

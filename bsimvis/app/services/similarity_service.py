@@ -205,7 +205,7 @@ class SimilarityService:
                 top_k,
                 min_features,
             ] + lua_features_args
-            
+
             prepared_targets.append((fid, md5, addr, target_feat_total, lua_args))
 
         discovery_results = []
@@ -214,10 +214,12 @@ class SimilarityService:
             for fid, md5, addr, target_feat_total, lua_args in prepared_targets:
                 self._find_script(args=lua_args, client=pipe)
                 pipe.sadd(built_set_key, fid)
-            
+
             pipe_results = pipe.execute()
-            
-            for idx, (fid, md5, addr, target_feat_total, lua_args) in enumerate(prepared_targets):
+
+            for idx, (fid, md5, addr, target_feat_total, lua_args) in enumerate(
+                prepared_targets
+            ):
                 candidates_raw = pipe_results[idx * 2]
                 if candidates_raw:
                     # Parse flat array return into triples (id, score, c_total)
@@ -486,7 +488,9 @@ class SimilarityService:
 
             if func_ids_needed:
                 func_ids_list = list(func_ids_needed)
-                raw_func_metas = r.json().mget([f"{fid}:meta" for fid in func_ids_list], "$")
+                raw_func_metas = r.json().mget(
+                    [f"{fid}:meta" for fid in func_ids_list], "$"
+                )
                 for fid, raw in zip(func_ids_list, raw_func_metas):
                     if raw:
                         m = raw[0] if isinstance(raw, list) else raw
@@ -498,7 +502,9 @@ class SimilarityService:
 
             if file_ids_needed:
                 file_ids_list = list(file_ids_needed)
-                raw_file_metas = r.json().mget([f"{fid}:meta" for fid in file_ids_list], "$")
+                raw_file_metas = r.json().mget(
+                    [f"{fid}:meta" for fid in file_ids_list], "$"
+                )
                 for fid, raw in zip(file_ids_list, raw_file_metas):
                     if raw:
                         m = raw[0] if isinstance(raw, list) else raw
@@ -986,7 +992,9 @@ class SimilarityService:
         algo = func_sim_params.get("algo", pool.get("algo", "unweighted_cosine"))
         top_k = int(func_sim_params.get("top_k", pool.get("top_k", 1000)))
         min_score = float(func_sim_params.get("min_score", pool.get("min_score", 0.3)))
-        min_features = int(func_sim_params.get("min_features", pool.get("min_features", 0)))
+        min_features = int(
+            func_sim_params.get("min_features", pool.get("min_features", 0))
+        )
 
         r = self.r
 
@@ -1093,9 +1101,7 @@ class SimilarityService:
                     fid_candidates.append(
                         {
                             "id": (
-                                raw[k].decode()
-                                if isinstance(raw[k], bytes)
-                                else raw[k]
+                                raw[k].decode() if isinstance(raw[k], bytes) else raw[k]
                             ),
                             "score": float(raw[k + 1]),
                             "c_total": float(raw[k + 2]),
@@ -1112,9 +1118,7 @@ class SimilarityService:
 
                     parts = fid.split(":")
                     md5 = parts[2] if len(parts) >= 3 else "unknown"
-                    discovery_results.append(
-                        (fid, md5, "", t_total, candidates)
-                    )
+                    discovery_results.append((fid, md5, "", t_total, candidates))
 
             if discovery_results:
                 self._persist_and_index_batch(
@@ -1141,6 +1145,179 @@ class SimilarityService:
             job_service.add_log(
                 job_id,
                 f"Pool build {pool_id} completed in {time.time() - start_time:.2f}s",
+            )
+
+        return True
+
+    def build_pool_file(
+        self,
+        pool_id,
+        file_md5,
+        job_service=None,
+        job_id=None,
+    ):
+        """
+        Orchestrates cross-collection similarity discovery for a single file in the pool.
+        """
+        self._func_meta_cache = {}
+        self._file_meta_cache = {}
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            logging.error(f"Pool {pool_id} not found")
+            return False
+
+        collections = pool.get("collections", [])
+
+        # New structured config handling
+        only_cross_collection = pool.get("only_cross_collection", False)
+        func_sim_params = pool.get("func_sim_params", {})
+
+        algo = func_sim_params.get("algo", pool.get("algo", "unweighted_cosine"))
+        top_k = int(func_sim_params.get("top_k", pool.get("top_k", 1000)))
+        min_score = float(func_sim_params.get("min_score", pool.get("min_score", 0.3)))
+        min_features = int(
+            func_sim_params.get("min_features", pool.get("min_features", 0))
+        )
+
+        r = self.r
+
+        # 1. Collect all functions for this file md5 from all member collections
+        all_function_ids = []
+        for coll in collections:
+            funcs_key = f"{coll}:idx:file:functions:{file_md5}"
+            all_function_ids.extend(
+                [
+                    f.decode() if isinstance(f, bytes) else f
+                    for f in r.smembers(funcs_key)
+                ]
+            )
+
+        total = len(all_function_ids)
+        if total == 0:
+            logging.warning(
+                f"No functions found for file {file_md5} in collections {collections}"
+            )
+            return True
+
+        logging.info(
+            f"[*] Building pool similarities for file {file_md5} ({total} functions)..."
+        )
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"Building pool similarities for file {file_md5} ({total} functions)...",
+            )
+
+        start_time = time.time()
+        chunk_size = 5
+        for i in range(0, total, chunk_size):
+            chunk = all_function_ids[i : i + chunk_size]
+
+            # Update Progress
+            if job_service and job_id:
+                elapsed = time.time() - start_time
+                done = i
+                speed = done / elapsed if elapsed > 0 else 0
+                job_service.update_progress(
+                    job_id,
+                    int(done / total * 100),
+                    f"Building file {file_md5} pool sim: {done}/{total} functions ({speed:.1f} fn/s)",
+                )
+
+            # Build list of (fid, target_feat_total, lua_args) tuples for pipeline
+            targets_with_lua = []
+            for fid in chunk:
+                vec_key = f"{fid}:vec:tf"
+                features_raw = r.zrange(vec_key, 0, -1, withscores=True)
+                if not features_raw:
+                    continue
+
+                target_feat_total = 0
+                target_feat_norm_sq = 0
+                lua_features_args = []
+                for f_hash, f_tf_raw in features_raw:
+                    f_tf = float(f_tf_raw)
+                    target_feat_total += f_tf
+                    target_feat_norm_sq += f_tf * f_tf
+                    lua_features_args.extend(
+                        [
+                            (
+                                f_hash.decode()
+                                if isinstance(f_hash, bytes)
+                                else str(f_hash)
+                            ),
+                            str(f_tf),
+                        ]
+                    )
+
+                target_feat_norm = math.sqrt(target_feat_norm_sq)
+
+                for search_coll in collections:
+                    # ONLY_CROSS_COLLECTION FILTER: Skip Lua if query FID is from search_coll
+                    if only_cross_collection and fid.startswith(f"{search_coll}:"):
+                        continue
+
+                    lua_args = [
+                        fid,
+                        search_coll,
+                        algo,
+                        min_score,
+                        target_feat_total,
+                        target_feat_norm,
+                        top_k,
+                        min_features,
+                    ] + lua_features_args
+
+                    targets_with_lua.append((fid, target_feat_total, lua_args))
+
+            if not targets_with_lua:
+                continue
+
+            # Pipeline all EVAL calls across all functions × collections → 1 RTT
+            pipe = r.pipeline()
+            for fid, _, lua_args in targets_with_lua:
+                self._find_script(args=lua_args, client=pipe)
+            raw_results = pipe.execute()
+
+            # Parse pipeline results back into per-function groups
+            candidates_by_fid = []
+            for (fid, t_total, lua_args), raw in zip(targets_with_lua, raw_results):
+                if not raw:
+                    continue
+                fid_candidates = []
+                for k in range(0, len(raw), 3):
+                    fid_candidates.append(
+                        {
+                            "id": (
+                                raw[k].decode() if isinstance(raw[k], bytes) else raw[k]
+                            ),
+                            "score": float(raw[k + 1]),
+                            "c_total": float(raw[k + 2]),
+                        }
+                    )
+                candidates_by_fid.append((fid, t_total, fid_candidates))
+
+            discovery_results = []
+            for fid, t_total, candidates in candidates_by_fid:
+                if candidates:
+                    candidates.sort(key=lambda x: x["score"], reverse=True)
+                    candidates = candidates[:top_k]
+
+                    parts = fid.split(":")
+                    md5 = parts[2] if len(parts) >= 3 else "unknown"
+                    discovery_results.append((fid, md5, "", t_total, candidates))
+
+            if discovery_results:
+                self._persist_and_index_batch(
+                    "", algo, discovery_results, pool_id=pool_id
+                )
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id,
+                f"File {file_md5} pool sim completed in {time.time() - start_time:.2f}s",
             )
 
         return True

@@ -7,6 +7,7 @@ job_service = JobService()
 
 def create_pool():
     import uuid
+
     data = request.json
     pool_id = data.get("pool_id")
     if not pool_id:
@@ -22,13 +23,42 @@ def create_pool():
     if not success:
         return {"error": message}, 400
 
-    # Schedule similarity building followed by clustering in a unified pipeline
-    pipeline_id = job_service.create_pipeline(
+    # Fetch all files in the member collections to build parallel build_pool_sim tasks
+    redis_client = pool_service.r
+    file_tasks = []
+    for coll in collections:
+        all_files_key = f"{coll}:all_files"
+        file_keys = [
+            d.decode() if isinstance(d, bytes) else str(d)
+            for d in redis_client.smembers(all_files_key)
+        ]
+        for k in file_keys:
+            if k.endswith(":meta"):
+                continue
+            parts = k.split(":")
+            if len(parts) >= 3:
+                md5 = parts[2]
+                file_tasks.append(
+                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
+                )
+
+    tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
+    if file_tasks:
+        group_id = job_service.create_group(file_tasks, enqueue=False)
+        tasks.append(group_id)
+    else:
+        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+
+    tasks.extend(
         [
-            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
+            (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
         ]
     )
+
+    pipeline_id = job_service.create_pipeline(tasks)
 
     return {"message": message, "pool_id": pool_id, "job_id": pipeline_id}, 201
 
@@ -59,8 +89,43 @@ def build_pool(pool_id):
     if not pool:
         return {"error": "Pool not found"}, 404
 
-    job_id = job_service.create_job(JobType.BUILD_POOL_SIM, {"pool_id": pool_id})
-    return {"job_id": job_id, "message": "Pool build job enqueued"}
+    collections = pool.get("collections", [])
+    redis_client = pool_service.r
+    file_tasks = []
+    for coll in collections:
+        all_files_key = f"{coll}:all_files"
+        file_keys = [
+            d.decode() if isinstance(d, bytes) else str(d)
+            for d in redis_client.smembers(all_files_key)
+        ]
+        for k in file_keys:
+            if k.endswith(":meta"):
+                continue
+            parts = k.split(":")
+            if len(parts) >= 3:
+                md5 = parts[2]
+                file_tasks.append(
+                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
+                )
+
+    tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
+    if file_tasks:
+        group_id = job_service.create_group(file_tasks, enqueue=False)
+        tasks.append(group_id)
+    else:
+        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+
+    tasks.extend(
+        [
+            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
+            (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
+            (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
+        ]
+    )
+
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "message": "Pool build pipeline enqueued"}
 
 
 def cluster_pool(pool_id):
@@ -69,8 +134,14 @@ def cluster_pool(pool_id):
     if not pool:
         return {"error": "Pool not found"}, 404
 
-    job_id = job_service.create_job(JobType.CLUSTER_POOL, {"pool_id": pool_id})
-    return {"job_id": job_id, "message": "Pool clustering job enqueued"}
+    pipeline_id = job_service.create_pipeline(
+        [
+            (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
+            (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
+        ]
+    )
+    return {"job_id": pipeline_id, "message": "Pool clustering pipeline enqueued"}
 
 
 def sync_check(pool_id):
@@ -88,13 +159,42 @@ def rebuild_pool(pool_id):
 
     pool_service.wipe_pool_data(pool_id)
 
-    # Schedule similarity building followed by clustering in a unified pipeline
-    pipeline_id = job_service.create_pipeline(
+    collections = pool.get("collections", [])
+    redis_client = pool_service.r
+    file_tasks = []
+    for coll in collections:
+        all_files_key = f"{coll}:all_files"
+        file_keys = [
+            d.decode() if isinstance(d, bytes) else str(d)
+            for d in redis_client.smembers(all_files_key)
+        ]
+        for k in file_keys:
+            if k.endswith(":meta"):
+                continue
+            parts = k.split(":")
+            if len(parts) >= 3:
+                md5 = parts[2]
+                file_tasks.append(
+                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
+                )
+
+    tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
+    if file_tasks:
+        group_id = job_service.create_group(file_tasks, enqueue=False)
+        tasks.append(group_id)
+    else:
+        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+
+    tasks.extend(
         [
-            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+            (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
+            (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
+            (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
         ]
     )
+
+    pipeline_id = job_service.create_pipeline(tasks)
     return {
         "message": "Pool data wiped and rebuild pipeline enqueued",
         "pool_id": pool_id,

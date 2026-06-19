@@ -108,13 +108,15 @@ class PoolService:
         # Retrieve pool-wide similarities & clusters counts
         # Function similarities
         meta["total_func_similarities"] = r.zcard(f"global:pool:{pool_id}:sim:score")
-        
+
         # Function clusters
         meta["total_func_clusters"] = r.scard(f"global:pool:{pool_id}:cluster:list")
 
         # File similarities
         file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
-        meta["total_file_similarities"] = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
+        meta["total_file_similarities"] = r.zcard(
+            f"global:pool:{pool_id}:bin_sim:score:{file_algo}"
+        )
 
         # File clusters (if any list exists, otherwise default 0 or check algorithm clusters)
         meta["total_file_clusters"] = r.scard(f"global:pool:{pool_id}:bin_cluster:list")
@@ -178,7 +180,7 @@ class PoolService:
             return False, "Pool not found"
 
         pipe = r.pipeline()
-        
+
         # Cleanup keys in pool namespace except meta and collections_list keys
         cursor = 0
         pattern = f"global:pool:{pool_id}:*"
@@ -190,7 +192,7 @@ class PoolService:
                     k_str = k.decode() if isinstance(k, bytes) else k
                     if k_str not in [
                         f"global:pool:{pool_id}:meta",
-                        f"global:pool:{pool_id}:collections_list"
+                        f"global:pool:{pool_id}:collections_list",
                     ]:
                         keys_to_delete.append(k)
                 if keys_to_delete:
@@ -453,6 +455,211 @@ class PoolService:
                         for k, v in coll_tags_meta.items()
                     },
                 )
+
+        return True
+
+    def init_pool_build(self, pool_id):
+        """
+        Wipes pool data, updates snapshots, and merges base file/func indexes.
+        """
+        r = self.r
+        meta = self.get_pool(pool_id)
+        if not meta:
+            return False
+
+        collections = meta.get("collections", [])
+        if not collections:
+            return True
+
+        # Wipe old data
+        self.wipe_pool_data(pool_id)
+        # Update snapshots
+        self.update_sync_snapshots(pool_id)
+
+        from bsimvis.app.services.index_service import (
+            FILE_TAG_FIELDS,
+            FUNC_TAG_FIELDS,
+            FILE_NUM_FIELDS,
+            FUNC_NUM_FIELDS,
+        )
+
+        pool_coll = f"global:pool:{pool_id}"
+
+        # 1. Merge TAG registries and buckets (excluding 'sim')
+        for level, fields in [
+            ("file", FILE_TAG_FIELDS),
+            ("func", FUNC_TAG_FIELDS),
+        ]:
+            for field in fields:
+                # Skip pool-specific user annotations and their propagations
+                if field in [
+                    "user_tags",
+                    "file_user_tags",
+                    "func_user_tags",
+                    "note_owners",
+                ]:
+                    continue
+
+                bucket_values = set()
+                for coll in collections:
+                    reg_key = f"{coll}:reg:{level}:{field}"
+                    buckets = r.smembers(reg_key)
+                    for b in buckets:
+                        b_str = b.decode() if isinstance(b, bytes) else str(b)
+                        prefix = f"{coll}:idx:{level}:{field}:"
+                        if b_str.startswith(prefix):
+                            bucket_values.add(b_str[len(prefix) :])
+
+                if bucket_values:
+                    pool_reg_key = f"{pool_coll}:reg:{level}:{field}"
+                    pipe = r.pipeline()
+                    pipe.delete(pool_reg_key)
+                    for val in bucket_values:
+                        pool_bucket_key = f"{pool_coll}:idx:{level}:{field}:{val}"
+                        source_buckets = [
+                            f"{coll}:idx:{level}:{field}:{val}" for coll in collections
+                        ]
+                        existing_sources = [sb for sb in source_buckets if r.exists(sb)]
+                        if existing_sources:
+                            pipe.sunionstore(pool_bucket_key, *existing_sources)
+                            pipe.sadd(pool_reg_key, pool_bucket_key)
+                    pipe.execute()
+
+        # 2. Merge NUM ZSets (excluding 'sim')
+        for level, fields in [
+            ("file", FILE_NUM_FIELDS),
+            ("func", FUNC_NUM_FIELDS),
+        ]:
+            for field in fields:
+                source_zsets = [f"{coll}:idx:{level}:{field}" for coll in collections]
+                existing_zsets = [sz for sz in source_zsets if r.exists(sz)]
+                if existing_zsets:
+                    pool_zset_key = f"{pool_coll}:idx:{level}:{field}"
+                    r.zunionstore(pool_zset_key, existing_zsets)
+
+        # 3. Merge all_files and all_functions
+        pipe = r.pipeline()
+        pipe.delete(f"{pool_coll}:all_files")
+        pipe.delete(f"{pool_coll}:all_functions")
+        all_files_sources = [
+            f"{coll}:all_files" for coll in collections if r.exists(f"{coll}:all_files")
+        ]
+        if all_files_sources:
+            pipe.sunionstore(f"{pool_coll}:all_files", *all_files_sources)
+
+        all_funcs_sources = [
+            f"{coll}:all_functions"
+            for coll in collections
+            if r.exists(f"{coll}:all_functions")
+        ]
+        if all_funcs_sources:
+            pipe.sunionstore(f"{pool_coll}:all_functions", *all_funcs_sources)
+
+        # 4. Merge idx:file:functions:*
+        md5_set = set()
+        for coll in collections:
+            for key in r.scan_iter(match=f"{coll}:idx:file:functions:*", count=1000):
+                key_str = key.decode() if isinstance(key, bytes) else str(key)
+                md5 = key_str.split(":")[-1]
+                md5_set.add(md5)
+
+        for md5 in md5_set:
+            sources = [
+                f"{coll}:idx:file:functions:{md5}"
+                for coll in collections
+                if r.exists(f"{coll}:idx:file:functions:{md5}")
+            ]
+            if sources:
+                pipe.sunionstore(f"{pool_coll}:idx:file:functions:{md5}", *sources)
+
+        pipe.execute()
+
+        # 5. Merge tags_metadata
+        pool_tags_meta_key = f"{pool_coll}:tags_metadata"
+        r.delete(pool_tags_meta_key)
+        for coll in collections:
+            coll_tags_meta = r.hgetall(f"{coll}:tags_metadata")
+            if coll_tags_meta:
+                r.hset(
+                    pool_tags_meta_key,
+                    mapping={
+                        k.decode() if isinstance(k, bytes) else k: (
+                            v.decode() if isinstance(v, bytes) else v
+                        )
+                        for k, v in coll_tags_meta.items()
+                    },
+                )
+
+        return True
+
+    def finalize_pool_build(self, pool_id):
+        """
+        Merges similarity-level tag registries and index buckets.
+        """
+        r = self.r
+        meta = self.get_pool(pool_id)
+        if not meta:
+            return False
+
+        collections = meta.get("collections", [])
+        if not collections:
+            return True
+
+        from bsimvis.app.services.index_config import get_fields_targeting_level
+
+        SIM_TAG_FIELDS = get_fields_targeting_level("sim", is_num=False)
+        SIM_NUM_FIELDS = get_fields_targeting_level("sim", is_num=True)
+
+        pool_coll = f"global:pool:{pool_id}"
+
+        # 1. Merge TAG registries and buckets for level 'sim'
+        for field in SIM_TAG_FIELDS:
+            bucket_values = set()
+            for coll in collections:
+                reg_key = f"{coll}:reg:sim:{field}"
+                buckets = r.smembers(reg_key)
+                for b in buckets:
+                    b_str = b.decode() if isinstance(b, bytes) else str(b)
+                    prefix = f"{coll}:idx:sim:{field}:"
+                    if b_str.startswith(prefix):
+                        bucket_values.add(b_str[len(prefix) :])
+
+            if bucket_values:
+                pool_reg_key = f"{pool_coll}:reg:sim:{field}"
+                pipe = r.pipeline()
+                pipe.delete(pool_reg_key)
+                for val in bucket_values:
+                    pool_bucket_key = f"{pool_coll}:idx:sim:{field}:{val}"
+                    all_sids = set()
+                    for coll in collections:
+                        sb = f"{coll}:idx:sim:{field}:{val}"
+                        for sid in r.smembers(sb):
+                            sid_str = (
+                                sid.decode() if isinstance(sid, bytes) else str(sid)
+                            )
+                            parts = sid_str.split(":")
+                            if len(parts) >= 4:
+                                coll_name = parts[0]
+                                rest = ":".join(parts[3:])
+                                pivot = rest.find("::")
+                                if pivot != -1:
+                                    clean_id1 = rest[:pivot]
+                                    clean_id2 = rest[pivot + 2 :]
+                                    pool_sid = f"global:pool:{pool_id}:sim:{coll_name}:func:{clean_id1}::{coll_name}:func:{clean_id2}"
+                                    all_sids.add(pool_sid)
+                    if all_sids:
+                        pipe.delete(pool_bucket_key)
+                        pipe.sadd(pool_bucket_key, *all_sids)
+                        pipe.sadd(pool_reg_key, pool_bucket_key)
+                pipe.execute()
+
+        # 2. Merge NUM ZSets for level 'sim'
+        for field in SIM_NUM_FIELDS:
+            source_zsets = [f"{coll}:idx:sim:{field}" for coll in collections]
+            existing_zsets = [sz for sz in source_zsets if r.exists(sz)]
+            if existing_zsets:
+                pool_zset_key = f"{pool_coll}:idx:sim:{field}"
+                r.zunionstore(pool_zset_key, existing_zsets)
 
         return True
 

@@ -254,7 +254,7 @@ class JobService:
 
         return group_id
 
-    def enqueue_job(self, job_id):
+    def enqueue_job(self, job_id, is_continuation=False):
         """Pushes a job ID onto the appropriate priority queue."""
         job = self.r.hgetall(f"job:{job_id}")
         jtype = job.get("type") if job else None
@@ -270,9 +270,14 @@ class JobService:
         if jtype in high_priority_types:
             self.r.lpush("jobs:pending:high", job_id)
         else:
-            self.r.lpush("jobs:pending", job_id)
+            if is_continuation:
+                # Push to tail/RIGHT so workers pulling from tail (LMOVE/BLMOVE ... RIGHT LEFT) pick it up immediately
+                self.r.rpush("jobs:pending", job_id)
+            else:
+                # Push to head/LEFT (normal queueing order)
+                self.r.lpush("jobs:pending", job_id)
 
-    def start_job(self, job_id):
+    def start_job(self, job_id, is_continuation=False):
         """Starts a job. If it's a group or pipeline, it resolves down to leaf jobs."""
         job = self.r.hgetall(f"job:{job_id}")
         if not job:
@@ -289,18 +294,18 @@ class JobService:
         if jtype == "pipeline":
             tids = json.loads(job.get("task_ids", "[]"))
             if tids:
-                self.start_job(tids[0])
+                self.start_job(tids[0], is_continuation=is_continuation)
             else:
                 self.complete_job(job_id)
         elif jtype == "group":
             tids = json.loads(job.get("task_ids", "[]"))
             if tids:
                 for tid in tids:
-                    self.start_job(tid)
+                    self.start_job(tid, is_continuation=is_continuation)
             else:
                 self.complete_job(job_id)
         else:
-            self.enqueue_job(job_id)
+            self.enqueue_job(job_id, is_continuation=is_continuation)
 
     def complete_job(self, job_id):
         """Marks a job as completed and advances its parent if applicable."""
@@ -329,7 +334,7 @@ class JobService:
                         parent_id,
                         f"Sub-task {finished_job_id} done. Starting next: {next_tid}",
                     )
-                    self.start_job(next_tid)
+                    self.start_job(next_tid, is_continuation=True)
                 else:
                     self.add_log(parent_id, "All tasks in pipeline completed.")
                     self.complete_job(parent_id)
@@ -609,14 +614,16 @@ class JobService:
                 active_collections.add(coll)
 
             jid_str = jid.decode() if isinstance(jid, bytes) else jid
-            active_jobs.append({
-                "id": jid_str,
-                "type": jtype,
-                "status": status,
-                "collection": coll,
-                "pool_id": pool_id,
-                "progress": safe_int(job.get("progress", 0))
-            })
+            active_jobs.append(
+                {
+                    "id": jid_str,
+                    "type": jtype,
+                    "status": status,
+                    "collection": coll,
+                    "pool_id": pool_id,
+                    "progress": safe_int(job.get("progress", 0)),
+                }
+            )
 
         return {
             "active_workers": active_jobs_count,
@@ -629,14 +636,19 @@ class JobService:
             "active_jobs": active_jobs,
         }
 
-    def list_jobs(self, limit=100, offset=0, collection=None, pool=None, status=None, jtype=None):
+    def list_jobs(
+        self, limit=100, offset=0, collection=None, pool=None, status=None, jtype=None
+    ):
         """Returns a paged list of jobs and the total count."""
         # Fetch all top-level job IDs (at most 1000)
         all_job_ids = self.r.lrange("jobs:global", 0, -1)
 
         pool_cols = set()
         if pool:
-            pool_cols = {c.decode() if isinstance(c, bytes) else c for c in self.r.smembers(f"global:pool:{pool}:collections_list")}
+            pool_cols = {
+                c.decode() if isinstance(c, bytes) else c
+                for c in self.r.smembers(f"global:pool:{pool}:collections_list")
+            }
             pool_cols.add(f"pool:{pool}")
 
         # Batch fetch all top-level job hashes using pipeline
@@ -853,4 +865,37 @@ class JobService:
                 if sub_job_dict["type"] in ["pipeline", "group"] and task_ids:
                     to_fetch.extend(task_ids)
 
-        return results, total
+        # Group subtasks by their top-level ancestor
+        ancestor_map = {job["id"]: [] for job in paginated_top_level}
+        sub_tasks_list = results[len(paginated_top_level):]
+
+        def get_top_level_ancestor(sub_job):
+            curr = sub_job
+            visited = set()
+            while curr.get("parent_id") and curr["id"] not in visited:
+                visited.add(curr["id"])
+                p_id = curr["parent_id"]
+                if p_id in ancestor_map:
+                    return p_id
+                parent = results_map.get(p_id)
+                if not parent:
+                    break
+                curr = parent
+            return None
+
+        for sub_job in sub_tasks_list:
+            ancestor = get_top_level_ancestor(sub_job)
+            if ancestor:
+                ancestor_map[ancestor].append(sub_job)
+
+        final_results = []
+        for job in paginated_top_level:
+            job_descendants = ancestor_map.get(job["id"], [])
+            job_total_count = 1 + len(job_descendants)
+            if not final_results or len(final_results) + job_total_count <= limit:
+                final_results.append(job)
+                final_results.extend(job_descendants)
+            else:
+                break
+
+        return final_results, total

@@ -113,7 +113,7 @@ def get_pipeline_perf_metrics(pipeline_id, collection=None, pool_id=None):
         # Fetch counts (similarities and clusters)
         if pool_id:
             try:
-                p_resp = requests.get(f"{API_BASE}/pools/{pool_id}")
+                p_resp = requests.get(f"{API_BASE}/pool/{pool_id}")
                 if p_resp.status_code == 200:
                     p_data = p_resp.json()
                     metrics["stats"] = {

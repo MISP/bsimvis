@@ -1843,4 +1843,5 @@ class SimilarityService:
                 f"Pool binary similarity build finished. Found {len(pairs)} comparisons.",
             )
 
+        self.r.hdel(f"global:pool:{pool_id}:meta", "total_file_similarities")
         return True

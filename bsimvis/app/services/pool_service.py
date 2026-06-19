@@ -106,20 +106,45 @@ class PoolService:
         }
 
         # Retrieve pool-wide similarities & clusters counts
+        updated_meta = {}
+
         # Function similarities
-        meta["total_func_similarities"] = r.zcard(f"global:pool:{pool_id}:sim:score")
+        if "total_func_similarities" not in meta:
+            total_func_sim = r.zcard(f"global:pool:{pool_id}:sim:score")
+            meta["total_func_similarities"] = total_func_sim
+            updated_meta["total_func_similarities"] = total_func_sim
+        else:
+            meta["total_func_similarities"] = int(meta["total_func_similarities"])
 
         # Function clusters
-        meta["total_func_clusters"] = r.scard(f"global:pool:{pool_id}:cluster:list")
+        if "total_func_clusters" not in meta:
+            total_func_clust = r.scard(f"global:pool:{pool_id}:cluster:list")
+            meta["total_func_clusters"] = total_func_clust
+            updated_meta["total_func_clusters"] = total_func_clust
+        else:
+            meta["total_func_clusters"] = int(meta["total_func_clusters"])
 
         # File similarities
         file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
-        meta["total_file_similarities"] = r.zcard(
-            f"global:pool:{pool_id}:bin_sim:score:{file_algo}"
-        )
+        if "total_file_similarities" not in meta:
+            total_file_sim = r.zcard(
+                f"global:pool:{pool_id}:bin_sim:score:{file_algo}"
+            )
+            meta["total_file_similarities"] = total_file_sim
+            updated_meta["total_file_similarities"] = total_file_sim
+        else:
+            meta["total_file_similarities"] = int(meta["total_file_similarities"])
 
         # File clusters (if any list exists, otherwise default 0 or check algorithm clusters)
-        meta["total_file_clusters"] = r.scard(f"global:pool:{pool_id}:bin_cluster:list")
+        if "total_file_clusters" not in meta:
+            total_file_clust = r.scard(f"global:pool:{pool_id}:bin_cluster:list")
+            meta["total_file_clusters"] = total_file_clust
+            updated_meta["total_file_clusters"] = total_file_clust
+        else:
+            meta["total_file_clusters"] = int(meta["total_file_clusters"])
+
+        if updated_meta:
+            r.hset(f"global:pool:{pool_id}:meta", mapping=updated_meta)
 
         return meta
 
@@ -204,6 +229,13 @@ class PoolService:
         pipe.hset(
             f"global:pool:{pool_id}:meta",
             mapping={"sync_status": "outdated", "last_built_at": 0},
+        )
+        pipe.hdel(
+            f"global:pool:{pool_id}:meta",
+            "total_func_similarities",
+            "total_func_clusters",
+            "total_file_similarities",
+            "total_file_clusters",
         )
         pipe.execute()
         return True, "Pool data wiped successfully"
@@ -660,6 +692,8 @@ class PoolService:
             if existing_zsets:
                 pool_zset_key = f"{pool_coll}:idx:sim:{field}"
                 r.zunionstore(pool_zset_key, existing_zsets)
+
+        r.hdel(f"global:pool:{pool_id}:meta", "total_func_similarities")
 
         return True
 

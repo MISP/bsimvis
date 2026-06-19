@@ -40,46 +40,81 @@ def search_collections():
         total = len(collection_names)
         page_names = collection_names[offset : offset + limit]
 
+        # 1. Fetch metadata hashes first
         pipe = r.pipeline()
         for name in page_names:
-            pipe.scard(f"{name}:all_files")
-            pipe.scard(f"{name}:all_functions")
-            pipe.scard(f"{name}:all_batches")
-            pipe.zrange(f"{name}:idx:file:entry_date", -1, -1, withscores=True)
             pipe.hgetall(f"global:collection:{name}:meta")
-        pipe_results = pipe.execute()
+        meta_results = pipe.execute()
 
-        results = []
+        # 2. Identify collections that have missing cached statistics
+        fetch_pipe = r.pipeline()
+        fetch_jobs = []  # list of tuples: (collection_name, meta_decoded_dict, field_name)
+
+        results_temp = []
         for i, name in enumerate(page_names):
-            idx = i * 5
-            total_files = pipe_results[idx]
-            total_functions = pipe_results[idx + 1]
-            total_batches = pipe_results[idx + 2]
-            zrange_res = pipe_results[idx + 3]
-            meta = pipe_results[idx + 4] or {}
+            meta = meta_results[i] or {}
+            meta_decoded = {}
+            for k, v in meta.items():
+                k_str = k.decode() if isinstance(k, bytes) else str(k)
+                v_str = v.decode() if isinstance(v, bytes) else str(v)
+                meta_decoded[k_str] = v_str
 
-            # Determine last_updated from latest file entry_date
-            last_updated = 0
-            if zrange_res:
-                try:
-                    # zrange_res is a list of tuples: [(member, score)]
-                    last_updated = int(zrange_res[0][1])
-                except (ValueError, TypeError, IndexError):
-                    pass
+            need_files = "total_files" not in meta_decoded
+            need_functions = "total_functions" not in meta_decoded
+            need_batches = "total_batches" not in meta_decoded
+            need_last_updated = "last_updated" not in meta_decoded
 
-            # Fallback to meta hash last_updated if zrange_res was empty
-            if not last_updated:
-                last_updated_raw = meta.get("last_updated")
-                if last_updated_raw:
-                    last_updated = parse_timestamp(last_updated_raw)
+            if need_files:
+                fetch_pipe.scard(f"{name}:all_files")
+                fetch_jobs.append((name, meta_decoded, "total_files"))
+            if need_functions:
+                fetch_pipe.scard(f"{name}:all_functions")
+                fetch_jobs.append((name, meta_decoded, "total_functions"))
+            if need_batches:
+                fetch_pipe.scard(f"{name}:all_batches")
+                fetch_jobs.append((name, meta_decoded, "total_batches"))
+            if need_last_updated:
+                fetch_pipe.zrange(f"{name}:idx:file:entry_date", -1, -1, withscores=True)
+                fetch_jobs.append((name, meta_decoded, "last_updated"))
 
+            results_temp.append((name, meta_decoded))
+
+        # 3. Fetch any missing fields and cache them back
+        if fetch_jobs:
+            fetched_vals = fetch_pipe.execute()
+            updates_pipe = r.pipeline()
+            for job_idx, (name, meta_decoded, field) in enumerate(fetch_jobs):
+                val = fetched_vals[job_idx]
+                if field == "last_updated":
+                    last_updated = 0
+                    if val:
+                        try:
+                            last_updated = int(val[0][1])
+                        except (ValueError, TypeError, IndexError):
+                            pass
+                    if not last_updated:
+                        raw_updated = meta_decoded.get("last_updated")
+                        if raw_updated:
+                            last_updated = parse_timestamp(raw_updated)
+                    meta_decoded[field] = last_updated
+                else:
+                    meta_decoded[field] = int(val) if val else 0
+
+                updates_pipe.hset(
+                    f"global:collection:{name}:meta", field, meta_decoded[field]
+                )
+            updates_pipe.execute()
+
+        # 4. Construct final results lists
+        results = []
+        for name, meta_decoded in results_temp:
             results.append(
                 {
                     "name": name,
-                    "total_files": int(total_files) if total_files else 0,
-                    "total_functions": int(total_functions) if total_functions else 0,
-                    "total_batches": int(total_batches) if total_batches else 0,
-                    "last_updated": last_updated,
+                    "total_files": int(meta_decoded.get("total_files", 0)),
+                    "total_functions": int(meta_decoded.get("total_functions", 0)),
+                    "total_batches": int(meta_decoded.get("total_batches", 0)),
+                    "last_updated": int(meta_decoded.get("last_updated", 0)),
                 }
             )
 

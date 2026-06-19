@@ -1375,6 +1375,7 @@ class ClusterService:
         if not success:
             return False
 
+        self.r.hdel(f"global:pool:{pool_id}:meta", "total_func_clusters")
         return True
 
     def run_pool_bin_clustering(
@@ -1952,6 +1953,7 @@ class ClusterService:
                 f"Pool binary clustering {pool_id} completed. Found {len(cluster_members)} clusters.",
             )
 
+        self.r.hdel(f"global:pool:{pool_id}:meta", "total_file_clusters")
         return True
 
 

@@ -383,6 +383,7 @@ def delete_file(r, coll, file_md5):
     for f in FILE_NUM_FIELDS:
         _unindex_num(pipe, coll, "file", f, base_id)
     pipe.srem(f"{coll}:all_files", base_id)
+    pipe.hincrby(f"global:collection:{coll}:meta", "total_files", -1)
     pipe.execute()
 
 
@@ -402,6 +403,7 @@ def delete_function(r, coll, md5, addr):
         _unindex_num(pipe, coll, "func", f, base_id)
     pipe.srem(f"{coll}:idx:file:functions:{md5}", base_id)
     pipe.srem(f"{coll}:all_functions", base_id)
+    pipe.hincrby(f"global:collection:{coll}:meta", "total_functions", -1)
     pipe.delete(f"{base_id}:callees")
     pipe.delete(f"{base_id}:callers")
     pipe.execute()

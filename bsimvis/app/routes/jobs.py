@@ -9,10 +9,11 @@ def list_jobs():
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
     collection = request.args.get("collection")
+    pool = request.args.get("pool")
     status = request.args.get("status")
     jtype = request.args.get("type")
     jobs, total = job_service.list_jobs(
-        limit=limit, offset=offset, collection=collection, status=status, jtype=jtype
+        limit=limit, offset=offset, collection=collection, pool=pool, status=status, jtype=jtype
     )
     return {"items": jobs, "total": total}
 

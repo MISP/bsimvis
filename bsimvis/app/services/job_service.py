@@ -144,17 +144,29 @@ class JobService:
         for task in tasks:
             if isinstance(task, (list, tuple)) and len(task) >= 2:
                 payload = task[1]
-                if isinstance(payload, dict) and "collection" in payload:
-                    collection = payload["collection"]
-                    break
+                if isinstance(payload, dict):
+                    if "collection" in payload:
+                        collection = payload["collection"]
+                        break
+                    elif "pool_id" in payload:
+                        collection = f"pool:{payload['pool_id']}"
+                        break
             elif isinstance(task, str):
                 st = self.r.hgetall(f"job:{task}")
                 if st:
-                    collection = st.get("collection")
-                    if not collection and "payload" in st:
+                    st_decoded = {
+                        k.decode() if isinstance(k, bytes) else k: (
+                            v.decode() if isinstance(v, bytes) else v
+                        )
+                        for k, v in st.items()
+                    }
+                    collection = st_decoded.get("collection")
+                    if not collection and "payload" in st_decoded:
                         try:
-                            pl = json.loads(st["payload"])
+                            pl = json.loads(st_decoded["payload"])
                             collection = pl.get("collection")
+                            if not collection and "pool_id" in pl:
+                                collection = f"pool:{pl['pool_id']}"
                         except:
                             pass
                     if collection:
@@ -202,17 +214,29 @@ class JobService:
         for task in tasks:
             if isinstance(task, (list, tuple)) and len(task) >= 2:
                 payload = task[1]
-                if isinstance(payload, dict) and "collection" in payload:
-                    collection = payload["collection"]
-                    break
+                if isinstance(payload, dict):
+                    if "collection" in payload:
+                        collection = payload["collection"]
+                        break
+                    elif "pool_id" in payload:
+                        collection = f"pool:{payload['pool_id']}"
+                        break
             elif isinstance(task, str):
                 st = self.r.hgetall(f"job:{task}")
                 if st:
-                    collection = st.get("collection")
-                    if not collection and "payload" in st:
+                    st_decoded = {
+                        k.decode() if isinstance(k, bytes) else k: (
+                            v.decode() if isinstance(v, bytes) else v
+                        )
+                        for k, v in st.items()
+                    }
+                    collection = st_decoded.get("collection")
+                    if not collection and "payload" in st_decoded:
                         try:
-                            pl = json.loads(st["payload"])
+                            pl = json.loads(st_decoded["payload"])
                             collection = pl.get("collection")
+                            if not collection and "pool_id" in pl:
+                                collection = f"pool:{pl['pool_id']}"
                         except:
                             pass
                     if collection:
@@ -543,30 +567,56 @@ class JobService:
             "jobs:pending:high", 0, 100
         )
 
+        active_jobs = []
         for jid in set(all_processing_ids + pending_ids):
             job = self.r.hgetall(f"job:{jid}")
             if not job:
                 continue
-            if job.get("status") in [
+
+            # Decode key-value pairs of job if they are bytes
+            job_decoded = {}
+            for k, v in job.items():
+                k_str = k.decode() if isinstance(k, bytes) else k
+                v_str = v.decode() if isinstance(v, bytes) else v
+                job_decoded[k_str] = v_str
+            job = job_decoded
+
+            status = job.get("status")
+            if status in [
                 JobStatus.CANCELLED.value,
                 JobStatus.FAILED.value,
                 JobStatus.COMPLETED.value,
             ]:
                 continue
 
-            coll = job.get("collection")
+            jtype = job.get("type", "")
+            coll = job.get("collection", "")
+            pool_id = ""
+            payload_raw = job.get("payload")
+            if payload_raw:
+                try:
+                    payload = json.loads(payload_raw)
+                    if not coll:
+                        coll = payload.get("collection", "")
+                    pool_id = payload.get("pool_id", "")
+                except:
+                    pass
+
+            if not coll and pool_id:
+                coll = f"pool:{pool_id}"
+
             if coll:
                 active_collections.add(coll)
-            else:
-                payload_raw = job.get("payload")
-                if payload_raw:
-                    try:
-                        payload = json.loads(payload_raw)
-                        coll = payload.get("collection")
-                        if coll:
-                            active_collections.add(coll)
-                    except:
-                        pass
+
+            jid_str = jid.decode() if isinstance(jid, bytes) else jid
+            active_jobs.append({
+                "id": jid_str,
+                "type": jtype,
+                "status": status,
+                "collection": coll,
+                "pool_id": pool_id,
+                "progress": safe_int(job.get("progress", 0))
+            })
 
         return {
             "active_workers": active_jobs_count,
@@ -576,12 +626,18 @@ class JobService:
             "remaining_items": remaining_items,
             "global_eta": int(global_eta),
             "active_collections": list(active_collections),
+            "active_jobs": active_jobs,
         }
 
-    def list_jobs(self, limit=100, offset=0, collection=None, status=None, jtype=None):
+    def list_jobs(self, limit=100, offset=0, collection=None, pool=None, status=None, jtype=None):
         """Returns a paged list of jobs and the total count."""
         # Fetch all top-level job IDs (at most 1000)
         all_job_ids = self.r.lrange("jobs:global", 0, -1)
+
+        pool_cols = set()
+        if pool:
+            pool_cols = {c.decode() if isinstance(c, bytes) else c for c in self.r.smembers(f"global:pool:{pool}:collections_list")}
+            pool_cols.add(f"pool:{pool}")
 
         # Batch fetch all top-level job hashes using pipeline
         pipe = self.r.pipeline()
@@ -594,6 +650,14 @@ class JobService:
         for jid, job in zip(all_job_ids, raw_jobs):
             if not job:
                 continue
+
+            # Decode key-value pairs of job if they are bytes
+            job_decoded = {}
+            for k, v in job.items():
+                k_str = k.decode() if isinstance(k, bytes) else k
+                v_str = v.decode() if isinstance(v, bytes) else v
+                job_decoded[k_str] = v_str
+            job = job_decoded
 
             # Extract target and collection from payload
             target = ""
@@ -640,9 +704,45 @@ class JobService:
                 except:
                     pass
 
+            if not coll and job.get("type") in ["pipeline", "group"] and task_ids:
+                first_task_id = task_ids[0]
+                first_task = self.r.hgetall(f"job:{first_task_id}")
+                if first_task:
+                    first_task = {
+                        k.decode() if isinstance(k, bytes) else k: (
+                            v.decode() if isinstance(v, bytes) else v
+                        )
+                        for k, v in first_task.items()
+                    }
+                    coll = first_task.get("collection", "")
+                    if not coll:
+                        payload_raw = first_task.get("payload")
+                        if payload_raw:
+                            try:
+                                payload = json.loads(payload_raw)
+                                coll = payload.get("collection", "")
+                                if not coll and "pool_id" in payload:
+                                    coll = f"pool:{payload['pool_id']}"
+                            except:
+                                pass
+
             # Apply filters early to top-level jobs
             if collection and coll != collection:
-                continue
+                # If pool is specified, allow pool-level jobs to bypass the collection filter
+                if not (pool and coll == f"pool:{pool}"):
+                    continue
+            if pool and coll not in pool_cols:
+                # Also check if payload explicitly has pool_id
+                payload_pool = ""
+                payload_raw = job.get("payload")
+                if payload_raw:
+                    try:
+                        payload = json.loads(payload_raw)
+                        payload_pool = payload.get("pool_id", "")
+                    except:
+                        pass
+                if payload_pool != pool:
+                    continue
             if status and job.get("status") != status:
                 continue
             if jtype and job.get("type") != jtype:

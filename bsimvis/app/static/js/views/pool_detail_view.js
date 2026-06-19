@@ -4,6 +4,15 @@
  */
 
 window.PoolDetailView = {
+    refreshInterval: null,
+
+    destroy() {
+        if (this.refreshInterval) {
+            clearInterval(this.refreshInterval);
+            this.refreshInterval = null;
+        }
+    },
+
     async init(params, containerId) {
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -20,9 +29,10 @@ window.PoolDetailView = {
             </div>`;
 
         try {
-            const [poolRes, collectionsRes] = await Promise.all([
+            const [poolRes, collectionsRes, jobsStatsRes] = await Promise.all([
                 fetch(`/api/pool/${encodeURIComponent(poolId)}`),
-                fetch('/api/collection/search?limit=500&offset=0')
+                fetch('/api/collection/search?limit=500&offset=0'),
+                fetch('/api/jobs/stats').catch(() => null)
             ]);
 
             if (!poolRes.ok) throw new Error('Pool not found');
@@ -44,7 +54,42 @@ window.PoolDetailView = {
             const collMap = {};
             allCollections.forEach(c => { collMap[c.name] = c; });
 
-            container.innerHTML = this._renderPage(pool, poolId, collMap);
+            let poolActiveJobs = [];
+            if (jobsStatsRes && jobsStatsRes.ok) {
+                const stats = await jobsStatsRes.json();
+                const activeJobs = stats.active_jobs || [];
+                poolActiveJobs = activeJobs.filter(job => {
+                    if (job.pool_id === poolId) return true;
+                    if (job.collection === `pool:${poolId}`) return true;
+                    if (pool.collections && pool.collections.includes(job.collection)) return true;
+                    return false;
+                });
+            }
+
+            container.innerHTML = this._renderPage(pool, poolId, collMap, poolActiveJobs);
+
+            if (this.refreshInterval) clearInterval(this.refreshInterval);
+            this.refreshInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/jobs/stats');
+                    if (res.ok) {
+                        const stats = await res.json();
+                        const activeJobs = stats.active_jobs || [];
+                        const filtered = activeJobs.filter(job => {
+                            if (job.pool_id === poolId) return true;
+                            if (job.collection === `pool:${poolId}`) return true;
+                            if (pool.collections && pool.collections.includes(job.collection)) return true;
+                            return false;
+                        });
+                        const tableContainer = document.getElementById('active-jobs-container');
+                        if (tableContainer) {
+                            tableContainer.innerHTML = this._renderActiveJobsSection(poolId, filtered);
+                        }
+                    }
+                } catch (e) {
+                    console.error("Auto refresh jobs error:", e);
+                }
+            }, 3000);
 
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
@@ -65,7 +110,7 @@ window.PoolDetailView = {
         </div>`;
     },
 
-    _renderPage(pool, poolId, collMap) {
+    _renderPage(pool, poolId, collMap, poolActiveJobs = []) {
         const status = pool.sync_status || 'created';
         const name = pool.name || 'Unnamed Pool';
         const createdAt = pool.created_at ? (typeof window.formatDate === 'function' ? formatDate(pool.created_at) : pool.created_at) : '—';
@@ -151,6 +196,7 @@ window.PoolDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     ${buildBtnHtml}
                     <button onclick="window.poolDetailRebuild('${poolId}', this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-rotate"></i> Rebuild</button>
                     <button onclick="window.poolDetailDelete('${poolId}', this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
@@ -271,7 +317,87 @@ window.PoolDetailView = {
                     </div>
                 </div>
             </div>
+
+            <!-- ACTIVE / RUNNING JOBS -->
+            <div id="active-jobs-container">
+                ${this._renderActiveJobsSection(poolId, poolActiveJobs)}
+            </div>
+
         </div>`;
+    },
+
+    _renderActiveJobsSection(poolId, poolActiveJobs) {
+        return `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--dim); display:flex; align-items:center; gap:7px;">
+                        <i class="fa-solid fa-server"></i> Active Jobs
+                    </div>
+                    <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(255,255,255,0.03); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.07)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'"><i class="fa-solid fa-server"></i> See All Jobs</button>
+                </div>
+                ${poolActiveJobs.length > 0 ? `
+                <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
+                    <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
+                        <thead>
+                            <tr style="border-bottom:1px solid var(--border); background:rgba(255,255,255,0.02); color:var(--dim);">
+                                <th style="padding:10px 15px;">Job ID</th>
+                                <th style="padding:10px 15px;">Type</th>
+                                <th style="padding:10px 15px;">Status</th>
+                                <th style="padding:10px 15px;">Progress</th>
+                                <th style="padding:10px 15px; text-align:right;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${poolActiveJobs.map(job => {
+                                const jobUrl = `/pools/${encodeURIComponent(poolId)}/jobs`;
+                                const status = job.status;
+                                let actions = '<div class="job-actions" style="display:flex; justify-content:flex-end;">';
+                                if (status === 'pending' || status === 'running') {
+                                    actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+                                }
+                                if (status === 'failed' || status === 'cancelled' || status === 'completed') {
+                                    actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+                                }
+                                actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
+                                actions += '</div>';
+
+                                let progressClass = '';
+                                if (status === 'running') progressClass = 'progress-running';
+                                if (status === 'completed') progressClass = 'progress-completed';
+                                if (status === 'failed' || status === 'cancelled') progressClass = 'progress-failed';
+
+                                const progressHtml = `
+                                    <div class="job-progress-container">
+                                        <div class="job-progress-track">
+                                            <div class="job-progress-fill ${progressClass}" style="width: ${job.progress}%"></div>
+                                        </div>
+                                        <span class="job-progress-text">${job.progress}%</span>
+                                    </div>
+                                `;
+
+                                let statusIcon = 'fa-circle-notch fa-spin';
+                                if (status === 'completed') statusIcon = 'fa-check-circle';
+                                if (status === 'failed') statusIcon = 'fa-exclamation-circle';
+                                if (status === 'cancelled') statusIcon = 'fa-ban';
+                                if (status === 'pending') statusIcon = 'fa-clock';
+
+                                const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`;
+
+                                return `
+                                <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath('${jobUrl}', event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
+                                    <td style="padding:10px 15px; font-weight:600; text-transform:capitalize;">${job.type}</td>
+                                    <td style="padding:10px 15px;">${statusBadge}</td>
+                                    <td style="padding:10px 15px;">${progressHtml}</td>
+                                    <td style="padding:10px 15px; text-align:right;">${actions}</td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>` : `
+                <div style="color:var(--dim); font-size:0.85rem; padding:20px; text-align:center; background:var(--card-bg); border:1px solid var(--border); border-radius:8px;">
+                    No active jobs running for this pool.
+                </div>
+                `}`;
     }
 };
 

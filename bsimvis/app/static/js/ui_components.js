@@ -58,7 +58,7 @@ window.UI = {
     Sidebar: {
         render: function() {
             const { viewKey, collection, pool } = getRoutingState();
-            if (!collection && !pool && viewKey !== 'collections' && viewKey !== 'pools') {
+            if (!collection && !pool && viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'jobs') {
                 throw new Error("Navigation error: collection context is missing.");
             }
 
@@ -68,7 +68,9 @@ window.UI = {
 
                 const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
                 if (pool) {
-                    if (view === 'jobs') return `/jobs?collection=${encodeURIComponent(collection)}&pool=${encodeURIComponent(pool)}`;
+                    if (view === 'jobs') {
+                        return collection ? `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collection)}/jobs` : `/${prefix}/${encodeURIComponent(pool)}/jobs`;
+                    }
                     if (view === 'upload') return `/${prefix}/${encodeURIComponent(pool)}/upload`;
                     if (view === 'batches') return `/${prefix}/${encodeURIComponent(pool)}/batches`;
                     if (view === 'files') return `/${prefix}/${encodeURIComponent(pool)}/files`;
@@ -81,7 +83,9 @@ window.UI = {
                     return `/${prefix}/${encodeURIComponent(pool)}/${view}`;
                 }
 
-                if (view === 'jobs') return `/jobs?collection=${encodeURIComponent(collection)}`;
+                if (view === 'jobs') {
+                    return collection ? `/collections/${encodeURIComponent(collection)}/jobs` : `/jobs`;
+                }
                 if (view === 'upload') return `/collections/${encodeURIComponent(collection)}/upload`;
                 if (view === 'batches') return `/collections/${encodeURIComponent(collection)}/batches`;
                 if (view === 'files') return `/collections/${encodeURIComponent(collection)}/files`;

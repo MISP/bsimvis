@@ -519,6 +519,49 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     lastPathName = currentUrlPath;
     if (viewKey === 'pools') {
         if (!skipHeader) renderPoolCreationForm();
+    } else if (viewKey === 'jobs') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            const hasPool = !!(pool || localStorage.getItem('lastPoolContext'));
+            const hasCol = !!(collection || localStorage.getItem('lastCollectionContext'));
+            const showContextBtn = hasPool || hasCol;
+
+            // Determine if we are currently filtered by context
+            const isContextFiltered = !!(pool || collection);
+
+            let buttonText = "Context Jobs";
+            if (pool) {
+                buttonText = "Pool Jobs";
+            } else if (collection) {
+                buttonText = "Collection Jobs";
+            } else {
+                const lastPool = localStorage.getItem('lastPoolContext');
+                const lastCol = localStorage.getItem('lastCollectionContext');
+                if (lastPool) {
+                    buttonText = "Pool Jobs";
+                } else if (lastCol) {
+                    buttonText = "Collection Jobs";
+                }
+            }
+
+            gridHeader.innerHTML = `
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.01);">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        ${showContextBtn ? `
+                            <button class="top-action-btn ${isContextFiltered ? 'active' : ''}" onclick="window.goToContextJobs()" style="${isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
+                                <i class="fa-solid fa-filter"></i> ${buttonText}
+                            </button>
+                        ` : ''}
+                        <button class="top-action-btn ${!isContextFiltered ? 'active' : ''}" onclick="window.goToAllJobs()" style="${!isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
+                            <i class="fa-solid fa-globe"></i> All Jobs
+                        </button>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--dim);">
+                        ${isContextFiltered ? `Viewing jobs for <b>${pool ? 'Pool: ' + pool : 'Collection: ' + collection}</b>` : 'Viewing all jobs in all collections'}
+                    </div>
+                </div>
+            `;
+        }
     } else {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) gridHeader.innerHTML = '';
@@ -584,14 +627,26 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             params.delete('pool');
         }
     } else if (viewKey === 'jobs') {
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('collection')) {
-            params.set('collection', urlParams.get('collection'));
+        if (collection) {
+            params.set('collection', collection);
         } else {
-            params.delete('collection');
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('collection')) {
+                params.set('collection', urlParams.get('collection'));
+            } else {
+                params.delete('collection');
+            }
         }
-        const pool = window.getRoutingState ? window.getRoutingState().pool : null;
-        if (pool) params.set('pool', pool);
+        if (pool) {
+            params.set('pool', pool);
+        } else {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('pool')) {
+                params.set('pool', urlParams.get('pool'));
+            } else {
+                params.delete('pool');
+            }
+        }
     } else {
         params.delete('collection');
         params.delete('pool');
@@ -715,7 +770,7 @@ function updateNavbarLinks(col) {
             if (targetView === 'collections') {
                 url = `/collections`;
             } else if (targetView === 'jobs') {
-                url = col ? `/jobs?collection=${encodeURIComponent(col)}` : `/jobs?pool=${encodeURIComponent(poolId)}`;
+                url = col ? `/pools/${encodeURIComponent(poolId)}/collections/${encodeURIComponent(col)}/jobs` : `/pools/${encodeURIComponent(poolId)}/jobs`;
             } else if (targetView === 'files') {
                 url = `/pools/${encodeURIComponent(poolId)}/files`;
             } else if (targetView === 'functions') {
@@ -740,7 +795,7 @@ function updateNavbarLinks(col) {
             if (targetView === 'collections') {
                 url = `/collections`;
             } else if (targetView === 'jobs') {
-                url = `/jobs?collection=${encodeURIComponent(col)}`;
+                url = `/collections/${encodeURIComponent(col)}/jobs`;
             } else if (targetView === 'files') {
                 url = `/collections/${encodeURIComponent(col)}/files`;
             } else if (targetView === 'functions') {
@@ -762,21 +817,11 @@ function updateNavbarLinks(col) {
             }
         }
 
-        if (saved) {
+        if (saved && targetView !== 'jobs') {
             const savedParams = new URLSearchParams(saved);
-            if (targetView !== 'jobs') {
-                savedParams.delete('collection'); // Already in path
-                savedParams.delete('pool'); // Already in path
-                if (savedParams.toString()) url += `?${savedParams.toString()}`;
-            } else {
-                if (col) {
-                    savedParams.set('collection', col);
-                } else if (pool) {
-                    savedParams.delete('collection');
-                    savedParams.set('pool', pool);
-                }
-                url = `/jobs?${savedParams.toString()}`;
-            }
+            savedParams.delete('collection'); // Already in path
+            savedParams.delete('pool'); // Already in path
+            if (savedParams.toString()) url += `?${savedParams.toString()}`;
         }
         el.href = url;
 
@@ -1239,19 +1284,11 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
                 headHtml += `<tr class="filter-row">
                     <th></th><th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
-                    <th><select id="job-collection-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;"><option value="">All Collections</option></select></th>
+                    <th></th>
                     <th></th><th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
                     <th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
-                fetch('/api/collection/search').then(res => res.json()).then(data => {
-                    const collections = data.collections || (Array.isArray(data) ? data : []);
-                    const select = document.getElementById('job-collection-filter');
-                    if (select) {
-                        const currentVal = p.get('collection') || '';
-                        select.innerHTML = `<option value="">All Collections</option>` + collections.map(c => `<option value="${c.name}" ${currentVal === c.name ? 'selected' : ''}>${c.name}</option>`).join('');
-                    }
-                });
             } else if (path === 'binary-similarity') {
                 headHtml += `<tr class="filter-row">
                     <th>
@@ -2387,7 +2424,13 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     if (viewKey === 'collections') {
         url = `/collections`;
     } else if (viewKey === 'jobs') {
-        url = `/jobs`;
+        if (pool) {
+            url = col ? `/pools/${encodeURIComponent(pool)}/collections/${encodeURIComponent(col)}/jobs` : `/pools/${encodeURIComponent(pool)}/jobs`;
+        } else if (col) {
+            url = `/collections/${encodeURIComponent(col)}/jobs`;
+        } else {
+            url = `/jobs`;
+        }
     } else if (viewKey === 'pools') {
         url = `/pools`;
     }
@@ -2733,7 +2776,7 @@ window.addEventListener('load', () => {
             const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
             const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
 
-            const { collection: currentCollection, viewKey: path } = getRoutingState();
+            const { collection: currentCollection, pool: currentPool, viewKey: path } = getRoutingState();
 
             // Rebuild animation should only show if a job FOR THIS COLLECTION is active
             const activeCollections = stats.active_collections || [];
@@ -2760,6 +2803,65 @@ window.addEventListener('load', () => {
                     headerRebuildBtn.style.display = 'inline-flex';
                 } else {
                     headerRebuildBtn.style.display = 'none';
+                }
+            }
+
+            // Update view-specific job indicator
+            const activeJobs = stats.active_jobs || [];
+            const isJobInContext = (job) => {
+                if (currentPool) {
+                    return job.pool_id === currentPool || job.collection === `pool:${currentPool}` || (currentCollection && job.collection === currentCollection);
+                }
+                if (currentCollection) {
+                    return job.collection === currentCollection;
+                }
+                return false;
+            };
+
+            const isJobRelevant = (job) => {
+                const type = job.type;
+                if (path === 'batches' || path === 'upload') {
+                    return ['file_data_ingest', 'ghidra_analyze'].includes(type);
+                }
+                if (path === 'files') {
+                    return ['file_data_ingest', 'ghidra_analyze', 'idx_meta'].includes(type);
+                }
+                if (path === 'features-global') {
+                    return ['idx_features', 'enrich_features'].includes(type);
+                }
+                if (path === 'function-similarity') {
+                    return ['idx_functions', 'idx_features', 'build_sim', 'build_pool_sim', 'sync_milvus'].includes(type);
+                }
+                if (path === 'clusters') {
+                    return ['cluster_functions', 'cluster_pool'].includes(type);
+                }
+                if (path === 'binary-similarity') {
+                    return ['build_bin_sim', 'build_pool_bin_sim'].includes(type);
+                }
+                if (path === 'bin-clusters') {
+                    return ['cluster_binaries', 'cluster_pool_binaries'].includes(type);
+                }
+                return false;
+            };
+
+            const formatJobType = (type) => {
+                if (!type) return 'Job';
+                return type.split('_')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            };
+
+            const matchingJob = activeJobs.find(job => isJobInContext(job) && isJobRelevant(job));
+            const statusBadge = document.getElementById('view-job-status');
+            if (statusBadge) {
+                if (matchingJob) {
+                    statusBadge.style.display = 'inline-flex';
+                    const iconClass = matchingJob.status === 'running' ? 'fa-circle-notch fa-spin' : 'fa-clock';
+                    const progressText = matchingJob.status === 'running' ? ` (${matchingJob.progress}%)` : '';
+                    statusBadge.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${formatJobType(matchingJob.type)}${progressText}`;
+                    statusBadge.title = `Job ID: ${matchingJob.id} is ${matchingJob.status}`;
+                } else {
+                    statusBadge.style.display = 'none';
                 }
             }
         } catch (e) {
@@ -4423,5 +4525,45 @@ async function rebuildPool(poolId, btn) {
     }
 }
 window.rebuildPool = rebuildPool;
+
+window.goToContextJobs = function() {
+    const pool = localStorage.getItem('lastPoolContext');
+    const col = localStorage.getItem('lastCollectionContext');
+    let url;
+    if (pool) {
+        url = col ? `/pools/${encodeURIComponent(pool)}/collections/${encodeURIComponent(col)}/jobs` : `/pools/${encodeURIComponent(pool)}/jobs`;
+    } else if (col) {
+        url = `/collections/${encodeURIComponent(col)}/jobs`;
+    } else {
+        url = '/jobs';
+    }
+    Nav.openPath(url);
+};
+
+window.goToAllJobs = function() {
+    Nav.openPath('/jobs');
+};
+
+function applyJobSearch() {
+    const p = new URLSearchParams();
+    const type = document.getElementById('job-type-filter')?.value;
+    const collection = document.getElementById('job-collection-filter')?.value;
+    const status = document.getElementById('job-status-filter')?.value;
+
+    if (type) p.set('type', type);
+    if (collection) p.set('collection', collection);
+    if (status) p.set('status', status);
+
+    // Preserve pool context if present
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (pool) p.set('pool', pool);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate('jobs', p);
+}
+window.applyJobSearch = applyJobSearch;
+
+
 
 

@@ -324,7 +324,14 @@ function getRoutingState() {
     if (collection === 'null' || collection === 'undefined') {
         collection = null;
     }
-    const pool = restful.pool || params.get('pool');
+    const pool = restful.pool || params.get('pool') || null;
+
+    if (collection && viewKey !== 'jobs') {
+        localStorage.setItem('lastCollectionContext', collection);
+    }
+    if (pool && viewKey !== 'jobs') {
+        localStorage.setItem('lastPoolContext', pool);
+    }
 
     // Bridge restful params to search params for backward compatibility
     if (restful.md5 && !params.has('md5')) params.set('md5', restful.md5);

@@ -127,9 +127,7 @@ class PoolService:
         # File similarities
         file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
         if "total_file_similarities" not in meta:
-            total_file_sim = r.zcard(
-                f"global:pool:{pool_id}:bin_sim:score:{file_algo}"
-            )
+            total_file_sim = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
             meta["total_file_similarities"] = total_file_sim
             updated_meta["total_file_similarities"] = total_file_sim
         else:
@@ -658,14 +656,33 @@ class PoolService:
 
             if bucket_values:
                 pool_reg_key = f"{pool_coll}:reg:sim:{field}"
-                pipe = r.pipeline()
-                pipe.delete(pool_reg_key)
-                for val in bucket_values:
-                    pool_bucket_key = f"{pool_coll}:idx:sim:{field}:{val}"
-                    all_sids = set()
-                    for coll in collections:
-                        sb = f"{coll}:idx:sim:{field}:{val}"
-                        for sid in r.smembers(sb):
+                r.delete(pool_reg_key)
+
+                bucket_list = list(bucket_values)
+                chunk_size = 500
+
+                for i in range(0, len(bucket_list), chunk_size):
+                    chunk = bucket_list[i : i + chunk_size]
+
+                    # Phase 1: Pipeline read smembers for all collections and bucket values in the chunk
+                    read_pipe = r.pipeline(transaction=False)
+                    key_mapping = []
+                    for val in chunk:
+                        for coll in collections:
+                            sb = f"{coll}:idx:sim:{field}:{val}"
+                            read_pipe.smembers(sb)
+                            key_mapping.append((val, coll))
+
+                    read_results = read_pipe.execute()
+
+                    # Group similarity IDs by bucket value
+                    val_to_sids = {}
+                    for (val, coll), sids in zip(key_mapping, read_results):
+                        if not sids:
+                            continue
+                        if val not in val_to_sids:
+                            val_to_sids[val] = set()
+                        for sid in sids:
                             sid_str = (
                                 sid.decode() if isinstance(sid, bytes) else str(sid)
                             )
@@ -678,12 +695,18 @@ class PoolService:
                                     clean_id1 = rest[:pivot]
                                     clean_id2 = rest[pivot + 2 :]
                                     pool_sid = f"global:pool:{pool_id}:sim:{coll_name}:func:{clean_id1}::{coll_name}:func:{clean_id2}"
-                                    all_sids.add(pool_sid)
-                    if all_sids:
-                        pipe.delete(pool_bucket_key)
-                        pipe.sadd(pool_bucket_key, *all_sids)
-                        pipe.sadd(pool_reg_key, pool_bucket_key)
-                pipe.execute()
+                                    val_to_sids[val].add(pool_sid)
+
+                    # Phase 2: Pipeline write results back
+                    if val_to_sids:
+                        write_pipe = r.pipeline(transaction=False)
+                        for val, all_sids in val_to_sids.items():
+                            if all_sids:
+                                pool_bucket_key = f"{pool_coll}:idx:sim:{field}:{val}"
+                                write_pipe.delete(pool_bucket_key)
+                                write_pipe.sadd(pool_bucket_key, *all_sids)
+                                write_pipe.sadd(pool_reg_key, pool_bucket_key)
+                        write_pipe.execute()
 
         # 2. Merge NUM ZSets for level 'sim'
         for field in SIM_NUM_FIELDS:

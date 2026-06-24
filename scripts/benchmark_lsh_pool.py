@@ -22,7 +22,7 @@ APP_PORT = os.getenv("APP_PORT", "5000")
 API_BASE = f"http://{APP_HOST}:{APP_PORT}/api"
 
 
-def poll_job(job_id, timeout=300):
+def poll_job(job_id, timeout=36000):
     """Wait for a pool build pipeline job to complete."""
     start = time.time()
     while time.time() - start < timeout:
@@ -49,7 +49,7 @@ def delete_pool(pool_id):
         pass
 
 
-def run_pool_build(pool_id, collections, algo, min_score, min_features):
+def run_pool_build(pool_id, collections, algo, min_score, min_features, timeout=36000):
     """Trigger pool creation and record execution duration and similarities count."""
     delete_pool(pool_id)
 
@@ -76,8 +76,10 @@ def run_pool_build(pool_id, collections, algo, min_score, min_features):
         logging.error(f"[-] No job ID returned for pool build with {algo}")
         return None
 
-    logging.info(f"[*] Started pool job {job_id} for {algo}. Waiting for completion...")
-    finished_job = poll_job(job_id)
+    logging.info(
+        f"[*] Started pool job {job_id} for {algo}. Waiting for completion (timeout {timeout}s)..."
+    )
+    finished_job = poll_job(job_id, timeout=timeout)
     duration = time.time() - start_time
 
     if not finished_job or finished_job.get("status") != "completed":
@@ -183,6 +185,12 @@ def main():
     parser.add_argument(
         "-r", "--rows", type=int, default=8, help="Rows per band (default: 8)"
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=36000,
+        help="Job completion timeout in seconds (default: 36000)",
+    )
 
     args = parser.parse_args()
 
@@ -199,12 +207,18 @@ def main():
         "unweighted_cosine",
         args.min_score,
         args.min_features,
+        timeout=args.timeout,
     )
 
     # 3. Run LSH Pool Build
     logging.info("[*] Phase 3: Running LSH pool build (minhash_lsh)...")
     current = run_pool_build(
-        args.pool_id, args.collections, "minhash_lsh", args.min_score, args.min_features
+        args.pool_id,
+        args.collections,
+        "minhash_lsh",
+        args.min_score,
+        args.min_features,
+        timeout=args.timeout,
     )
 
     # 4. Clean up pool similarities

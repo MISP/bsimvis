@@ -139,35 +139,34 @@ class SimilarityService:
 
         return True
 
-    def _compute_lsh_buckets(self, features_raw, num_bands=10, rows_per_band=5):
-        """Generates MinHash LSH buckets for a set of features."""
-        # 1. Generate MinHash signature using hash function seeds
-        # We need a stable hash function. We'll use md5(feature_hash + seed)
-        sig = []
-        features_sorted = sorted(
-            [
-                f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash)
-                for f_hash, _ in features_raw
-            ]
-        )
-        if not features_sorted:
+    def _compute_lsh_buckets(self, features_raw, num_bands=30, rows_per_band=4):
+        """Generates SimHash LSH buckets for a set of features."""
+        # Signature size M = num_bands * rows_per_band (e.g. 8 * 16 = 128 bits)
+        # We project features using deterministically seeded weights:
+        # random_weight = ((hash(feat + plane) % 2) * 2) - 1  --> yields +1 or -1
+        num_features = num_bands * rows_per_band
+        if not features_raw:
             return []
 
-        for seed in range(num_bands * rows_per_band):
-            min_val = float("inf")
-            for f in features_sorted:
-                # md5 hash
-                h = int(hashlib.md5(f"{f}:{seed}".encode()).hexdigest(), 16)
-                if h < min_val:
-                    min_val = h
-            sig.append(min_val)
+        projections = [0.0] * num_features
+        for f_hash, f_tf_raw in features_raw:
+            f = f_hash.decode() if isinstance(f_hash, bytes) else str(f_hash)
+            tf = float(f_tf_raw)
+            for j in range(num_features):
+                # Deterministic projection weight hash
+                h = int(hashlib.md5(f"{f}:{j}".encode()).hexdigest(), 16)
+                weight = 1.0 if (h % 2 == 1) else -1.0
+                projections[j] += tf * weight
 
-        # 2. Group signature into bands to get LSH bucket strings
+        # Generate binary SimHash signature
+        sig = [1 if val >= 0 else 0 for val in projections]
+
+        # Group signature into bands to get LSH bucket strings
         buckets = []
         for band in range(num_bands):
             start = band * rows_per_band
             band_sig = sig[start : start + rows_per_band]
-            band_str = ",".join(map(str, band_sig))
+            band_str = "".join(map(str, band_sig))
             bucket_hash = hashlib.md5(band_str.encode()).hexdigest()
             buckets.append((band, bucket_hash))
         return buckets
@@ -211,7 +210,7 @@ class SimilarityService:
 
         # Pre-populate LSH buckets if algorithm is minhash_lsh
         if algo == "minhash_lsh":
-            num_bands = 10
+            num_bands = 30
             lsh_pipe = r.pipeline()
             for fid, features in targets_to_build:
                 buckets = self._compute_lsh_buckets(features, num_bands=num_bands)
@@ -250,7 +249,7 @@ class SimilarityService:
 
             if algo == "minhash_lsh":
                 # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, num_bands, features...]
-                num_bands = 10
+                num_bands = 30
                 lua_args = [
                     fid,
                     collection,
@@ -314,7 +313,9 @@ class SimilarityService:
 
         # Phase 4: Persistence and Indexing
         if discovery_results:
-            self._persist_and_index_batch(collection, algo, discovery_results)
+            self._persist_and_index_batch(
+                collection, algo, discovery_results, min_features=min_features
+            )
 
     def _process_chunk_milvus(
         self, collection, chunk, algo, top_k, min_score, min_features=0
@@ -411,10 +412,12 @@ class SimilarityService:
 
         # Phase 3: Persistence and Indexing
         if discovery_results:
-            self._persist_and_index_batch(collection, algo, discovery_results)
+            self._persist_and_index_batch(
+                collection, algo, discovery_results, min_features=min_features
+            )
 
     def _persist_and_index_batch(
-        self, collection, algo, discovery_results, pool_id=None
+        self, collection, algo, discovery_results, pool_id=None, min_features=0
     ):
         """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
@@ -437,7 +440,15 @@ class SimilarityService:
 
         # 1. Canonical Persistence
         for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+            # Skip if target function has too few features
+            if t_total < min_features:
+                continue
+
             for item in candidates:
+                # Skip if candidate function has too few features
+                if item["c_total"] < min_features:
+                    continue
+
                 if fid > item["id"]:
                     id_a, id_b = fid, item["id"]
                     md5_a, md5_b = t_md5, extract_md5(item["id"])
@@ -1141,7 +1152,7 @@ class SimilarityService:
 
                 # Pre-populate LSH buckets if algorithm is minhash_lsh
                 if algo == "minhash_lsh":
-                    num_bands = 10
+                    num_bands = 30
                     # Determine source collection from FID prefix
                     parts_fid = fid.split(":")
                     if parts_fid:
@@ -1162,7 +1173,7 @@ class SimilarityService:
                         continue
 
                     if algo == "minhash_lsh":
-                        num_bands = 10
+                        num_bands = 30
                         lua_args = [
                             fid,
                             search_coll,
@@ -1232,7 +1243,11 @@ class SimilarityService:
 
             if discovery_results:
                 self._persist_and_index_batch(
-                    "", algo, discovery_results, pool_id=pool_id
+                    "",
+                    algo,
+                    discovery_results,
+                    pool_id=pool_id,
+                    min_features=min_features,
                 )
 
         # 2. Update Sync Snapshots and Indexes
@@ -1366,7 +1381,7 @@ class SimilarityService:
 
                 # Pre-populate LSH buckets if algorithm is minhash_lsh
                 if algo == "minhash_lsh":
-                    num_bands = 10
+                    num_bands = 30
                     parts_fid = fid.split(":")
                     if parts_fid:
                         src_coll = parts_fid[0]
@@ -1386,7 +1401,7 @@ class SimilarityService:
                         continue
 
                     if algo == "minhash_lsh":
-                        num_bands = 10
+                        num_bands = 30
                         lua_args = [
                             fid,
                             search_coll,
@@ -1454,7 +1469,11 @@ class SimilarityService:
 
             if discovery_results:
                 self._persist_and_index_batch(
-                    "", algo, discovery_results, pool_id=pool_id
+                    "",
+                    algo,
+                    discovery_results,
+                    pool_id=pool_id,
+                    min_features=min_features,
                 )
 
         if job_service and job_id:

@@ -192,7 +192,9 @@ def print_comparison(baseline, current):
         print("-" * len(stat_header) + "\n")
 
 
-def run_single_file(data_dir, filename, collection, top_k, min_score, min_features):
+def run_single_file(
+    data_dir, filename, collection, top_k, min_score, min_features, algo=None
+):
     """Process a single file and return results. Thread-safe."""
     path = os.path.join(data_dir, filename)
     size_mb, lines = get_file_stats(path)
@@ -209,6 +211,8 @@ def run_single_file(data_dir, filename, collection, top_k, min_score, min_featur
             data["min_score"] = min_score
         if min_features:
             data["min_features"] = min_features
+        if algo:
+            data["algo"] = algo
         num_funcs_in_file = len(data.get("functions", []))
 
         print(f"\n[*] Processing {filename}")
@@ -285,6 +289,7 @@ def run_bench(
     save_path=None,
     compare_path=None,
     sequential=False,
+    algo=None,
 ):
     """Run benchmark by uploading all JSON files in a directory."""
     if not os.path.exists(data_dir):
@@ -315,7 +320,7 @@ def run_bench(
         print(f"\n[*] Uploading {len(json_files)} files sequentially...")
         for f in json_files:
             result = run_single_file(
-                data_dir, f, collection, top_k, min_score, min_features
+                data_dir, f, collection, top_k, min_score, min_features, algo=algo
             )
             if result:
                 results.append(result)
@@ -333,6 +338,7 @@ def run_bench(
                     top_k,
                     min_score,
                     min_features,
+                    algo,
                 ): f
                 for f in json_files
             }
@@ -388,9 +394,9 @@ def run_bench(
                 avg_metrics["sub_tasks"][k]["python"] += v["python"]
                 avg_metrics["sub_tasks"][k]["db"] += v["db"]
                 avg_metrics["sub_tasks"][k]["lua"] += v["lua"]
-            # Accumulate stats counts (similarities and clusters) from all pipelines
+            # Take the max for stats counts (similarities and clusters) across pipelines instead of summing
             for sk, sv in m.get("stats", {}).items():
-                avg_metrics["stats"][sk] = avg_metrics["stats"].get(sk, 0) + sv
+                avg_metrics["stats"][sk] = max(avg_metrics["stats"].get(sk, 0), sv)
 
         for k in avg_metrics["sub_tasks"]:
             n = len(all_perfs)
@@ -473,6 +479,7 @@ def run_bench_pools(
     save_path=None,
     compare_path=None,
     sequential=False,
+    algo=None,
 ):
     """Run benchmark by creating a pool across separate collections."""
     if not os.path.exists(data_dir):
@@ -570,12 +577,26 @@ def run_bench_pools(
 
     # 3. Create the pool and trigger building
     print(f"\n[*] Creating Pool '{pool_id}'...")
+    func_sim_params = {}
+    if algo:
+        func_sim_params["algo"] = algo
+    if top_k:
+        func_sim_params["top_k"] = top_k
+    if min_score:
+        func_sim_params["min_score"] = min_score
+    if min_features:
+        func_sim_params["min_features"] = min_features
+
     pool_payload = {
         "pool_id": pool_id,
         "name": f"Benchmark Pool for {collection}",
         "collections": file_collections,
-        "config": {"skip_clustering": True},
+        "config": {
+            "skip_clustering": True,
+        },
     }
+    if func_sim_params:
+        pool_payload["config"]["func_sim_params"] = func_sim_params
 
     try:
         resp = requests.post(f"{API_BASE}/pool", json=pool_payload)
@@ -670,6 +691,12 @@ def main():
         help="Path to baseline performance metrics JSON for comparison",
     )
     parser.add_argument(
+        "--algo",
+        type=str,
+        help="Similarity algorithm to use (e.g. unweighted_cosine, minhash_lsh)",
+        default=None,
+    )
+    parser.add_argument(
         "--bench-pools",
         action="store_true",
         help="Benchmark pool-level similarities instead of standard pipeline",
@@ -694,6 +721,7 @@ def main():
             args.save,
             args.compare,
             args.sequential,
+            args.algo,
         )
     else:
         run_bench(
@@ -707,6 +735,7 @@ def main():
             args.save,
             args.compare,
             args.sequential,
+            args.algo,
         )
 
 

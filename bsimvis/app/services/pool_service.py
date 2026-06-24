@@ -629,10 +629,12 @@ class PoolService:
         r = self.r
         meta = self.get_pool(pool_id)
         if not meta:
+            logging.error(f"Pool {pool_id} not found")
             return False
 
         collections = meta.get("collections", [])
         if not collections:
+            logging.info(f"No collections defined for pool {pool_id}")
             return True
 
         from bsimvis.app.services.index_config import get_fields_targeting_level
@@ -641,9 +643,13 @@ class PoolService:
         SIM_NUM_FIELDS = get_fields_targeting_level("sim", is_num=True)
 
         pool_coll = f"global:pool:{pool_id}"
+        logging.info(
+            f"Starting finalize_pool_build for pool {pool_id} (collections: {collections})"
+        )
 
         # 1. Merge TAG registries and buckets for level 'sim'
         for field in SIM_TAG_FIELDS:
+            logging.info(f"Merging TAG registry & buckets for field '{field}'")
             bucket_values = set()
             for coll in collections:
                 reg_key = f"{coll}:reg:sim:{field}"
@@ -654,15 +660,25 @@ class PoolService:
                     if b_str.startswith(prefix):
                         bucket_values.add(b_str[len(prefix) :])
 
+            logging.info(
+                f"Field '{field}' has {len(bucket_values)} unique bucket values across collections"
+            )
+
             if bucket_values:
                 pool_reg_key = f"{pool_coll}:reg:sim:{field}"
+                logging.info(f"Deleting pool registry key {pool_reg_key}")
                 r.delete(pool_reg_key)
 
                 bucket_list = list(bucket_values)
-                chunk_size = 500
+                chunk_size = 100
+                total_chunks = (len(bucket_list) + chunk_size - 1) // chunk_size
 
                 for i in range(0, len(bucket_list), chunk_size):
                     chunk = bucket_list[i : i + chunk_size]
+                    chunk_idx = i // chunk_size + 1
+                    logging.info(
+                        f"Field '{field}': processing chunk {chunk_idx}/{total_chunks} (size {len(chunk)})"
+                    )
 
                     # Phase 1: Pipeline read smembers for all collections and bucket values in the chunk
                     read_pipe = r.pipeline(transaction=False)
@@ -673,7 +689,11 @@ class PoolService:
                             read_pipe.smembers(sb)
                             key_mapping.append((val, coll))
 
+                    logging.info(
+                        f"Executing read pipeline for chunk {chunk_idx} ({len(key_mapping)} commands)"
+                    )
                     read_results = read_pipe.execute()
+                    logging.info(f"Read pipeline for chunk {chunk_idx} completed")
 
                     # Group similarity IDs by bucket value
                     val_to_sids = {}
@@ -700,21 +720,40 @@ class PoolService:
                     # Phase 2: Pipeline write results back
                     if val_to_sids:
                         write_pipe = r.pipeline(transaction=False)
+                        sadd_cmd_count = 0
                         for val, all_sids in val_to_sids.items():
                             if all_sids:
                                 pool_bucket_key = f"{pool_coll}:idx:sim:{field}:{val}"
                                 write_pipe.delete(pool_bucket_key)
-                                write_pipe.sadd(pool_bucket_key, *all_sids)
+
+                                # Chunk SADD calls to prevent excessively large Redis commands
+                                sids_list = list(all_sids)
+                                for k in range(0, len(sids_list), 2000):
+                                    write_pipe.sadd(
+                                        pool_bucket_key, *sids_list[k : k + 2000]
+                                    )
+                                    sadd_cmd_count += 1
+
                                 write_pipe.sadd(pool_reg_key, pool_bucket_key)
+
+                        logging.info(
+                            f"Executing write pipeline for chunk {chunk_idx} (with {sadd_cmd_count} SADD chunks)"
+                        )
                         write_pipe.execute()
+                        logging.info(f"Write pipeline for chunk {chunk_idx} completed")
 
         # 2. Merge NUM ZSets for level 'sim'
         for field in SIM_NUM_FIELDS:
+            logging.info(f"Merging NUM ZSets for field '{field}'")
             source_zsets = [f"{coll}:idx:sim:{field}" for coll in collections]
             existing_zsets = [sz for sz in source_zsets if r.exists(sz)]
             if existing_zsets:
                 pool_zset_key = f"{pool_coll}:idx:sim:{field}"
+                logging.info(
+                    f"Running zunionstore on {pool_zset_key} with {existing_zsets}"
+                )
                 r.zunionstore(pool_zset_key, existing_zsets)
+                logging.info("zunionstore completed")
 
         r.hdel(f"global:pool:{pool_id}:meta", "total_func_similarities")
 

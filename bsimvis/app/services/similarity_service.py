@@ -1006,12 +1006,15 @@ class SimilarityService:
                 continue
 
             meta_key = f"{collection}:batch:{uuid}"
-            name_raw = r.json().get(meta_key, "$")
+            name_raw = r.get(meta_key)
             name = "N/A"
             if name_raw:
-                if isinstance(name_raw, list):
-                    name_raw = name_raw[0]
-                name = name_raw.get("name", "N/A")
+                val = name_raw.decode() if isinstance(name_raw, bytes) else name_raw
+                try:
+                    meta_dict = json.loads(val)
+                    name = meta_dict.get("name", "N/A")
+                except:
+                    pass
 
             total = r.scard(batch_func_set)
             try:
@@ -1044,9 +1047,14 @@ class SimilarityService:
                 continue
             md5 = parts[2]
 
-            meta = r.json().get(f_key, "$")
-            if meta and isinstance(meta, list):
-                meta = meta[0]
+            meta_raw = r.get(f_key)
+            meta = {}
+            if meta_raw:
+                val = meta_raw.decode() if isinstance(meta_raw, bytes) else meta_raw
+                try:
+                    meta = json.loads(val)
+                except:
+                    pass
             name = meta.get("file_name", "N/A") if meta else "N/A"
 
             # Get functions for this file
@@ -1632,21 +1640,16 @@ class SimilarityService:
             pipe = r.pipeline()
             for label in cluster_labels:
                 pipe.smembers(f"global:pool:{pool_id}:cluster:{algo}:{label}:members")
-                pipe.json().get(
-                    f"global:pool:{pool_id}:cluster:{algo}:{label}:meta", "$"
-                )
+                pipe.get(f"global:pool:{pool_id}:cluster:{algo}:{label}:meta")
             results = pipe.execute()
             for idx, label in enumerate(cluster_labels):
                 members = results[idx * 2] or []
                 meta_raw = results[idx * 2 + 1]
-                meta = (
-                    (meta_raw[0] if isinstance(meta_raw, list) else meta_raw)
-                    if meta_raw
-                    else {}
-                )
-                if isinstance(meta, str):
+                meta = {}
+                if meta_raw:
+                    val = meta_raw.decode() if isinstance(meta_raw, bytes) else meta_raw
                     try:
-                        meta = json.loads(meta)
+                        meta = json.loads(val)
                     except Exception:
                         pass
                 c_uuid = meta.get("cluster_uuid", str(label))
@@ -1722,11 +1725,11 @@ class SimilarityService:
         file_meta_cache = {}
         pipe_meta = r.pipeline()
         for coll, md5 in binaries:
-            pipe_meta.json().get(f"{coll}:file:{md5}:meta", "$")
+            pipe_meta.get(f"{coll}:file:{md5}:meta")
         meta_results = pipe_meta.execute()
         for (coll, md5), res in zip(binaries, meta_results):
             if res:
-                m = res[0] if isinstance(res, list) else res
+                m = res.decode() if isinstance(res, bytes) else res
                 if isinstance(m, str):
                     try:
                         m = json.loads(m)

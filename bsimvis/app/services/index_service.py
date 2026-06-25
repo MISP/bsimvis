@@ -382,9 +382,14 @@ def delete_file(r, coll, file_md5):
     """Remove a file from all indexes."""
     base_id = f"{coll}:file:{file_md5}"
     doc_id = f"{base_id}:meta"
-    data = r.json().get(doc_id, "$")
-    if isinstance(data, list) and data:
-        data = data[0]
+    raw = r.get(doc_id)
+    data = {}
+    if raw:
+        val = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = json.loads(val)
+        except Exception:
+            pass
     if not data:
         return
     pipe = r.pipeline()
@@ -401,9 +406,14 @@ def delete_function(r, coll, md5, addr):
     """Remove a function from all indexes."""
     base_id = f"{coll}:func:{md5}:{addr}"
     doc_id = f"{base_id}:meta"
-    data = r.json().get(doc_id, "$")
-    if isinstance(data, list) and data:
-        data = data[0]
+    raw = r.get(doc_id)
+    data = {}
+    if raw:
+        val = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = json.loads(val)
+        except Exception:
+            pass
     if not data:
         return
     pipe = r.pipeline()
@@ -423,9 +433,14 @@ def delete_feature(r, coll, f_hash):
     """Remove a feature from all indexes."""
     base_id = f"{coll}:feature:{f_hash}"
     doc_id = f"{base_id}:global_meta"
-    data = r.json().get(doc_id, "$")
-    if isinstance(data, list) and data:
-        data = data[0]
+    raw = r.get(doc_id)
+    data = {}
+    if raw:
+        val = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = json.loads(val)
+        except Exception:
+            pass
 
     pipe = r.pipeline()
     if data:
@@ -434,7 +449,7 @@ def delete_feature(r, coll, f_hash):
         for f in FEATURE_NUM_FIELDS:
             _unindex_num(pipe, coll, "feature", f, base_id)
     pipe.srem(f"{coll}:all_features", base_id)
-    pipe.json().delete(doc_id)
+    pipe.delete(doc_id)
     pipe.execute()
 
 

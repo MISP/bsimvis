@@ -440,9 +440,14 @@ class Worker:
 
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing
-                data = self.r_data.json().get(file_id, "$")
-                if isinstance(data, list) and data:
-                    data = data[0]
+                raw = self.r_data.get(file_id)
+                data = {}
+                if raw:
+                    val = raw.decode() if isinstance(raw, bytes) else raw
+                    try:
+                        data = json.loads(val)
+                    except Exception:
+                        pass
                 md5 = data.get("file_md5")
 
             return self.similarity_service.build_batch(
@@ -464,9 +469,14 @@ class Worker:
             )
             pool_id = payload.get("pool_id")
             if not md5 and file_id:
-                data = self.r_data.json().get(file_id, "$")
-                if isinstance(data, list) and data:
-                    data = data[0]
+                raw = self.r_data.get(file_id)
+                data = {}
+                if raw:
+                    val = raw.decode() if isinstance(raw, bytes) else raw
+                    try:
+                        data = json.loads(val)
+                    except Exception:
+                        pass
                 md5 = data.get("file_md5")
             return self.similarity_service.index_similarities(
                 collection,

@@ -21,6 +21,8 @@ class FeatureService:
         milvus_chunk_size = 100
         indexed_features = set()
 
+        pipe = self.r.pipeline()
+
         for i, func_id in enumerate(function_ids):
             # Update job progress if applicable
             if job_service and job_id and (i % 10 == 0 or i == total - 1):
@@ -33,6 +35,7 @@ class FeatureService:
             tf_key = f"{func_id}:vec:tf"
 
             # 1. Fetch metadata and vector data
+            # NOTE: Getting data can't be pipelined easily since it is needed inside loop
             raw_meta = self.r.get(meta_key)
             if raw_meta:
                 raw_meta = json.loads(raw_meta)
@@ -45,8 +48,6 @@ class FeatureService:
                     f"  [!] Skipping {func_id}: Missing metadata or vector data."
                 )
                 continue
-
-            pipe = self.r.pipeline()
 
             # A. Recalculate L2 Norm
             sum_sq = sum(float(tf) ** 2 for _, tf in new_tf_data)
@@ -83,7 +84,11 @@ class FeatureService:
 
             # Mark as indexed (Base ID)
             pipe.sadd(f"{collection}:indexed:functions", func_id)
-            pipe.execute()
+
+            # Execute pipeline in chunks to reduce memory footprint and network overhead
+            if (i + 1) % 100 == 0:
+                pipe.execute()
+                pipe = self.r.pipeline()
 
             # Milvus Buffer
             if milvus_service.enabled:
@@ -94,6 +99,8 @@ class FeatureService:
                             collection, milvus_data, index_type=itype
                         )
                     milvus_data = []
+
+        pipe.execute()
 
         # Final Milvus Flush
         if milvus_service.enabled and milvus_data:

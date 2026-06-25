@@ -22,11 +22,11 @@ INDEX_CONFIG = {
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
         "user_tags": ["file", "func", "sim"],  # not propagated
         "language_id": ["file", "func", "sim"],
-        "batch_uuid": ["file", "func", "sim"],
-        "type": ["file", "func", "sim"],
-        "batch_order": ["file", "func", "sim"],  # numeric
-        "entry_date": ["file", "func", "sim"],  # numeric
-        "file_date": ["file", "func", "sim"],  # numeric
+        "batch_uuid": ["file", "func"],
+        "type": ["file", "func"],
+        "batch_order": ["file", "func"],  # numeric
+        "entry_date": ["file", "func"],  # numeric
+        "file_date": ["file", "func"],  # numeric
         "function_count": ["file"],  # numeric
         "bsim_features_count": ["file"],  # numeric
         "cohesion_score": ["file"],  # numeric
@@ -34,13 +34,13 @@ INDEX_CONFIG = {
         "bin_cluster_uuid": ["file"],
         "bin_cluster_name": ["file"],
         "bin_cluster_stability": ["file"],
-        "first_seen": ["file", "func", "sim"],
-        "last_seen": ["file", "func", "sim"],
-        "filetype": ["file", "func", "sim"],
-        "avtype": ["file", "func", "sim"],
-        "yara": ["file", "func", "sim"],
-        "cc_ip": ["file", "func", "sim"],
-        "file_names": ["file", "func", "sim"],
+        "first_seen": ["file", "func"],
+        "last_seen": ["file", "func"],
+        "filetype": ["file", "func"],
+        "avtype": ["file", "func"],
+        "yara": ["file", "func"],
+        "cc_ip": ["file", "func"],
+        "file_names": ["file", "func"],
         "inferred_yara": ["file"],
         "inferred_avtype": ["file"],
         "inferred_filetype": ["file"],
@@ -55,12 +55,12 @@ INDEX_CONFIG = {
         "user_tags": ["func", "sim"],
         "namespace": ["func", "sim"],
         "return_type": ["func", "sim"],
-        "parameters": ["func", "sim"],
-        "calling_convention": ["func", "sim"],
+        "parameters": ["func"],
+        "calling_convention": ["func"],
         "entrypoint_address": ["func", "sim"],
-        "decompiler_id": ["func", "sim"],
-        "instruction_count": ["func", "sim"],  # numeric
-        "bsim_features_count": ["func", "sim"],  # numeric
+        "decompiler_id": ["func"],
+        "instruction_count": ["func"],  # numeric
+        "bsim_features_count": ["func"],  # numeric
         "cluster_id": ["func"],
         "cluster_uuid": ["func"],
         "cluster_name": ["func"],

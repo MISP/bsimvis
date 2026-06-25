@@ -1131,6 +1131,7 @@ class SimilarityService:
             # Use a pipeline to batch any LSH setup writes for this chunk
             lsh_pipe = r.pipeline()
             has_lsh_writes = False
+            targets_with_lua = []
 
             for fid in chunk:
                 vec_key = f"{fid}:vec:tf"
@@ -1368,6 +1369,7 @@ class SimilarityService:
             # Use a pipeline to batch any LSH setup writes for this chunk
             lsh_pipe = r.pipeline()
             has_lsh_writes = False
+            targets_with_lua = []
 
             for fid in chunk:
                 vec_key = f"{fid}:vec:tf"

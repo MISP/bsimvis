@@ -868,7 +868,7 @@ class JobService:
 
         # Group subtasks by their top-level ancestor
         ancestor_map = {job["id"]: [] for job in paginated_top_level}
-        sub_tasks_list = results[len(paginated_top_level):]
+        sub_tasks_list = results[len(paginated_top_level) :]
 
         def get_top_level_ancestor(sub_job):
             curr = sub_job

@@ -30,7 +30,7 @@ def get_enriched_nodes(collection, md5, addr):
         pipe = r.pipeline()
         for fid in all_ids:
             if not fid.startswith("ext:"):
-                pipe.json().get(f"{fid}:meta", "$")
+                pipe.get(f"{fid}:meta")
             else:
                 pipe.exists("dummy")  # keep pipeline aligned
 
@@ -40,7 +40,7 @@ def get_enriched_nodes(collection, md5, addr):
             if fid.startswith("ext:"):
                 continue
             if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                meta = raw_meta.decode() if isinstance(raw_meta, bytes) else raw_meta
                 if isinstance(meta, str):
                     meta = json.loads(meta)
                 if meta:

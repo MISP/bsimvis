@@ -1,4 +1,5 @@
 import logging
+import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
 
@@ -60,7 +61,7 @@ class ProcessingService:
         pipe = self.r.pipeline()
 
         # 0. Store exploded file meta
-        pipe.json().set(file_meta_key, "$", coll_file_meta)
+        pipe.set(file_meta_key, json.dumps(coll_file_meta))
 
         # 1. Standard file-level indexing (secondary search)
         save_file(pipe, collection, file_md5, coll_file_meta)
@@ -81,10 +82,16 @@ class ProcessingService:
                 "last_updated": timestamp,
                 "collections": {collection: True},
             }
-            self.r.json().set(global_batch_key, "$", initial_global_batch)
+            self.r.set(global_batch_key, json.dumps(initial_global_batch))
         else:
-            pipe.json().set(global_batch_key, f'$["collections"]["{collection}"]', True)
-            pipe.json().set(global_batch_key, '$["last_updated"]', timestamp)
+            val = self.r.get(global_batch_key)
+            if val:
+                global_batch = json.loads(val)
+                if "collections" not in global_batch:
+                    global_batch["collections"] = {}
+                global_batch["collections"][collection] = True
+                global_batch["last_updated"] = timestamp
+                pipe.set(global_batch_key, json.dumps(global_batch))
 
         # 4. Collection Stats
         coll_meta_key = f"global:collection:{collection}:meta"
@@ -107,11 +114,18 @@ class ProcessingService:
                 "total_functions": 0,
                 "collection": collection,
             }
-            self.r.json().set(batch_key, "$", initial_batch_data)
+            self.r.set(batch_key, json.dumps(initial_batch_data))
+            batch_data = initial_batch_data
+        else:
+            val = self.r.get(batch_key)
+            batch_data = json.loads(val) if val else {}
 
-        pipe.json().numincrby(batch_key, '$["total_files"]', 1)
-        pipe.json().numincrby(batch_key, '$["total_functions"]', num_functions)
-        pipe.json().set(batch_key, '$["last_updated"]', timestamp)
+        batch_data["total_files"] = batch_data.get("total_files", 0) + 1
+        batch_data["total_functions"] = (
+            batch_data.get("total_functions", 0) + num_functions
+        )
+        batch_data["last_updated"] = timestamp
+        pipe.set(batch_key, json.dumps(batch_data))
 
         pipe.execute()
 
@@ -183,14 +197,14 @@ class ProcessingService:
 
             # --- Store exploded data ---
             pipe = self.r.pipeline()
-            pipe.json().set(f"{base_func_key}:meta", "$", func_meta)
-            pipe.json().set(f"{base_func_key}:source", "$", func_source)
+            pipe.set(f"{base_func_key}:meta", json.dumps(func_meta))
+            pipe.set(f"{base_func_key}:source", json.dumps(func_source))
 
             vec_meta = func_features.get("bsim_features_meta", [])
-            pipe.json().set(f"{base_func_key}:vec:meta", "$", vec_meta)
+            pipe.set(f"{base_func_key}:vec:meta", json.dumps(vec_meta))
 
             vec_raw = func_features.get("bsim_features_raw", [])
-            pipe.json().set(f"{base_func_key}:vec:raw", "$", vec_raw)
+            pipe.set(f"{base_func_key}:vec:raw", json.dumps(vec_raw))
 
             # --- Store Call Graph Sets ---
             callees_key = f"{base_func_key}:callees"
@@ -276,12 +290,10 @@ class ProcessingService:
         for idx, batch_uuid in enumerate(batch_uuids):
             global_batch_key = f"global:batch:{batch_uuid}"
             # Fetch global batch metadata
-            raw_meta = r.json().get(global_batch_key, "$")
+            raw_meta = r.get(global_batch_key)
             if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                meta = json.loads(raw_meta)
                 if isinstance(meta, str):
-                    import json
-
                     meta = json.loads(meta)
 
                 # Remove collection from collections dict
@@ -296,7 +308,7 @@ class ProcessingService:
                 else:
                     # Save updated collections dict
                     meta["collections"] = collections
-                    pipe.json().set(global_batch_key, "$", meta)
+                    pipe.set(global_batch_key, json.dumps(meta))
 
             if len(pipe) > 1000:
                 pipe.execute()

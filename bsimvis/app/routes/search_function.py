@@ -446,7 +446,7 @@ def search_functions():
         # Phase 1: Fetch Function Metadata & Cluster Scores (Bulk)
         f_pipe = r.pipeline()
         for doc_id in doc_ids:
-            f_pipe.json().get(f"{doc_id}:meta", "$")
+            f_pipe.get(f"{doc_id}:meta")
             if col.startswith("global:pool:"):
                 f_pipe.hgetall(f"{col}:{doc_id}:cluster_scores")
             else:
@@ -462,7 +462,11 @@ def search_functions():
             m_json = f_results_raw[i * 2]
             scores_raw = f_results_raw[i * 2 + 1] or {}
 
-            meta = (m_json[0] if isinstance(m_json, list) and m_json else m_json) or {}
+            meta = (
+                json.loads(m_json)
+                if m_json and not isinstance(m_json, dict)
+                else (m_json or {})
+            )
             if isinstance(meta, str):
                 meta = json.loads(meta)
 
@@ -482,10 +486,14 @@ def search_functions():
             file_pipe = r.pipeline()
             md5_list = list(unique_md5s)
             for md5 in md5_list:
-                file_pipe.json().get(f"{col}:file:{md5}:meta", "$")
+                file_pipe.get(f"{col}:file:{md5}:meta")
             file_results = file_pipe.execute()
             for md5, res in zip(md5_list, file_results):
-                fm = (res[0] if isinstance(res, list) and res else res) or {}
+                fm = (
+                    json.loads(res)
+                    if res and not isinstance(res, dict)
+                    else (res or {})
+                )
                 if isinstance(fm, str):
                     fm = json.loads(fm)
                 file_meta_map[md5] = fm
@@ -497,10 +505,14 @@ def search_functions():
             c_pipe = r.pipeline()
             c_list = list(unique_cluster_ids)
             for cid in c_list:
-                c_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
+                c_pipe.get(f"{col}:cluster:{algo}:{cid}:meta")
             c_results = c_pipe.execute()
             for cid, res in zip(c_list, c_results):
-                cm = (res[0] if isinstance(res, list) and res else res) or {}
+                cm = (
+                    json.loads(res)
+                    if res and not isinstance(res, dict)
+                    else (res or {})
+                )
                 if isinstance(cm, str):
                     cm = json.loads(cm)
                 # Apply cohesion threshold server-side

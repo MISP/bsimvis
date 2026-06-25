@@ -243,13 +243,13 @@ class BinSimService:
             cids_list = list(all_cids)
             pipe = r.pipeline()
             for cid in cids_list:
-                pipe.json().get(f"{collection}:cluster:{algo}:{cid}:meta", "$")
+                pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
 
             meta_results = pipe.execute()
             for i, cid in enumerate(cids_list):
                 res = meta_results[i]
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(m, str):
                         m = json.loads(m)
                     cluster_meta[cid] = m
@@ -274,11 +274,11 @@ class BinSimService:
             fids_list = list(all_unique_fids)
             pipe = r.pipeline()
             for fid in fids_list:
-                pipe.json().get(f"{fid}:meta", "$")
+                pipe.get(f"{fid}:meta")
             meta_results = pipe.execute()
             for fid, res in zip(fids_list, meta_results):
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(m, str):
                         try:
                             m = json.loads(m)
@@ -317,11 +317,11 @@ class BinSimService:
         file_meta_cache = {}
         pipe_meta = r.pipeline()
         for md5 in binaries:
-            pipe_meta.json().get(f"{collection}:file:{md5}:meta", "$")
+            pipe_meta.get(f"{collection}:file:{md5}:meta")
         meta_results = pipe_meta.execute()
         for md5, res in zip(binaries, meta_results):
             if res:
-                m = res[0] if isinstance(res, list) else res
+                m = json.loads(res) if not isinstance(res, dict) else res
                 if isinstance(m, str):
                     m = json.loads(m)
                 file_meta_cache[md5] = m if isinstance(m, dict) else {}
@@ -637,7 +637,7 @@ class BinSimService:
                 },
             }
 
-            pipe.json().set(sid, "$", doc)
+            pipe.set(sid, json.dumps(doc))
             pipe.zadd(
                 f"{collection}:bin_sim:score:{algo}", {sid: score_collection_weighted}
             )
@@ -778,10 +778,10 @@ class BinSimService:
         if md5_list:
             pipe_meta = r.pipeline()
             for md5 in md5_list:
-                pipe_meta.json().get(f"{collection}:file:{md5}:meta", "$")
+                pipe_meta.get(f"{collection}:file:{md5}:meta")
             for md5, res in zip(md5_list, pipe_meta.execute()):
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(m, str):
                         m = json.loads(m)
                     file_meta_cache[md5] = m if isinstance(m, dict) else {}
@@ -791,14 +791,14 @@ class BinSimService:
         # Fetch all docs and reindex
         pipe = r.pipeline()
         for sid in sids:
-            pipe.json().get(sid, "$")
+            pipe.get(sid)
         docs = pipe.execute()
 
         pipe = r.pipeline()
         for i, (sid, res) in enumerate(zip(sids, docs)):
             if not res:
                 continue
-            doc = res[0] if isinstance(res, list) else res
+            doc = json.loads(res) if not isinstance(res, dict) else res
             if isinstance(doc, str):
                 doc = json.loads(doc)
             m_a = doc.get("md5_a", "")

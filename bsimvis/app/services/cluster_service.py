@@ -129,13 +129,15 @@ class ClusterService:
             # Bulk fetch bsim_features_count
             pipe = r.pipeline()
             for fid in fids_list:
-                pipe.json().get(f"{fid}:meta", "$.bsim_features_count")
+                pipe.get(f"{fid}:meta")
 
             raw_res = pipe.execute()
             for fid, res in zip(fids_list, raw_res):
                 try:
-                    # JSON.GET with path returns list of results
-                    val = res[0] if isinstance(res, list) and res else 0
+                    val = 0
+                    if res:
+                        doc = json.loads(res)
+                        val = doc.get("bsim_features_count", 0)
                     if int(val) >= min_features:
                         allowed_fids.add(fid)
                 except (ValueError, TypeError, IndexError):
@@ -644,30 +646,22 @@ class ClusterService:
             chunk = all_member_fids[i : i + 1000]
             m_pipe = r.pipeline()
             for fid in chunk:
-                m_pipe.json().get(f"{fid}:meta", "$.function_name")
-                m_pipe.json().get(f"{fid}:meta", "$.bsim_features_count")
-                m_pipe.json().get(f"{fid}:meta", "$.file_name")
-                m_pipe.json().get(f"{fid}:meta", "$.entrypoint_address")
-                m_pipe.json().get(f"{fid}:meta", "$.file_md5")
+                m_pipe.get(f"{fid}:meta")
             results = m_pipe.execute()
             for idx, fid in enumerate(chunk):
-                name_res = results[idx * 5]
-                feat_res = results[idx * 5 + 1]
-                filename_res = results[idx * 5 + 2]
-                addr_res = results[idx * 5 + 3]
-                md5_res = results[idx * 5 + 4]
+                raw_meta = results[idx]
+                m = {}
+                if raw_meta:
+                    try:
+                        m = json.loads(raw_meta)
+                    except Exception:
+                        m = {}
 
-                name = name_res[0] if isinstance(name_res, list) and name_res else None
-                feat_count = (
-                    feat_res[0] if isinstance(feat_res, list) and feat_res else 0
-                )
-                file_name = (
-                    filename_res[0]
-                    if isinstance(filename_res, list) and filename_res
-                    else None
-                )
-                addr = addr_res[0] if isinstance(addr_res, list) and addr_res else None
-                md5 = md5_res[0] if isinstance(md5_res, list) and md5_res else None
+                name = m.get("function_name")
+                feat_count = m.get("bsim_features_count", 0)
+                file_name = m.get("file_name")
+                addr = m.get("entrypoint_address")
+                md5 = m.get("file_md5")
 
                 all_member_meta[fid] = {
                     "function_name": name,
@@ -785,7 +779,7 @@ class ClusterService:
                 if isinstance(v, float):
                     if not np.isfinite(v):
                         meta[k] = 0.0
-            pipe.json().set(f"{collection}:cluster:{algo}:{label}:meta", "$", meta)
+            pipe.set(f"{collection}:cluster:{algo}:{label}:meta", json.dumps(meta))
 
             if "cluster_name" in func_tag_fields:
                 bucket_key = (
@@ -1030,11 +1024,11 @@ class ClusterService:
         if meta_keys:
             c_pipe = r.pipeline()
             for k in meta_keys:
-                c_pipe.json().get(k, "$")
+                c_pipe.get(k)
             res_list = c_pipe.execute()
             for k, res in zip(meta_keys, res_list):
                 if res:
-                    cm = res[0] if isinstance(res, list) else res
+                    cm = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(cm, str):
                         cm = json.loads(cm)
                     if cm and "cluster_id" in cm:
@@ -1729,14 +1723,14 @@ class ClusterService:
             for fid in chunk:
                 parts = fid.split(":")
                 coll, md5 = parts[0], parts[2]
-                m_pipe.json().get(f"{coll}:file:{md5}:meta", "$")
+                m_pipe.get(f"{coll}:file:{md5}:meta")
             results = m_pipe.execute()
             for idx, fid in enumerate(chunk):
                 meta_res = results[idx]
-                m = meta_res[0] if isinstance(meta_res, list) and meta_res else {}
-                if isinstance(m, str):
+                m = {}
+                if meta_res:
                     try:
-                        m = json.loads(m)
+                        m = json.loads(meta_res)
                     except Exception:
                         m = {}
                 all_member_meta[fid] = m
@@ -1878,7 +1872,7 @@ class ClusterService:
                         meta[k] = 0.0
 
             pipe.sadd(cluster_list_key, c_uuid)
-            pipe.json().set(meta_key, "$", meta)
+            pipe.set(meta_key, json.dumps(meta))
             pipe.sadd(members_key, *members)
 
             # Secondary indexes for the pool

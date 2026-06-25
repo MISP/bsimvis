@@ -563,7 +563,7 @@ class SimilarityService:
                     sim_doc["coll_1"] = coll_a
                     sim_doc["coll_2"] = coll_b
 
-                persist_pipe.json().set(sid, "$", sim_doc)
+                persist_pipe.set(sid, json.dumps(sim_doc))
                 persist_pipe.zadd(score_key, {sid: score_rounded})
                 persist_pipe.zadd(all_key, {sid: 0})
 
@@ -1751,11 +1751,11 @@ class SimilarityService:
             fids_list = list(all_unique_fids)
             pipe = r.pipeline()
             for fid in fids_list:
-                pipe.json().get(f"{fid}:meta", "$")
+                pipe.get(f"{fid}:meta")
             meta_results = pipe.execute()
             for fid, res in zip(fids_list, meta_results):
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = res.decode() if isinstance(res, bytes) else res
                     if isinstance(m, str):
                         try:
                             m = json.loads(m)
@@ -2076,7 +2076,7 @@ class SimilarityService:
                 },
             }
 
-            persist_pipe.json().set(sid, "$", doc)
+            persist_pipe.set(sid, json.dumps(doc))
             persist_pipe.zadd(
                 f"global:pool:{pool_id}:bin_sim:score:{algo}", {sid: col_weighted_score}
             )
@@ -2134,19 +2134,34 @@ class SimilarityService:
                 keys = r.keys(f"{involves_file_prefix}*:{md5}")
                 similarity_ids = []
                 for k in keys:
-                    similarity_ids.extend([sid.decode() if isinstance(sid, bytes) else sid for sid in r.smembers(k)])
+                    similarity_ids.extend(
+                        [
+                            sid.decode() if isinstance(sid, bytes) else sid
+                            for sid in r.smembers(k)
+                        ]
+                    )
             else:
                 involves_key = f"{involves_file_prefix}{md5}"
-                similarity_ids = [sid.decode() if isinstance(sid, bytes) else sid for sid in r.smembers(involves_key)]
-            
-            self._index_similarity_ids_batch(r, similarity_ids, target_coll, pool_id, job_service, job_id)
+                similarity_ids = [
+                    sid.decode() if isinstance(sid, bytes) else sid
+                    for sid in r.smembers(involves_key)
+                ]
+
+            self._index_similarity_ids_batch(
+                r, similarity_ids, target_coll, pool_id, job_service, job_id
+            )
         elif batch_uuid:
             batch_func_set = f"{collection}:batch:{batch_uuid}:functions"
-            func_ids = [fid.decode() if isinstance(fid, bytes) else fid for fid in r.smembers(batch_func_set)]
+            func_ids = [
+                fid.decode() if isinstance(fid, bytes) else fid
+                for fid in r.smembers(batch_func_set)
+            ]
             total_funcs = len(func_ids)
             if total_funcs == 0:
                 if job_service and job_id:
-                    job_service.update_progress(job_id, 100, "No functions found in batch to index.")
+                    job_service.update_progress(
+                        job_id, 100, "No functions found in batch to index."
+                    )
                 return True
 
             similarity_ids_set = set()
@@ -2155,16 +2170,25 @@ class SimilarityService:
                 if not pool_id:
                     func_prefix = f"{collection}:func:"
                     if fid.startswith(func_prefix):
-                        clean_fid = fid[len(func_prefix):]
+                        clean_fid = fid[len(func_prefix) :]
                 involves_key = f"{involves_func_prefix}{clean_fid}"
                 for sid in r.smembers(involves_key):
-                    similarity_ids_set.add(sid.decode() if isinstance(sid, bytes) else sid)
-            
+                    similarity_ids_set.add(
+                        sid.decode() if isinstance(sid, bytes) else sid
+                    )
+
             similarity_ids = list(similarity_ids_set)
-            self._index_similarity_ids_batch(r, similarity_ids, target_coll, pool_id, job_service, job_id)
+            self._index_similarity_ids_batch(
+                r, similarity_ids, target_coll, pool_id, job_service, job_id
+            )
         else:
-            similarity_ids = [k.decode() if isinstance(k, bytes) else k for k in r.zrange(all_key, 0, -1)]
-            self._index_similarity_ids_batch(r, similarity_ids, target_coll, pool_id, job_service, job_id)
+            similarity_ids = [
+                k.decode() if isinstance(k, bytes) else k
+                for k in r.zrange(all_key, 0, -1)
+            ]
+            self._index_similarity_ids_batch(
+                r, similarity_ids, target_coll, pool_id, job_service, job_id
+            )
 
         return True
 

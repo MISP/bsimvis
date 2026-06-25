@@ -33,9 +33,11 @@ class FeatureService:
             tf_key = f"{func_id}:vec:tf"
 
             # 1. Fetch metadata and vector data
-            raw_meta = self.r.json().get(meta_key, "$")
-            if isinstance(raw_meta, list) and raw_meta and len(raw_meta) == 1:
-                raw_meta = raw_meta[0]
+            raw_meta = self.r.get(meta_key)
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
 
             new_tf_data = self.r.zrange(tf_key, 0, -1, withscores=True)
             if not raw_meta or not new_tf_data:
@@ -170,9 +172,11 @@ class FeatureService:
         affected_features = set()
         for fid in function_ids:
             meta_key = f"{fid}:vec:meta"
-            raw_meta = r.json().get(meta_key, "$")
-            if isinstance(raw_meta, list) and raw_meta and len(raw_meta) == 1:
-                raw_meta = raw_meta[0]
+            raw_meta = r.get(meta_key)
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
 
             if not raw_meta:
                 continue
@@ -264,12 +268,15 @@ class FeatureService:
                 continue
 
             meta_key = f"{collection}:batch:{uuid}"
-            name_raw = r.json().get(meta_key, "$")
+            name_raw = r.get(meta_key)
             name = "N/A"
             if name_raw:
+                name_raw = json.loads(name_raw)
                 if isinstance(name_raw, list):
                     name_raw = name_raw[0]
-                name = name_raw.get("name", "N/A")
+                name = (
+                    name_raw.get("name", "N/A") if isinstance(name_raw, dict) else "N/A"
+                )
 
             total = r.scard(batch_func_set)
             try:
@@ -305,11 +312,13 @@ class FeatureService:
                 continue
             md5 = parts[2]
 
-            meta = r.json().get(f_key, "$")
-            if meta and isinstance(meta, list):
-                meta = meta[0]
+            meta = r.get(f_key)
+            if meta:
+                meta = json.loads(meta)
+                if isinstance(meta, list):
+                    meta = meta[0]
 
-            name = meta.get("file_name", "N/A") if meta else "N/A"
+            name = meta.get("file_name", "N/A") if isinstance(meta, dict) else "N/A"
 
             # Get functions for this file (Base IDs now)
             file_func_set = f"{collection}:idx:file:functions:{md5}"
@@ -496,28 +505,38 @@ class FeatureService:
                     }
                 )
 
-            # Phase B: 1 JSON.GET per unique func (2 per func: source + vec:meta)
+            # Phase B: 1 GET per unique func (2 per func: source + vec:meta)
             source_lookup = {}
             vec_meta_lookup = {}
             if pending_funcs:
                 ctx_pipe = self.r.pipeline()
                 for func_id in pending_funcs:
-                    ctx_pipe.json().get(f"{func_id}:source", "$")
+                    ctx_pipe.get(f"{func_id}:source")
                 ctx_res = ctx_pipe.execute()
                 for func_id, ctx_entry in zip(pending_funcs, ctx_res):
-                    if isinstance(ctx_entry, list) and ctx_entry:
-                        source_lookup[func_id] = ctx_entry[0]
+                    if ctx_entry:
+                        entry_decoded = json.loads(ctx_entry)
+                        source_lookup[func_id] = (
+                            entry_decoded[0]
+                            if isinstance(entry_decoded, list)
+                            else entry_decoded
+                        )
                     else:
                         source_lookup[func_id] = {}
 
                 ctx_pipe2 = self.r.pipeline()
                 for func_id in pending_funcs:
-                    ctx_pipe2.json().get(f"{func_id}:vec:meta", "$")
+                    ctx_pipe2.get(f"{func_id}:vec:meta")
                 ctx_res2 = ctx_pipe2.execute()
                 func_vec = list(pending_funcs)
                 for func_id, ctx_entry in zip(func_vec, ctx_res2):
-                    if isinstance(ctx_entry, list) and ctx_entry:
-                        vec_meta_lookup[func_id] = ctx_entry[0]
+                    if ctx_entry:
+                        entry_decoded = json.loads(ctx_entry)
+                        vec_meta_lookup[func_id] = (
+                            entry_decoded[0]
+                            if isinstance(entry_decoded, list)
+                            else entry_decoded
+                        )
                     else:
                         vec_meta_lookup[func_id] = []
 
@@ -578,8 +597,9 @@ class FeatureService:
                     "tf_score": result["tf_score"],
                     "context": context,
                 }
-                save_pipe.json().set(
-                    f"{collection}:feature:{result['fh']}:global_meta", "$", global_meta
+                save_pipe.set(
+                    f"{collection}:feature:{result['fh']}:global_meta",
+                    json.dumps(global_meta),
                 )
                 save_feature(save_pipe, collection, result["fh"], global_meta)
 

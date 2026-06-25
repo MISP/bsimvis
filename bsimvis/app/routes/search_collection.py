@@ -48,7 +48,9 @@ def search_collections():
 
         # 2. Identify collections that have missing cached statistics
         fetch_pipe = r.pipeline()
-        fetch_jobs = []  # list of tuples: (collection_name, meta_decoded_dict, field_name)
+        fetch_jobs = (
+            []
+        )  # list of tuples: (collection_name, meta_decoded_dict, field_name)
 
         results_temp = []
         for i, name in enumerate(page_names):
@@ -74,7 +76,9 @@ def search_collections():
                 fetch_pipe.scard(f"{name}:all_batches")
                 fetch_jobs.append((name, meta_decoded, "total_batches"))
             if need_last_updated:
-                fetch_pipe.zrange(f"{name}:idx:file:entry_date", -1, -1, withscores=True)
+                fetch_pipe.zrange(
+                    f"{name}:idx:file:entry_date", -1, -1, withscores=True
+                )
                 fetch_jobs.append((name, meta_decoded, "last_updated"))
 
             results_temp.append((name, meta_decoded))
@@ -163,7 +167,7 @@ def search_batches():
 
         pipe = r.pipeline()
         for uuid in batch_uuids:
-            pipe.json().get(f"{target_collection}:batch:{uuid}", "$")
+            pipe.get(f"{target_collection}:batch:{uuid}")
         raw_data = pipe.execute()
 
         all_results = []
@@ -172,8 +176,7 @@ def search_batches():
         for item in raw_data:
             if not item:
                 continue
-            data = item[0] if isinstance(item, list) and item else item
-            data = json.loads(data) if isinstance(data, str) else data
+            data = json.loads(item) if not isinstance(item, dict) else item
 
             # Apply q filter
             if keywords:

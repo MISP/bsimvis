@@ -144,13 +144,13 @@ def search_bin_sims():
         # Pipeline fetch JSON for ALL candidates to run in-memory filters
         pipe = r.pipeline()
         for sid in candidates:
-            pipe.json().get(sid, "$")
+            pipe.get(sid)
         raw_json_docs = pipe.execute()
 
         for sid, res in zip(candidates, raw_json_docs):
             if not res:
                 continue
-            doc = res[0] if isinstance(res, list) else res
+            doc = json.loads(res) if not isinstance(res, dict) else res
             if isinstance(doc, str):
                 try:
                     doc = json.loads(doc)
@@ -198,14 +198,14 @@ def search_bin_sims():
             md5_list = list(unique_md5s)
             pipe = r.pipeline()
             for coll, md5 in md5_list:
-                pipe.json().get(f"{coll}:file:{md5}:meta", "$")
+                pipe.get(f"{coll}:file:{md5}:meta")
                 pipe.scard(f"{coll}:idx:file:functions:{md5}")
             results = pipe.execute()
             for i, (coll, md5) in enumerate(md5_list):
                 res = results[2 * i]
                 func_count = results[2 * i + 1]
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(m, str):
                         m = json.loads(m)
                     file_meta_cache[(coll, md5)] = m if isinstance(m, dict) else {}
@@ -427,9 +427,9 @@ def search_bin_sims():
             doc = ld["doc"] if is_pool else None
 
             if not doc:
-                res = r.json().get(sid, "$")
+                res = r.get(sid)
                 if res:
-                    doc = res[0] if isinstance(res, list) else res
+                    doc = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(doc, str):
                         doc = json.loads(doc)
 

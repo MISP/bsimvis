@@ -18,19 +18,16 @@ class TagService:
         """Resolves a frontend ID into a backend Redis key."""
         collection = _normalize_collection(collection)
         if entity_type in ["file", "function"]:
-            # Standardized IDs: {col}:file:{id} or {col}:func:{id}
             resolved_id = entity_id.replace(":function:", ":func:")
             if resolved_id.endswith(":meta"):
                 return resolved_id
             return f"{resolved_id}:meta"
 
         if entity_type == "similarity":
-            # Similarity IDs might be passed as "id1|id2|algo" from the UI
             if "|" in entity_id:
                 parts = entity_id.split("|")
                 if len(parts) == 3:
                     id1, id2, algo = parts
-                    # Standard Canonical SID: {coll}:sim:{algo}:{c1}::{c2}
                     id1_clean = id1.replace(":function:", ":func:")
                     id2_clean = id2.replace(":function:", ":func:")
                     func_prefix = f"{collection}:func:"
@@ -53,6 +50,19 @@ class TagService:
 
         return entity_id
 
+    def _get_doc(self, doc_id):
+        raw = self.r.get(doc_id)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception as e:
+            logging.error(f"TagService: Error decoding JSON for key {doc_id}: {e}")
+            return None
+
+    def _set_doc(self, doc_id, doc):
+        self.r.set(doc_id, json.dumps(doc))
+
     def add_user_tag(self, collection, entity_type, entity_id, tag):
         """
         Adds a user tag to an entity (file, function, or similarity).
@@ -64,30 +74,30 @@ class TagService:
             return False
 
         try:
-            # 1. Resolve to the actual JSON document key
             doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
 
-            # 2. Update the JSON document
-            doc = r.json().get(doc_id, "$")
-            if not doc:
+            data = self._get_doc(doc_id)
+            if not data:
                 logging.error(
                     f"TagService: Entity {doc_id} not found (from {entity_id})"
                 )
                 return False
 
-            data = doc[0] if isinstance(doc, list) else doc
             json_field = "user_tags"
             pool_id = get_pool_id(collection)
             if pool_id:
                 json_field = f"pool_tags_{pool_id}"
 
             user_tags = data.get(json_field, [])
+            if not isinstance(user_tags, list):
+                user_tags = []
 
             if tag not in user_tags:
                 user_tags.append(tag)
-                r.json().set(doc_id, f"$.{json_field}", user_tags)
+                data[json_field] = user_tags
+                self._set_doc(doc_id, data)
 
-                # 3. Update Secondary Index
+                # Update Secondary Index
                 tag_lower = tag.lower()
                 lvl = (
                     "func"
@@ -95,25 +105,20 @@ class TagService:
                     else "sim" if entity_type == "similarity" else entity_type
                 )
 
-                # We store the BASE IDENTITY in the bucket (e.g. col:func:md5:addr)
                 indexed_id = doc_id
                 if indexed_id.endswith(":meta"):
                     indexed_id = indexed_id[:-5]
 
-                # Standard Bucket: {col}:idx:{lvl}:user_tags:{tag}
                 index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
                 r.sadd(index_key, indexed_id)
 
-                # Standard Registry: {col}:reg:{lvl}:user_tags
                 registry_key = f"{collection}:reg:{lvl}:user_tags"
                 r.sadd(registry_key, index_key)
 
-                # 4. Handle Propagation
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="add"
                 )
 
-                # 5. Ensure metadata
                 self._ensure_tag_metadata(collection, tag)
 
             return True
@@ -134,14 +139,18 @@ class TagService:
             if pool_id:
                 json_field = f"pool_tags_{pool_id}"
 
-            doc = r.json().get(doc_id, f"$.{json_field}")
-            if not doc or not isinstance(doc, list) or len(doc) == 0:
+            data = self._get_doc(doc_id)
+            if not data:
                 return False
 
-            user_tags = doc[0]
+            user_tags = data.get(json_field, [])
+            if not isinstance(user_tags, list):
+                return False
+
             if tag in user_tags:
                 user_tags.remove(tag)
-                r.json().set(doc_id, f"$.{json_field}", user_tags)
+                data[json_field] = user_tags
+                self._set_doc(doc_id, data)
 
                 # Update Index
                 tag_lower = tag.lower()
@@ -158,7 +167,6 @@ class TagService:
                 index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
                 r.srem(index_key, indexed_id)
 
-                # Handle Propagation
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="remove"
                 )
@@ -186,16 +194,12 @@ class TagService:
             registry_key = f"{collection}:reg:{lvl}:user_tags"
             index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
 
-            pipe = r.pipeline()
             for eid in entity_ids:
                 doc_id = self._resolve_doc_id(collection, entity_type, eid)
-                # Note: Still need to check if tag exists to avoid duplicates
-                # For simplicity in bulk, we'll do it sequentially but we could optimize further with Lua
-                doc = r.json().get(doc_id, "$")
-                if not doc or not isinstance(doc, list) or len(doc) == 0:
+                data = self._get_doc(doc_id)
+                if not data:
                     continue
 
-                data = doc[0] if isinstance(doc, list) else doc
                 json_field = "user_tags"
                 pool_id = get_pool_id(collection)
                 if pool_id:
@@ -207,13 +211,13 @@ class TagService:
 
                 if tag not in user_tags:
                     user_tags.append(tag)
-                    r.json().set(doc_id, f"$.{json_field}", user_tags)
+                    data[json_field] = user_tags
+                    self._set_doc(doc_id, data)
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                     r.sadd(index_key, indexed_id)
                     r.sadd(registry_key, index_key)
 
-                    # Handle Propagation
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="add"
                     )
@@ -240,11 +244,10 @@ class TagService:
 
             for eid in entity_ids:
                 doc_id = self._resolve_doc_id(collection, entity_type, eid)
-                doc = r.json().get(doc_id, "$")
-                if not doc or not isinstance(doc, list) or len(doc) == 0:
+                data = self._get_doc(doc_id)
+                if not data:
                     continue
 
-                data = doc[0] if isinstance(doc, list) else doc
                 json_field = "user_tags"
                 pool_id = get_pool_id(collection)
                 if pool_id:
@@ -256,12 +259,12 @@ class TagService:
 
                 if tag in user_tags:
                     user_tags.remove(tag)
-                    r.json().set(doc_id, f"$.{json_field}", user_tags)
+                    data[json_field] = user_tags
+                    self._set_doc(doc_id, data)
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                     r.srem(index_key, indexed_id)
 
-                    # Handle Propagation
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="remove"
                     )
@@ -276,7 +279,6 @@ class TagService:
         collection = _normalize_collection(collection)
         meta_key = f"{collection}:tags_metadata"
         if not self.r.hexists(meta_key, tag):
-            # Deterministic color based on tag name if we want, or just a better palette
             palette = [
                 "#FF5555",
                 "#50FA7B",
@@ -294,7 +296,6 @@ class TagService:
                 "#00FF7F",
                 "#F4A460",
             ]
-            # Use hash of tag name to pick a stable default color from palette
             import hashlib
 
             tag_hash = int(hashlib.md5(tag.encode()).hexdigest(), 16)
@@ -305,9 +306,6 @@ class TagService:
     def get_tags(self, collection):
         """Returns the global tag index for a collection."""
         collection = _normalize_collection(collection)
-        r = get_redis()
-        # Tags are stored in a hash bsimvis:{collection}:tags:meta or similar
-        # Based on routes, it seems we need to return metadata (color, priority)
         return self.get_collection_tags(collection)
 
     def get_collection_tags(self, collection):
@@ -332,9 +330,7 @@ class TagService:
         tag_lower = tag.lower()
         stats = {"function": 0, "file": 0, "similarity": 0}
 
-        # Check buckets for each level
         for lvl in ["func", "file", "sim"]:
-            # Note: tags can be in 'tags' or 'user_tags' index buckets
             for field in ["tags", "user_tags"]:
                 bkey = f"{collection}:idx:{lvl}:{field}:{tag_lower}"
                 count = r.scard(bkey)
@@ -373,14 +369,12 @@ class TagService:
             resolve_target_field,
         )
 
-        # 1. Determine source level
         src_level = (
             "func"
             if entity_type == "function"
             else "sim" if entity_type == "similarity" else entity_type
         )
 
-        # 2. Get targets for user_tags from this source level
         prop_levels = get_propagation_targets(src_level, "user_tags")
         if not prop_levels:
             return
@@ -388,12 +382,10 @@ class TagService:
         r = self.r
         tag_lower = tag.strip().lower()
 
-        # Resolve to indexed_id (base identity)
         indexed_id = self._resolve_doc_id(collection, entity_type, entity_id)
         if indexed_id.endswith(":meta"):
             indexed_id = indexed_id[:-5]
 
-        # 3. Handle File -> Func/Sim
         if src_level == "file":
             md5 = indexed_id.split(":")[-1]
             for target_lvl in prop_levels:
@@ -409,7 +401,6 @@ class TagService:
                     continue
 
                 if related_ids:
-                    # Convert to list to avoid *set issues if empty (though checked above)
                     id_list = list(related_ids)
                     if op == "add":
                         r.sadd(index_key, *id_list)
@@ -417,9 +408,7 @@ class TagService:
                     else:
                         r.srem(index_key, *id_list)
 
-        # 4. Handle Func -> Sim
         elif src_level == "func":
-            # indexed_id is {coll}:func:{md5}:{addr}
             parts = indexed_id.split(":")
             if len(parts) >= 4:
                 clean_id = f"{parts[-2]}:{parts[-1]}"

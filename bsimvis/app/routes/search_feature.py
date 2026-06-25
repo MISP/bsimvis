@@ -130,13 +130,13 @@ def _enrich_feature_context(r, collection, feature_list):
                 }
                 func_id = fm.get("function_id")
                 if func_id and f["context"]["line_idxs"]:
-                    pipe.json().get(f"{func_id}:source", "$")
+                    pipe.get(f"{func_id}:source")
                     f["_line_idx"] = f["context"]["line_idxs"][0]
                 else:
                     pipe.execute_command("ECHO", "no_source")
 
                 if not f["context"]["pcode_full"] and func_id:
-                    pipe.json().get(f"{func_id}:vec:meta", "$")
+                    pipe.get(f"{func_id}:vec:meta")
                 else:
                     pipe.execute_command("ECHO", "no_meta_fallback")
             else:
@@ -154,10 +154,20 @@ def _enrich_feature_context(r, collection, feature_list):
             if "context" not in f:
                 continue
             source_data = second_results[i * 2]
-            if isinstance(source_data, list) and source_data:
-                source_data = source_data[0]
+            if source_data:
+                source_data = (
+                    json.loads(source_data)
+                    if not isinstance(source_data, dict)
+                    else source_data
+                )
+                if isinstance(source_data, list) and source_data:
+                    source_data = source_data[0]
 
             vec_meta = second_results[i * 2 + 1]
+            if vec_meta:
+                vec_meta = (
+                    json.loads(vec_meta) if not isinstance(vec_meta, list) else vec_meta
+                )
             if isinstance(vec_meta, list) and vec_meta:
                 vec_meta = vec_meta[0]
 
@@ -329,15 +339,20 @@ def query_features_advanced(r, collection, filters):
             pipe = r.pipeline()
             for doc_id in candidate_list:
                 f_hash = doc_id.split(":")[-1]
-                pipe.json().get(
-                    f"{collection}:feature:{f_hash}:global_meta", f"$.{sort_by}"
-                )
+                pipe.get(f"{collection}:feature:{f_hash}:global_meta")
             sort_vals = pipe.execute()
 
             def get_sort_val(v):
-                if isinstance(v, list) and v:
-                    v = v[0]
-                return str(v or "").lower()
+                if v:
+                    try:
+                        v_doc = json.loads(v) if not isinstance(v, dict) else v
+                        val = v_doc.get(sort_by, "")
+                        if isinstance(val, list) and val:
+                            val = val[0]
+                        return str(val or "").lower()
+                    except:
+                        pass
+                return ""
 
             sorted_candidates = [
                 (doc_id, get_sort_val(val))
@@ -359,12 +374,18 @@ def query_features_advanced(r, collection, filters):
 
     pipe = r.pipeline()
     for fh in page_hashes:
-        pipe.json().get(f"{collection}:feature:{fh}:global_meta", "$")
+        pipe.get(f"{collection}:feature:{fh}:global_meta")
     metas_raw = pipe.execute()
 
     features = []
     for fh, m_list in zip(page_hashes, metas_raw):
-        meta = m_list[0] if (isinstance(m_list, list) and m_list) else None
+        meta = (
+            json.loads(m_list)
+            if m_list and not isinstance(m_list, dict)
+            else (m_list or None)
+        )
+        if meta and isinstance(meta, list):
+            meta = meta[0]
         if not meta:
             # Fallback dynamic enrichment
             meta = {
@@ -486,7 +507,7 @@ def get_feature_details(f_hash):
             ):
                 func_id = occ.get("function_id")
                 if func_id:
-                    pipe.json().get(f"{func_id}:vec:meta", "$")
+                    pipe.get(f"{func_id}:vec:meta")
                     pipe.zscore(f"{func_id}:vec:tf", f_hash)
                     augment_indices.append(i)
 
@@ -496,8 +517,14 @@ def get_feature_details(f_hash):
                 for i, idx in enumerate(augment_indices):
                     occ = paginated_meta[idx]
                     vec_meta = extra_results[i * 2]
-                    if isinstance(vec_meta, list) and vec_meta and len(vec_meta) == 1:
-                        vec_meta = vec_meta[0]
+                    if vec_meta:
+                        vec_meta = (
+                            json.loads(vec_meta)
+                            if not isinstance(vec_meta, list)
+                            else vec_meta
+                        )
+                        if isinstance(vec_meta, list) and len(vec_meta) == 1:
+                            vec_meta = vec_meta[0]
                     tf_score = extra_results[i * 2 + 1]
                     if vec_meta:
                         for feat in vec_meta:

@@ -57,16 +57,14 @@ class MetadataService:
             file_meta_key = f"{file_base_id}:meta"
 
             # 1. Fetch current file metadata
-            old_meta_raw = r.json().get(file_meta_key, "$")
+            old_meta_raw = r.get(file_meta_key)
             if not old_meta_raw:
                 logging.warning(
                     f"[-] File metadata not found for {md5} in collection '{collection}'"
                 )
                 continue
 
-            old_meta = (
-                old_meta_raw[0] if isinstance(old_meta_raw, list) else old_meta_raw
-            )
+            old_meta = json.loads(old_meta_raw) if old_meta_raw else None
             if isinstance(old_meta, str):
                 old_meta = json.loads(old_meta)
 
@@ -120,7 +118,7 @@ class MetadataService:
                     changed_fields.append("file_name")
 
             # 3. Store merged file meta
-            r.json().set(file_meta_key, "$", new_meta)
+            r.set(file_meta_key, json.dumps(new_meta))
 
             # 4. Update file-level secondary indexes
             pipe = r.pipeline()
@@ -162,7 +160,7 @@ class MetadataService:
                     chunk = func_ids[i : i + chunk_size]
                     get_pipe = r.pipeline()
                     for func_id in chunk:
-                        get_pipe.json().get(f"{func_id}:meta", "$")
+                        get_pipe.get(f"{func_id}:meta")
                     meta_results = get_pipe.execute()
 
                     write_pipe = r.pipeline()
@@ -171,9 +169,7 @@ class MetadataService:
                     for func_id, fmeta_raw in zip(chunk, meta_results):
                         if not fmeta_raw:
                             continue
-                        old_fmeta = (
-                            fmeta_raw[0] if isinstance(fmeta_raw, list) else fmeta_raw
-                        )
+                        old_fmeta = json.loads(fmeta_raw) if fmeta_raw else None
                         if isinstance(old_fmeta, str):
                             old_fmeta = json.loads(old_fmeta)
 
@@ -216,7 +212,7 @@ class MetadataService:
                                     )
 
                         if f_changed:
-                            write_pipe.json().set(f"{func_id}:meta", "$", new_fmeta)
+                            write_pipe.set(f"{func_id}:meta", json.dumps(new_fmeta))
                             any_changes = True
 
                     if any_changes:
@@ -245,13 +241,11 @@ class MetadataService:
                 if not r.exists(meta_key):
                     continue
 
-                old_cluster_meta_raw = r.json().get(meta_key, "$")
+                old_cluster_meta_raw = r.get(meta_key)
                 if not old_cluster_meta_raw:
                     continue
                 old_cm = (
-                    old_cluster_meta_raw[0]
-                    if isinstance(old_cluster_meta_raw, list)
-                    else old_cluster_meta_raw
+                    json.loads(old_cluster_meta_raw) if old_cluster_meta_raw else None
                 )
                 if isinstance(old_cm, str):
                     old_cm = json.loads(old_cm)
@@ -267,7 +261,7 @@ class MetadataService:
 
                 c_meta_pipe = r.pipeline()
                 for mid in members:
-                    c_meta_pipe.json().get(f"{mid}:meta", "$")
+                    c_meta_pipe.get(f"{mid}:meta")
                 c_meta_results = c_meta_pipe.execute()
 
                 names = []
@@ -275,11 +269,13 @@ class MetadataService:
                 avtype_list = []
                 filetype_list = []
                 ccip_list = []
+                member_metas = {}
 
                 for mid, res in zip(members, c_meta_results):
                     if not res:
                         continue
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if res else {}
+                    member_metas[mid] = m
                     if isinstance(m, str):
                         m = json.loads(m)
                     if m.get("file_name"):
@@ -354,7 +350,7 @@ class MetadataService:
                     new_cm["cluster_name"] = new_default_name
                     name_changed = True
 
-                r.json().set(meta_key, "$", new_cm)
+                r.set(meta_key, json.dumps(new_cm))
 
                 if name_changed:
                     prop_pipe = r.pipeline()
@@ -376,11 +372,9 @@ class MetadataService:
                             new_default_name,
                             mid,
                         )
-                        prop_pipe.json().set(
-                            f"{mid}:meta",
-                            "$.bin_cluster_name",
-                            new_default_name,
-                        )
+                        mid_meta = member_metas.get(mid, {})
+                        mid_meta["bin_cluster_name"] = new_default_name
+                        prop_pipe.set(f"{mid}:meta", json.dumps(mid_meta))
                     prop_pipe.execute()
 
         logging.info(f"[+] Propagation complete for {total_files} files.")

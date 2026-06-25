@@ -40,9 +40,12 @@ def create_app():
             pool_id = request.args.get("pool")
             coll_id = request.args.get("collection")
             from werkzeug.datastructures import MultiDict
+
             new_args = MultiDict(request.args)
             if coll_id:
-                if not coll_id.startswith("pool:") and not coll_id.startswith("global:pool:"):
+                if not coll_id.startswith("pool:") and not coll_id.startswith(
+                    "global:pool:"
+                ):
                     new_args["collection"] = f"global:pool:{pool_id}:col:{coll_id}"
             else:
                 new_args["collection"] = f"global:pool:{pool_id}"
@@ -55,7 +58,9 @@ def create_app():
                     pool_id = data.get("pool")
                     coll_id = data.get("collection")
                     if coll_id:
-                        if not coll_id.startswith("pool:") and not coll_id.startswith("global:pool:"):
+                        if not coll_id.startswith("pool:") and not coll_id.startswith(
+                            "global:pool:"
+                        ):
                             data["collection"] = f"global:pool:{pool_id}:col:{coll_id}"
                     else:
                         data["collection"] = f"global:pool:{pool_id}"

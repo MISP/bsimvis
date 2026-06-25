@@ -238,14 +238,14 @@ def list_bin_clusters():
     if all_meta_keys:
         pipe = r.pipeline()
         for k in all_meta_keys:
-            pipe.json().get(k, "$")
+            pipe.get(k)
         raw_metas = pipe.execute()
 
         meta_map = {}
         for meta in raw_metas:
             if not meta:
                 continue
-            m = meta[0] if isinstance(meta, list) else meta
+            m = json.loads(meta) if not isinstance(meta, dict) else meta
             if isinstance(m, str):
                 m = json.loads(m)
             cid = str(m.get("cluster_id", ""))
@@ -462,7 +462,7 @@ def list_bin_clusters():
             all_member_ids_list = list(all_member_ids)
             m_pipe = r.pipeline()
             for mid in all_member_ids_list:
-                m_pipe.json().get(f"{mid}:meta", "$")
+                m_pipe.get(f"{mid}:meta")
                 parts = mid.split(":")
                 md5 = parts[-1] if len(parts) >= 3 else ""
                 actual_col = parts[0]
@@ -471,7 +471,11 @@ def list_bin_clusters():
             for idx, mid in enumerate(all_member_ids_list):
                 meta = raw_results[2 * idx]
                 func_count = raw_results[2 * idx + 1]
-                m = meta[0] if isinstance(meta, list) and meta else {}
+                m = (
+                    json.loads(meta)
+                    if meta and not isinstance(meta, dict)
+                    else (meta or {})
+                )
                 if isinstance(m, str):
                     try:
                         m = json.loads(m)
@@ -570,8 +574,12 @@ def update_bin_cluster_meta():
     if not r.exists(meta_key):
         return {"error": "Cluster meta not found"}, 404
 
-    r.json().set(meta_key, "$.cluster_name", cluster_name)
-    r.json().set(meta_key, "$.is_custom_name", True)
+    meta_val = r.get(meta_key)
+    if meta_val:
+        meta_doc = json.loads(meta_val)
+        meta_doc["cluster_name"] = cluster_name
+        meta_doc["is_custom_name"] = True
+        r.set(meta_key, json.dumps(meta_doc))
 
     # Propagate name to all member files for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
@@ -582,16 +590,19 @@ def update_bin_cluster_meta():
         members_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:members"
     members = r.smembers(members_key)
 
-    old_meta = r.json().get(meta_key, "$")
-    old_name = (
-        old_meta[0].get("cluster_name")
-        if old_meta and isinstance(old_meta, list)
-        else None
-    )
+    old_meta = json.loads(meta_val) if meta_val else {}
+    old_name = old_meta.get("cluster_name")
+
+    # Fetch all members' metadata
+    mid_list = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
+    m_pipe = r.pipeline()
+    for mid_str in mid_list:
+        m_pipe.get(f"{mid_str}:meta")
+    member_metas = m_pipe.execute()
 
     pipe = r.pipeline()
-    for mid in members:
-        mid_str = mid.decode() if isinstance(mid, bytes) else mid
+    for mid_str, raw_m in zip(mid_list, member_metas):
+        m = json.loads(raw_m) if raw_m else {}
         if old_name:
             _unindex_tag(
                 pipe, collection_for_tags, "file", "bin_cluster_name", old_name, mid_str
@@ -599,7 +610,8 @@ def update_bin_cluster_meta():
         _index_tag(
             pipe, collection_for_tags, "file", "bin_cluster_name", cluster_name, mid_str
         )
-        pipe.json().set(f"{mid_str}:meta", "$.bin_cluster_name", cluster_name)
+        m["bin_cluster_name"] = cluster_name
+        pipe.set(f"{mid_str}:meta", json.dumps(m))
     pipe.execute()
 
     return {"status": "success", "cluster_name": cluster_name}
@@ -639,13 +651,13 @@ def list_bin_cluster_members():
         if is_pool and ":" in mid:
             parts = mid.split(":")
             coll, md5 = parts[0], parts[1]
-            pipe.json().get(f"{coll}:file:{md5}:meta", "$")
+            pipe.get(f"{coll}:file:{md5}:meta")
         else:
-            pipe.json().get(f"{collection}:file:{mid}:meta", "$")
+            pipe.get(f"{collection}:file:{mid}:meta")
     raw_metas = pipe.execute()
 
     for i, meta in enumerate(raw_metas):
-        m = meta[0] if isinstance(meta, list) and meta else {}
+        m = json.loads(meta) if meta and not isinstance(meta, dict) else (meta or {})
         results.append({"id": page[i], "meta": m})
 
     return {
@@ -696,10 +708,16 @@ def get_bin_cluster_files():
                 if keys:
                     pipe = r.pipeline()
                     for k in keys:
-                        pipe.json().get(k, "$.cluster_uuid")
+                        pipe.get(k)
                     uuids = pipe.execute()
                     for k, u_res in zip(keys, uuids):
-                        u = u_res[0] if isinstance(u_res, list) and u_res else u_res
+                        u = ""
+                        if u_res:
+                            try:
+                                u_doc = json.loads(u_res)
+                                u = u_doc.get("cluster_uuid", "")
+                            except:
+                                u = ""
                         if isinstance(u, bytes):
                             u = u.decode()
                         if u == cluster_uuid:
@@ -728,7 +746,7 @@ def get_bin_cluster_files():
 
     pipe = r.pipeline()
     for fid in page:
-        pipe.json().get(f"{fid}:meta", "$")
+        pipe.get(f"{fid}:meta")
         parts = fid.split(":")
         md5 = parts[-1] if len(parts) >= 3 else ""
         actual_col = parts[0]
@@ -739,7 +757,7 @@ def get_bin_cluster_files():
     for idx, fid in enumerate(page):
         meta = raw_metas[2 * idx]
         func_count = raw_metas[2 * idx + 1]
-        m = meta[0] if isinstance(meta, list) and meta else meta
+        m = json.loads(meta) if meta and not isinstance(meta, dict) else (meta or {})
         if isinstance(m, str):
             try:
                 m = json.loads(m)

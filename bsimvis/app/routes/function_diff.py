@@ -222,19 +222,17 @@ def _fetch_clusters(meta, collection, md5, addr, pool_id, algo):
             for cid_bytes in cluster_ids:
                 cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
                 if effective_pool:
-                    cluster_pipe.json().get(
-                        f"global:pool:{effective_pool}:cluster:{algo}:{cid}:meta", "$"
+                    cluster_pipe.get(
+                        f"global:pool:{effective_pool}:cluster:{algo}:{cid}:meta"
                     )
                 else:
-                    cluster_pipe.json().get(
-                        f"{collection}:cluster:{algo}:{cid}:meta", "$"
-                    )
+                    cluster_pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
 
             raw_cluster_metas = cluster_pipe.execute()
 
             for raw_cm in raw_cluster_metas:
                 if raw_cm:
-                    cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                    cm = json.loads(raw_cm) if not isinstance(raw_cm, dict) else raw_cm
                     if isinstance(cm, str):
                         cm = json.loads(cm)
                     if cm:
@@ -273,6 +271,7 @@ def _fetch_clusters(meta, collection, md5, addr, pool_id, algo):
 def _diff_bin_sim(collection_a, md5_a, md5_b, collection_b, pool_id):
     """File-level bin_sim diff (reused from bin_sim.py)."""
     from bsimvis.app.routes import bin_sim
+
     return bin_sim.get_bin_sim(
         collection=collection_a,
         md5_a=md5_a,
@@ -565,4 +564,3 @@ def render_aligned_diff(
                 )
 
     return rows, left_tips, right_tips
-

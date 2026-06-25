@@ -4,8 +4,12 @@ from bsimvis.app.services.similarity_service import SimilarityService
 
 def similarity_api():
     # Accept new flat params, fall back to legacy id1/id2
-    collection_a = request.args.get("collection_a", request.args.get("collection", "main"))
-    collection_b = request.args.get("collection_b") or request.args.get("coll_b", collection_a)
+    collection_a = request.args.get(
+        "collection_a", request.args.get("collection", "main")
+    )
+    collection_b = request.args.get("collection_b") or request.args.get(
+        "coll_b", collection_a
+    )
     md5_a = request.args.get("md5_a", request.args.get("md5A"))
     md5_b = request.args.get("md5_b", request.args.get("md5B"))
     addr_a = request.args.get("addr_a", request.args.get("addrA"))
@@ -25,7 +29,9 @@ def similarity_api():
         id2 = f"{collection_b}:func:{md5_b}:{addr_b}"
         collection = collection_a
     else:
-        return {"detail": "Missing function identifiers (id1/id2 or addr/addr_b with md5)"}, 400
+        return {
+            "detail": "Missing function identifiers (id1/id2 or addr/addr_b with md5)"
+        }, 400
 
     if pool_id:
         collection = f"global:pool:{pool_id}:col:{collection}"
@@ -67,9 +73,9 @@ def similarity_api():
 
             # Fetch the actual document to extract tags
             sid = service._canonicalize_sid(collection, id1, id2, algo)
-            doc = service.r.json().get(sid, "$")
-            if doc:
-                d = doc[0] if isinstance(doc, list) else doc
+            raw_doc = service.r.get(sid)
+            if raw_doc:
+                d = json.loads(raw_doc)
                 if d.get("tags") and not tags:
                     tags = d.get("tags")
                 if pool_id:

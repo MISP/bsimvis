@@ -986,7 +986,7 @@ def similarity_search():
             # Phase 1: Fetch Similarity Metrics & Identity
             pipe = r.pipeline()
             for sid, sort_sc in page_results:
-                pipe.json().get(sid, "$")
+                pipe.get(sid)
                 if sort_by == "score":
                     pipe.zscore(min_features_zset, sid)
                 else:
@@ -1021,7 +1021,9 @@ def similarity_search():
                 raw_json = sim_raw[i * 2]
                 if not raw_json:
                     continue
-                data = raw_json[0] if isinstance(raw_json, list) else raw_json
+                data = (
+                    json.loads(raw_json) if not isinstance(raw_json, dict) else raw_json
+                )
                 if isinstance(data, str):
                     data = json.loads(data)
 
@@ -1046,7 +1048,7 @@ def similarity_search():
             unique_fids_list = list(unique_fids)
             f_pipe = r.pipeline()
             for fid in unique_fids_list:
-                f_pipe.json().get(f"{fid}:meta", "$")
+                f_pipe.get(f"{fid}:meta")
                 if is_pool:
                     f_pipe.hgetall(f"global:pool:{pool_id}:{fid}:cluster_scores")
                 else:
@@ -1061,7 +1063,11 @@ def similarity_search():
                 m_json = f_results[i * 2]
                 scores_raw = f_results[i * 2 + 1] or {}
 
-                meta = (m_json[0] if isinstance(m_json, list) else m_json) or {}
+                meta = (
+                    json.loads(m_json)
+                    if m_json and not isinstance(m_json, dict)
+                    else (m_json or {})
+                )
                 if isinstance(meta, str):
                     meta = json.loads(meta)
 
@@ -1085,10 +1091,14 @@ def similarity_search():
                 file_pipe = r.pipeline()
                 md5_list = list(unique_md5s)
                 for f_coll, md5 in md5_list:
-                    file_pipe.json().get(f"{f_coll}:file:{md5}:meta", "$")
+                    file_pipe.get(f"{f_coll}:file:{md5}:meta")
                 file_results = file_pipe.execute()
                 for (f_coll, md5), res in zip(md5_list, file_results):
-                    fm = (res[0] if isinstance(res, list) else res) or {}
+                    fm = (
+                        json.loads(res)
+                        if res and not isinstance(res, dict)
+                        else (res or {})
+                    )
                     if isinstance(fm, str):
                         fm = json.loads(fm)
                     file_meta_map[f"{f_coll}:{md5}"] = fm
@@ -1105,10 +1115,14 @@ def similarity_search():
                     else "unweighted_cosine"
                 )
                 for c_coll, cid in c_list:
-                    c_pipe.json().get(f"{c_coll}:cluster:{c_algo}:{cid}:meta", "$")
+                    c_pipe.get(f"{c_coll}:cluster:{c_algo}:{cid}:meta")
                 c_results = c_pipe.execute()
                 for (c_coll, cid), res in zip(c_list, c_results):
-                    cm = (res[0] if isinstance(res, list) else res) or {}
+                    cm = (
+                        json.loads(res)
+                        if res and not isinstance(res, dict)
+                        else (res or {})
+                    )
                     if isinstance(cm, str):
                         cm = json.loads(cm)
                     # Apply cohesion threshold server-side

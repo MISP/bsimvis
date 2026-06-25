@@ -574,7 +574,10 @@ class IndexStatsService:
             if rtype == "hash":
                 return r.hlen(k) * 150  # Approx
             if "rejson" in rtype or "json" in rtype:
-                val = r.execute_command("JSON.GET", k)
+                try:
+                    val = r.execute_command("JSON.GET", k)
+                except Exception:
+                    val = r.get(k)
                 return len(str(val)) if val is not None else 0
         except Exception:
             pass

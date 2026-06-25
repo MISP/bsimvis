@@ -331,14 +331,14 @@ def list_clusters():
     if all_meta_keys:
         pipe = r.pipeline()
         for k in all_meta_keys:
-            pipe.json().get(k, "$")
+            pipe.get(k)
         raw_metas = pipe.execute()
 
         meta_map = {}
         for meta in raw_metas:
             if not meta:
                 continue
-            m = meta[0] if isinstance(meta, list) else meta
+            m = json.loads(meta) if not isinstance(meta, dict) else meta
             if isinstance(m, str):
                 import json
 
@@ -580,10 +580,14 @@ def list_clusters():
             all_member_ids_list = list(all_member_ids)
             m_pipe = r.pipeline()
             for mid in all_member_ids_list:
-                m_pipe.json().get(f"{mid}:meta", "$")
+                m_pipe.get(f"{mid}:meta")
             raw_metas = m_pipe.execute()
             for mid, meta in zip(all_member_ids_list, raw_metas):
-                m = meta[0] if isinstance(meta, list) and meta else {}
+                m = (
+                    json.loads(meta)
+                    if meta and not isinstance(meta, dict)
+                    else (meta or {})
+                )
                 if isinstance(m, str):
                     try:
                         m = json.loads(m)
@@ -676,7 +680,11 @@ def update_cluster_meta():
     if not r.exists(meta_key):
         return {"error": "Cluster meta not found"}, 404
 
-    r.json().set(meta_key, "$.cluster_name", cluster_name)
+    meta_val = r.get(meta_key)
+    if meta_val:
+        meta_doc = json.loads(meta_val)
+        meta_doc["cluster_name"] = cluster_name
+        r.set(meta_key, json.dumps(meta_doc))
 
     # Propagate name to all member functions for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
@@ -688,16 +696,19 @@ def update_cluster_meta():
     members = r.smembers(members_key)
 
     # Get old name to unindex
-    old_meta = r.json().get(meta_key, "$")
-    old_name = (
-        old_meta[0].get("cluster_name")
-        if old_meta and isinstance(old_meta, list)
-        else None
-    )
+    old_meta = json.loads(meta_val) if meta_val else {}
+    old_name = old_meta.get("cluster_name")
+
+    # Fetch all members' metadata
+    mid_list = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
+    m_pipe = r.pipeline()
+    for mid_str in mid_list:
+        m_pipe.get(f"{mid_str}:meta")
+    member_metas = m_pipe.execute()
 
     pipe = r.pipeline()
-    for mid in members:
-        mid_str = mid.decode() if isinstance(mid, bytes) else mid
+    for mid_str, raw_m in zip(mid_list, member_metas):
+        m = json.loads(raw_m) if raw_m else {}
         if old_name:
             _unindex_tag(
                 pipe, collection_for_tags, "func", "cluster_name", old_name, mid_str
@@ -705,8 +716,8 @@ def update_cluster_meta():
         _index_tag(
             pipe, collection_for_tags, "func", "cluster_name", cluster_name, mid_str
         )
-        # Also update the function's metadata JSON for consistency
-        pipe.json().set(f"{mid_str}:meta", "$.cluster_name", cluster_name)
+        m["cluster_name"] = cluster_name
+        pipe.set(f"{mid_str}:meta", json.dumps(m))
     pipe.execute()
 
     return {"status": "success", "cluster_name": cluster_name}
@@ -745,11 +756,11 @@ def list_cluster_members():
     results = []
     pipe = r.pipeline()
     for mid in page:
-        pipe.json().get(f"{mid}:meta", "$")
+        pipe.get(f"{mid}:meta")
     raw_metas = pipe.execute()
 
     for i, meta in enumerate(raw_metas):
-        m = meta[0] if isinstance(meta, list) and meta else {}
+        m = json.loads(meta) if meta and not isinstance(meta, dict) else (meta or {})
         results.append({"id": page[i], "meta": m})
 
     return {
@@ -798,10 +809,16 @@ def get_cluster_functions():
             if keys:
                 pipe = r.pipeline()
                 for k in keys:
-                    pipe.json().get(k, "$.cluster_uuid")
+                    pipe.get(k)
                 uuids = pipe.execute()
                 for k, u_res in zip(keys, uuids):
-                    u = u_res[0] if isinstance(u_res, list) and u_res else u_res
+                    u = ""
+                    if u_res:
+                        try:
+                            u_doc = json.loads(u_res)
+                            u = u_doc.get("cluster_uuid", "")
+                        except:
+                            u = ""
                     if isinstance(u, bytes):
                         u = u.decode()
                     if u == cluster_uuid:
@@ -831,14 +848,14 @@ def get_cluster_functions():
     # Bulk fetch function metadata
     pipe = r.pipeline()
     for fid in page:
-        pipe.json().get(f"{fid}:meta", "$")
+        pipe.get(f"{fid}:meta")
     raw_metas = pipe.execute()
 
     import json
 
     functions = []
     for fid, meta in zip(page, raw_metas):
-        m = meta[0] if isinstance(meta, list) and meta else meta
+        m = json.loads(meta) if meta and not isinstance(meta, dict) else (meta or {})
         if isinstance(m, str):
             m = json.loads(m)
         if not m:

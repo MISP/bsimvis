@@ -544,13 +544,18 @@ class BinClusterService:
             chunk = all_member_file_ids[i : i + 1000]
             m_pipe = r.pipeline()
             for file_id in chunk:
-                m_pipe.json().get(f"{file_id}:meta", "$")
+                m_pipe.get(f"{file_id}:meta")
             results = m_pipe.execute()
             for idx, file_id in enumerate(chunk):
                 meta_res = results[idx]
-                m = meta_res[0] if isinstance(meta_res, list) and meta_res else {}
-                if isinstance(m, str):
-                    m = json.loads(m)
+                m = {}
+                if meta_res:
+                    if isinstance(meta_res, bytes):
+                        meta_res = meta_res.decode("utf-8")
+                    try:
+                        m = json.loads(meta_res)
+                    except Exception:
+                        m = {}
                 all_member_meta[file_id] = m
 
             if i % 1000 == 0:
@@ -710,7 +715,7 @@ class BinClusterService:
                 if isinstance(v, float):
                     if not np.isfinite(v):
                         meta[k] = 0.0
-            pipe.json().set(f"{collection}:bin_cluster:{algo}:{label}:meta", "$", meta)
+            pipe.set(f"{collection}:bin_cluster:{algo}:{label}:meta", json.dumps(meta))
 
             if "bin_cluster_name" in file_tag_fields:
                 bucket_key = (

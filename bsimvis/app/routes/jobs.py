@@ -13,7 +13,12 @@ def list_jobs():
     status = request.args.get("status")
     jtype = request.args.get("type")
     jobs, total = job_service.list_jobs(
-        limit=limit, offset=offset, collection=collection, pool=pool, status=status, jtype=jtype
+        limit=limit,
+        offset=offset,
+        collection=collection,
+        pool=pool,
+        status=status,
+        jtype=jtype,
     )
     return {"items": jobs, "total": total}
 

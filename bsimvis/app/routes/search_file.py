@@ -146,7 +146,7 @@ def search_files():
         # 4. Fetch full JSON, function counts, and cluster assignments for the page
         pipe = r.pipeline()
         for doc_id in paged_ids:
-            pipe.json().get(f"{doc_id}:meta", "$")
+            pipe.get(f"{doc_id}:meta")
             actual_col = doc_id.split(":")[0]
             md5 = doc_id.split(":")[-1]
             pipe.scard(f"{actual_col}:idx:file:functions:{md5}")
@@ -169,7 +169,7 @@ def search_files():
             if not res:
                 continue
 
-            data = res[0] if isinstance(res, list) else res
+            data = json.loads(res) if not isinstance(res, dict) else res
             if isinstance(data, str):
                 data = json.loads(data)
 
@@ -194,14 +194,16 @@ def search_files():
             c_list = list(unique_cluster_ids)
             for cid in c_list:
                 if is_pool:
-                    c_pipe.json().get(
-                        f"global:pool:{pool_id}:bin_cluster:{cid}:meta", "$"
-                    )
+                    c_pipe.get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta")
                 else:
-                    c_pipe.json().get(f"{col}:bin_cluster:{algo}:{cid}:meta", "$")
+                    c_pipe.get(f"{col}:bin_cluster:{algo}:{cid}:meta")
             c_results = c_pipe.execute()
             for cid, res in zip(c_list, c_results):
-                cm = (res[0] if isinstance(res, list) and res else res) or {}
+                cm = (
+                    json.loads(res)
+                    if res and not isinstance(res, dict)
+                    else (res or {})
+                )
                 if isinstance(cm, str):
                     cm = json.loads(cm)
 
@@ -408,7 +410,7 @@ def get_file_details(collection, file_md5):
 
         r = get_redis()
         file_id = f"{sub_collection}:file:{file_md5}"
-        
+
         if pool_id:
             clusters_key = f"pool:{pool_id}:file:{file_md5}:bin_clusters"
         else:
@@ -416,7 +418,7 @@ def get_file_details(collection, file_md5):
 
         # 1. Fetch full JSON, function counts, and cluster assignments
         pipe = r.pipeline()
-        pipe.json().get(f"{file_id}:meta", "$")
+        pipe.get(f"{file_id}:meta")
         pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
         pipe.smembers(clusters_key)
         results = pipe.execute()
@@ -428,7 +430,7 @@ def get_file_details(collection, file_md5):
         if not res:
             return {"error": "File not found"}, 404
 
-        data = res[0] if isinstance(res, list) else res
+        data = json.loads(res) if not isinstance(res, dict) else res
         if isinstance(data, str):
             data = json.loads(data)
 
@@ -452,10 +454,14 @@ def get_file_details(collection, file_md5):
             c_pipe = r.pipeline()
             c_list = data["bin_clusters"]
             for cid in c_list:
-                c_pipe.json().get(f"{collection}:bin_cluster:{algo}:{cid}:meta", "$")
+                c_pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
             c_results = c_pipe.execute()
             for cid, c_res in zip(c_list, c_results):
-                cm = (c_res[0] if isinstance(c_res, list) and c_res else c_res) or {}
+                cm = (
+                    json.loads(c_res)
+                    if c_res and not isinstance(c_res, dict)
+                    else (c_res or {})
+                )
                 if isinstance(cm, str):
                     cm = json.loads(cm)
                 cluster_meta_map[cid] = cm

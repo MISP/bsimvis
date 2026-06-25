@@ -1,6 +1,7 @@
 import uuid
 import time
 import logging
+import json
 from .redis_client import get_redis
 from bsimvis.app.services.index_service import get_pool_id
 
@@ -17,10 +18,8 @@ class NoteService:
     def _resolve_func_id(self, collection, entity_id):
         """Resolves a function ID into its meta document key."""
         collection = _normalize_collection(collection)
-        # entity_id is expected to be {coll}:func:{md5}:{addr} or idx:...
         resolved_id = entity_id.replace(":function:", ":func:")
         if resolved_id.startswith("idx:"):
-            # idx:collection:func:md5:addr
             parts = resolved_id.split(":")
             if len(parts) >= 5:
                 resolved_id = f"{parts[1]}:func:{parts[3]}:{parts[4]}"
@@ -28,6 +27,19 @@ class NoteService:
         if resolved_id.endswith(":meta"):
             return resolved_id
         return f"{resolved_id}:meta"
+
+    def _get_doc(self, doc_id):
+        raw = self.r.get(doc_id)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception as e:
+            logging.error(f"NoteService: Error decoding JSON for key {doc_id}: {e}")
+            return None
+
+    def _set_doc(self, doc_id, doc):
+        self.r.set(doc_id, json.dumps(doc))
 
     def add_note(self, collection, func_id, text, owner="user"):
         """Adds a note to a function and updates indices."""
@@ -48,12 +60,10 @@ class NoteService:
 
         try:
             # 1. Fetch current document
-            doc_raw = r.json().get(doc_id, "$")
-            if not doc_raw:
+            doc = self._get_doc(doc_id)
+            if not doc:
                 logging.error(f"NoteService: Document {doc_id} not found.")
                 return None
-
-            doc = doc_raw[0] if isinstance(doc_raw, list) else doc_raw
 
             json_field = "notes"
             count_field = "note_count"
@@ -69,8 +79,8 @@ class NoteService:
             if not isinstance(notes, list):
                 notes = []
             notes.append(note)
-            r.json().set(doc_id, f"$.{json_field}", notes)
-            r.json().set(doc_id, f"$.{count_field}", len(notes))
+            doc[json_field] = notes
+            doc[count_field] = len(notes)
 
             # 3. Update note_owners for indexing
             owners = doc.get(owner_field, [])
@@ -79,18 +89,19 @@ class NoteService:
 
             if owner not in owners:
                 owners.append(owner)
-                r.json().set(doc_id, f"$.{owner_field}", owners)
+                doc[owner_field] = owners
 
-                # Standard Bucket: {col}:idx:func:note_owners:{owner}
+            self._set_doc(doc_id, doc)
+
+            # Indexing
+            if owner not in doc.get(owner_field, []) or True:  # enforce check/index
                 indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                 index_key = f"{orig_collection}:idx:func:note_owners:{owner.lower()}"
                 r.sadd(index_key, indexed_id)
 
-                # Standard Registry: {col}:reg:func:note_owners
                 registry_key = f"{orig_collection}:reg:func:note_owners"
                 r.sadd(registry_key, index_key)
 
-                # Also index in pool namespace if pool exists
                 pool_id = get_pool_id(orig_collection)
                 if pool_id:
                     pool_coll = f"global:pool:{pool_id}"
@@ -107,7 +118,6 @@ class NoteService:
     def update_note(self, collection, func_id, note_id, text):
         """Updates an existing note's text."""
         collection = _normalize_collection(collection)
-        r = self.r
         doc_id = self._resolve_func_id(collection, func_id)
 
         try:
@@ -116,12 +126,17 @@ class NoteService:
             if pool_id:
                 json_field = f"pool_notes_{pool_id}"
 
-            notes = r.json().get(doc_id, f"$.{json_field}")[0]
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return None
+
+            notes = doc.get(json_field, [])
             for note in notes:
                 if note["id"] == note_id:
                     note["text"] = text
                     note["timestamp"] = int(time.time() * 1000)
-                    r.json().set(doc_id, f"$.{json_field}", notes)
+                    doc[json_field] = notes
+                    self._set_doc(doc_id, doc)
                     return note
             return None
         except Exception as e:
@@ -145,21 +160,26 @@ class NoteService:
                 count_field = f"pool_note_count_{pool_id}"
                 owner_field = f"pool_note_owners_{pool_id}"
 
-            notes = r.json().get(doc_id, f"$.{json_field}")[0]
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return False
+
+            notes = doc.get(json_field, [])
             new_notes = [n for n in notes if n["id"] != note_id]
 
             if len(new_notes) == len(notes):
                 return False
 
-            r.json().set(doc_id, f"$.{json_field}", new_notes)
-            r.json().set(doc_id, f"$.{count_field}", len(new_notes))
+            doc[json_field] = new_notes
+            doc[count_field] = len(new_notes)
 
             # Update owners index if this was the last note by this owner
             remaining_owners = set(n["owner"] for n in new_notes)
             old_owners = set(n["owner"] for n in notes)
             removed_owners = old_owners - remaining_owners
 
-            r.json().set(doc_id, f"$.{owner_field}", list(remaining_owners))
+            doc[owner_field] = list(remaining_owners)
+            self._set_doc(doc_id, doc)
 
             indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
             pool_id = get_pool_id(orig_collection)
@@ -183,8 +203,10 @@ class NoteService:
         pool_id = get_pool_id(collection)
         json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
         try:
-            notes = self.r.json().get(doc_id, f"$.{json_field}")
-            return notes[0] if notes else []
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return []
+            return doc.get(json_field, [])
         except:
             return []
 
@@ -193,7 +215,6 @@ class NoteService:
     def _resolve_file_id(self, collection, file_id):
         """Resolves a file ID into its meta document key."""
         collection = _normalize_collection(collection)
-        # Accepts: {col}:file:{md5} or {col}:file:{md5}:meta
         if file_id.endswith(":meta"):
             return file_id
         return f"{file_id}:meta"
@@ -216,12 +237,10 @@ class NoteService:
         }
 
         try:
-            doc_raw = r.json().get(doc_id, "$")
-            if not doc_raw:
+            doc = self._get_doc(doc_id)
+            if not doc:
                 logging.error(f"NoteService: File document {doc_id} not found.")
                 return None
-
-            doc = doc_raw[0] if isinstance(doc_raw, list) else doc_raw
 
             json_field = "notes"
             count_field = "note_count"
@@ -236,8 +255,8 @@ class NoteService:
             if not isinstance(notes, list):
                 notes = []
             notes.append(note)
-            r.json().set(doc_id, f"$.{json_field}", notes)
-            r.json().set(doc_id, f"$.{count_field}", len(notes))
+            doc[json_field] = notes
+            doc[count_field] = len(notes)
 
             owners = doc.get(owner_field, [])
             if not isinstance(owners, list):
@@ -245,9 +264,12 @@ class NoteService:
 
             if owner not in owners:
                 owners.append(owner)
-                r.json().set(doc_id, f"$.{owner_field}", owners)
+                doc[owner_field] = owners
 
-                # Index: {col}:idx:file:note_owners:{owner}
+            self._set_doc(doc_id, doc)
+
+            # Indexing
+            if owner not in doc.get(owner_field, []) or True:
                 indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                 index_key = f"{orig_collection}:idx:file:note_owners:{owner.lower()}"
                 r.sadd(index_key, indexed_id)
@@ -255,7 +277,6 @@ class NoteService:
                 registry_key = f"{orig_collection}:reg:file:note_owners"
                 r.sadd(registry_key, index_key)
 
-                # Also index in pool namespace if pool exists
                 pool_id = get_pool_id(orig_collection)
                 if pool_id:
                     pool_coll = f"global:pool:{pool_id}"
@@ -272,18 +293,21 @@ class NoteService:
     def update_file_note(self, collection, file_id, note_id, text):
         """Updates an existing file note's text."""
         collection = _normalize_collection(collection)
-        r = self.r
         doc_id = self._resolve_file_id(collection, file_id)
         pool_id = get_pool_id(collection)
         json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
 
         try:
-            notes = r.json().get(doc_id, f"$.{json_field}")[0]
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return None
+            notes = doc.get(json_field, [])
             for note in notes:
                 if note["id"] == note_id:
                     note["text"] = text
                     note["timestamp"] = int(time.time() * 1000)
-                    r.json().set(doc_id, f"$.{json_field}", notes)
+                    doc[json_field] = notes
+                    self._set_doc(doc_id, doc)
                     return note
             return None
         except Exception as e:
@@ -302,20 +326,24 @@ class NoteService:
         owner_field = f"pool_note_owners_{pool_id}" if pool_id else "note_owners"
 
         try:
-            notes = r.json().get(doc_id, f"$.{json_field}")[0]
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return False
+            notes = doc.get(json_field, [])
             new_notes = [n for n in notes if n["id"] != note_id]
 
             if len(new_notes) == len(notes):
                 return False
 
-            r.json().set(doc_id, f"$.{json_field}", new_notes)
-            r.json().set(doc_id, f"$.{count_field}", len(new_notes))
+            doc[json_field] = new_notes
+            doc[count_field] = len(new_notes)
 
             remaining_owners = set(n["owner"] for n in new_notes)
             old_owners = set(n["owner"] for n in notes)
             removed_owners = old_owners - remaining_owners
 
-            r.json().set(doc_id, f"$.{owner_field}", list(remaining_owners))
+            doc[owner_field] = list(remaining_owners)
+            self._set_doc(doc_id, doc)
 
             indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
             pool_id = get_pool_id(orig_collection)
@@ -339,8 +367,10 @@ class NoteService:
         pool_id = get_pool_id(collection)
         json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
         try:
-            notes = self.r.json().get(doc_id, f"$.{json_field}")
-            return notes[0] if notes else []
+            doc = self._get_doc(doc_id)
+            if not doc:
+                return []
+            return doc.get(json_field, [])
         except:
             return []
 

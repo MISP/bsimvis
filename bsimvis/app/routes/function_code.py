@@ -197,19 +197,21 @@ def get_function_code():
                             else cid_bytes
                         )
                         if pool_id:
-                            cluster_pipe.json().get(
-                                f"global:pool:{pool_id}:cluster:{algo}:{cid}:meta", "$"
+                            cluster_pipe.get(
+                                f"global:pool:{pool_id}:cluster:{algo}:{cid}:meta"
                             )
                         else:
-                            cluster_pipe.json().get(
-                                f"{collection}:cluster:{algo}:{cid}:meta", "$"
-                            )
+                            cluster_pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
 
                     raw_cluster_metas = cluster_pipe.execute()
 
                     for raw_cm in raw_cluster_metas:
                         if raw_cm:
-                            cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                            cm = (
+                                json.loads(raw_cm)
+                                if not isinstance(raw_cm, dict)
+                                else raw_cm
+                            )
                             if isinstance(cm, str):
                                 cm = json.loads(cm)
                             if cm:
@@ -298,7 +300,7 @@ def get_file_call_graph():
 
         pipe = r.pipeline()
         for fid in func_ids:
-            pipe.json().get(f"{fid}:meta", "$")
+            pipe.get(f"{fid}:meta")
             pipe.smembers(f"{fid}:callees")
 
         results = pipe.execute()
@@ -315,7 +317,9 @@ def get_file_call_graph():
 
             meta = None
             if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                meta = (
+                    json.loads(raw_meta) if not isinstance(raw_meta, dict) else raw_meta
+                )
                 if isinstance(meta, str):
                     meta = json.loads(meta)
 
@@ -357,13 +361,17 @@ def get_file_call_graph():
             other_ids = list(unindexed_nodes)
             other_pipe = r.pipeline()
             for oid in other_ids:
-                other_pipe.json().get(f"{oid}:meta", "$")
+                other_pipe.get(f"{oid}:meta")
             other_results = other_pipe.execute()
 
             for oid, raw_meta in zip(other_ids, other_results):
                 meta = None
                 if raw_meta:
-                    meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                    meta = (
+                        json.loads(raw_meta)
+                        if not isinstance(raw_meta, dict)
+                        else raw_meta
+                    )
                     if isinstance(meta, str):
                         meta = json.loads(meta)
 

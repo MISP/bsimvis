@@ -24,21 +24,27 @@ def fetch_function_data(collection, md5, addr):
 
         r = get_redis()
         pipe = r.pipeline()
-        pipe.json().get(f"{sub_collection}:func:{md5}:{addr}:source", "$")
-        pipe.json().get(f"{sub_collection}:func:{md5}:{addr}:vec:meta", "$")
-        pipe.json().get(f"{sub_collection}:func:{md5}:{addr}:meta", "$")
+        pipe.get(f"{sub_collection}:func:{md5}:{addr}:source")
+        pipe.get(f"{sub_collection}:func:{md5}:{addr}:vec:meta")
+        pipe.get(f"{sub_collection}:func:{md5}:{addr}:meta")
 
         tf_key = f"{sub_collection}:func:{md5}:{addr}:vec:tf"
         pipe.zrange(tf_key, 0, -1, withscores=True)
 
-        source, features, meta, tf_raw = pipe.execute()
+        source_raw, features_raw, meta_raw, tf_raw = pipe.execute()
 
-        # Unwrap Dialect 2 / JSON.GET $ results (Kvrocks returns a list of results for path '$')
-        if isinstance(source, list) and source and len(source) == 1:
+        import json
+
+        source = json.loads(source_raw) if source_raw else None
+        if isinstance(source, list) and len(source) == 1:
             source = source[0]
-        if isinstance(features, list) and features and len(features) == 1:
+
+        features = json.loads(features_raw) if features_raw else None
+        if isinstance(features, list) and len(features) == 1:
             features = features[0]
-        if isinstance(meta, list) and meta and len(meta) == 1:
+
+        meta = json.loads(meta_raw) if meta_raw else None
+        if isinstance(meta, list) and len(meta) == 1:
             meta = meta[0]
 
         tf_map = (

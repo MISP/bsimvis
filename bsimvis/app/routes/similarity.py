@@ -45,12 +45,12 @@ def list_similarities():
     if sim_keys:
         pipe = r.pipeline()
         for k in sim_keys:
-            pipe.json().get(k, "$")
+            pipe.get(k)
         raw_docs = pipe.execute()
 
         for i, doc in enumerate(raw_docs):
             if doc:
-                d = doc[0] if isinstance(doc, list) else doc
+                d = json.loads(doc) if not isinstance(doc, dict) else doc
                 sid_key = sim_keys[i]
                 d["sid"] = sid_key.decode() if isinstance(sid_key, bytes) else sid_key
                 normalize_tags(d)

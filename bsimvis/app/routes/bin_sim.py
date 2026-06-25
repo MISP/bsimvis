@@ -151,15 +151,15 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
             coll_a, coll_b = coll_b, coll_a
         sid = f"{collection}:bin_sim:{algo}:{md5_a}::{md5_b}"
 
-    data = r.json().get(sid, "$")
+    data_raw = r.get(sid)
 
-    if not data:
+    if not data_raw:
         return {
             "status": "not_found",
             "message": "Similarity not calculated for this pair",
         }, 404
 
-    diff_data = data[0] if isinstance(data, list) else data
+    diff_data = json.loads(data_raw) if not isinstance(data_raw, dict) else data_raw
 
     # Resolve actual coll_a/coll_b from the stored doc for metadata lookups
     if pool_id:
@@ -190,35 +190,45 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
 
     # Fetch File Metadata for both sides (each from their own collection)
     pipe = r.pipeline()
-    pipe.json().get(f"{coll_a}:file:{md5_a}:meta", "$")
-    pipe.json().get(f"{coll_b}:file:{md5_b}:meta", "$")
+    pipe.get(f"{coll_a}:file:{md5_a}:meta")
+    pipe.get(f"{coll_b}:file:{md5_b}:meta")
     file_meta_res = pipe.execute()
 
     if file_meta_res[0]:
-        diff_data["file_metadata_a"] = (
-            file_meta_res[0][0]
-            if isinstance(file_meta_res[0], list)
+        file_meta_0 = (
+            json.loads(file_meta_res[0])
+            if not isinstance(file_meta_res[0], dict)
             else file_meta_res[0]
         )
+        if isinstance(file_meta_0, list) and file_meta_0:
+            file_meta_0 = file_meta_0[0]
+        diff_data["file_metadata_a"] = file_meta_0
     if file_meta_res[1]:
-        diff_data["file_metadata_b"] = (
-            file_meta_res[1][0]
-            if isinstance(file_meta_res[1], list)
+        file_meta_1 = (
+            json.loads(file_meta_res[1])
+            if not isinstance(file_meta_res[1], dict)
             else file_meta_res[1]
         )
+        if isinstance(file_meta_1, list) and file_meta_1:
+            file_meta_1 = file_meta_1[0]
+        diff_data["file_metadata_b"] = file_meta_1
 
     # Retrieve function metadata
     fids = list(fids)
     if fids:
         pipe = r.pipeline()
         for fid in fids:
-            pipe.json().get(f"{fid}:meta", "$")
+            pipe.get(f"{fid}:meta")
         meta_results = pipe.execute()
 
         funcs_metadata = {}
         for fid, raw_meta in zip(fids, meta_results):
             if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                meta = (
+                    json.loads(raw_meta) if not isinstance(raw_meta, dict) else raw_meta
+                )
+                if isinstance(meta, list) and meta:
+                    meta = meta[0]
                 if isinstance(meta, str):
                     try:
                         meta = json.loads(meta)
@@ -328,14 +338,14 @@ def list_bin_sims():
     # Fetch docs
     pipe = r.pipeline()
     for sid, _ in paged:
-        pipe.json().get(sid, "$")
+        pipe.get(sid)
 
     docs_res = pipe.execute()
 
     results = []
     for i, res in enumerate(docs_res):
         if res:
-            doc = res[0] if isinstance(res, list) else res
+            doc = json.loads(res) if not isinstance(res, dict) else res
             if isinstance(doc, str):
                 doc = json.loads(doc)
             results.append(doc)

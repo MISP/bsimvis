@@ -161,6 +161,9 @@ class ProcessingService:
         if total == 0:
             return True
 
+        # Use a single pipeline for indexing functions
+        pipe = self.r.pipeline()
+
         for i, func_data in enumerate(functions):
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
                 pct = int((i + 1) / total * 100)
@@ -196,7 +199,6 @@ class ProcessingService:
             func_meta["function_id"] = base_func_key
 
             # --- Store exploded data ---
-            pipe = self.r.pipeline()
             pipe.set(f"{base_func_key}:meta", json.dumps(func_meta))
             pipe.set(f"{base_func_key}:source", json.dumps(func_source))
 
@@ -246,8 +248,12 @@ class ProcessingService:
             # --- Secondary Indexing ---
             save_function(pipe, collection, file_md5, addr, func_meta)
 
-            pipe.execute()
+            # Periodically execute the pipeline to reduce batch overhead / roundtrips
+            if (i + 1) % 100 == 0:
+                pipe.execute()
+                pipe = self.r.pipeline()
 
+        pipe.execute()
         return True
 
     def delete_collection(self, collection, job_service=None, job_id=None):

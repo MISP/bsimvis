@@ -2103,33 +2103,83 @@ class SimilarityService:
         collection,
         algo="unweighted_cosine",
         pool_id=None,
+        md5=None,
+        batch_uuid=None,
         job_service=None,
         job_id=None,
     ):
         """
         Reads existing similarity JSON documents and builds/updates full secondary indexes.
         Used to perform deferred indexing after running build_sim with index_depth='none' or 'minimal'.
+        Can run incrementally for a specific file md5 or batch_uuid.
         """
         r = self.r
         if pool_id:
             all_key = f"global:pool:{pool_id}:sim:all"
             target_coll = f"global:pool:{pool_id}"
+            involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
+            involves_func_prefix = f"global:pool:{pool_id}:sim:involves:func:"
         else:
             all_key = f"{collection}:sim:all"
             target_coll = collection
-
-        similarity_ids = [k.decode() if isinstance(k, bytes) else k for k in r.zrange(all_key, 0, -1)]
-        total = len(similarity_ids)
-        if total == 0:
-            if job_service and job_id:
-                job_service.update_progress(job_id, 100, "No similarities found to index.")
-            return True
-
-        logging.info(f"[*] Indexing {total} similarities for {collection} (pool: {pool_id})...")
+            involves_file_prefix = f"{collection}:sim:involves:file:"
+            involves_func_prefix = f"{collection}:sim:involves:func:"
 
         # Prep caches
         self._func_meta_cache = {}
         self._file_meta_cache = {}
+
+        if md5:
+            if pool_id:
+                keys = r.keys(f"{involves_file_prefix}*:{md5}")
+                similarity_ids = []
+                for k in keys:
+                    similarity_ids.extend([sid.decode() if isinstance(sid, bytes) else sid for sid in r.smembers(k)])
+            else:
+                involves_key = f"{involves_file_prefix}{md5}"
+                similarity_ids = [sid.decode() if isinstance(sid, bytes) else sid for sid in r.smembers(involves_key)]
+            
+            self._index_similarity_ids_batch(r, similarity_ids, target_coll, pool_id, job_service, job_id)
+        elif batch_uuid:
+            batch_func_set = f"{collection}:batch:{batch_uuid}:functions"
+            func_ids = [fid.decode() if isinstance(fid, bytes) else fid for fid in r.smembers(batch_func_set)]
+            total_funcs = len(func_ids)
+            if total_funcs == 0:
+                if job_service and job_id:
+                    job_service.update_progress(job_id, 100, "No functions found in batch to index.")
+                return True
+
+            similarity_ids_set = set()
+            for fid in func_ids:
+                clean_fid = fid
+                if not pool_id:
+                    func_prefix = f"{collection}:func:"
+                    if fid.startswith(func_prefix):
+                        clean_fid = fid[len(func_prefix):]
+                involves_key = f"{involves_func_prefix}{clean_fid}"
+                for sid in r.smembers(involves_key):
+                    similarity_ids_set.add(sid.decode() if isinstance(sid, bytes) else sid)
+            
+            similarity_ids = list(similarity_ids_set)
+            self._index_similarity_ids_batch(r, similarity_ids, target_coll, pool_id, job_service, job_id)
+        else:
+            similarity_ids = [k.decode() if isinstance(k, bytes) else k for k in r.zrange(all_key, 0, -1)]
+            self._index_similarity_ids_batch(r, similarity_ids, target_coll, pool_id, job_service, job_id)
+
+        return True
+
+    def _index_similarity_ids_batch(
+        self,
+        r,
+        similarity_ids,
+        target_coll,
+        pool_id,
+        job_service,
+        job_id,
+    ):
+        total = len(similarity_ids)
+        if total == 0:
+            return
 
         def extract_coll(fid):
             parts = fid.split(":")
@@ -2137,7 +2187,6 @@ class SimilarityService:
                 return parts[0]
             return "unknown"
 
-        # Process in batches
         batch_size = 500
         start_time = time.time()
 

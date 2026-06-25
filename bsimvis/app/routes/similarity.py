@@ -124,21 +124,28 @@ def build_similarity():
         "all": data.get("all", False),
     }
 
+    tasks = [
+        (JobType.BUILD_SIM, payload),
+        (
+            JobType.INDEX_SIM,
+            {
+                "collection": collection,
+                "algo": algo,
+                "md5": md5,
+                "batch_uuid": batch_uuid,
+            },
+        ),
+    ]
+
     if algo in ["milvus_sparse"]:
         if not milvus_service.enabled:
             return {
                 "error": "Milvus is disabled. Cannot use milvus_sparse algorithm."
             }, 400
+        tasks.insert(0, (JobType.SYNC_MILVUS, {"collection": collection}))
 
-        tasks = [
-            (JobType.SYNC_MILVUS, {"collection": collection}),
-            (JobType.BUILD_SIM, payload),
-        ]
-        job_id = job_service.create_pipeline(tasks)
-        return {"job_id": job_id, "pipeline_id": job_id, "status": "enqueued"}
-    else:
-        job_id = job_service.create_job(JobType.BUILD_SIM, payload)
-        return {"job_id": job_id, "status": "enqueued"}
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
 def rebuild_similarity():
@@ -191,6 +198,15 @@ def rebuild_similarity():
                 "top_k": top_k,
                 "min_features": min_features,
                 "all": data.get("all", False),
+            },
+        ),
+        (
+            JobType.INDEX_SIM,
+            {
+                "collection": collection,
+                "algo": algo,
+                "md5": md5,
+                "batch_uuid": batch_uuid,
             },
         ),
     ]

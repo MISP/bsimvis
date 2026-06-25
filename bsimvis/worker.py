@@ -463,10 +463,17 @@ class Worker:
                 "algo", config_service.get("similarity.algo", "unweighted_cosine")
             )
             pool_id = payload.get("pool_id")
+            if not md5 and file_id:
+                data = self.r_data.json().get(file_id, "$")
+                if isinstance(data, list) and data:
+                    data = data[0]
+                md5 = data.get("file_md5")
             return self.similarity_service.index_similarities(
                 collection,
                 algo=algo,
                 pool_id=pool_id,
+                md5=md5,
+                batch_uuid=batch_uuid,
                 job_service=self.job_service,
                 job_id=job_id,
             )

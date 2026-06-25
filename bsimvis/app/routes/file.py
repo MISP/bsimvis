@@ -121,6 +121,16 @@ def upload_file_data():
             ):
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
             pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
+            pipeline_tasks.append(
+                (
+                    JobType.INDEX_SIM,
+                    {
+                        "collection": collection,
+                        "md5": file_md5,
+                        "algo": build_sim_payload.get("algo"),
+                    },
+                )
+            )
 
         if enqueue:
             pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
@@ -306,6 +316,16 @@ def finalize_batch_upload():
         if min_cohesion is not None:
             cluster_payload["min_cohesion"] = min_cohesion
         master_tasks.append((JobType.CLUSTER_BINARIES.value, cluster_payload))
+        master_tasks.append(
+            (
+                JobType.INDEX_SIM.value,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "batch_uuid": batch_uuid,
+                },
+            )
+        )
 
     # Enrich features must be the absolute last job to run:
     master_tasks.append(

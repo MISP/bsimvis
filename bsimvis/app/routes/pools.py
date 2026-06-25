@@ -55,6 +55,7 @@ def create_pool():
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
+            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
         ]
     )
 
@@ -121,6 +122,7 @@ def build_pool(pool_id):
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
+            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
         ]
     )
 
@@ -139,6 +141,7 @@ def cluster_pool(pool_id):
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
+            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
         ]
     )
     return {"job_id": pipeline_id, "message": "Pool clustering pipeline enqueued"}
@@ -191,6 +194,7 @@ def rebuild_pool(pool_id):
             (JobType.CLUSTER_POOL, {"pool_id": pool_id}),
             (JobType.BUILD_POOL_BIN_SIM, {"pool_id": pool_id}),
             (JobType.CLUSTER_POOL_BINARIES, {"pool_id": pool_id}),
+            (JobType.INDEX_SIM, {"collection": "", "pool_id": pool_id}),
         ]
     )
 

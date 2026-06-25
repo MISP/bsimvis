@@ -156,6 +156,13 @@ def rebuild_all_pipeline():
                 ),
             },
         ),
+        (
+            JobType.INDEX_SIM,
+            {
+                "collection": collection,
+                "algo": algo,
+            },
+        ),
     ]
 
     pipeline_id = job_service.create_pipeline(tasks)

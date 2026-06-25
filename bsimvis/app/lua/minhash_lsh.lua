@@ -8,37 +8,30 @@ local limit = tonumber(ARGV[7])
 local min_features = tonumber(ARGV[8] or 0)
 local num_bands = tonumber(ARGV[9] or 10)
 
--- Features start from ARGV[10] as (hash, tf) pairs
-local target_features = {}
-for i = 10, #ARGV, 2 do
-    target_features[ARGV[i]] = tonumber(ARGV[i+1])
-end
-
--- Helper to extract collection prefix from a string (swaps coll1:lsh:bucket... -> coll2:lsh:bucket...)
-local function get_search_bucket_key(stored_key, target_coll)
-    if not stored_key then return nil end
-    -- stored_key format: "source_collection:lsh:bucket:band:hash"
-    -- Find the index of ':lsh:bucket:'
-    local pivot = string.find(stored_key, ":lsh:bucket:")
-    if not pivot then return nil end
-    local suffix = string.sub(stored_key, pivot)
-    return target_coll .. suffix
-end
-
--- 1. Get query function's own LSH buckets
--- Find candidate function IDs by union of members in matching LSH buckets
-local candidate_set = {}
+-- 1. Construct bucket keys and get candidate functions using a single SUNION call
+local bucket_keys = {}
 for band = 0, num_bands - 1 do
-    local stored_bucket_key = redis.call('GET', target_id .. ':lsh:bucket_key:' .. band)
-    local bucket_key = get_search_bucket_key(stored_bucket_key, collection)
-    if bucket_key then
-        local cands = redis.call('SMEMBERS', bucket_key)
+    local b_hash = ARGV[9 + band + 1]
+    local bucket_key = collection .. ":lsh:bucket:" .. band .. ":" .. b_hash
+    table.insert(bucket_keys, bucket_key)
+end
+
+local candidate_set = {}
+if #bucket_keys > 0 then
+    local cands = redis.call('SUNION', unpack(bucket_keys))
+    if cands and #cands > 0 then
         for _, cand_id in ipairs(cands) do
             if cand_id ~= target_id then
                 candidate_set[cand_id] = true
             end
         end
     end
+end
+
+-- Features start from ARGV[10 + num_bands] as (hash, tf) pairs
+local target_features = {}
+for i = 10 + num_bands, #ARGV, 2 do
+    target_features[ARGV[i]] = tonumber(ARGV[i+1])
 end
 
 -- 2. Compute similarity for the candidate set

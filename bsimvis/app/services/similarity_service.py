@@ -248,19 +248,25 @@ class SimilarityService:
             target_feat_norm = math.sqrt(target_feat_norm_sq)
 
             if algo == "minhash_lsh":
-                # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, num_bands, features...]
+                # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, num_bands, bucket_hashes..., features...]
                 num_bands = 30
-                lua_args = [
-                    fid,
-                    collection,
-                    algo,
-                    min_score,
-                    target_feat_total,
-                    target_feat_norm,
-                    top_k,
-                    min_features,
-                    num_bands,
-                ] + lua_features_args
+                buckets = self._compute_lsh_buckets(features_raw, num_bands=num_bands)
+                hashes = [b_hash for band, b_hash in buckets]
+                lua_args = (
+                    [
+                        fid,
+                        collection,
+                        algo,
+                        min_score,
+                        target_feat_total,
+                        target_feat_norm,
+                        top_k,
+                        min_features,
+                        num_bands,
+                    ]
+                    + hashes
+                    + lua_features_args
+                )
             else:
                 # Lua ARGV: [id, collection, algo, threshold, total, norm, limit, min_features, features...]
                 lua_args = [
@@ -1122,8 +1128,10 @@ class SimilarityService:
                     f"Building pool: {done}/{total} functions ({speed:.1f} fn/s)",
                 )
 
-            # Build list of (fid, target_feat_total, lua_args) tuples for pipeline
-            targets_with_lua = []
+            # Use a pipeline to batch any LSH setup writes for this chunk
+            lsh_pipe = r.pipeline()
+            has_lsh_writes = False
+
             for fid in chunk:
                 vec_key = f"{fid}:vec:tf"
                 features_raw = r.zrange(vec_key, 0, -1, withscores=True)
@@ -1150,22 +1158,20 @@ class SimilarityService:
 
                 target_feat_norm = math.sqrt(target_feat_norm_sq)
 
-                # Pre-populate LSH buckets if algorithm is minhash_lsh
+                buckets = None
                 if algo == "minhash_lsh":
                     num_bands = 30
-                    # Determine source collection from FID prefix
+                    buckets = self._compute_lsh_buckets(
+                        features_raw, num_bands=num_bands
+                    )
                     parts_fid = fid.split(":")
                     if parts_fid:
                         src_coll = parts_fid[0]
-                        buckets = self._compute_lsh_buckets(
-                            features_raw, num_bands=num_bands
-                        )
-                        lsh_pipe = r.pipeline()
                         for band, b_hash in buckets:
                             bucket_key = f"{src_coll}:lsh:bucket:{band}:{b_hash}"
                             lsh_pipe.sadd(bucket_key, fid)
                             lsh_pipe.set(f"{fid}:lsh:bucket_key:{band}", bucket_key)
-                        lsh_pipe.execute()
+                        has_lsh_writes = True
 
                 for search_coll in collections:
                     # ONLY_CROSS_COLLECTION FILTER: Skip Lua if query FID is from search_coll
@@ -1174,17 +1180,22 @@ class SimilarityService:
 
                     if algo == "minhash_lsh":
                         num_bands = 30
-                        lua_args = [
-                            fid,
-                            search_coll,
-                            algo,
-                            min_score,
-                            target_feat_total,
-                            target_feat_norm,
-                            top_k,
-                            min_features,
-                            num_bands,
-                        ] + lua_features_args
+                        hashes = [b_hash for band, b_hash in buckets]
+                        lua_args = (
+                            [
+                                fid,
+                                search_coll,
+                                algo,
+                                min_score,
+                                target_feat_total,
+                                target_feat_norm,
+                                top_k,
+                                min_features,
+                                num_bands,
+                            ]
+                            + hashes
+                            + lua_features_args
+                        )
                     else:
                         lua_args = [
                             fid,
@@ -1198,6 +1209,9 @@ class SimilarityService:
                         ] + lua_features_args
 
                     targets_with_lua.append((fid, target_feat_total, lua_args))
+
+            if has_lsh_writes:
+                lsh_pipe.execute()
 
             if not targets_with_lua:
                 continue
@@ -1351,8 +1365,10 @@ class SimilarityService:
                     f"Building file {file_md5} pool sim: {done}/{total} functions ({speed:.1f} fn/s)",
                 )
 
-            # Build list of (fid, target_feat_total, lua_args) tuples for pipeline
-            targets_with_lua = []
+            # Use a pipeline to batch any LSH setup writes for this chunk
+            lsh_pipe = r.pipeline()
+            has_lsh_writes = False
+
             for fid in chunk:
                 vec_key = f"{fid}:vec:tf"
                 features_raw = r.zrange(vec_key, 0, -1, withscores=True)
@@ -1379,21 +1395,20 @@ class SimilarityService:
 
                 target_feat_norm = math.sqrt(target_feat_norm_sq)
 
-                # Pre-populate LSH buckets if algorithm is minhash_lsh
+                buckets = None
                 if algo == "minhash_lsh":
                     num_bands = 30
+                    buckets = self._compute_lsh_buckets(
+                        features_raw, num_bands=num_bands
+                    )
                     parts_fid = fid.split(":")
                     if parts_fid:
                         src_coll = parts_fid[0]
-                        buckets = self._compute_lsh_buckets(
-                            features_raw, num_bands=num_bands
-                        )
-                        lsh_pipe = r.pipeline()
                         for band, b_hash in buckets:
                             bucket_key = f"{src_coll}:lsh:bucket:{band}:{b_hash}"
                             lsh_pipe.sadd(bucket_key, fid)
                             lsh_pipe.set(f"{fid}:lsh:bucket_key:{band}", bucket_key)
-                        lsh_pipe.execute()
+                        has_lsh_writes = True
 
                 for search_coll in collections:
                     # ONLY_CROSS_COLLECTION FILTER: Skip Lua if query FID is from search_coll
@@ -1402,17 +1417,22 @@ class SimilarityService:
 
                     if algo == "minhash_lsh":
                         num_bands = 30
-                        lua_args = [
-                            fid,
-                            search_coll,
-                            algo,
-                            min_score,
-                            target_feat_total,
-                            target_feat_norm,
-                            top_k,
-                            min_features,
-                            num_bands,
-                        ] + lua_features_args
+                        hashes = [b_hash for band, b_hash in buckets]
+                        lua_args = (
+                            [
+                                fid,
+                                search_coll,
+                                algo,
+                                min_score,
+                                target_feat_total,
+                                target_feat_norm,
+                                top_k,
+                                min_features,
+                                num_bands,
+                            ]
+                            + hashes
+                            + lua_features_args
+                        )
                     else:
                         lua_args = [
                             fid,
@@ -1426,6 +1446,9 @@ class SimilarityService:
                         ] + lua_features_args
 
                     targets_with_lua.append((fid, target_feat_total, lua_args))
+
+            if has_lsh_writes:
+                lsh_pipe.execute()
 
             if not targets_with_lua:
                 continue

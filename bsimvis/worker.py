@@ -436,6 +436,7 @@ class Worker:
             min_features = payload.get(
                 "min_features", config_service.get("similarity.min_features", 0)
             )
+            index_depth = payload.get("index_depth", "full")
 
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing
@@ -452,6 +453,20 @@ class Worker:
                 top_k=top_k,
                 min_score=min_score,
                 min_features=min_features,
+                job_service=self.job_service,
+                job_id=job_id,
+                index_depth=index_depth,
+            )
+
+        elif jtype == JobType.INDEX_SIM.value:
+            algo = payload.get(
+                "algo", config_service.get("similarity.algo", "unweighted_cosine")
+            )
+            pool_id = payload.get("pool_id")
+            return self.similarity_service.index_similarities(
+                collection,
+                algo=algo,
+                pool_id=pool_id,
                 job_service=self.job_service,
                 job_id=job_id,
             )
@@ -629,13 +644,21 @@ class Worker:
         elif jtype == JobType.BUILD_POOL_SIM.value:
             pool_id = payload.get("pool_id")
             file_md5 = payload.get("file_md5")
+            index_depth = payload.get("index_depth", "none")
             if file_md5:
                 return self.similarity_service.build_pool_file(
-                    pool_id, file_md5, job_service=self.job_service, job_id=job_id
+                    pool_id,
+                    file_md5,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                    index_depth=index_depth,
                 )
             else:
                 return self.similarity_service.build_pool(
-                    pool_id, job_service=self.job_service, job_id=job_id
+                    pool_id,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                    index_depth=index_depth,
                 )
 
         elif jtype == JobType.CLUSTER_POOL.value:

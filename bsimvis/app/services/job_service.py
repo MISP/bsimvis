@@ -20,6 +20,7 @@ class JobType(Enum):
     INDEX_FUNCTIONS = "idx_functions"
     INDEX_FEATURES = "idx_features"
     BUILD_SIM = "build_sim"
+    INDEX_SIM = "index_sim"
     CLEAR_SIM = "clear_sim"
     CLEAR_FEATURES = "clear_features"
     SYNC_MILVUS = "sync_milvus"

@@ -42,6 +42,7 @@ class SimilarityService:
         job_service=None,
         job_id=None,
         sleep_time=0,
+        index_depth="none",
     ):
         """
         Builds similarities for all functions in a batch or for a specific file.
@@ -125,7 +126,15 @@ class SimilarityService:
                 )
 
             # 2. Process Chunk with Pipelining
-            self._process_chunk(collection, chunk, algo, top_k, min_score, min_features)
+            self._process_chunk(
+                collection,
+                chunk,
+                algo,
+                top_k,
+                min_score,
+                min_features,
+                index_depth=index_depth,
+            )
 
             # 3. Dashboard Protection: Yield
             if sleep_time > 0 and i + chunk_size < total:
@@ -171,11 +180,26 @@ class SimilarityService:
             buckets.append((band, bucket_hash))
         return buckets
 
-    def _process_chunk(self, collection, chunk, algo, top_k, min_score, min_features=0):
+    def _process_chunk(
+        self,
+        collection,
+        chunk,
+        algo,
+        top_k,
+        min_score,
+        min_features=0,
+        index_depth="full",
+    ):
         """Processes a chunk of functions using Redis pipelining."""
         if algo in ["milvus_sparse"]:
             return self._process_chunk_milvus(
-                collection, chunk, algo, top_k, min_score, min_features
+                collection,
+                chunk,
+                algo,
+                top_k,
+                min_score,
+                min_features,
+                index_depth=index_depth,
             )
 
         r = self.r
@@ -320,11 +344,22 @@ class SimilarityService:
         # Phase 4: Persistence and Indexing
         if discovery_results:
             self._persist_and_index_batch(
-                collection, algo, discovery_results, min_features=min_features
+                collection,
+                algo,
+                discovery_results,
+                min_features=min_features,
+                index_depth=index_depth,
             )
 
     def _process_chunk_milvus(
-        self, collection, chunk, algo, top_k, min_score, min_features=0
+        self,
+        collection,
+        chunk,
+        algo,
+        top_k,
+        min_score,
+        min_features=0,
+        index_depth="full",
     ):
         """Processes a chunk using Milvus for discovery."""
         if not milvus_service.enabled:
@@ -419,11 +454,21 @@ class SimilarityService:
         # Phase 3: Persistence and Indexing
         if discovery_results:
             self._persist_and_index_batch(
-                collection, algo, discovery_results, min_features=min_features
+                collection,
+                algo,
+                discovery_results,
+                min_features=min_features,
+                index_depth=index_depth,
             )
 
     def _persist_and_index_batch(
-        self, collection, algo, discovery_results, pool_id=None, min_features=0
+        self,
+        collection,
+        algo,
+        discovery_results,
+        pool_id=None,
+        min_features=0,
+        index_depth="full",
     ):
         """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
@@ -542,13 +587,21 @@ class SimilarityService:
         persist_pipe.execute()
 
         # 2. Metadata Propagation (Search Index)
+        if index_depth == "none":
+            return
+
         propagated = get_propagated_fields("sim")
         # Optimization: use pool_id for coll param in save_similarity if provided
         target_coll = f"global:pool:{pool_id}" if pool_id else collection
-        needs_func_meta = len(propagated.get("func", [])) > 0
-        needs_file_meta = (
-            len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
-        )
+
+        if index_depth == "minimal":
+            needs_func_meta = False
+            needs_file_meta = False
+        else:
+            needs_func_meta = len(propagated.get("func", [])) > 0
+            needs_file_meta = (
+                len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
+            )
 
         if not hasattr(self, "_func_meta_cache"):
             self._func_meta_cache = {}
@@ -653,6 +706,7 @@ class SimilarityService:
                     func_meta2=self._func_meta_cache.get(id_b),
                     file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
                     file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
+                    index_depth=index_depth,
                 )
 
         idx_pipe.execute()
@@ -666,6 +720,7 @@ class SimilarityService:
         min_score=None,
         min_features=None,
         sleep_time=0,
+        index_depth="none",
     ):
         """
         Builds similarities for a single function against the collection.
@@ -746,7 +801,13 @@ class SimilarityService:
             discovery_results = [
                 (base_id, md5, addr, target_feat_total, enriched_candidates)
             ]
-            self._persist_and_index_batch(collection, algo, discovery_results)
+            self._persist_and_index_batch(
+                collection,
+                algo,
+                discovery_results,
+                min_features=min_features,
+                index_depth=index_depth,
+            )
 
             return True
         except Exception as e:
@@ -1063,6 +1124,7 @@ class SimilarityService:
         pool_id,
         job_service=None,
         job_id=None,
+        index_depth="none",
     ):
         """
         Orchestrates cross-collection similarity discovery for a pool.
@@ -1263,6 +1325,7 @@ class SimilarityService:
                     discovery_results,
                     pool_id=pool_id,
                     min_features=min_features,
+                    index_depth=index_depth,
                 )
 
         # 2. Update Sync Snapshots and Indexes
@@ -1295,6 +1358,7 @@ class SimilarityService:
         file_md5,
         job_service=None,
         job_id=None,
+        index_depth="none",
     ):
         """
         Orchestrates cross-collection similarity discovery for a single file in the pool.
@@ -1499,6 +1563,7 @@ class SimilarityService:
                     discovery_results,
                     pool_id=pool_id,
                     min_features=min_features,
+                    index_depth=index_depth,
                 )
 
         if job_service and job_id:
@@ -2031,4 +2096,161 @@ class SimilarityService:
             )
 
         self.r.hdel(f"global:pool:{pool_id}:meta", "total_file_similarities")
+        return True
+
+    def index_similarities(
+        self,
+        collection,
+        algo="unweighted_cosine",
+        pool_id=None,
+        job_service=None,
+        job_id=None,
+    ):
+        """
+        Reads existing similarity JSON documents and builds/updates full secondary indexes.
+        Used to perform deferred indexing after running build_sim with index_depth='none' or 'minimal'.
+        """
+        r = self.r
+        if pool_id:
+            all_key = f"global:pool:{pool_id}:sim:all"
+            target_coll = f"global:pool:{pool_id}"
+        else:
+            all_key = f"{collection}:sim:all"
+            target_coll = collection
+
+        similarity_ids = [k.decode() if isinstance(k, bytes) else k for k in r.zrange(all_key, 0, -1)]
+        total = len(similarity_ids)
+        if total == 0:
+            if job_service and job_id:
+                job_service.update_progress(job_id, 100, "No similarities found to index.")
+            return True
+
+        logging.info(f"[*] Indexing {total} similarities for {collection} (pool: {pool_id})...")
+
+        # Prep caches
+        self._func_meta_cache = {}
+        self._file_meta_cache = {}
+
+        def extract_coll(fid):
+            parts = fid.split(":")
+            if len(parts) >= 1:
+                return parts[0]
+            return "unknown"
+
+        # Process in batches
+        batch_size = 500
+        start_time = time.time()
+
+        for i in range(0, total, batch_size):
+            batch_ids = similarity_ids[i : i + batch_size]
+
+            # 1. Fetch similarity documents
+            sim_docs_raw = r.json().mget(batch_ids, "$")
+            valid_docs = []
+            func_ids_needed = set()
+            file_ids_needed = set()
+
+            for sid, doc_raw in zip(batch_ids, sim_docs_raw):
+                if not doc_raw:
+                    continue
+                doc = doc_raw[0] if isinstance(doc_raw, list) else doc_raw
+                if isinstance(doc, str):
+                    doc = json.loads(doc)
+                if not doc:
+                    continue
+                valid_docs.append((sid, doc))
+
+                # Identify meta needed
+                id_a, id_b = doc.get("id1"), doc.get("id2")
+                md5_a, md5_b = doc.get("md5_1"), doc.get("md5_2")
+                if id_a and id_a not in self._func_meta_cache:
+                    func_ids_needed.add(id_a)
+                if id_b and id_b not in self._func_meta_cache:
+                    func_ids_needed.add(id_b)
+
+                coll_a = extract_coll(id_a) if id_a else "unknown"
+                coll_b = extract_coll(id_b) if id_b else "unknown"
+                if md5_a:
+                    file_key = f"{coll_a}:file:{md5_a}"
+                    if file_key not in self._file_meta_cache:
+                        file_ids_needed.add(file_key)
+                if md5_b:
+                    file_key = f"{coll_b}:file:{md5_b}"
+                    if file_key not in self._file_meta_cache:
+                        file_ids_needed.add(file_key)
+
+            # 2. Fetch required function metadata
+            if func_ids_needed:
+                func_ids_list = list(func_ids_needed)
+                raw_func_metas = r.json().mget(
+                    [f"{fid}:meta" for fid in func_ids_list], "$"
+                )
+                for fid, raw in zip(func_ids_list, raw_func_metas):
+                    if raw:
+                        m = raw[0] if isinstance(raw, list) else raw
+                        if isinstance(m, str):
+                            m = json.loads(m)
+                        self._func_meta_cache[fid] = m
+                    else:
+                        self._func_meta_cache[fid] = None
+
+            # 3. Fetch required file metadata
+            if file_ids_needed:
+                file_ids_list = list(file_ids_needed)
+                raw_file_metas = r.json().mget(
+                    [f"{fid}:meta" for fid in file_ids_list], "$"
+                )
+                for fid, raw in zip(file_ids_list, raw_file_metas):
+                    if raw:
+                        m = raw[0] if isinstance(raw, list) else raw
+                        if isinstance(m, str):
+                            m = json.loads(m)
+                        self._file_meta_cache[fid] = m
+                    else:
+                        self._file_meta_cache[fid] = None
+
+            # 4. Write indexes
+            idx_pipe = r.pipeline()
+            for sid, doc in valid_docs:
+                id_a, id_b = doc.get("id1"), doc.get("id2")
+                md5_a, md5_b = doc.get("md5_1"), doc.get("md5_2")
+                coll_a = extract_coll(id_a) if id_a else "unknown"
+                coll_b = extract_coll(id_b) if id_b else "unknown"
+
+                sim_doc_for_idx = {
+                    "md5_1": md5_a,
+                    "md5_2": md5_b,
+                    "tags": doc.get("tags", []),
+                    "user_tags": doc.get("user_tags", []),
+                }
+
+                save_similarity(
+                    idx_pipe,
+                    target_coll,
+                    sid,
+                    sim_doc_for_idx,
+                    func_meta1=self._func_meta_cache.get(id_a),
+                    func_meta2=self._func_meta_cache.get(id_b),
+                    file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
+                    file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
+                    index_depth="full",
+                )
+            idx_pipe.execute()
+
+            # 5. Progress updates
+            if job_service and job_id:
+                elapsed = time.time() - start_time
+                done = min(i + batch_size, total)
+                speed = done / elapsed if elapsed > 0 else 0
+                pct = int(done / total * 100)
+                job_service.update_progress(
+                    job_id,
+                    pct,
+                    f"Indexing similarities: {done}/{total} ({speed:.1f} sim/s)",
+                )
+
+        if job_service and job_id:
+            job_service.update_progress(
+                job_id, 100, f"Completed indexing {total} similarities."
+            )
         return True

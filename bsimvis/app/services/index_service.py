@@ -267,6 +267,7 @@ def save_similarity(
     func_meta2=None,
     file_meta1=None,
     file_meta2=None,
+    index_depth="full",
 ):
     """Write sim-level secondary indexes for all propagated fields.
     Pulls data from the sim doc itself, function meta, or file meta based on field source.
@@ -278,6 +279,15 @@ def save_similarity(
         value = sim_doc.get(orig_field)
         if value is not None:
             _index_tag(pipe, coll, "sim", target_field, value, sid)
+
+    if index_depth == "minimal":
+        # Only index file_md5 from file level
+        for orig_field, target_field in propagated["file"]:
+            if orig_field == "file_md5":
+                value = [v for v in [sim_doc.get("md5_1"), sim_doc.get("md5_2")] if v]
+                if value:
+                    _index_tag(pipe, coll, "sim", target_field, value, sid)
+        return
 
     # 2. Propagated Func Fields (source: func)
     for orig_field, target_field in propagated["func"]:

@@ -343,6 +343,7 @@ window.PoolDetailView = {
                                 <th style="padding:10px 15px;">Type</th>
                                 <th style="padding:10px 15px;">Status</th>
                                 <th style="padding:10px 15px;">Progress</th>
+                                <th style="padding:10px 15px;">Duration</th>
                                 <th style="padding:10px 15px; text-align:right;">Actions</th>
                             </tr>
                         </thead>
@@ -382,12 +383,15 @@ window.PoolDetailView = {
 
                                 const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`;
 
+                                const durationHtml = window.formatDuration ? window.formatDuration(job.created_at, job.updated_at, status) : '-';
+
                                 return `
                                 <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
                                     <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath('${jobUrl}', event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
                                     <td style="padding:10px 15px; font-weight:600; text-transform:capitalize;">${job.type}</td>
                                     <td style="padding:10px 15px;">${statusBadge}</td>
                                     <td style="padding:10px 15px;">${progressHtml}</td>
+                                    <td style="padding:10px 15px;">${durationHtml}</td>
                                     <td style="padding:10px 15px; text-align:right;">${actions}</td>
                                 </tr>`;
                             }).join('')}

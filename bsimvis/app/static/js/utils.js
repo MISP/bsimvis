@@ -44,6 +44,31 @@ function formatDate(iso) {
 }
 window.formatDate = formatDate;
 
+function formatDuration(createdAt, updatedAt, status) {
+    if (!createdAt) return '<span class="dim">-</span>';
+    let end = updatedAt;
+    if (status === 'running' || status === 'pending') {
+        end = Date.now();
+    }
+    const diffMs = end - createdAt;
+    if (diffMs < 0) return '0s';
+    const totalSecs = Math.floor(diffMs / 1000);
+    if (totalSecs < 1) return '< 1s';
+    
+    const hours = Math.floor(totalSecs / 3600);
+    const minutes = Math.floor((totalSecs % 3600) / 60);
+    const seconds = totalSecs % 60;
+    
+    let parts = [];
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+    
+    return parts.join(' ');
+}
+window.formatDuration = formatDuration;
+
+
 function copyToClipboard(text, btn) {
     navigator.clipboard.writeText(text).then(() => {
         if (btn) {

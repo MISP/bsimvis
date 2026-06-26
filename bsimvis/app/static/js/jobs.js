@@ -18,7 +18,7 @@ function renderJobs(jobs) {
     const jobsList = Array.isArray(jobs) ? jobs : (jobs.results || []);
 
     if (jobsList.length === 0) {
-        return '<tr><td colspan="8" style="text-align:center; padding: 60px; color: var(--dim);"><i class="fa-solid fa-wind" style="font-size: 2rem; opacity: 0.2; display: block; margin-bottom: 10px;"></i>No recent jobs found</td></tr>';
+        return '<tr><td colspan="9" style="text-align:center; padding: 60px; color: var(--dim);"><i class="fa-solid fa-wind" style="font-size: 2rem; opacity: 0.2; display: block; margin-bottom: 10px;"></i>No recent jobs found</td></tr>';
     }
 
     const jobsById = new Map();
@@ -164,6 +164,8 @@ function renderJobs(jobs) {
 
         const targetDisplay = job.target ? `<code class="job-target-text">${job.target}</code>` : '<span class="dim">-</span>';
 
+        const durationHtml = window.formatDuration ? window.formatDuration(job.created_at, job.updated_at, status) : '-';
+
         const rowStyle = shouldHide ? 'display: none;' : '';
 
         return `
@@ -184,6 +186,7 @@ function renderJobs(jobs) {
                 <td>${statusBadge}</td>
                 <td>${progressHtml}</td>
                 <td class="job-date-cell">${createdDate}</td>
+                <td class="job-duration-cell">${durationHtml}</td>
                 <td>${actions}</td>
             </tr>
         `;

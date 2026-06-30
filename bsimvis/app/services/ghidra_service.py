@@ -359,7 +359,9 @@ class GhidraService:
             functions.extend(chunk)
         return {"file_metadata": file_metadata, "functions": functions}
 
-    def stream_bsim_data(self, program, options=None, chunk_size=100):
+    def stream_bsim_data(
+        self, program, options=None, chunk_size=100, job_service=None, job_id=None
+    ):
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
         from ghidra.util.task import ConsoleTaskMonitor
 
@@ -406,14 +408,106 @@ class GhidraService:
             return
 
         decompiler_id = f"{decomp_interface.getMajorVersion()}.{decomp_interface.getMinorVersion()}:{decomp_interface.getCompilerSpec().getLanguage()}:{hex(decomp_interface.getSignatureSettings())}"
-        functions = program.getFunctionManager().getFunctions(True)
-        chunk = []
 
-        for func in functions:
-            if func.isExternal() or func.isThunk():
+        # Count total eligible functions first
+        all_funcs = list(program.getFunctionManager().getFunctions(True))
+        eligible_funcs = [
+            f
+            for f in all_funcs
+            if not (f.isExternal() or f.isThunk())
+            and f.getBody().getNumAddresses() >= min_func_len
+        ]
+        total_funcs = len(eligible_funcs)
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id, f"Found {total_funcs} functions to decompile and analyze."
+            )
+
+        # Build full call graph in one reference-manager pass (avoids N×getCalledFunctions calls)
+        func_manager = program.getFunctionManager()
+        ref_manager = program.getReferenceManager()
+        eligible_entries = {str(f.getEntryPoint()).split(":")[-1] for f in eligible_funcs}
+        callees_graph = {e: [] for e in eligible_entries}  # entry_str -> [callee_info, ...]
+        callers_graph = {e: [] for e in eligible_entries}  # entry_str -> [caller_info, ...]
+
+        ref_iter = ref_manager.getReferenceIterator(program.getMinAddress())
+        while ref_iter.hasNext():
+            ref = ref_iter.next()
+            if not ref.getReferenceType().isCall():
                 continue
-            if func.getBody().getNumAddresses() < min_func_len:
+
+            caller_func = func_manager.getFunctionContaining(ref.getFromAddress())
+            if caller_func is None:
                 continue
+            caller_entry = str(caller_func.getEntryPoint()).split(":")[-1]
+
+            callee_func = func_manager.getFunctionAt(ref.getToAddress())
+            if callee_func is not None:
+                callee_entry = str(callee_func.getEntryPoint()).split(":")[-1]
+                callee_info = {
+                    "name": callee_func.getName(),
+                    "entrypoint": callee_entry,
+                    "is_external": callee_func.isExternal() or callee_func.isThunk(),
+                }
+                caller_info = {
+                    "name": caller_func.getName(),
+                    "entrypoint": caller_entry,
+                    "is_external": caller_func.isExternal() or caller_func.isThunk(),
+                }
+                # Dedup using sets per entry
+                if caller_entry in callees_graph:
+                    callees_graph[caller_entry].append(callee_info)
+                if callee_entry in callers_graph:
+                    callers_graph[callee_entry].append(caller_info)
+            else:
+                # Unresolved destination — mark as external
+                sym = program.getSymbolTable().getPrimarySymbol(ref.getToAddress())
+                callee_name = sym.getName() if sym else str(ref.getToAddress())
+                callee_info = {"name": callee_name, "entrypoint": None, "is_external": True}
+                if caller_entry in callees_graph:
+                    callees_graph[caller_entry].append(callee_info)
+
+        # Dedup each list (multiple CALL sites to the same target within one function)
+        def _dedup(lst, key_fn):
+            seen = set()
+            result = []
+            for item in lst:
+                k = key_fn(item)
+                if k not in seen:
+                    seen.add(k)
+                    result.append(item)
+            return result
+
+        for entry in callees_graph:
+            callees_graph[entry] = _dedup(
+                callees_graph[entry],
+                lambda x: (x["entrypoint"], x["name"], x["is_external"]),
+            )
+        for entry in callers_graph:
+            callers_graph[entry] = _dedup(
+                callers_graph[entry],
+                lambda x: (x["entrypoint"], x["name"], x["is_external"]),
+            )
+
+        chunk = []
+        decompiled_count = 0
+
+        for func in eligible_funcs:
+            decompiled_count += 1
+            if (
+                job_service
+                and job_id
+                and (decompiled_count % 10 == 0 or decompiled_count == total_funcs)
+            ):
+                pct = int(
+                    (decompiled_count / max(1, total_funcs)) * 80
+                )  # Reserve 80-100% for chunk streaming/indexing
+                job_service.update_progress(
+                    job_id,
+                    pct,
+                    f"Decompiling and analyzing functions: {decompiled_count}/{total_funcs}",
+                )
 
             func_name = func.getName()
             entry_point = func.getEntryPoint()
@@ -469,41 +563,8 @@ class GhidraService:
                     seq_to_token_idx,
                 )
 
-            callees_list = []
-            try:
-                for callee in func.getCalledFunctions(monitor):
-                    if callee:
-                        callee_entry = callee.getEntryPoint()
-                        callee_entry_str = (
-                            str(callee_entry).split(":")[-1] if callee_entry else None
-                        )
-                        callees_list.append(
-                            {
-                                "name": callee.getName(),
-                                "entrypoint": callee_entry_str,
-                                "is_external": callee.isExternal() or callee.isThunk(),
-                            }
-                        )
-            except Exception:
-                pass
-
-            callers_list = []
-            try:
-                for caller in func.getCallingFunctions(monitor):
-                    if caller:
-                        caller_entry = caller.getEntryPoint()
-                        caller_entry_str = (
-                            str(caller_entry).split(":")[-1] if caller_entry else None
-                        )
-                        callers_list.append(
-                            {
-                                "name": caller.getName(),
-                                "entrypoint": caller_entry_str,
-                                "is_external": caller.isExternal() or caller.isThunk(),
-                            }
-                        )
-            except Exception:
-                pass
+            callees_list = callees_graph.get(entry_str, [])
+            callers_list = callers_graph.get(entry_str, [])
 
             chunk.append(
                 {

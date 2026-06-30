@@ -150,8 +150,14 @@ class Worker:
         skip_sim = payload.get("skip_sim", False)
         import requests
 
-        # Initialize stream generator
-        generator = ghidra_service.stream_bsim_data(program, payload, chunk_size=100)
+        # Initialize stream generator with job context for real-time progress
+        generator = ghidra_service.stream_bsim_data(
+            program,
+            payload,
+            chunk_size=100,
+            job_service=self.job_service,
+            job_id=job_id,
+        )
         file_meta = next(generator)
         file_md5 = file_meta.get("file_md5")
 
@@ -185,6 +191,12 @@ class Worker:
                 url = f"http://{api_host}/api/file/upload_chunk"
                 resp = requests.post(url, json=chunk_payload, timeout=300)
                 resp.raise_for_status()
+
+            # Update progress between 80% and 100%
+            pct = 80 + int(((idx + 1) / total_chunks) * 20)
+            self.job_service.update_progress(
+                job_id, pct, f"Uploaded chunk {idx+1}/{total_chunks}"
+            )
 
         return True
 

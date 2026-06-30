@@ -145,10 +145,55 @@ class Worker:
                 self.job_service.add_log(job_id, perf_summary)
                 logging.info(f"[#] Job {job_id} {perf_summary}")
 
-    def _stream_program_chunks(self, program, payload, hosts, job_id):
+    def _collect_project_files(self, folder):
+        """Recursively collect all DomainFiles from a Ghidra project folder."""
+        files = list(folder.getFiles())
+        for sub in folder.getFolders():
+            files.extend(self._collect_project_files(sub))
+        return files
+
+    def _post_chunk(
+        self,
+        chunk,
+        idx,
+        is_final,
+        collection,
+        file_md5,
+        file_meta,
+        skip_sim,
+        payload,
+        hosts,
+        job_id,
+        splice_into_parent=True,
+    ):
+        import requests
+
+        chunk_payload = {
+            "collection": collection,
+            "file_md5": file_md5,
+            "chunk_index": idx,
+            "is_final": is_final,
+            "skip_sim": skip_sim,
+            "file_metadata": file_meta if idx == 0 else None,
+            "functions": chunk,
+        }
+        if splice_into_parent:
+            chunk_payload["parent_job_id"] = job_id
+
+        for opt in ["top_k", "min_score", "min_features", "algo"]:
+            if opt in payload:
+                chunk_payload[opt] = payload[opt]
+        for api_host in hosts:
+            url = f"http://{api_host}/api/file/upload_chunk"
+            resp = requests.post(url, json=chunk_payload, timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+
+    def _stream_program_chunks(
+        self, program, payload, hosts, job_id, splice_into_parent=True
+    ):
         collection = payload.get("collection", "main")
         skip_sim = payload.get("skip_sim", False)
-        import requests
 
         # Initialize stream generator with job context for real-time progress
         generator = ghidra_service.stream_bsim_data(
@@ -161,44 +206,49 @@ class Worker:
         file_meta = next(generator)
         file_md5 = file_meta.get("file_md5")
 
-        all_chunks = []
+        # Look-ahead: send each chunk immediately without buffering all of them.
+        # Holding one chunk behind lets us detect the final chunk on arrival of the next.
+        idx = 0
+        prev_chunk = None
         for chunk in generator:
-            all_chunks.append(chunk)
+            if prev_chunk is not None:
+                self._post_chunk(
+                    prev_chunk,
+                    idx - 1,
+                    False,
+                    collection,
+                    file_md5,
+                    file_meta,
+                    skip_sim,
+                    payload,
+                    hosts,
+                    job_id,
+                    splice_into_parent=splice_into_parent,
+                )
+                self.job_service.update_progress(job_id, 80, f"Uploaded chunk {idx}")
+            prev_chunk = chunk
+            idx += 1
 
-        total_chunks = len(all_chunks)
-        if total_chunks == 0:
-            all_chunks.append([])
-            total_chunks = 1
+        # Send the final chunk (or empty sentinel when the program has no functions)
+        final_chunk = prev_chunk if prev_chunk is not None else []
+        final_idx = max(idx - 1, 0)
+        res = self._post_chunk(
+            final_chunk,
+            final_idx,
+            True,
+            collection,
+            file_md5,
+            file_meta,
+            skip_sim,
+            payload,
+            hosts,
+            job_id,
+            splice_into_parent=splice_into_parent,
+        )
+        self.job_service.update_progress(job_id, 100, f"Uploaded chunk {idx}/{idx}")
 
-        for idx, chunk in enumerate(all_chunks):
-            is_final = idx == total_chunks - 1
-            chunk_payload = {
-                "collection": collection,
-                "file_md5": file_md5,
-                "chunk_index": idx,
-                "is_final": is_final,
-                "skip_sim": skip_sim,
-                "file_metadata": file_meta if idx == 0 else None,
-                "functions": chunk,
-                "parent_job_id": job_id,
-            }
-            # Copy options
-            for opt in ["top_k", "min_score", "min_features", "algo"]:
-                if opt in payload:
-                    chunk_payload[opt] = payload[opt]
-
-            for api_host in hosts:
-                url = f"http://{api_host}/api/file/upload_chunk"
-                resp = requests.post(url, json=chunk_payload, timeout=300)
-                resp.raise_for_status()
-
-            # Update progress between 80% and 100%
-            pct = 80 + int(((idx + 1) / total_chunks) * 20)
-            self.job_service.update_progress(
-                job_id, pct, f"Uploaded chunk {idx+1}/{total_chunks}"
-            )
-
-        return True
+        pipeline_id = res.get("pipeline_id") if isinstance(res, dict) else None
+        return pipeline_id
 
     def _dispatch(self, jtype, payload, job_id):
         """Dispatcher for background jobs."""
@@ -281,9 +331,10 @@ class Worker:
                     project = GhidraProject.openProject(
                         Path(gpr_path).parent, Path(gpr_path).stem
                     )
+                    pipeline_ids = []
                     try:
                         root_folder = project.getProjectData().getRootFolder()
-                        files = root_folder.getFiles()
+                        files = self._collect_project_files(root_folder)
                         for file in files:
                             from ghidra.util.task import ConsoleTaskMonitor
 
@@ -291,17 +342,73 @@ class Worker:
                                 project, True, False, ConsoleTaskMonitor()
                             )
                             try:
+                                binary_md5 = program.getExecutableMD5()
+                                if binary_md5:
+                                    # Check if already exists in collection
+                                    if self.r_data.sismember(
+                                        f"{collection}:all_files",
+                                        f"{collection}:file:{binary_md5}",
+                                    ):
+                                        self.job_service.add_log(
+                                            job_id,
+                                            f"Skipping {program.getName()} (MD5 {binary_md5} already exists in collection).",
+                                        )
+                                        continue
+
                                 ghidra_service.run_profile_analysis(
                                     program,
                                     payload.get("profile", "fast"),
                                     force_reanalysis=False,
                                 )
-                                self._stream_program_chunks(
-                                    program, payload, hosts, job_id
+                                pipe_id = self._stream_program_chunks(
+                                    program,
+                                    payload,
+                                    hosts,
+                                    job_id,
+                                    splice_into_parent=True,
                                 )
+                                if pipe_id:
+                                    pipeline_ids.append(pipe_id)
                             finally:
                                 if program:
                                     program.release(project)
+
+                        if pipeline_ids:
+                            group_id = self.job_service.create_group(
+                                pipeline_ids, enqueue=False
+                            )
+                            parent_pipeline_id = self.r_queue.hget(
+                                f"job:{job_id}", "parent_id"
+                            )
+                            if parent_pipeline_id:
+                                parent_pipeline_id = (
+                                    parent_pipeline_id.decode()
+                                    if isinstance(parent_pipeline_id, bytes)
+                                    else parent_pipeline_id
+                                )
+                                pipe_data = self.r_queue.hgetall(
+                                    f"job:{parent_pipeline_id}"
+                                )
+                                if pipe_data and "task_ids" in pipe_data:
+                                    existing_tids = json.loads(pipe_data["task_ids"])
+                                    try:
+                                        idx = existing_tids.index(job_id)
+                                        updated_tids = (
+                                            existing_tids[: idx + 1]
+                                            + [group_id]
+                                            + existing_tids[idx + 1 :]
+                                        )
+                                    except ValueError:
+                                        updated_tids = existing_tids + [group_id]
+                                    self.r_queue.hset(
+                                        f"job:{parent_pipeline_id}",
+                                        "task_ids",
+                                        json.dumps(updated_tids),
+                                    )
+                                    self.job_service.add_log(
+                                        parent_pipeline_id,
+                                        f"Spliced child pipelines group {group_id} into pipeline.",
+                                    )
                     finally:
                         project.close()
                 else:

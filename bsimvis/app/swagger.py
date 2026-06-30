@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_restx import Api, Resource, fields, Namespace
 import json
+from redis.exceptions import BusyLoadingError
 
 # Create a blueprint for the Swagger UI and API
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -12,6 +13,13 @@ api = Api(
     doc="/",  # Swagger UI at /api/
     mask_swagger=False,
 )
+
+
+@api.errorhandler(BusyLoadingError)
+def handle_busy_loading_error(error):
+    return {
+        "detail": "Redis database is loading the dataset in memory. Please retry in a few seconds."
+    }, 503
 
 
 # Namespaces (matching the first part of the path after /api)

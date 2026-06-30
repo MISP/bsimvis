@@ -3,10 +3,26 @@
  */
 
 const collapsedPipelines = new Set(JSON.parse(localStorage.getItem('collapsedPipelines') || '[]'));
+const loadedSubtasks = new Map();
 
-window.togglePipelineCollapse = function (pipelineId) {
+window.togglePipelineCollapse = async function (pipelineId) {
     if (collapsedPipelines.has(pipelineId)) {
         collapsedPipelines.delete(pipelineId);
+        
+        // Fetch subtask data if expanding and not loaded yet
+        if (!loadedSubtasks.has(pipelineId)) {
+            try {
+                const resp = await fetch(`/api/jobs/${pipelineId}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.sub_tasks) {
+                        loadedSubtasks.set(pipelineId, data.sub_tasks);
+                    }
+                }
+            } catch (e) {
+                console.error("Failed to load subtasks for pipeline", pipelineId, e);
+            }
+        }
     } else {
         collapsedPipelines.add(pipelineId);
     }
@@ -15,11 +31,26 @@ window.togglePipelineCollapse = function (pipelineId) {
 };
 
 function renderJobs(jobs) {
-    const jobsList = Array.isArray(jobs) ? jobs : (jobs.results || []);
+    let jobsList = Array.isArray(jobs) ? jobs : (jobs.results || []);
 
     if (jobsList.length === 0) {
         return '<tr><td colspan="9" style="text-align:center; padding: 60px; color: var(--dim);"><i class="fa-solid fa-wind" style="font-size: 2rem; opacity: 0.2; display: block; margin-bottom: 10px;"></i>No recent jobs found</td></tr>';
     }
+
+    // Merge in any loaded subtask lists
+    const expandedJobsList = [...jobsList];
+    const presentIds = new Set(jobsList.map(j => j.id));
+    loadedSubtasks.forEach((subTasks, parentId) => {
+        subTasks.forEach(st => {
+            if (!presentIds.has(st.id)) {
+                // Ensure parent_id is set so render tree associates it
+                const stWithParent = { ...st, parent_id: parentId };
+                expandedJobsList.push(stWithParent);
+                presentIds.add(st.id);
+            }
+        });
+    });
+    jobsList = expandedJobsList;
 
     const jobsById = new Map();
     const childJobIds = new Set();
@@ -257,11 +288,14 @@ window.showJobDetails = async function (jobId) {
 async function refreshJobModal(jobId, isInitial = false) {
     try {
         const resp = await fetch(`/api/jobs/${jobId}`);
+        if (!resp.ok) {
+            throw new Error(`API error: ${resp.status} ${resp.statusText}`);
+        }
         const job = await resp.json();
 
         if (currentActiveJobId !== jobId) return;
 
-        document.getElementById('job-modal-title').innerText = `Job Details: ${job.type}`;
+        document.getElementById('job-modal-title').innerText = `Job Details: ${job.type || 'Unknown'}`;
 
         // Build subtasks HTML
         let subtasksHtml = '';
@@ -289,10 +323,10 @@ async function refreshJobModal(jobId, isInitial = false) {
                 subtasksHtml += `
                     <tr>
                         <td style="padding: 8px;">${st.type}</td>
-                        <td style="padding: 8px;"><span style="color: ${sColor}">${st.status.toUpperCase()}</span></td>
+                        <td style="padding: 8px;"><span style="color: ${sColor}">${(st.status || 'pending').toUpperCase()}</span></td>
                         <td style="padding: 8px;">
                             <div style="background: rgba(255,255,255,0.05); height: 6px; width: 100%; border-radius:3px; overflow:hidden;">
-                                <div style="background: var(--accent); width: ${st.progress}%; height: 100%;"></div>
+                                <div style="background: var(--accent); width: ${st.progress || 0}%; height: 100%;"></div>
                             </div>
                         </td>
                     </tr>
@@ -391,11 +425,11 @@ async function refreshJobModal(jobId, isInitial = false) {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: rgba(255,255,255,0.02); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
                 <div>
                     <div style="color: var(--dim); font-size: 0.75rem; text-transform: uppercase;">Job ID</div>
-                    <div style="font-family: var(--mono); font-size: 0.85rem;">${job.id}</div>
+                    <div style="font-family: var(--mono); font-size: 0.85rem;">${job.id || ''}</div>
                 </div>
                 <div>
                     <div style="color: var(--dim); font-size: 0.75rem; text-transform: uppercase;">Status</div>
-                    <div style="font-weight: bold; color: var(--accent);">${job.status.toUpperCase()}</div>
+                    <div style="font-weight: bold; color: var(--accent);">${(job.status || 'unknown').toUpperCase()}</div>
                 </div>
             </div>
             ${errorHtml}
@@ -412,7 +446,7 @@ async function refreshJobModal(jobId, isInitial = false) {
 
     } catch (e) {
         console.error(e);
-        if (isInitial) alert('Error fetching job details');
+        if (isInitial) alert('Error fetching job details: ' + e.message);
     }
 }
 

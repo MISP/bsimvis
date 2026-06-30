@@ -95,6 +95,12 @@ class JobService:
             # Keep only the last 1000 jobs in the global list
             self.r.ltrim("jobs:global", 0, 999)
 
+            # Index by collection if present
+            coll = job_data.get("collection")
+            if coll:
+                self.r.lpush(f"jobs:collection:{coll}", job_id)
+                self.r.ltrim(f"jobs:collection:{coll}", 0, 999)
+
         # If it's not a subtask of a pipeline (or it's the first subtask), enqueue it
         if not is_subtask:
             self.enqueue_job(job_id)
@@ -180,6 +186,10 @@ class JobService:
         self.r.lpush("jobs:global", pipeline_id)
         self.r.ltrim("jobs:global", 0, 999)
 
+        if collection:
+            self.r.lpush(f"jobs:collection:{collection}", pipeline_id)
+            self.r.ltrim(f"jobs:collection:{collection}", 0, 999)
+
         if enqueue:
             self.start_job(pipeline_id)
 
@@ -250,6 +260,10 @@ class JobService:
         self.r.lpush("jobs:global", group_id)
         self.r.ltrim("jobs:global", 0, 999)
 
+        if collection:
+            self.r.lpush(f"jobs:collection:{collection}", group_id)
+            self.r.ltrim(f"jobs:collection:{collection}", 0, 999)
+
         if enqueue:
             self.start_job(group_id)
 
@@ -285,8 +299,20 @@ class JobService:
             return
 
         jtype = job.get("type")
+        status = job.get("status")
 
-        if job.get("status") == JobStatus.CANCELLED.value:
+        if status == JobStatus.CANCELLED.value:
+            return
+
+        if status in [
+            JobStatus.RUNNING.value,
+            JobStatus.COMPLETED.value,
+            JobStatus.FAILED.value,
+        ]:
+            if status in [JobStatus.COMPLETED.value, JobStatus.FAILED.value]:
+                parent_id = job.get("parent_id")
+                if parent_id:
+                    self.advance_parent(parent_id, job_id)
             return
 
         if jtype in ["pipeline", "group"]:
@@ -329,6 +355,12 @@ class JobService:
         if ptype == "pipeline":
             try:
                 current_idx = tids.index(finished_job_id)
+                for i in range(current_idx):
+                    prev_status = self.r.hget(f"job:{tids[i]}", "status")
+                    if isinstance(prev_status, bytes):
+                        prev_status = prev_status.decode()
+                    if prev_status != JobStatus.COMPLETED.value:
+                        return
                 if current_idx + 1 < len(tids):
                     next_tid = tids[current_idx + 1]
                     self.add_log(
@@ -641,8 +673,13 @@ class JobService:
         self, limit=100, offset=0, collection=None, pool=None, status=None, jtype=None
     ):
         """Returns a paged list of jobs and the total count."""
-        # Fetch all top-level job IDs (at most 1000)
-        all_job_ids = self.r.lrange("jobs:global", 0, -1)
+        # Use collection index key if collection filter is passed
+        if collection:
+            all_job_ids = self.r.lrange(f"jobs:collection:{collection}", 0, -1)
+        elif pool:
+            all_job_ids = self.r.lrange(f"jobs:collection:pool:{pool}", 0, -1)
+        else:
+            all_job_ids = self.r.lrange("jobs:global", 0, -1)
 
         pool_cols = set()
         if pool:
@@ -652,15 +689,22 @@ class JobService:
             }
             pool_cols.add(f"pool:{pool}")
 
+        # Optimize: if no filter is active, we can slice top-level job IDs early
+        # to avoid fetching and parsing all 1000 jobs.
+        has_filters = any([collection, pool, status, jtype])
+        sliced_job_ids = all_job_ids
+        if not has_filters:
+            sliced_job_ids = all_job_ids[offset : offset + limit]
+
         # Batch fetch all top-level job hashes using pipeline
         pipe = self.r.pipeline()
-        for jid in all_job_ids:
+        for jid in sliced_job_ids:
             pipe.hgetall(f"job:{jid}")
         raw_jobs = pipe.execute()
 
         # Parse payloads and build initial list of top-level job dicts
         top_level_jobs = []
-        for jid, job in zip(all_job_ids, raw_jobs):
+        for jid, job in zip(sliced_job_ids, raw_jobs):
             if not job:
                 continue
 
@@ -717,50 +761,6 @@ class JobService:
                 except:
                     pass
 
-            if not coll and job.get("type") in ["pipeline", "group"] and task_ids:
-                first_task_id = task_ids[0]
-                first_task = self.r.hgetall(f"job:{first_task_id}")
-                if first_task:
-                    first_task = {
-                        k.decode() if isinstance(k, bytes) else k: (
-                            v.decode() if isinstance(v, bytes) else v
-                        )
-                        for k, v in first_task.items()
-                    }
-                    coll = first_task.get("collection", "")
-                    if not coll:
-                        payload_raw = first_task.get("payload")
-                        if payload_raw:
-                            try:
-                                payload = json.loads(payload_raw)
-                                coll = payload.get("collection", "")
-                                if not coll and "pool_id" in payload:
-                                    coll = f"pool:{payload['pool_id']}"
-                            except:
-                                pass
-
-            # Apply filters early to top-level jobs
-            if collection and coll != collection:
-                # If pool is specified, allow pool-level jobs to bypass the collection filter
-                if not (pool and coll == f"pool:{pool}"):
-                    continue
-            if pool and coll not in pool_cols:
-                # Also check if payload explicitly has pool_id
-                payload_pool = ""
-                payload_raw = job.get("payload")
-                if payload_raw:
-                    try:
-                        payload = json.loads(payload_raw)
-                        payload_pool = payload.get("pool_id", "")
-                    except:
-                        pass
-                if payload_pool != pool:
-                    continue
-            if status and job.get("status") != status:
-                continue
-            if jtype and job.get("type") != jtype:
-                continue
-
             top_level_jobs.append(
                 {
                     "id": jid,
@@ -773,130 +773,97 @@ class JobService:
                     "updated_at": safe_int(job.get("updated_at", 0)),
                     "parent_id": parent_id,
                     "task_ids": task_ids,
+                    "payload": job.get("payload", ""),
                 }
             )
 
-        # Total is the count of filtered top-level jobs
-        total = len(top_level_jobs)
+        # Collect first_task_ids to resolve collection info in a single batch pipeline
+        pipeline_job_map = {}
+        for job_dict in top_level_jobs:
+            if (
+                not job_dict["collection"]
+                and job_dict["type"] in ["pipeline", "group"]
+                and job_dict["task_ids"]
+            ):
+                pipeline_job_map[job_dict["id"]] = job_dict["task_ids"][0]
 
-        # Paginate top-level jobs
-        paginated_top_level = top_level_jobs[offset : offset + limit]
-
-        # Now, recursively fetch all subtask descendants for the paginated top-level jobs.
-        results = list(paginated_top_level)
-        results_map = {res["id"]: res for res in results}
-
-        to_fetch = []
-        for job in paginated_top_level:
-            if job["type"] in ["pipeline", "group"] and job.get("task_ids"):
-                to_fetch.extend(job["task_ids"])
-
-        while to_fetch:
-            ids_to_fetch = list(set(tid for tid in to_fetch if tid not in results_map))
-            to_fetch = []
-
-            if not ids_to_fetch:
-                break
-
+        if pipeline_job_map:
+            p_ids = list(pipeline_job_map.keys())
+            t_ids = [pipeline_job_map[pid] for pid in p_ids]
             pipe = self.r.pipeline()
-            for tid in ids_to_fetch:
+            for tid in t_ids:
                 pipe.hgetall(f"job:{tid}")
-            raw_sub_jobs = pipe.execute()
+            raw_first_tasks = pipe.execute()
 
-            for tid, sub_job in zip(ids_to_fetch, raw_sub_jobs):
-                if not sub_job:
+            for pid, tid, raw_task in zip(p_ids, t_ids, raw_first_tasks):
+                if not raw_task:
                     continue
-
-                target = ""
-                coll = sub_job.get("collection", "")
+                first_task = {
+                    k.decode() if isinstance(k, bytes) else k: (
+                        v.decode() if isinstance(v, bytes) else v
+                    )
+                    for k, v in raw_task.items()
+                }
+                coll = first_task.get("collection", "")
                 if not coll:
-                    payload_raw = sub_job.get("payload")
+                    payload_raw = first_task.get("payload")
                     if payload_raw:
                         try:
                             payload = json.loads(payload_raw)
                             coll = payload.get("collection", "")
-                            target = (
-                                payload.get("md5")
-                                or payload.get("file_id")
-                                or payload.get("batch_uuid")
-                                or ""
-                            )
-                            if target and len(target) > 20:
-                                target = target[:8] + "..." + target[-8:]
-                        except:
-                            pass
-                else:
-                    payload_raw = sub_job.get("payload")
-                    if payload_raw:
-                        try:
-                            payload = json.loads(payload_raw)
-                            target = (
-                                payload.get("md5")
-                                or payload.get("file_id")
-                                or payload.get("batch_uuid")
-                                or ""
-                            )
-                            if target and len(target) > 20:
-                                target = target[:8] + "..." + target[-8:]
+                            if not coll and "pool_id" in payload:
+                                coll = f"pool:{payload['pool_id']}"
                         except:
                             pass
 
-                task_ids = []
-                if "task_ids" in sub_job:
+                # Update the corresponding job object
+                for job_dict in top_level_jobs:
+                    if job_dict["id"] == pid:
+                        job_dict["collection"] = coll
+                        break
+
+        # Filter the top-level jobs post-pipeline resolution
+        filtered_top_level_jobs = []
+        for job_dict in top_level_jobs:
+            coll = job_dict["collection"]
+            # Apply filters early to top-level jobs
+            if collection and coll != collection:
+                # If pool is specified, allow pool-level jobs to bypass the collection filter
+                if not (pool and coll == f"pool:{pool}"):
+                    continue
+            if pool and coll not in pool_cols:
+                # Also check if payload explicitly has pool_id
+                payload_pool = ""
+                payload_raw = job_dict.get("payload")
+                if payload_raw:
                     try:
-                        task_ids = json.loads(sub_job["task_ids"])
+                        payload = json.loads(payload_raw)
+                        payload_pool = payload.get("pool_id", "")
                     except:
                         pass
+                if payload_pool != pool:
+                    continue
 
-                sub_job_dict = {
-                    "id": tid,
-                    "type": sub_job.get("type"),
-                    "status": sub_job.get("status"),
-                    "progress": safe_int(sub_job.get("progress", 0)),
-                    "collection": coll,
-                    "target": target,
-                    "created_at": safe_int(sub_job.get("created_at", 0)),
-                    "updated_at": safe_int(sub_job.get("updated_at", 0)),
-                    "parent_id": sub_job.get("parent_id", ""),
-                    "task_ids": task_ids,
-                }
-                results_map[tid] = sub_job_dict
-                results.append(sub_job_dict)
+            if status and job_dict.get("status") != status:
+                continue
+            if jtype and job_dict.get("type") != jtype:
+                continue
 
-                if sub_job_dict["type"] in ["pipeline", "group"] and task_ids:
-                    to_fetch.extend(task_ids)
+            filtered_top_level_jobs.append(job_dict)
 
-        # Group subtasks by their top-level ancestor
-        ancestor_map = {job["id"]: [] for job in paginated_top_level}
-        sub_tasks_list = results[len(paginated_top_level) :]
+        top_level_jobs = filtered_top_level_jobs
 
-        def get_top_level_ancestor(sub_job):
-            curr = sub_job
-            visited = set()
-            while curr.get("parent_id") and curr["id"] not in visited:
-                visited.add(curr["id"])
-                p_id = curr["parent_id"]
-                if p_id in ancestor_map:
-                    return p_id
-                parent = results_map.get(p_id)
-                if not parent:
-                    break
-                curr = parent
-            return None
+        # Total is the count of filtered top-level jobs
+        total = len(all_job_ids) if not has_filters else len(top_level_jobs)
 
-        for sub_job in sub_tasks_list:
-            ancestor = get_top_level_ancestor(sub_job)
-            if ancestor:
-                ancestor_map[ancestor].append(sub_job)
+        # Paginate top-level jobs (skip slicing if already sliced early)
+        paginated_top_level = (
+            top_level_jobs
+            if not has_filters
+            else top_level_jobs[offset : offset + limit]
+        )
 
-        final_results = []
-        for job in paginated_top_level:
-            job_descendants = ancestor_map.get(job["id"], [])
-            job_total_count = 1 + len(job_descendants)
-            if not final_results or len(final_results) + job_total_count <= limit:
-                final_results.append(job)
-                final_results.extend(job_descendants)
-            else:
-                break
+        for r in paginated_top_level:
+            r.pop("payload", None)
 
-        return final_results, total
+        return paginated_top_level, total

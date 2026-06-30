@@ -192,38 +192,69 @@ def upload_chunk():
             if val:
                 parent_pipeline_id = val.decode() if isinstance(val, bytes) else val
 
-        chunk_store_key = f"{collection}:file:{file_md5}:chunks"
         meta_store_key = f"{collection}:file:{file_md5}:chunk_meta"
+        chunk_jobs_key = f"{collection}:file:{file_md5}:chunk_jobs"
+        features_counter_key = f"{collection}:file:{file_md5}:total_features"
+        functions_counter_key = f"{collection}:file:{file_md5}:total_functions"
 
         # 1. Save file metadata once (chunk 0)
+        stored_meta = None
         if chunk_index == 0 and file_metadata:
             r_data.set(meta_store_key, json.dumps(file_metadata))
+            stored_meta = file_metadata
+        else:
+            stored_meta_raw = r_data.get(meta_store_key)
+            stored_meta = json.loads(stored_meta_raw) if stored_meta_raw else {}
 
-        # 2. Store this chunk's function list by index
-        r_data.hset(chunk_store_key, str(chunk_index), json.dumps(functions))
+        # 2. Immediately index functions for this chunk
+        if functions:
+            batch_uuid = stored_meta.get("batch_uuid") if stored_meta else None
+            job_payload = {
+                "collection": collection,
+                "functions_list": functions,
+                "file_meta": stored_meta,
+                "file_md5": file_md5,
+                "batch_uuid": batch_uuid,
+            }
+            # Enqueue immediately
+            chunk_job_id = job_service.create_job(JobType.INDEX_FUNCTIONS, job_payload)
+            job_service.enqueue_job(chunk_job_id)
 
-        # 3. On final chunk, collect all chunks and build a single ordered pipeline
-        if is_final:
-            raw_chunks = r_data.hgetall(chunk_store_key)
-            ordered_chunks = sorted(
-                (
-                    (
-                        int(k.decode() if isinstance(k, bytes) else k),
-                        json.loads(v.decode() if isinstance(v, bytes) else v),
-                    )
-                    for k, v in raw_chunks.items()
-                ),
-                key=lambda x: x[0],
+            r_data.sadd(chunk_jobs_key, chunk_job_id)
+
+            # Update feature/function counters
+            chunk_features_count = sum(
+                f.get("function_metadata", {}).get("bsim_features_count", 0)
+                for f in functions
             )
+            r_data.incrby(features_counter_key, chunk_features_count)
+            r_data.incrby(functions_counter_key, len(functions))
 
+        # 3. On final chunk, collect jobs and build pipeline
+        if is_final:
             stored_meta_raw = r_data.get(meta_store_key)
             stored_meta = (
                 json.loads(stored_meta_raw) if stored_meta_raw else file_metadata or {}
             )
             batch_uuid = stored_meta.get("batch_uuid")
 
-            # Clean up chunk storage
-            r_data.delete(chunk_store_key, meta_store_key)
+            # Collect child job IDs
+            chunk_jobs_bytes = r_data.smembers(chunk_jobs_key)
+            chunk_jobs = [
+                jid.decode() if isinstance(jid, bytes) else jid
+                for jid in chunk_jobs_bytes
+            ]
+
+            total_features = int(r_data.get(features_counter_key) or 0)
+            num_functions = int(r_data.get(functions_counter_key) or 0)
+
+            # Clean up Redis keys
+            r_data.delete(
+                chunk_jobs_key,
+                meta_store_key,
+                features_counter_key,
+                functions_counter_key,
+            )
 
             from bsimvis.app.services.config_service import config_service
 
@@ -238,13 +269,7 @@ def upload_chunk():
                 "similarity.min_features", 0
             )
 
-            all_functions = [fn for _, chunk in ordered_chunks for fn in chunk]
-            total_features = sum(
-                f.get("function_metadata", {}).get("bsim_features_count", 0)
-                for f in all_functions
-            )
-
-            # Build strictly ordered pipeline: meta -> functions (per chunk) -> features -> sim
+            # Build strictly ordered pipeline
             pipeline_tasks = [
                 (
                     JobType.INDEX_META,
@@ -252,27 +277,17 @@ def upload_chunk():
                         "collection": collection,
                         "file_id": None,
                         "file_meta": stored_meta,
-                        "num_functions": len(all_functions),
+                        "num_functions": num_functions,
                         "total_features": total_features,
                     },
                 )
             ]
 
-            for _, chunk_fns in ordered_chunks:
-                if chunk_fns:
-                    pipeline_tasks.append(
-                        (
-                            JobType.INDEX_FUNCTIONS,
-                            {
-                                "collection": collection,
-                                "functions_list": chunk_fns,
-                                "file_md5": file_md5,
-                                "batch_uuid": batch_uuid,
-                            },
-                        )
-                    )
+            if chunk_jobs:
+                # Group wraps existing jobs (enqueue=False since already active)
+                group_id = job_service.create_group(chunk_jobs, enqueue=False)
+                pipeline_tasks.append(group_id)
 
-            # INDEX_FEATURES runs only after all INDEX_FUNCTIONS jobs are done
             pipeline_tasks.append(
                 (JobType.INDEX_FEATURES, {"collection": collection, "md5": file_md5})
             )
@@ -300,9 +315,7 @@ def upload_chunk():
                 )
 
             if parent_pipeline_id:
-                # Splice these tasks into the parent pipeline right after ghidra_analyze.
-                # All created as subtasks (not enqueued). advance_parent fires them in order
-                # when ghidra_analyze completes.
+                # Splice tasks into parent pipeline
                 new_tids = [
                     job_service._resolve_task(task, parent_pipeline_id)
                     for task in pipeline_tasks
@@ -330,7 +343,12 @@ def upload_chunk():
                         f"Spliced {len(new_tids)} ordered indexing tasks into pipeline.",
                     )
             else:
-                job_service.create_pipeline(pipeline_tasks, enqueue=True)
+                pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=True)
+                return {
+                    "status": "success",
+                    "chunk_index": chunk_index,
+                    "pipeline_id": pipeline_id,
+                }
 
         return {"status": "success", "chunk_index": chunk_index}
     except Exception as e:
@@ -416,7 +434,8 @@ def upload_raw_binary():
         pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
 
         # Pre-register similarity jobs so the pipeline doesn't finish early
-        if not analysis_payload.get("skip_sim"):
+        is_gpr_zip = file_name.endswith(".gpr.zip")
+        if not analysis_payload.get("skip_sim") and not is_gpr_zip:
             algo = analysis_payload.get("algo")
             build_sim_payload = {
                 "collection": collection,

@@ -727,10 +727,6 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         }
 
         let count = items.length;
-        if (viewKey === 'jobs') {
-            const jobIds = new Set(items.map(item => item.id));
-            count = items.filter(item => !item.parent_id || !jobIds.has(item.parent_id)).length;
-        }
 
         if (append) {
             currentOffset += count;

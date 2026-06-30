@@ -1,3 +1,4 @@
+import json
 from flask import request
 from bsimvis.app.services.similarity_service import SimilarityService
 

@@ -681,6 +681,15 @@ class FileUpload(Resource):
         return upload_file_data()
 
 
+@ns_file.route("/upload_chunk")
+class FileUploadChunk(Resource):
+    def post(self):
+        """Uploads a chunk of function analysis data (avoiding memory bloat)."""
+        from bsimvis.app.routes.file import upload_chunk
+
+        return upload_chunk()
+
+
 @ns_file.route("/upload")
 class RawFileUpload(Resource):
     @ns_file.doc(

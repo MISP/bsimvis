@@ -313,11 +313,12 @@ const routes = {
             { label: 'ID', width: '15%' },
             { label: 'Type', width: '12%' },
             { label: 'Collection', width: '10%' },
-            { label: 'Target', width: '15%' },
+            { label: 'Target', width: '12%' },
             { label: 'Status', width: '10%' },
             { label: 'Progress', width: '15%' },
-            { label: 'Created', width: '12%' },
-            { label: 'Actions', width: '11%' }
+            { label: 'Created', width: '11%' },
+            { label: 'Duration', width: '7%' },
+            { label: 'Actions', width: '8%' }
         ],
         renderer: (data) => window.renderJobs(data)
     }
@@ -1286,7 +1287,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th></th><th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
                     <th></th>
                     <th></th><th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
-                    <th></th><th></th><th></th>
+                    <th></th><th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
             } else if (path === 'binary-similarity') {

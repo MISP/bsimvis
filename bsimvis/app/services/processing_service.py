@@ -8,38 +8,61 @@ class ProcessingService:
     def __init__(self, r=None):
         self.r = r or get_redis()
 
-    def index_metadata(self, collection, file_id, job_service=None, job_id=None):
+    def index_metadata(
+        self,
+        collection,
+        file_id,
+        job_service=None,
+        job_id=None,
+        file_meta=None,
+        num_functions=None,
+        total_features=None,
+    ):
         """Indexes file, batch, and collection metadata globals and explodes file-level meta."""
-        logging.info(f"[*] Indexing metadata for {file_id} in {collection}...")
-
-        # Since we use SET instead of JSON.SET for the monolith, we load the whole string.
-        raw_data = self.r.get(file_id)
-        if not raw_data:
-            logging.error(f"Data not found for {file_id}")
-            return False
-
-        import json
-
-        data = json.loads(raw_data)
-
-        if not data:
-            logging.error(f"Data not found for {file_id}")
-            return False
-
-        file_meta = data.get("file_metadata", {})
-        file_md5 = file_meta.get("file_md5") or data.get("file_md5") or "unknown_md5"
-        batch_uuid = (
-            file_meta.get("batch_uuid")
-            or data.get("batch_uuid")
-            or "unknown_batch_uuid"
+        logging.info(
+            f"[*] Indexing metadata for {file_id or (file_meta and file_meta.get('file_md5'))} in {collection}..."
         )
-        batch_name = (
-            file_meta.get("batch_name")
-            or data.get("batch_name")
-            or "unknown_batch_name"
-        )
-        num_functions = len(data.get("functions", []))
-        timestamp = file_meta.get("entry_date") or data.get("entry_date") or 0
+
+        if file_meta is not None:
+            file_md5 = file_meta.get("file_md5") or "unknown_md5"
+            batch_uuid = file_meta.get("batch_uuid") or "unknown_batch_uuid"
+            batch_name = file_meta.get("batch_name") or "unknown_batch_name"
+            num_functions = num_functions or 0
+            total_features = total_features or 0
+            timestamp = file_meta.get("entry_date") or 0
+        else:
+            # Since we use SET instead of JSON.SET for the monolith, we load the whole string.
+            raw_data = self.r.get(file_id)
+            if not raw_data:
+                logging.error(f"Data not found for {file_id}")
+                return False
+
+            data = json.loads(raw_data)
+            if not data:
+                logging.error(f"Data not found for {file_id}")
+                return False
+
+            file_meta = data.get("file_metadata", {})
+            file_md5 = (
+                file_meta.get("file_md5") or data.get("file_md5") or "unknown_md5"
+            )
+            batch_uuid = (
+                file_meta.get("batch_uuid")
+                or data.get("batch_uuid")
+                or "unknown_batch_uuid"
+            )
+            batch_name = (
+                file_meta.get("batch_name")
+                or data.get("batch_name")
+                or "unknown_batch_name"
+            )
+            num_functions = len(data.get("functions", []))
+            timestamp = file_meta.get("entry_date") or data.get("entry_date") or 0
+            total_features = 0
+            for f in data.get("functions", []):
+                total_features += f.get("function_metadata", {}).get(
+                    "bsim_features_count", 0
+                )
 
         # Create the standalone file metadata key (exploded from the main blob)
         file_base_id = f"{collection}:file:{file_md5}"
@@ -50,12 +73,6 @@ class ProcessingService:
         coll_file_meta["file_id"] = file_base_id
         coll_file_meta["function_count"] = num_functions
 
-        # Calculate total bsim features
-        total_features = 0
-        for f in data.get("functions", []):
-            total_features += f.get("function_metadata", {}).get(
-                "bsim_features_count", 0
-            )
         coll_file_meta["bsim_features_count"] = total_features
 
         pipe = self.r.pipeline()
@@ -136,28 +153,43 @@ class ProcessingService:
 
         return True
 
-    def index_functions(self, collection, file_id, job_service=None, job_id=None):
+    def index_functions(
+        self,
+        collection,
+        file_id,
+        job_service=None,
+        job_id=None,
+        functions_list=None,
+        file_meta=None,
+        file_md5=None,
+        batch_uuid=None,
+    ):
         """Explodes and indexes all functions in a file."""
-        logging.info(f"[*] Exploding and indexing functions for {file_id}...")
+        logging.info(
+            f"[*] Exploding and indexing functions for {file_id or file_md5}..."
+        )
 
-        # Load monolith from SET
-        raw_data = self.r.get(file_id)
-        if not raw_data:
-            return False
+        if functions_list is not None:
+            functions = functions_list
+            file_meta = file_meta or {}
+            file_md5 = file_md5 or file_meta.get("file_md5")
+            batch_uuid = batch_uuid or file_meta.get("batch_uuid")
+        else:
+            # Load monolith from SET
+            raw_data = self.r.get(file_id)
+            if not raw_data:
+                return False
 
-        import json
+            data = json.loads(raw_data)
+            if not data:
+                return False
 
-        data = json.loads(raw_data)
+            functions = data.get("functions", [])
+            file_meta = data.get("file_metadata", {})
+            file_md5 = file_meta.get("file_md5") or data.get("file_md5")
+            batch_uuid = file_meta.get("batch_uuid") or data.get("batch_uuid")
 
-        if not data:
-            return False
-
-        functions = data.get("functions", [])
         total = len(functions)
-        file_meta = data.get("file_metadata", {})
-        file_md5 = file_meta.get("file_md5") or data.get("file_md5")
-        batch_uuid = file_meta.get("batch_uuid") or data.get("batch_uuid")
-
         if total == 0:
             return True
 

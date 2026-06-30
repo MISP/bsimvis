@@ -352,6 +352,14 @@ class GhidraService:
         return bsim_meta, bsim_raw, bsim_tf, times
 
     def get_bsim_data(self, program, options=None):
+        generator = self.stream_bsim_data(program, options, chunk_size=999999)
+        file_metadata = next(generator)
+        functions = []
+        for chunk in generator:
+            functions.extend(chunk)
+        return {"file_metadata": file_metadata, "functions": functions}
+
+    def stream_bsim_data(self, program, options=None, chunk_size=100):
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
         from ghidra.util.task import ConsoleTaskMonitor
 
@@ -384,6 +392,9 @@ class GhidraService:
             "file_id": file_id,
         }
 
+        # Yield file_metadata first as the initial item
+        yield file_metadata
+
         symbol_table = program.getSymbolTable()
         decomp_opts = DecompileOptions()
         decomp_interface = DecompInterface()
@@ -392,11 +403,11 @@ class GhidraService:
 
         if not decomp_interface.openProgram(program):
             logging.error(f"[-] Decompiler failed to initialize for {file_name}")
-            return {}
+            return
 
         decompiler_id = f"{decomp_interface.getMajorVersion()}.{decomp_interface.getMinorVersion()}:{decomp_interface.getCompilerSpec().getLanguage()}:{hex(decomp_interface.getSignatureSettings())}"
         functions = program.getFunctionManager().getFunctions(True)
-        all_function_data = []
+        chunk = []
 
         for func in functions:
             if func.isExternal() or func.isThunk():
@@ -494,7 +505,7 @@ class GhidraService:
             except Exception:
                 pass
 
-            all_function_data.append(
+            chunk.append(
                 {
                     "function_metadata": {
                         "type": "function",
@@ -541,8 +552,14 @@ class GhidraService:
                 }
             )
 
+            if len(chunk) >= chunk_size:
+                yield chunk
+                chunk = []
+
+        if chunk:
+            yield chunk
+
         decomp_interface.dispose()
-        return {"file_metadata": file_metadata, "functions": all_function_data}
 
     def run_profile_analysis(self, program, profile_name, force_reanalysis=False):
         from ghidra.app.plugin.core.analysis import AutoAnalysisManager

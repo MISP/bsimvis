@@ -18,6 +18,8 @@ def run_job(host, port, args):
         job_status(args.job_id, args.watch, args.logs)
     elif args.action == "cancel":
         cancel_job(args.job_id)
+    elif args.action == "retry":
+        retry_job(args.job_id)
     elif args.action == "perf":
         job_perf(args.job_id, args.top)
 
@@ -246,5 +248,15 @@ def cancel_job(job_id):
             resp = requests.post(f"{API_BASE}/jobs/{job_id}/cancel")
             resp.raise_for_status()
             print(f"Job {job_id} cancellation requested.")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+
+
+def retry_job(job_id):
+    try:
+        resp = requests.post(f"{API_BASE}/jobs/{job_id}/retry")
+        resp.raise_for_status()
+        data = resp.json()
+        print(f"Job {job_id} retry requested. Status: {data.get('status')}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

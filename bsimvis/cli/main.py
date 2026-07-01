@@ -370,6 +370,9 @@ def main():
     j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
     j_cancel.add_argument("job_id", help="Job or Pipeline ID")
 
+    j_retry = job_actions.add_parser("retry", help="Retry a failed or cancelled job")
+    j_retry.add_argument("job_id", help="Job or Pipeline ID")
+
     # --- WORKER ---
     worker_parser = subparsers.add_parser("worker", help="Worker management")
     worker_actions = worker_parser.add_subparsers(dest="action", required=True)

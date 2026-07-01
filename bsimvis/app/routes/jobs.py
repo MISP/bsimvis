@@ -1,3 +1,4 @@
+import json
 from flask import request
 from bsimvis.app.services.job_service import JobService
 
@@ -51,47 +52,57 @@ def cancel_all_jobs():
     return {"status": "cancelled", "cancelled_count": cancelled}
 
 
+def _reset_job_recursive(job_id):
+    """Recursively resets a job and all its sub-tasks/descendants to pending."""
+    job = job_service.r.hgetall(f"job:{job_id}")
+    if not job:
+        return
+
+    # Reset this job
+    job_service.r.hset(
+        f"job:{job_id}",
+        mapping={
+            "status": "pending",
+            "error": "",
+            "progress": 0,
+        },
+    )
+
+    # Check for children
+    task_ids_raw = job.get(b"task_ids") or job.get("task_ids")
+    if task_ids_raw:
+        try:
+            if isinstance(task_ids_raw, bytes):
+                task_ids_raw = task_ids_raw.decode()
+            task_ids = json.loads(task_ids_raw)
+            if isinstance(task_ids, list):
+                for tid in task_ids:
+                    _reset_job_recursive(tid)
+        except Exception:
+            pass
+
+
 def retry_job(job_id):
-    """Retries a failed or cancelled job/pipeline."""
+    """Retries a failed or cancelled job/pipeline/group recursively."""
     job = job_service.get_job_status(job_id)
     if not job:
         return {"error": "Job not found"}, 404
 
-    # If it's a pipeline or group
     jtype = job.get("type")
+
+    # Recursively reset the job and all descendants
+    _reset_job_recursive(job_id)
+
     if jtype in ["pipeline", "group"]:
-        task_ids = job.get("task_ids", [])
-        if not task_ids:
-            return {"error": f"{jtype.capitalize()} has no tasks"}, 400
-
-        # Reset parent metadata
-        job_service.r.hset(
-            f"job:{job_id}",
-            mapping={
-                "status": "pending",
-                "error": "",
-                "progress": 0,
-            },
-        )
-
-        # Reset all sub-tasks to pending
-        for tid in task_ids:
-            job_service.r.hset(
-                f"job:{tid}", mapping={"status": "pending", "error": "", "progress": 0}
-            )
-
         # Restart via start_job
         job_service.start_job(job_id)
         job_service.add_log(
             job_id,
             f"{jtype.capitalize()} retried by user. Restarting tasks.",
         )
-        return {"status": "retried", "job_id": job_id}
     else:
-        # Standard job retry
-        job_service.r.hset(
-            f"job:{job_id}", mapping={"status": "pending", "error": "", "progress": 0}
-        )
+        # Standard leaf job retry
         job_service.enqueue_job(job_id)
         job_service.add_log(job_id, "Job retried by user.")
-        return {"status": "retried", "job_id": job_id}
+
+    return {"status": "retried", "job_id": job_id}

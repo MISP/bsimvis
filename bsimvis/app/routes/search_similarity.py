@@ -68,7 +68,7 @@ def autocomplete():
             try:
                 # Parse key to get the suffix
                 count_found = 0
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 candidate_buckets = []
 
                 for bucket in r.sscan_iter(registry_key, match=match_pat, count=1000):
@@ -984,7 +984,7 @@ def similarity_search():
         cluster_meta_map = {}
         if page_results:
             # Phase 1: Fetch Similarity Metrics & Identity
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for sid, sort_sc in page_results:
                 pipe.get(sid)
                 if sort_by == "score":
@@ -1046,7 +1046,7 @@ def similarity_search():
             # Phase 2: Fetch Function Metadata & Cluster Scores (DEDUPLICATED)
             f_meta_map = {}  # fid -> {meta, scores}
             unique_fids_list = list(unique_fids)
-            f_pipe = r.pipeline()
+            f_pipe = r.pipeline(transaction=False)
             for fid in unique_fids_list:
                 f_pipe.get(f"{fid}:meta")
                 if is_pool:
@@ -1088,7 +1088,7 @@ def similarity_search():
             # Phase 3: Fetch File Metadata (DEDUPLICATED)
             file_meta_map = {}
             if unique_md5s:
-                file_pipe = r.pipeline()
+                file_pipe = r.pipeline(transaction=False)
                 md5_list = list(unique_md5s)
                 for f_coll, md5 in md5_list:
                     file_pipe.get(f"{f_coll}:file:{md5}:meta")
@@ -1106,7 +1106,7 @@ def similarity_search():
             # Phase 4: Fetch Cluster Metadata (DEDUPLICATED & ALGO-AWARE)
             cluster_meta_map = {}
             if unique_cluster_ids:
-                c_pipe = r.pipeline()
+                c_pipe = r.pipeline(transaction=False)
                 c_list = list(unique_cluster_ids)
                 # Use the requested algo for clusters if it matches a known clustering algo
                 c_algo = (

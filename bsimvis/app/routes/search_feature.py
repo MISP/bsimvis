@@ -72,7 +72,7 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
 
         if feature_list:
             zset_key = f"{collection}:features:by_tf"
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for f in feature_list:
                 pipe.zscore(zset_key, f["hash"])
             scores = pipe.execute()
@@ -88,7 +88,7 @@ def _enrich_feature_context(r, collection, feature_list):
         return feature_list
 
     try:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for f in feature_list:
             pipe.execute_command("HVALS", f"{collection}:feature:{f['hash']}:meta")
         first_metas_raw = pipe.execute()
@@ -100,7 +100,7 @@ def _enrich_feature_context(r, collection, feature_list):
             else:
                 first_metas.append([])
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for i, meta_pkg in enumerate(first_metas):
             fm = meta_pkg[0] if meta_pkg else None
             f = feature_list[i]
@@ -251,7 +251,7 @@ def query_features_advanced(r, collection, filters):
                     for t in r.smembers(matching_buckets[0])
                 }
             else:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for b in matching_buckets:
                     pipe.smembers(b)
                 for res in pipe.execute():
@@ -322,7 +322,7 @@ def query_features_advanced(r, collection, filters):
 
     if sort_by in ["frequency", "tf_score"]:
         zset_key = f"{collection}:idx:feature:{sort_by}"
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for doc_id in candidate_list:
             pipe.zscore(zset_key, doc_id)
         scores = pipe.execute()
@@ -336,7 +336,7 @@ def query_features_advanced(r, collection, filters):
         if sort_by == "hash":
             candidate_list.sort(key=lambda x: x.split(":")[-1], reverse=reverse_sort)
         else:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for doc_id in candidate_list:
                 f_hash = doc_id.split(":")[-1]
                 pipe.get(f"{collection}:feature:{f_hash}:global_meta")
@@ -372,7 +372,7 @@ def query_features_advanced(r, collection, filters):
     # 6. Enrichment
     page_hashes = [doc_id.split(":")[-1] for doc_id in page_ids]
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for fh in page_hashes:
         pipe.get(f"{collection}:feature:{fh}:global_meta")
     metas_raw = pipe.execute()
@@ -496,7 +496,7 @@ def get_feature_details(f_hash):
         paginated_meta = meta_data[offset : offset + limit]
 
         # Augment missing fields
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         augment_indices = []
         for i, occ in enumerate(paginated_meta):
             if (

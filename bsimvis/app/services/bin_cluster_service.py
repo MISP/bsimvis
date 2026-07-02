@@ -455,7 +455,7 @@ class BinClusterService:
 
         from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
 
         for c, members in cluster_members.items():
             pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:members", *members)
@@ -542,7 +542,7 @@ class BinClusterService:
 
         for i in range(0, total_members, 1000):
             chunk = all_member_file_ids[i : i + 1000]
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for file_id in chunk:
                 m_pipe.get(f"{file_id}:meta")
             results = m_pipe.execute()
@@ -812,7 +812,7 @@ class BinClusterService:
             members_key = f"{collection}:bin_cluster:{algo}:{cid}:members"
             members = r.smembers(members_key)
             if members:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for j, mid_raw in enumerate(members):
                     mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
                     _unindex_tag(pipe, collection, "file", "bin_cluster_id", cid, mid)
@@ -859,7 +859,7 @@ class BinClusterService:
         reg_key = f"{collection}:reg:{level}:{field}"
         buckets = r.smembers(reg_key)
         if buckets:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for b_raw in buckets:
                 b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
                 pipe.delete(b)

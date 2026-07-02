@@ -43,7 +43,7 @@ def list_similarities():
 
     results = []
     if sim_keys:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for k in sim_keys:
             pipe.get(k)
         raw_docs = pipe.execute()

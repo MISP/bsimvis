@@ -392,7 +392,7 @@ def delete_file(r, coll, file_md5):
             pass
     if not data:
         return
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for f in FILE_TAG_FIELDS:
         _unindex_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
@@ -416,7 +416,7 @@ def delete_function(r, coll, md5, addr):
             pass
     if not data:
         return
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for f in FUNC_TAG_FIELDS:
         _unindex_tag(pipe, coll, "func", f, data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
@@ -442,7 +442,7 @@ def delete_feature(r, coll, f_hash):
         except Exception:
             pass
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     if data:
         for f in FEATURE_TAG_FIELDS:
             _unindex_tag(pipe, coll, "feature", f, data.get(f), base_id)
@@ -505,7 +505,7 @@ def query_ids(
             if not candidates:
                 break
             if not is_union:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for cid in candidates:
                     pipe.sismember(group_keys[0], cid)
                 results = pipe.execute()
@@ -526,7 +526,7 @@ def query_ids(
 
     # Standardized Numerical Filtering: idx:{col}:idx:{level}:{field}
     if num_filters and all_ids:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for field, (fmin, fmax) in num_filters.items():
             pipe.zrangebyscore(f"{coll}:idx:{lvl}:{field}", fmin, fmax)
         range_results = pipe.execute()

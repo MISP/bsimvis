@@ -192,10 +192,11 @@ def upload_chunk():
             if val:
                 parent_pipeline_id = val.decode() if isinstance(val, bytes) else val
 
-        meta_store_key = f"{collection}:file:{file_md5}:chunk_meta"
-        chunk_jobs_key = f"{collection}:file:{file_md5}:chunk_jobs"
-        features_counter_key = f"{collection}:file:{file_md5}:total_features"
-        functions_counter_key = f"{collection}:file:{file_md5}:total_functions"
+        suffix = f":{parent_job_id}" if parent_job_id else ""
+        meta_store_key = f"{collection}:file:{file_md5}:chunk_meta{suffix}"
+        chunk_jobs_key = f"{collection}:file:{file_md5}:chunk_jobs{suffix}"
+        features_counter_key = f"{collection}:file:{file_md5}:total_features{suffix}"
+        functions_counter_key = f"{collection}:file:{file_md5}:total_functions{suffix}"
 
         # 1. Save file metadata once (chunk 0)
         stored_meta = None
@@ -209,15 +210,23 @@ def upload_chunk():
         # 2. Immediately index functions for this chunk
         if functions:
             batch_uuid = stored_meta.get("batch_uuid") if stored_meta else None
+            # ponytail: Offload heavy functions list to Kvrocks. Save job RAM.
+            chunk_id = f"{collection}:file:{file_md5}:chunk_data:{chunk_index}"
+            r_data.set(chunk_id, json.dumps(functions))
+
             job_payload = {
                 "collection": collection,
-                "functions_list": functions,
+                "chunk_id": chunk_id,
                 "file_meta": stored_meta,
                 "file_md5": file_md5,
                 "batch_uuid": batch_uuid,
             }
-            # Enqueue immediately
             chunk_job_id = job_service.create_job(JobType.INDEX_FUNCTIONS, job_payload)
+
+            if parent_job_id:
+                job_service.r.hset(f"job:{chunk_job_id}", "parent_id", parent_job_id)
+                job_service.r.lrem("jobs:global", 0, chunk_job_id)
+
             job_service.enqueue_job(chunk_job_id)
 
             r_data.sadd(chunk_jobs_key, chunk_job_id)

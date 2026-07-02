@@ -127,7 +127,7 @@ class ClusterService:
             allowed_fids = set()
             fids_list = list(unique_fids)
             # Bulk fetch bsim_features_count
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid in fids_list:
                 pipe.get(f"{fid}:meta")
 
@@ -529,7 +529,7 @@ class ClusterService:
 
         from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
 
         # Save members set for each cluster
         for c, members in cluster_members.items():
@@ -644,7 +644,7 @@ class ClusterService:
 
         for i in range(0, total_members, 1000):
             chunk = all_member_fids[i : i + 1000]
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for fid in chunk:
                 m_pipe.get(f"{fid}:meta")
             results = m_pipe.execute()
@@ -885,7 +885,7 @@ class ClusterService:
 
             members = r.smembers(members_key)
             if members:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for j, mid_raw in enumerate(members):
                     mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
 
@@ -926,7 +926,7 @@ class ClusterService:
         reg_key = f"{collection}:reg:{level}:{field}"
         buckets = r.smembers(reg_key)
         if buckets:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for b_raw in buckets:
                 b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
                 pipe.delete(b)
@@ -1022,7 +1022,7 @@ class ClusterService:
                     break
 
         if meta_keys:
-            c_pipe = r.pipeline()
+            c_pipe = r.pipeline(transaction=False)
             for k in meta_keys:
                 c_pipe.get(k)
             res_list = c_pipe.execute()
@@ -1044,7 +1044,7 @@ class ClusterService:
         # First, gather all clustered function IDs by reading the members of all discovered clusters
         clustered_funcs_set = set()
         if cluster_meta_map:
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for cid in cluster_meta_map.keys():
                 m_pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
             for mem_set in m_pipe.execute():
@@ -1059,7 +1059,7 @@ class ClusterService:
 
         for i in range(0, len(funcs_list), 1000):
             chunk = funcs_list[i : i + 1000]
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid_raw in chunk:
                 fid = fid_raw.decode() if isinstance(fid_raw, bytes) else fid_raw
                 if collection.startswith("global:pool:"):
@@ -1140,7 +1140,7 @@ class ClusterService:
         prefix = f"{collection}:sim:{algo}:"
         candidate_sids = set()
         clean_ids_list = list(clustered_clean_ids)
-        involves_pipe = r.pipeline()
+        involves_pipe = r.pipeline(transaction=False)
 
         for i in range(0, len(clean_ids_list), 1000):
             chunk = clean_ids_list[i : i + 1000]
@@ -1172,7 +1172,7 @@ class ClusterService:
             )
 
         candidate_list = list(candidate_sids)
-        update_pipe = r.pipeline()
+        update_pipe = r.pipeline(transaction=False)
 
         start_prop = time.time()
 
@@ -1250,7 +1250,7 @@ class ClusterService:
 
             if processed % 5000 == 0:
                 flush_batch()
-                update_pipe = r.pipeline()
+                update_pipe = r.pipeline(transaction=False)
                 if job_service and job_id:
                     pct = (
                         int((processed / total_candidates) * 100)
@@ -1719,7 +1719,7 @@ class ClusterService:
         total_members = len(all_member_file_ids)
         for i in range(0, total_members, 1000):
             chunk = all_member_file_ids[i : i + 1000]
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for fid in chunk:
                 parts = fid.split(":")
                 coll, md5 = parts[0], parts[2]
@@ -1736,7 +1736,7 @@ class ClusterService:
                 all_member_meta[fid] = m
 
         cluster_list_key = f"global:pool:{pool_id}:bin_cluster:list"
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         pipe.delete(cluster_list_key)
 
         for label, members in cluster_members.items():
@@ -1921,7 +1921,7 @@ class ClusterService:
         pipe.execute()
 
         # Write file-to-cluster assignments: pool:{pool_id}:file:{md5}:bin_clusters
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for i, (leaf, clusters) in enumerate(leaf_to_clusters.items()):
             file_id = idx_to_id[leaf]
             parts = file_id.split(":")

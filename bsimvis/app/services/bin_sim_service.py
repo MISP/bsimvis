@@ -189,7 +189,7 @@ class BinSimService:
             b_cluster_map = defaultdict(set)
 
             if fids:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for fid in fids:
                     if collection.startswith("global:pool:"):
                         pipe.smembers(f"{collection}:{fid}:clusters")
@@ -241,7 +241,7 @@ class BinSimService:
                 )
 
             cids_list = list(all_cids)
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for cid in cids_list:
                 pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
 
@@ -272,7 +272,7 @@ class BinSimService:
                     f"[*] Loading metadata for {len(all_unique_fids)} functions...",
                 )
             fids_list = list(all_unique_fids)
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid in fids_list:
                 pipe.get(f"{fid}:meta")
             meta_results = pipe.execute()
@@ -310,12 +310,12 @@ class BinSimService:
 
         # 5. Process Pairs (Greedy Sweep)
         processed = 0
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         pair_scores = {}
 
         # Pre-fetch file metadata for all binaries (for indexing)
         file_meta_cache = {}
-        pipe_meta = r.pipeline()
+        pipe_meta = r.pipeline(transaction=False)
         for md5 in binaries:
             pipe_meta.get(f"{collection}:file:{md5}:meta")
         meta_results = pipe_meta.execute()
@@ -689,7 +689,7 @@ class BinSimService:
             involves_key = f"{collection}:bin_sim:involves:{md5}"
             sids = r.smembers(involves_key)
             if sids:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for sid_raw in sids:
                     sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
                     pipe.delete(sid)
@@ -776,7 +776,7 @@ class BinSimService:
         file_meta_cache = {}
         md5_list = list(md5s)
         if md5_list:
-            pipe_meta = r.pipeline()
+            pipe_meta = r.pipeline(transaction=False)
             for md5 in md5_list:
                 pipe_meta.get(f"{collection}:file:{md5}:meta")
             for md5, res in zip(md5_list, pipe_meta.execute()):
@@ -789,12 +789,12 @@ class BinSimService:
                     file_meta_cache[md5] = {}
 
         # Fetch all docs and reindex
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for sid in sids:
             pipe.get(sid)
         docs = pipe.execute()
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for i, (sid, res) in enumerate(zip(sids, docs)):
             if not res:
                 continue
@@ -813,7 +813,7 @@ class BinSimService:
             )
             if (i + 1) % 200 == 0:
                 pipe.execute()
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 if job_service and job_id:
                     job_service.update_progress(job_id, int((i + 1) / total * 100))
 

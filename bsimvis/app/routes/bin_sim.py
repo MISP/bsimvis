@@ -115,7 +115,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     if coll_b is None:
         coll_b = request.args.get("coll_b", collection)
     if pool_id is None:
-        pool_id = request.args.get("pool_id")
+        pool_id = request.args.get("pool_id") or request.args.get("pool")
 
     if not md5_a or not md5_b:
         abort(400, "Both md5_a and md5_b are required")
@@ -128,7 +128,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         # guessing the ordering used at storage time.
         involves_a = f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}"
         involves_b = f"global:pool:{pool_id}:bin_sim:involves:{coll_b}:{md5_b}"
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         pipe.smembers(involves_a)
         pipe.smembers(involves_b)
         res_a, res_b = pipe.execute()
@@ -189,7 +189,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         fids.update(u.get("funcs", []))
 
     # Fetch File Metadata for both sides (each from their own collection)
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     pipe.get(f"{coll_a}:file:{md5_a}:meta")
     pipe.get(f"{coll_b}:file:{md5_b}:meta")
     file_meta_res = pipe.execute()
@@ -216,7 +216,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # Retrieve function metadata
     fids = list(fids)
     if fids:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for fid in fids:
             pipe.get(f"{fid}:meta")
         meta_results = pipe.execute()
@@ -291,7 +291,7 @@ def list_bin_sims():
                 break
         sids = set()
         if matching_keys:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for k in matching_keys:
                 pipe.smembers(k)
             res = pipe.execute()
@@ -315,7 +315,7 @@ def list_bin_sims():
         zset_key = f"{collection}:bin_sim:score:{algo}"
 
     scored_sids = []
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for sid in sids:
         pipe.zscore(zset_key, sid)
     scores = pipe.execute()
@@ -336,7 +336,7 @@ def list_bin_sims():
         return {"total": total, "results": [], "offset": offset, "limit": limit}
 
     # Fetch docs
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for sid, _ in paged:
         pipe.get(sid)
 

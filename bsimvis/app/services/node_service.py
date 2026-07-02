@@ -27,7 +27,7 @@ def get_enriched_nodes(collection, md5, addr):
         # Pipeline to fetch names for internal functions
         all_ids = list(set(caller_ids + callee_ids))
         all_ids = [fid for fid in all_ids if fid]
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for fid in all_ids:
             if not fid.startswith("ext:"):
                 pipe.get(f"{fid}:meta")

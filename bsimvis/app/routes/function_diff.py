@@ -218,7 +218,7 @@ def _fetch_clusters(meta, collection, md5, addr, pool_id, algo):
                 )
             else:
                 scores = r.hgetall(f"{fid}:cluster_scores") or {}
-            cluster_pipe = r.pipeline()
+            cluster_pipe = r.pipeline(transaction=False)
             for cid_bytes in cluster_ids:
                 cid = cid_bytes.decode() if isinstance(cid_bytes, bytes) else cid_bytes
                 if effective_pool:

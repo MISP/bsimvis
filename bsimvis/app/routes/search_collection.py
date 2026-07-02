@@ -41,13 +41,13 @@ def search_collections():
         page_names = collection_names[offset : offset + limit]
 
         # 1. Fetch metadata hashes first
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for name in page_names:
             pipe.hgetall(f"global:collection:{name}:meta")
         meta_results = pipe.execute()
 
         # 2. Identify collections that have missing cached statistics
-        fetch_pipe = r.pipeline()
+        fetch_pipe = r.pipeline(transaction=False)
         fetch_jobs = (
             []
         )  # list of tuples: (collection_name, meta_decoded_dict, field_name)
@@ -86,7 +86,7 @@ def search_collections():
         # 3. Fetch any missing fields and cache them back
         if fetch_jobs:
             fetched_vals = fetch_pipe.execute()
-            updates_pipe = r.pipeline()
+            updates_pipe = r.pipeline(transaction=False)
             for job_idx, (name, meta_decoded, field) in enumerate(fetch_jobs):
                 val = fetched_vals[job_idx]
                 if field == "last_updated":
@@ -165,7 +165,7 @@ def search_batches():
 
         batch_uuids = list(r.smembers("global:batches"))
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for uuid in batch_uuids:
             pipe.get(f"{target_collection}:batch:{uuid}")
         raw_data = pipe.execute()

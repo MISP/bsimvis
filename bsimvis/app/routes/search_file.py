@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
@@ -17,6 +18,7 @@ DEFAULT_LIMIT = 100
 
 def search_files():
     try:
+        t_start = time.perf_counter()
         pool_id = request.args.get("pool")
         col = request.args.get("collection")
         if not col and not pool_id:
@@ -135,7 +137,9 @@ def search_files():
         sort_order = request.args.get("sort_order", "asc").lower()
 
         # 1. Fetch filtered IDs
+        t0 = time.perf_counter()
         doc_ids = query_files_advanced(r, col, filters)
+        t1 = time.perf_counter()
 
         # 2. Sort (simple in-memory sort for now, assuming result sets aren't massive)
         total = len(doc_ids)
@@ -144,7 +148,7 @@ def search_files():
         paged_ids = list(doc_ids)[offset : offset + limit]
 
         # 4. Fetch full JSON, function counts, and cluster assignments for the page
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for doc_id in paged_ids:
             pipe.get(f"{doc_id}:meta")
             actual_col = doc_id.split(":")[0]
@@ -156,6 +160,7 @@ def search_files():
                 pipe.smembers(f"{doc_id}:bin_clusters")
 
         results = pipe.execute()
+        t2 = time.perf_counter()
         files_list = []
         unique_cluster_ids = set()
 
@@ -187,10 +192,11 @@ def search_files():
         # Second pass: fetch cluster metadata
         cluster_meta_map = {}
         min_cohesion = float(request.args.get("min_cohesion", 0.95))  # Default to 0.95
+        t3 = t2  # default: no cluster fetch
         if unique_cluster_ids:
             is_pool = pool_id is not None
             algo = "unweighted_cosine"  # Assuming default algo
-            c_pipe = r.pipeline()
+            c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)
             for cid in c_list:
                 if is_pool:
@@ -198,6 +204,7 @@ def search_files():
                 else:
                     c_pipe.get(f"{col}:bin_cluster:{algo}:{cid}:meta")
             c_results = c_pipe.execute()
+            t3 = time.perf_counter()
             for cid, res in zip(c_list, c_results):
                 cm = (
                     json.loads(res)
@@ -248,6 +255,9 @@ def search_files():
 
             return export_to_json(response_data, "files")
         else:
+            logging.info(
+                f"FILE SEARCH | filter:{t1-t0:.3f}s | meta_fetch:{t2-t1:.3f}s | cluster_fetch:{t3-t2:.3f}s | TOTAL:{time.perf_counter()-t_start:.3f}s | count={total}"
+            )
             return response_data
     except Exception as e:
         logging.error(f"Error in search_files: {e}", exc_info=True)
@@ -417,7 +427,7 @@ def get_file_details(collection, file_md5):
             clusters_key = f"{collection}:file:{file_md5}:bin_clusters"
 
         # 1. Fetch full JSON, function counts, and cluster assignments
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         pipe.get(f"{file_id}:meta")
         pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
         pipe.smembers(clusters_key)
@@ -451,10 +461,15 @@ def get_file_details(collection, file_md5):
         cluster_meta_map = {}
         if cluster_ids:
             algo = request.args.get("algo", "unweighted_cosine")
-            c_pipe = r.pipeline()
+            c_pipe = r.pipeline(transaction=False)
             c_list = data["bin_clusters"]
+            is_pool = pool_id is not None
             for cid in c_list:
-                c_pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
+                if is_pool:
+                    # ponytail: Pool clusters do not use algo prefix in metadata keys
+                    c_pipe.get(f"global:pool:{pool_id}:bin_cluster:{cid}:meta")
+                else:
+                    c_pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
             c_results = c_pipe.execute()
             for cid, c_res in zip(c_list, c_results):
                 cm = (

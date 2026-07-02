@@ -21,7 +21,7 @@ class FeatureService:
         milvus_chunk_size = 100
         indexed_features = set()
 
-        pipe = self.r.pipeline()
+        pipe = self.r.pipeline(transaction=False)
 
         for i, func_id in enumerate(function_ids):
             # Update job progress if applicable
@@ -88,7 +88,7 @@ class FeatureService:
             # Execute pipeline in chunks to reduce memory footprint and network overhead
             if (i + 1) % 100 == 0:
                 pipe.execute()
-                pipe = self.r.pipeline()
+                pipe = self.r.pipeline(transaction=False)
 
             # Milvus Buffer
             if milvus_service.enabled:
@@ -188,7 +188,7 @@ class FeatureService:
             if not raw_meta:
                 continue
 
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for feat in raw_meta:
                 f_hash = feat.get("hash")
                 tf = feat.get("tf", 1)
@@ -378,7 +378,7 @@ class FeatureService:
             chunk = feature_hashes[i : i + chunk_size]
 
             # --- STAGE 1: Batch fetch sparse samples, frequencies, and scores ---
-            pipe1 = self.r.pipeline()
+            pipe1 = self.r.pipeline(transaction=False)
             for fh in chunk:
                 # HRANDFIELD withvalues → 100 random entries across ALL functions
                 # Covers every function proportionally, avoids first-N clustering bias
@@ -391,7 +391,7 @@ class FeatureService:
             res1 = pipe1.execute()
 
             # --- STAGE 2: Find best (type, op) per feature, assemble into save_pipe ---
-            save_pipe = self.r.pipeline()
+            save_pipe = self.r.pipeline(transaction=False)
 
             # Phase A: parse HRANDFIELD, collect unique func_ids for context fetch
             results = []
@@ -516,7 +516,7 @@ class FeatureService:
             source_lookup = {}
             vec_meta_lookup = {}
             if pending_funcs:
-                ctx_pipe = self.r.pipeline()
+                ctx_pipe = self.r.pipeline(transaction=False)
                 for func_id in pending_funcs:
                     ctx_pipe.get(f"{func_id}:source")
                 ctx_res = ctx_pipe.execute()
@@ -531,7 +531,7 @@ class FeatureService:
                     else:
                         source_lookup[func_id] = {}
 
-                ctx_pipe2 = self.r.pipeline()
+                ctx_pipe2 = self.r.pipeline(transaction=False)
                 for func_id in pending_funcs:
                     ctx_pipe2.get(f"{func_id}:vec:meta")
                 ctx_res2 = ctx_pipe2.execute()

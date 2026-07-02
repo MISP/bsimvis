@@ -75,7 +75,7 @@ class ProcessingService:
 
         coll_file_meta["bsim_features_count"] = total_features
 
-        pipe = self.r.pipeline()
+        pipe = self.r.pipeline(transaction=False)
 
         # 0. Store exploded file meta
         pipe.set(file_meta_key, json.dumps(coll_file_meta))
@@ -194,7 +194,7 @@ class ProcessingService:
             return True
 
         # Use a single pipeline for indexing functions
-        pipe = self.r.pipeline()
+        pipe = self.r.pipeline(transaction=False)
 
         for i, func_data in enumerate(functions):
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
@@ -283,7 +283,7 @@ class ProcessingService:
             # Periodically execute the pipeline to reduce batch overhead / roundtrips
             if (i + 1) % 100 == 0:
                 pipe.execute()
-                pipe = self.r.pipeline()
+                pipe = self.r.pipeline(transaction=False)
 
         pipe.execute()
         return True
@@ -323,7 +323,7 @@ class ProcessingService:
             )
 
         # 2. Update global batch metadata
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         batches_removed = []
         for idx, batch_uuid in enumerate(batch_uuids):
             global_batch_key = f"global:batch:{batch_uuid}"
@@ -389,7 +389,7 @@ class ProcessingService:
 
         cursor = 0
         deleted_count = 0
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         while True:
             cursor, keys = r.scan(cursor=cursor, match=f"{collection}:*", count=1000)
             if keys:
@@ -440,7 +440,7 @@ class ProcessingService:
 
         patterns = [f"{collection}:file:*:data", f"{collection}:file:*:raw"]
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         total_deleted = 0
 
         for pattern in patterns:

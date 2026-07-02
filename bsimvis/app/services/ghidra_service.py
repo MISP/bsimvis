@@ -427,9 +427,15 @@ class GhidraService:
         # Build full call graph in one reference-manager pass (avoids N×getCalledFunctions calls)
         func_manager = program.getFunctionManager()
         ref_manager = program.getReferenceManager()
-        eligible_entries = {str(f.getEntryPoint()).split(":")[-1] for f in eligible_funcs}
-        callees_graph = {e: [] for e in eligible_entries}  # entry_str -> [callee_info, ...]
-        callers_graph = {e: [] for e in eligible_entries}  # entry_str -> [caller_info, ...]
+        eligible_entries = {
+            str(f.getEntryPoint()).split(":")[-1] for f in eligible_funcs
+        }
+        callees_graph = {
+            e: [] for e in eligible_entries
+        }  # entry_str -> [callee_info, ...]
+        callers_graph = {
+            e: [] for e in eligible_entries
+        }  # entry_str -> [caller_info, ...]
 
         ref_iter = ref_manager.getReferenceIterator(program.getMinAddress())
         while ref_iter.hasNext():
@@ -464,7 +470,11 @@ class GhidraService:
                 # Unresolved destination — mark as external
                 sym = program.getSymbolTable().getPrimarySymbol(ref.getToAddress())
                 callee_name = sym.getName() if sym else str(ref.getToAddress())
-                callee_info = {"name": callee_name, "entrypoint": None, "is_external": True}
+                callee_info = {
+                    "name": callee_name,
+                    "entrypoint": None,
+                    "is_external": True,
+                }
                 if caller_entry in callees_graph:
                     callees_graph[caller_entry].append(callee_info)
 

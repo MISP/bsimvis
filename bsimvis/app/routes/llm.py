@@ -139,7 +139,7 @@ def summarize_file():
     clusters = []
 
     if cluster_ids:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for cid in cluster_ids:
             pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
         results = pipe.execute()

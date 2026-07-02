@@ -23,7 +23,7 @@ def fetch_function_data(collection, md5, addr):
                     sub_collection = parts[1]
 
         r = get_redis()
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         pipe.get(f"{sub_collection}:func:{md5}:{addr}:source")
         pipe.get(f"{sub_collection}:func:{md5}:{addr}:vec:meta")
         pipe.get(f"{sub_collection}:func:{md5}:{addr}:meta")

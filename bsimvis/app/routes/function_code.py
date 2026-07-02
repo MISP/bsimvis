@@ -189,7 +189,7 @@ def get_function_code():
                 clusters = []
                 algo = "unweighted_cosine"
                 if cluster_ids:
-                    cluster_pipe = r.pipeline()
+                    cluster_pipe = r.pipeline(transaction=False)
                     for cid_bytes in cluster_ids:
                         cid = (
                             cid_bytes.decode()
@@ -298,7 +298,7 @@ def get_file_call_graph():
         if not func_ids:
             return {"nodes": [], "edges": []}
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for fid in func_ids:
             pipe.get(f"{fid}:meta")
             pipe.smembers(f"{fid}:callees")
@@ -359,7 +359,7 @@ def get_file_call_graph():
         # Fetch metadata for unindexed nodes
         if unindexed_nodes:
             other_ids = list(unindexed_nodes)
-            other_pipe = r.pipeline()
+            other_pipe = r.pipeline(transaction=False)
             for oid in other_ids:
                 other_pipe.get(f"{oid}:meta")
             other_results = other_pipe.execute()

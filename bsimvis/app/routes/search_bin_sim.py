@@ -104,7 +104,7 @@ def search_bin_sims():
                 while True:
                     cursor, found_keys = r.scan(
                         cursor=cursor,
-                        match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5_filter}",
+                        match=f"global:pool:{pool_id}:bin_sim:involves:*:{md5_filter}*",
                         count=1000,
                     )
                     matching_keys.extend(found_keys)
@@ -112,14 +112,33 @@ def search_bin_sims():
                         break
                 sids = set()
                 if matching_keys:
-                    pipe = r.pipeline()
+                    pipe = r.pipeline(transaction=False)
                     for k in matching_keys:
                         pipe.smembers(k)
                     res = pipe.execute()
                     for s_set in res:
                         sids.update(s_set)
             else:
-                sids = r.smembers(f"{collection}:bin_sim:involves:{md5_filter}")
+                # ponytail: support partial MD5 search for non-pool collections
+                cursor = 0
+                matching_keys = []
+                while True:
+                    cursor, found_keys = r.scan(
+                        cursor=cursor,
+                        match=f"{collection}:bin_sim:involves:*{md5_filter}*",
+                        count=1000,
+                    )
+                    matching_keys.extend(found_keys)
+                    if cursor == 0:
+                        break
+                sids = set()
+                if matching_keys:
+                    pipe = r.pipeline(transaction=False)
+                    for k in matching_keys:
+                        pipe.smembers(k)
+                    res = pipe.execute()
+                    for s_set in res:
+                        sids.update(s_set)
         else:
             if is_pool:
                 sids = r.smembers(f"global:pool:{pool_id}:bin_sim:built:{algo}")
@@ -136,31 +155,39 @@ def search_bin_sims():
         if not candidates:
             return {"total": 0, "offset": offset, "limit": limit, "results": []}
 
-        # 2. Extract MD5s and Fetch File Meta
+        # 2. Extract MD5s from SID string directly (format: {coll}:bin_sim:{algo}:{m_a}::{m_b})
+        # This avoids a bulk GET of all sim docs just to extract md5 pairs.
         t2 = time.perf_counter()
         light_docs = []
         unique_md5s = set()
+        _algo_marker = f":bin_sim:{algo}:"
 
-        # Pipeline fetch JSON for ALL candidates to run in-memory filters
-        pipe = r.pipeline()
         for sid in candidates:
-            pipe.get(sid)
-        raw_json_docs = pipe.execute()
+            m_a, m_b, coll_a, coll_b = "", "", "", ""
+            try:
+                rest = sid.split(_algo_marker, 1)[
+                    1
+                ]  # "{m_a}::{m_b}" or "{coll_a}:{m_a}::{coll_b}:{m_b}"
+                parts = rest.split("::", 1)
+                part_a = parts[0]
+                part_b = parts[1] if len(parts) > 1 else ""
 
-        for sid, res in zip(candidates, raw_json_docs):
-            if not res:
+                if is_pool:
+                    if ":" in part_a:
+                        coll_a, m_a = part_a.rsplit(":", 1)
+                    else:
+                        coll_a, m_a = "", part_a
+                    if ":" in part_b:
+                        coll_b, m_b = part_b.rsplit(":", 1)
+                    else:
+                        coll_b, m_b = "", part_b
+                else:
+                    m_a = part_a
+                    m_b = part_b
+                    coll_a = collection
+                    coll_b = collection
+            except (IndexError, ValueError):
                 continue
-            doc = json.loads(res) if not isinstance(res, dict) else res
-            if isinstance(doc, str):
-                try:
-                    doc = json.loads(doc)
-                except Exception:
-                    continue
-
-            m_a = doc.get("md5_a") or doc.get("md5_1", "")
-            m_b = doc.get("md5_b") or doc.get("md5_2", "")
-            coll_a = doc.get("coll_1") or (collection[5:] if is_pool else collection)
-            coll_b = doc.get("coll_2") or (collection[5:] if is_pool else collection)
 
             unique_md5s.add((coll_a, m_a))
             unique_md5s.add((coll_b, m_b))
@@ -171,24 +198,14 @@ def search_bin_sims():
                 "m_b": m_b,
                 "coll_a": coll_a,
                 "coll_b": coll_b,
-                "score": doc.get("score", 0.0),
-                "score_sim_weighted": doc.get("sim_weighted_score")
-                or doc.get("score", 0.0),
-                "score_collection_weighted": doc.get("collection_weighted_score")
-                or doc.get("score", 0.0),
-                "coverage_a": doc.get("coverage_a")
-                or (
-                    doc.get("matched_clusters_count", 0)
-                    / max(1, doc.get("matched_clusters_count", 1))
-                ),
-                "coverage_b": doc.get("coverage_b")
-                or (
-                    doc.get("matched_clusters_count", 0)
-                    / max(1, doc.get("matched_clusters_count", 1))
-                ),
-                "shared_clusters": doc.get("shared_clusters")
-                or doc.get("matched_clusters_count", 0),
-                "doc": doc,
+                # Numeric fields populated later from zscore or doc
+                "score": 0.0,
+                "score_sim_weighted": 0.0,
+                "score_collection_weighted": 0.0,
+                "coverage_a": 0.0,
+                "coverage_b": 0.0,
+                "shared_clusters": 0,
+                "doc": None,  # fetched only for final page
             }
             light_docs.append(ld)
 
@@ -196,7 +213,7 @@ def search_bin_sims():
         file_funcs_count = {}
         if unique_md5s:
             md5_list = list(unique_md5s)
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for coll, md5 in md5_list:
                 pipe.get(f"{coll}:file:{md5}:meta")
                 pipe.scard(f"{coll}:idx:file:functions:{md5}")
@@ -243,7 +260,7 @@ def search_bin_sims():
                 numeric_fields_to_fetch.add("shared_clusters")
 
             if numeric_fields_to_fetch:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 fields_list = list(numeric_fields_to_fetch)
                 for ld in light_docs:
                     sid = ld["sid"]
@@ -273,6 +290,34 @@ def search_bin_sims():
                 in ["score", "score_sim_weighted", "score_collection_weighted"]
                 else "score_collection_weighted"
             )
+            # ponytail: Pools lack ZSET indexes. Fetch docs to get sorting/filtering metrics.
+            pipe = r.pipeline(transaction=False)
+            for ld in light_docs:
+                pipe.get(ld["sid"])
+            docs_raw = pipe.execute()
+            for ld, raw in zip(light_docs, docs_raw):
+                if raw:
+                    doc = json.loads(raw) if not isinstance(raw, dict) else raw
+                    if isinstance(doc, str):
+                        doc = json.loads(doc)
+                    ld["score"] = float(doc.get("score", 0.0))
+                    ld["score_sim_weighted"] = float(
+                        doc.get("sim_weighted_score") or doc.get("score", 0.0)
+                    )
+                    ld["score_collection_weighted"] = float(
+                        doc.get("collection_weighted_score") or doc.get("score", 0.0)
+                    )
+                    matched_cnt = doc.get("matched_clusters_count", 0)
+                    ld["coverage_a"] = float(
+                        doc.get("coverage_a") or (1.0 if matched_cnt > 0 else 0.0)
+                    )
+                    ld["coverage_b"] = float(
+                        doc.get("coverage_b") or (1.0 if matched_cnt > 0 else 0.0)
+                    )
+                    ld["shared_clusters"] = int(
+                        doc.get("shared_clusters") or matched_cnt
+                    )
+                    ld["doc"] = doc
 
         t4 = time.perf_counter()
 
@@ -449,6 +494,12 @@ def search_bin_sims():
             doc["md5_b"] = m_b
             doc["coll_a"] = coll_a
             doc["coll_b"] = coll_b
+            # ponytail: ensure pool docs get coverage and shared clusters populated
+            doc["coverage_a"] = doc.get("coverage_a") or ld.get("coverage_a", 0.0)
+            doc["coverage_b"] = doc.get("coverage_b") or ld.get("coverage_b", 0.0)
+            doc["shared_clusters"] = doc.get("shared_clusters") or ld.get(
+                "shared_clusters", 0
+            )
 
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})

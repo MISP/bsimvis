@@ -19,7 +19,7 @@ def get_function_features():
             clusters = []
             algo = "unweighted_cosine"
             if cluster_ids:
-                cluster_pipe = r.pipeline()
+                cluster_pipe = r.pipeline(transaction=False)
                 for cid_bytes in cluster_ids:
                     cid = (
                         cid_bytes.decode()

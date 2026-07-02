@@ -1,3 +1,6 @@
+import json
+import logging
+import time
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
@@ -183,6 +186,18 @@ def clear_cluster():
 
 
 def _get_matching_ids(r, collection, level, field, val):
+    # ponytail: if collection is a pool (global:pool:{pool_id}), query the registries of all collections in the pool instead.
+    if collection.startswith("global:pool:"):
+        pool_id = collection.split(":")[2]
+        col_list = [
+            c.decode() if isinstance(c, bytes) else str(c)
+            for c in r.smembers(f"global:pool:{pool_id}:collections_list")
+        ]
+        matching_ids = set()
+        for col in col_list:
+            matching_ids.update(_get_matching_ids(r, col, level, field, val))
+        return matching_ids
+
     reg_key = f"{collection}:reg:{level}:{field}"
     matching_ids = set()
     val_lower = val.lower().strip()
@@ -201,8 +216,9 @@ def _get_matching_ids(r, collection, level, field, val):
         logging.warning(f"SSCAN failed for registry {reg_key}: {e}")
 
     if matching_buckets:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for bucket in matching_buckets:
+            # ponytail: registry already stores the full bucket_key
             pipe.smembers(bucket)
         results = pipe.execute()
         for res in results:
@@ -215,6 +231,7 @@ def _get_matching_ids(r, collection, level, field, val):
 
 def list_clusters():
     """Lists discovered clusters with metadata, filtering, and sorting."""
+    t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
 
@@ -259,30 +276,22 @@ def list_clusters():
     is_pool = pool_id is not None
 
     if is_pool:
-        cluster_list_key = f"global:pool:{pool_id}:cluster:list:{algo}"
-    else:
-        cluster_list_key = f"{collection}:cluster:list:{algo}"
+        # ponytail: standardise collection name for pool
+        collection = f"global:pool:{pool_id}"
+
+    cluster_list_key = f"{collection}:cluster:list:{algo}"
 
     cids_raw = r.smembers(cluster_list_key)
     all_meta_keys = []
 
     if cids_raw:
-        if is_pool:
-            all_meta_keys = [
-                f"global:pool:{pool_id}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-                for cid in cids_raw
-            ]
-        else:
-            all_meta_keys = [
-                f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
-                for cid in cids_raw
-            ]
+        all_meta_keys = [
+            f"{collection}:cluster:{algo}:{cid.decode() if isinstance(cid, bytes) else cid}:meta"
+            for cid in cids_raw
+        ]
     else:
         # 1. Fallback to discover all cluster meta keys
-        if is_pool:
-            pattern = f"global:pool:{pool_id}:cluster:{algo}:*:meta"
-        else:
-            pattern = f"{collection}:cluster:{algo}:*:meta"
+        pattern = f"{collection}:cluster:{algo}:*:meta"
         cursor = 0
         while True:
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
@@ -307,10 +316,7 @@ def list_clusters():
     total = 0
 
     # Fetch tree links to provide parent information
-    if is_pool:
-        links_key = f"global:pool:{pool_id}:cluster:tree_links:{algo}"
-    else:
-        links_key = f"{collection}:cluster:tree_links:{algo}"
+    links_key = f"{collection}:cluster:tree_links:{algo}"
     links_raw = r.get(links_key)
     child_to_parent = {}
     parent_to_children = {}
@@ -329,10 +335,14 @@ def list_clusters():
             pass
 
     if all_meta_keys:
-        pipe = r.pipeline()
+        t_fetch = time.perf_counter()
+        pipe = r.pipeline(transaction=False)
         for k in all_meta_keys:
             pipe.get(k)
         raw_metas = pipe.execute()
+        logging.info(
+            f"CLUSTERS | smembers+fetch {len(all_meta_keys)} metas: {time.perf_counter()-t_fetch:.3f}s"
+        )
 
         meta_map = {}
         for meta in raw_metas:
@@ -426,22 +436,25 @@ def list_clusters():
             if not matched_fids:
                 valid_nodes = set()
             else:
-                filtered_valid_nodes = set()
-                pipe = r.pipeline()
-                valid_nodes_list = list(valid_nodes)
-                for cid in valid_nodes_list:
-                    pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
-                all_cluster_members = pipe.execute()
+                # ponytail: use the inverse index (function -> clusters) to avoid overfetching
+                c_pipe = r.pipeline(transaction=False)
+                matched_fids_list = list(matched_fids)
+                is_pool = collection.startswith("global:pool:")
+                for fid in matched_fids_list:
+                    if is_pool:
+                        c_pipe.smembers(f"{collection}:{fid}:clusters")
+                    else:
+                        c_pipe.smembers(f"{fid}:clusters")
+                associated_clusters_raw = c_pipe.execute()
 
-                for cid, members_raw in zip(valid_nodes_list, all_cluster_members):
-                    if members_raw:
-                        members = {
-                            m.decode() if isinstance(m, bytes) else str(m)
-                            for m in members_raw
-                        }
-                        if members.intersection(matched_fids):
-                            filtered_valid_nodes.add(cid)
-                valid_nodes = filtered_valid_nodes
+                associated_clusters = set()
+                for cluster_res in associated_clusters_raw:
+                    if cluster_res:
+                        associated_clusters.update(
+                            c.decode() if isinstance(c, bytes) else str(c)
+                            for c in cluster_res
+                        )
+                valid_nodes.intersection_update(associated_clusters)
 
         # Paginate matched nodes BEFORE expanding
         matched_results = []
@@ -560,7 +573,7 @@ def list_clusters():
     if show_members and page:
         import json
 
-        p_pipe = r.pipeline()
+        p_pipe = r.pipeline(transaction=False)
         page_cids = [str(c["cluster_id"]) for c in page]
         db_collection = f"global:pool:{pool_id}" if is_pool else collection
         for cid in page_cids:
@@ -578,7 +591,7 @@ def list_clusters():
         member_meta_map = {}
         if all_member_ids:
             all_member_ids_list = list(all_member_ids)
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for mid in all_member_ids_list:
                 m_pipe.get(f"{mid}:meta")
             raw_metas = m_pipe.execute()
@@ -612,6 +625,9 @@ def list_clusters():
                 for mid in mids
             ]
 
+    logging.info(
+        f"CLUSTERS | total={total} | TOTAL: {time.perf_counter()-t_start:.3f}s"
+    )
     response_data = {
         "collection": collection,
         "algo": algo,
@@ -701,12 +717,12 @@ def update_cluster_meta():
 
     # Fetch all members' metadata
     mid_list = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
-    m_pipe = r.pipeline()
+    m_pipe = r.pipeline(transaction=False)
     for mid_str in mid_list:
         m_pipe.get(f"{mid_str}:meta")
     member_metas = m_pipe.execute()
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for mid_str, raw_m in zip(mid_list, member_metas):
         m = json.loads(raw_m) if raw_m else {}
         if old_name:
@@ -754,7 +770,7 @@ def list_cluster_members():
 
     # Enrich with metadata if requested
     results = []
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for mid in page:
         pipe.get(f"{mid}:meta")
     raw_metas = pipe.execute()
@@ -807,7 +823,7 @@ def get_cluster_functions():
         while True:
             cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
             if keys:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for k in keys:
                     pipe.get(k)
                 uuids = pipe.execute()
@@ -846,7 +862,7 @@ def get_cluster_functions():
     page = fids[offset : offset + limit]
 
     # Bulk fetch function metadata
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for fid in page:
         pipe.get(f"{fid}:meta")
     raw_metas = pipe.execute()

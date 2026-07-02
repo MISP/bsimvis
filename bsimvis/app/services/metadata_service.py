@@ -121,7 +121,7 @@ class MetadataService:
             r.set(file_meta_key, json.dumps(new_meta))
 
             # 4. Update file-level secondary indexes
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             file_config = INDEX_CONFIG.get("file", {})
             for field in changed_fields:
                 if field not in file_config:
@@ -158,12 +158,12 @@ class MetadataService:
                 chunk_size = 500
                 for i in range(0, len(func_ids), chunk_size):
                     chunk = func_ids[i : i + chunk_size]
-                    get_pipe = r.pipeline()
+                    get_pipe = r.pipeline(transaction=False)
                     for func_id in chunk:
                         get_pipe.get(f"{func_id}:meta")
                     meta_results = get_pipe.execute()
 
-                    write_pipe = r.pipeline()
+                    write_pipe = r.pipeline(transaction=False)
                     any_changes = False
 
                     for func_id, fmeta_raw in zip(chunk, meta_results):
@@ -259,7 +259,7 @@ class MetadataService:
                 if not members:
                     continue
 
-                c_meta_pipe = r.pipeline()
+                c_meta_pipe = r.pipeline(transaction=False)
                 for mid in members:
                     c_meta_pipe.get(f"{mid}:meta")
                 c_meta_results = c_meta_pipe.execute()
@@ -353,7 +353,7 @@ class MetadataService:
                 r.set(meta_key, json.dumps(new_cm))
 
                 if name_changed:
-                    prop_pipe = r.pipeline()
+                    prop_pipe = r.pipeline(transaction=False)
                     for mid in members:
                         if old_name:
                             _unindex_tag(

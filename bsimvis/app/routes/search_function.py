@@ -444,7 +444,7 @@ def search_functions():
         t_enrich_start = time.perf_counter()
 
         # Phase 1: Fetch Function Metadata & Cluster Scores (Bulk)
-        f_pipe = r.pipeline()
+        f_pipe = r.pipeline(transaction=False)
         for doc_id in doc_ids:
             f_pipe.get(f"{doc_id}:meta")
             if col.startswith("global:pool:"):
@@ -483,7 +483,7 @@ def search_functions():
         # Phase 2: Fetch File Metadata (DEDUPLICATED)
         file_meta_map = {}
         if unique_md5s:
-            file_pipe = r.pipeline()
+            file_pipe = r.pipeline(transaction=False)
             md5_list = list(unique_md5s)
             for md5 in md5_list:
                 file_pipe.get(f"{col}:file:{md5}:meta")
@@ -502,7 +502,7 @@ def search_functions():
         cluster_meta_map = {}
         algo = "unweighted_cosine"  # Default algo
         if unique_cluster_ids:
-            c_pipe = r.pipeline()
+            c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)
             for cid in c_list:
                 c_pipe.get(f"{col}:cluster:{algo}:{cid}:meta")

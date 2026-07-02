@@ -1,4 +1,6 @@
 import json
+import logging
+import time
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
@@ -99,6 +101,18 @@ def clear_bin_cluster():
 
 
 def _get_matching_ids(r, collection, level, field, val):
+    # ponytail: if collection is a pool (global:pool:{pool_id}), query the registries of all collections in the pool instead.
+    if collection.startswith("global:pool:"):
+        pool_id = collection.split(":")[2]
+        col_list = [
+            c.decode() if isinstance(c, bytes) else str(c)
+            for c in r.smembers(f"global:pool:{pool_id}:collections_list")
+        ]
+        matching_ids = set()
+        for col in col_list:
+            matching_ids.update(_get_matching_ids(r, col, level, field, val))
+        return matching_ids
+
     reg_key = f"{collection}:reg:{level}:{field}"
     matching_ids = set()
     val_lower = val.lower().strip()
@@ -117,8 +131,9 @@ def _get_matching_ids(r, collection, level, field, val):
         logging.warning(f"SSCAN failed for registry {reg_key}: {e}")
 
     if matching_buckets:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for bucket in matching_buckets:
+            # ponytail: registry already stores the full bucket_key
             pipe.smembers(bucket)
         results = pipe.execute()
         for res in results:
@@ -131,6 +146,7 @@ def _get_matching_ids(r, collection, level, field, val):
 
 def list_bin_clusters():
     """Lists discovered binary clusters with metadata, filtering, and sorting."""
+    t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
     algo = request.args.get("algo", "unweighted_cosine")
 
@@ -236,10 +252,14 @@ def list_bin_clusters():
     results = []
     total = 0
     if all_meta_keys:
-        pipe = r.pipeline()
+        t_fetch = time.perf_counter()
+        pipe = r.pipeline(transaction=False)
         for k in all_meta_keys:
             pipe.get(k)
         raw_metas = pipe.execute()
+        logging.info(
+            f"BIN_CLUSTERS | smembers+fetch {len(all_meta_keys)} metas: {time.perf_counter()-t_fetch:.3f}s"
+        )
 
         meta_map = {}
         for meta in raw_metas:
@@ -327,27 +347,32 @@ def list_bin_clusters():
             if not matched_fids:
                 valid_nodes = set()
             else:
-                filtered_valid_nodes = set()
-                pipe = r.pipeline()
-                valid_nodes_list = list(valid_nodes)
-                for cid in valid_nodes_list:
+                # ponytail: use the inverse index (file -> clusters) to avoid overfetching
+                c_pipe = r.pipeline(transaction=False)
+                matched_fids_list = list(matched_fids)
+                for fid in matched_fids_list:
+                    parts = fid.split(":")
+                    md5 = parts[-1]
                     if is_pool:
-                        pipe.smembers(
-                            f"global:pool:{pool_id}:bin_cluster:{cid}:members"
-                        )
+                        c_pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters")
                     else:
-                        pipe.smembers(f"{collection}:bin_cluster:{algo}:{cid}:members")
-                all_cluster_members = pipe.execute()
+                        c_pipe.smembers(f"{fid}:bin_clusters")
+                associated_clusters_raw = c_pipe.execute()
 
-                for cid, members_raw in zip(valid_nodes_list, all_cluster_members):
-                    if members_raw:
-                        members = {
-                            m.decode() if isinstance(m, bytes) else str(m)
-                            for m in members_raw
-                        }
-                        if members.intersection(matched_fids):
-                            filtered_valid_nodes.add(cid)
-                valid_nodes = filtered_valid_nodes
+                associated_clusters = set()
+                for cluster_res in associated_clusters_raw:
+                    if cluster_res:
+                        associated_clusters.update(
+                            c.decode() if isinstance(c, bytes) else str(c)
+                            for c in cluster_res
+                        )
+                # ponytail: pools store UUIDs in associated_clusters, while collections store raw labels. Check both.
+                valid_nodes = {
+                    cid
+                    for cid in valid_nodes
+                    if cid in associated_clusters
+                    or meta_map.get(cid, {}).get("cluster_uuid") in associated_clusters
+                }
 
         # Paginate matched nodes BEFORE expanding
         matched_results = []
@@ -438,7 +463,7 @@ def list_bin_clusters():
 
     # Fetch direct members for ONLY the clusters in the current page
     if show_members and page:
-        p_pipe = r.pipeline()
+        p_pipe = r.pipeline(transaction=False)
         for c in page:
             if is_pool:
                 cuuid = str(c["cluster_uuid"])
@@ -460,7 +485,7 @@ def list_bin_clusters():
         member_meta_map = {}
         if all_member_ids:
             all_member_ids_list = list(all_member_ids)
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for mid in all_member_ids_list:
                 m_pipe.get(f"{mid}:meta")
                 parts = mid.split(":")
@@ -508,6 +533,9 @@ def list_bin_clusters():
                 for mid in mids
             ]
 
+    logging.info(
+        f"BIN_CLUSTERS | total={total} | TOTAL: {time.perf_counter()-t_start:.3f}s"
+    )
     response_data = {
         "collection": collection,
         "algo": algo,
@@ -595,12 +623,12 @@ def update_bin_cluster_meta():
 
     # Fetch all members' metadata
     mid_list = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
-    m_pipe = r.pipeline()
+    m_pipe = r.pipeline(transaction=False)
     for mid_str in mid_list:
         m_pipe.get(f"{mid_str}:meta")
     member_metas = m_pipe.execute()
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for mid_str, raw_m in zip(mid_list, member_metas):
         m = json.loads(raw_m) if raw_m else {}
         if old_name:
@@ -645,7 +673,7 @@ def list_bin_cluster_members():
     page = members[offset : offset + limit]
 
     results = []
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for mid in page:
         # If it's a pool, the members are formatted as {coll}:{md5}
         if is_pool and ":" in mid:
@@ -706,7 +734,7 @@ def get_bin_cluster_files():
             while True:
                 cursor, keys = r.scan(cursor=cursor, match=pattern, count=1000)
                 if keys:
-                    pipe = r.pipeline()
+                    pipe = r.pipeline(transaction=False)
                     for k in keys:
                         pipe.get(k)
                     uuids = pipe.execute()
@@ -744,7 +772,7 @@ def get_bin_cluster_files():
     total = len(fids)
     page = fids[offset : offset + limit]
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for fid in page:
         pipe.get(f"{fid}:meta")
         parts = fid.split(":")

@@ -2,7 +2,7 @@ import uuid
 import time
 import json
 from enum import Enum
-from .redis_client import get_queue_redis
+from .redis_client import get_queue_redis, get_redis
 
 
 class JobStatus(Enum):
@@ -63,6 +63,18 @@ def safe_int(val, default=0):
 class JobService:
     def __init__(self):
         self.r = get_queue_redis()
+
+    def _get_pool_name(self, pool_id):
+        if not pool_id:
+            return None
+        try:
+            r_kv = get_redis()
+            name = r_kv.hget(f"global:pool:{pool_id}:meta", "name")
+            if name:
+                return name.decode("utf-8") if isinstance(name, bytes) else name
+        except Exception:
+            pass
+        return None
 
     def create_job(self, job_type, payload, parent_id=None, is_subtask=False):
         """Creates a job record and returns the job_id."""
@@ -298,8 +310,17 @@ class JobService:
         if not job:
             return
 
-        jtype = job.get("type")
+        jtype = job.get("jtype")
+        if isinstance(jtype, bytes):
+            jtype = jtype.decode()
+        if not jtype:
+            jtype = job.get("type")
+            if isinstance(jtype, bytes):
+                jtype = jtype.decode()
+
         status = job.get("status")
+        if isinstance(status, bytes):
+            status = status.decode()
 
         if status == JobStatus.CANCELLED.value:
             return
@@ -312,6 +333,8 @@ class JobService:
             if status in [JobStatus.COMPLETED.value, JobStatus.FAILED.value]:
                 parent_id = job.get("parent_id")
                 if parent_id:
+                    if isinstance(parent_id, bytes):
+                        parent_id = parent_id.decode()
                     self.advance_parent(parent_id, job_id)
             return
 
@@ -422,6 +445,21 @@ class JobService:
         # Decode JSON fields
         if "payload" in data:
             data["payload"] = json.loads(data["payload"])
+
+        # Extract pool name for top-level job
+        pool_name = None
+        coll = data.get("collection", "")
+        payload = data.get("payload")
+        pool_id = None
+        if payload and isinstance(payload, dict):
+            pool_id = payload.get("pool_id")
+        if not pool_id and coll and coll.startswith("pool:"):
+            pool_id = coll.split(":", 1)[1]
+        if pool_id:
+            pool_name = self._get_pool_name(pool_id)
+        if pool_name:
+            data["pool_name"] = pool_name
+
         if "task_ids" in data:
             tids = json.loads(data["task_ids"])
             data["task_ids"] = tids
@@ -430,6 +468,34 @@ class JobService:
             for tid in tids:
                 st = self.r.hgetall(f"job:{tid}")
                 if st:
+                    # Extract target and collection from payload
+                    target = ""
+                    coll = st.get("collection", "")
+                    payload_raw = st.get("payload", "")
+                    sub_pool_name = None
+                    if payload_raw:
+                        try:
+                            payload = json.loads(payload_raw)
+                            if not coll:
+                                coll = payload.get("collection", "")
+                                if not coll and "pool_id" in payload:
+                                    coll = f"pool:{payload['pool_id']}"
+
+                            sub_pool_id = payload.get("pool_id")
+                            if not sub_pool_id and coll and coll.startswith("pool:"):
+                                sub_pool_id = coll.split(":", 1)[1]
+                            if sub_pool_id:
+                                sub_pool_name = self._get_pool_name(sub_pool_id)
+
+                            target = (
+                                payload.get("md5")
+                                or payload.get("file_id")
+                                or payload.get("batch_uuid")
+                                or ""
+                            )
+                        except:
+                            pass
+
                     sub_tasks.append(
                         {
                             "id": tid,
@@ -440,6 +506,13 @@ class JobService:
                             "perf_python": float(st.get("perf_python", 0)),
                             "perf_db": float(st.get("perf_db", 0)),
                             "perf_lua": float(st.get("perf_lua", 0)),
+                            "created_at": safe_int(st.get("created_at", 0)),
+                            "updated_at": safe_int(st.get("updated_at", 0)),
+                            "started_at": safe_int(st.get("started_at", 0)),
+                            "collection": coll,
+                            "pool_name": sub_pool_name,
+                            "target": target,
+                            "payload": payload_raw,
                         }
                     )
             data["sub_tasks"] = sub_tasks
@@ -697,7 +770,7 @@ class JobService:
             sliced_job_ids = all_job_ids[offset : offset + limit]
 
         # Batch fetch all top-level job hashes using pipeline
-        pipe = self.r.pipeline()
+        pipe = self.r.pipeline(transaction=False)
         for jid in sliced_job_ids:
             pipe.hgetall(f"job:{jid}")
         raw_jobs = pipe.execute()
@@ -771,6 +844,7 @@ class JobService:
                     "target": target,
                     "created_at": safe_int(job.get("created_at", 0)),
                     "updated_at": safe_int(job.get("updated_at", 0)),
+                    "started_at": safe_int(job.get("started_at", 0)),
                     "parent_id": parent_id,
                     "task_ids": task_ids,
                     "payload": job.get("payload", ""),
@@ -790,7 +864,7 @@ class JobService:
         if pipeline_job_map:
             p_ids = list(pipeline_job_map.keys())
             t_ids = [pipeline_job_map[pid] for pid in p_ids]
-            pipe = self.r.pipeline()
+            pipe = self.r.pipeline(transaction=False)
             for tid in t_ids:
                 pipe.hgetall(f"job:{tid}")
             raw_first_tasks = pipe.execute()
@@ -864,6 +938,30 @@ class JobService:
         )
 
         for r in paginated_top_level:
+            # Try to resolve pool_name
+            pool_id = None
+            payload_raw = r.get("payload", "")
+            coll = r.get("collection", "")
+
+            if payload_raw:
+                try:
+                    payload = (
+                        json.loads(payload_raw)
+                        if isinstance(payload_raw, str)
+                        else payload_raw
+                    )
+                    if isinstance(payload, dict):
+                        pool_id = payload.get("pool_id")
+                except:
+                    pass
+            if not pool_id and coll and coll.startswith("pool:"):
+                pool_id = coll.split(":", 1)[1]
+
+            if pool_id:
+                r["pool_name"] = self._get_pool_name(pool_id)
+            else:
+                r["pool_name"] = None
+
             r.pop("payload", None)
 
         return paginated_top_level, total

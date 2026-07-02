@@ -10,7 +10,16 @@ def list_jobs():
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
     collection = request.args.get("collection")
-    pool = request.args.get("pool")
+    pool = request.args.get("pool") or request.args.get("pool_id")
+
+    # If request.args.collection was normalized to global:pool:{pool_id} by the hook, extract pool_id
+    if collection and collection.startswith("global:pool:"):
+        # e.g., global:pool:5d626a78-e3b6-434f-9855-450734820539
+        parts = collection.split(":")
+        if len(parts) >= 3 and parts[2]:
+            pool = parts[2]
+            collection = None
+
     status = request.args.get("status")
     jtype = request.args.get("type")
     jobs, total = job_service.list_jobs(

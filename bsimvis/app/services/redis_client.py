@@ -119,7 +119,8 @@ def get_redis():
     global _kv_pool
     if _kv_pool is None:
         _kv_pool = redis.ConnectionPool(**KV_CONFIG)
-    return TimedRedis(connection_pool=_kv_pool)
+    # ponytail: Bypass TimedRedis wrapper to remove performance timing overhead
+    return redis.Redis(connection_pool=_kv_pool)
 
 
 def get_raw_redis():
@@ -130,7 +131,8 @@ def get_raw_redis():
         raw_config = KV_CONFIG.copy()
         raw_config["decode_responses"] = False
         _kv_raw_pool = redis.ConnectionPool(**raw_config)
-    return TimedRedis(connection_pool=_kv_raw_pool)
+    # ponytail: Bypass TimedRedis wrapper to remove performance timing overhead
+    return redis.Redis(connection_pool=_kv_raw_pool)
 
 
 def get_queue_redis():
@@ -138,7 +140,8 @@ def get_queue_redis():
     global _redis_pool
     if _redis_pool is None:
         _redis_pool = redis.ConnectionPool(**REDIS_CONFIG)
-    return TimedRedis(connection_pool=_redis_pool)
+    # ponytail: Bypass TimedRedis wrapper to remove performance timing overhead
+    return redis.Redis(connection_pool=_redis_pool)
 
 
 def get_batch_meta(collection, batch_uuid):

@@ -361,6 +361,13 @@ class JobList(Resource):
                 "example": 20,
             },
             "offset": {"description": "Pagination offset", "default": 0, "example": 0},
+            "collection": {
+                "description": "Filter by collection name",
+                "required": False,
+            },
+            "pool": {"description": "Filter by pool UUID", "required": False},
+            "status": {"description": "Filter by job status", "required": False},
+            "type": {"description": "Filter by job type", "required": False},
         }
     )
     def get(self):
@@ -2138,8 +2145,10 @@ pool_func_sim_params_model = api.model(
         "algo": fields.String(default="unweighted_cosine"),
         "top_k": fields.Integer(default=1000),
         "min_score": fields.Float(default=0.3),
+        "min_features": fields.Integer(default=0),
     },
 )
+
 
 pool_func_cluster_params_model = api.model(
     "PoolFuncClusterParams",

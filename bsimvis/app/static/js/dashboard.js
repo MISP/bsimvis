@@ -310,8 +310,7 @@ const routes = {
         title: 'Background Jobs',
         api: '/api/jobs',
         headers: [
-            { label: 'ID', width: '15%' },
-            { label: 'Type', width: '12%' },
+            { label: 'Task / ID', width: '27%' },
             { label: 'Collection', width: '10%' },
             { label: 'Target', width: '12%' },
             { label: 'Status', width: '10%' },
@@ -557,8 +556,16 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                             <i class="fa-solid fa-globe"></i> All Jobs
                         </button>
                     </div>
-                    <div style="font-size: 0.8rem; color: var(--dim);">
-                        ${isContextFiltered ? `Viewing jobs for <b>${pool ? 'Pool: ' + pool : 'Collection: ' + collection}</b>` : 'Viewing all jobs in all collections'}
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span style="font-size: 0.8rem; color: var(--dim);">
+                            ${isContextFiltered ? `Viewing jobs for <b>${pool ? 'Pool: ' + pool : 'Collection: ' + collection}</b>` : 'Viewing all jobs in all collections'}
+                        </span>
+                        <button class="top-action-btn" onclick="window.expandAllPipelines()" title="Expand all pipelines" style="font-size: 0.75rem; padding: 3px 8px;">
+                            <i class="fa-solid fa-expand"></i> Expand All
+                        </button>
+                        <button class="top-action-btn" onclick="window.collapseAllPipelines()" title="Collapse all pipelines" style="font-size: 0.75rem; padding: 3px 8px;">
+                            <i class="fa-solid fa-compress"></i> Collapse All
+                        </button>
                     </div>
                 </div>
             `;
@@ -648,9 +655,11 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
                 params.delete('pool');
             }
         }
+        params.delete('pool_id');
     } else {
         params.delete('collection');
         params.delete('pool');
+        params.delete('pool_id');
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
@@ -1280,9 +1289,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
                 const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
                 headHtml += `<tr class="filter-row">
-                    <th></th><th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
+                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
                     <th></th>
-                    <th></th><th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
+                    <th></th>
+                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
                     <th></th><th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -4053,6 +4063,7 @@ async function renderPoolCreationForm() {
     const funcAlgo = similarity.algo || 'unweighted_cosine';
     const funcTopK = similarity.top_k !== undefined ? similarity.top_k : 1000;
     const funcMinScore = similarity.min_score !== undefined ? similarity.min_score : 0.1;
+    const funcMinFeatures = similarity.min_features !== undefined ? similarity.min_features : 0;
     const funcClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
     const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
     const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
@@ -4144,7 +4155,7 @@ async function renderPoolCreationForm() {
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
                                             </div>
-                                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
                                                     <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
@@ -4152,6 +4163,10 @@ async function renderPoolCreationForm() {
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
                                                     <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label>
+                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4312,6 +4327,7 @@ async function submitCreatePool(btn) {
     const funcAlgo = document.getElementById('pool-func-algo')?.value ?? 'unweighted_cosine';
     const funcTopK = parseInt(document.getElementById('pool-func-topk')?.value || '1000');
     const funcMinScore = parseFloat(document.getElementById('pool-func-minscore')?.value || '0.1');
+    const funcMinFeatures = parseInt(document.getElementById('pool-func-minfeatures')?.value || '0');
     const funcClusterMinSize = parseInt(document.getElementById('pool-cluster-min-size')?.value || '2');
     const funcClusterMinSamples = parseInt(document.getElementById('pool-cluster-min-samples')?.value || '1');
     const funcClusterEpsilon = parseFloat(document.getElementById('pool-cluster-epsilon')?.value || '0.1');
@@ -4359,7 +4375,8 @@ async function submitCreatePool(btn) {
                     func_sim_params: {
                         algo: funcAlgo,
                         top_k: funcTopK,
-                        min_score: funcMinScore
+                        min_score: funcMinScore,
+                        min_features: funcMinFeatures
                     },
                     func_cluster_params: {
                         min_cluster_size: funcClusterMinSize,

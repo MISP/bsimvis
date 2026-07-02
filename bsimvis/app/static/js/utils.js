@@ -367,8 +367,7 @@ function getRoutingState() {
     if (restful.hash && !params.has('hash_val')) params.set('hash_val', restful.hash);
     if (restful.id1 && !params.has('id1')) params.set('id1', restful.id1);
     if (restful.id2 && !params.has('id2')) params.set('id2', restful.id2);
-    if (restful.coll_b && !params.has('coll_b')) params.set('coll_b', restful.coll_b);
-    if (restful.pool && !params.has('pool_id')) params.set('pool_id', restful.pool);
+    if (restful.pool && !params.has('pool')) params.set('pool', restful.pool);
 
     return { viewKey, collection, pool, params, ...restful };
 }

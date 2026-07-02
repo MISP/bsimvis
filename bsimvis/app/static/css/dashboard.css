@@ -1587,51 +1587,42 @@ body.sidebar-collapsed .sidebar-nav #nav-history-chevron {
     background: rgba(255, 255, 255, 0.03) !important;
 }
 
-.pipeline-row {
-    background: rgba(4, 217, 255, 0.03) !important;
+tr.pipeline-row td:first-child {
     border-left: 3px solid var(--accent);
 }
 
-.child-row {
-    background: transparent !important;
+tr.child-row td:first-child {
+    border-left: 2px solid rgba(102, 217, 239, 0.15);
 }
 
-.job-id-cell {
+.job-tree-cell {
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
-    width: 100%;
-}
-
-.job-indent {
-    width: 20px;
-    height: 20px;
-    border-left: 2px solid var(--border);
-    border-bottom: 2px solid var(--border);
-    margin-top: -10px;
-    margin-left: 10px;
-    border-bottom-left-radius: 4px;
-}
-
-.job-id-text {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--subtle);
-    background: rgba(255, 255, 255, 0.05);
-    padding: 2px 6px;
-    border-radius: 4px;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
-    display: inline-block;
 }
 
-.job-type-cell {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+.job-tree-guide {
+    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    white-space: pre;
+    display: inline-block;
+    vertical-align: middle;
+    line-height: 1;
+    font-size: 0.85rem;
+    color: var(--accent);
+    opacity: 0.45;
+    font-weight: bold;
+    letter-spacing: -0.5px;
+    user-select: none;
+    margin-right: 6px;
+}
+
+.collapse-chevron {
+    cursor: pointer;
+    transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.collapse-chevron:hover {
+    color: #fff !important;
 }
 
 .pipeline-label {
@@ -1648,33 +1639,87 @@ body.sidebar-collapsed .sidebar-nav #nav-history-chevron {
     font-weight: 600;
     color: var(--text);
     font-size: 0.8rem;
-}
-
-.job-collection {
-    font-size: 0.65rem;
-    color: var(--subtle);
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
 }
 
-.job-status-badge {
-    padding: 4px 10px;
-    border-radius: 20px;
+.pipeline-hidden-badge {
     font-size: 0.65rem;
-    font-weight: 800;
+    background: rgba(102, 217, 239, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(102, 217, 239, 0.25);
+    border-radius: 10px;
+    padding: 1px 7px;
+    margin-left: 6px;
+    font-weight: bold;
+    letter-spacing: 0.3px;
+}
+
+.job-id-text {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--subtle);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 8px;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.job-collection-cell {
+    font-size: 0.75rem;
+    color: var(--accent);
+    background: rgba(102, 217, 239, 0.06);
+    padding: 3px 8px;
+    border-radius: 4px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    letter-spacing: 0.5px;
+    border: 1px solid rgba(102, 217, 239, 0.15);
 }
 
-.status-completed { background: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.2); }
-.status-running { background: rgba(234, 179, 8, 0.1); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.2); }
-.status-failed { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
-.status-cancelled { background: rgba(107, 114, 128, 0.1); color: #9ca3af; border: 1px solid rgba(107, 114, 128, 0.2); }
-.status-pending { background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
+.job-collection-cell a {
+    color: var(--accent);
+    text-decoration: none;
+}
 
+.job-collection-cell a:hover {
+    text-decoration: underline;
+}
+
+.job-target-text {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--subtle);
+    background: rgba(255,255,255,0.03);
+    padding: 2px 5px;
+    border-radius: 3px;
+}
+
+/* Monokai status colors */
+.job-status-badge {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.65rem;
+    font-weight: bold;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+.status-completed { background: rgba(166, 226, 46, 0.1); color: #a6e22e; border: 1px solid rgba(166, 226, 46, 0.2); }
+.status-running { background: rgba(253, 151, 31, 0.1); color: #fd971f; border: 1px solid rgba(253, 151, 31, 0.2); }
+.status-failed { background: rgba(249, 38, 114, 0.1); color: #f92672; border: 1px solid rgba(249, 38, 114, 0.2); }
+.status-cancelled { background: rgba(117, 113, 94, 0.1); color: #75715e; border: 1px solid rgba(117, 113, 94, 0.2); }
+.status-pending { background: rgba(102, 217, 239, 0.1); color: #66d9ef; border: 1px solid rgba(102, 217, 239, 0.2); }
+
+/* Progress bar container and animation */
 .job-progress-container {
     display: flex;
     align-items: center;
@@ -1692,14 +1737,21 @@ body.sidebar-collapsed .sidebar-nav #nav-history-chevron {
 
 .job-progress-fill {
     height: 100%;
-    background: var(--accent);
     transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.progress-running {
+.job-progress-fill.progress-running {
     background: linear-gradient(90deg, var(--accent), #fff, var(--accent));
     background-size: 200% 100%;
     animation: progress-glow 2s linear infinite;
+}
+
+.job-progress-fill.progress-completed {
+    background: #a6e22e;
+}
+
+.job-progress-fill.progress-failed {
+    background: #f92672;
 }
 
 @keyframes progress-glow {
@@ -1747,14 +1799,88 @@ body.sidebar-collapsed .sidebar-nav #nav-history-chevron {
 }
 
 .job-btn-action.danger:hover {
-    background: #ef4444;
-    border-color: #ef4444;
+    background: #f92672;
+    border-color: #f92672;
 }
 
 .job-btn-action.info:hover {
-    background: #3b82f6;
-    border-color: #3b82f6;
+    background: var(--accent);
+    border-color: var(--accent);
 }
+
+/* Depth-based row background tinting */
+tr.child-depth-1 td { background: rgba(255,255,255,0.015) !important; }
+tr.child-depth-2 td { background: rgba(255,255,255,0.03) !important; }
+tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
+
+/* Job Target Link */
+.job-target-link {
+    color: var(--accent) !important;
+    text-decoration: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.job-target-link:hover {
+    text-decoration: underline !important;
+}
+.job-target-link code {
+    color: var(--accent) !important;
+    cursor: pointer;
+}
+
+/* Modal overlay & styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(4px);
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.modal-content {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+}
+.modal-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.modal-header h3 { margin: 0; color: var(--accent); }
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+.modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+}
+.close-btn {
+    background: none;
+    border: none;
+    color: var(--dim);
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+.close-btn:hover { color: var(--text); }
 
 /* Side Panel System */
 .side-panel {

@@ -296,6 +296,7 @@ window.PoolDetailView = {
                         ${this._configRow('Algorithm', fs.algo)}
                         ${this._configRow('Top K', fs.top_k)}
                         ${this._configRow('Min Score', fs.min_score)}
+                        ${this._configRow('Min Features', fs.min_features)}
                         ${this._configRow('Min Cluster Size', fc.min_cluster_size)}
                         ${this._configRow('Min Samples', fc.min_samples)}
                         ${this._configRow('Epsilon', fc.epsilon)}

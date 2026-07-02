@@ -113,7 +113,13 @@ class Worker:
         self.job_service.add_log(
             job_id, f"Worker {self.name} started processing {jtype}."
         )
-        self.r_queue.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+        self.r_queue.hset(
+            f"job:{job_id}",
+            mapping={
+                "status": JobStatus.RUNNING.value,
+                "started_at": str(int(time.time() * 1000)),
+            },
+        )
 
         # Execute Job within a timer context
         with job_timer(job_id) as timer:
@@ -496,6 +502,20 @@ class Worker:
 
         elif jtype == JobType.INDEX_FUNCTIONS.value:
             functions_list = payload.get("functions_list")
+            chunk_id = payload.get("chunk_id")
+            if chunk_id:
+                # ponytail: retrieve from Kvrocks & delete right away
+                raw_funcs = self.r_data.get(chunk_id)
+                if raw_funcs:
+                    functions_list = json.loads(raw_funcs)
+                    self.r_data.delete(chunk_id)
+                else:
+                    # ponytail: Duplicate run or missing data, finish gracefully
+                    self.job_service.add_log(
+                        job_id, "Chunk data empty or already processed. Skipping."
+                    )
+                    return True
+
             file_meta = payload.get("file_meta")
             file_md5 = payload.get("file_md5")
             batch_uuid = payload.get("batch_uuid")
@@ -559,7 +579,8 @@ class Worker:
             min_features = payload.get(
                 "min_features", config_service.get("similarity.min_features", 0)
             )
-            index_depth = payload.get("index_depth", "full")
+            # ponytail: Default to 'minimal' index depth to save indexing writes during build_sim
+            index_depth = payload.get("index_depth", "minimal")
 
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing

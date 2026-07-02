@@ -205,23 +205,28 @@ class SimilarityService:
         r = self.r
         built_set_key = f"{collection}:built:functions:{algo}"
 
-        # Phase 1: Bulk fetch built status and feature vectors
-        pipe = r.pipeline()
+        # ponytail: Check built status first to avoid fetching large vector objects for already built functions
+        pipe = r.pipeline(transaction=False)
         for fid in chunk:
             pipe.sismember(built_set_key, fid)
-            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        built_statuses = pipe.execute()
 
-        results = pipe.execute()
+        # Phase 1: Only fetch feature vectors for functions not yet built
+        targets_needing_vectors = [
+            fid for fid, is_built in zip(chunk, built_statuses) if not is_built
+        ]
+
+        if not targets_needing_vectors:
+            return
+
+        pipe = r.pipeline(transaction=False)
+        for fid in targets_needing_vectors:
+            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        vectors = pipe.execute()
 
         # Phase 2: Filter and prepare Lua bursts
         targets_to_build = []
-        for idx, fid in enumerate(chunk):
-            is_built = results[idx * 2]
-            features = results[idx * 2 + 1]
-
-            if is_built:
-                continue
-
+        for fid, features in zip(targets_needing_vectors, vectors):
             if not features or len(features) < min_features:
                 # Shortcut: Too few features = Mark as built immediately
                 r.sadd(built_set_key, fid)
@@ -235,7 +240,7 @@ class SimilarityService:
         # Pre-populate LSH buckets if algorithm is minhash_lsh
         if algo == "minhash_lsh":
             num_bands = 30
-            lsh_pipe = r.pipeline()
+            lsh_pipe = r.pipeline(transaction=False)
             for fid, features in targets_to_build:
                 buckets = self._compute_lsh_buckets(features, num_bands=num_bands)
                 for band, b_hash in buckets:
@@ -308,7 +313,7 @@ class SimilarityService:
 
         discovery_results = []
         if prepared_targets:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid, md5, addr, target_feat_total, lua_args in prepared_targets:
                 if algo == "minhash_lsh":
                     self._minhash_lsh_script(args=lua_args, client=pipe)
@@ -373,7 +378,7 @@ class SimilarityService:
         index_type = "SPARSE_INVERTED_INDEX"
 
         # Phase 1: Bulk fetch built status and feature vectors from Kvrocks
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for fid in chunk:
             pipe.sismember(built_set_key, fid)
             pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
@@ -472,7 +477,6 @@ class SimilarityService:
     ):
         """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
-        persist_pipe = r.pipeline()
         now = int(time.time() * 1000)
 
         def extract_md5(fid):
@@ -489,7 +493,91 @@ class SimilarityService:
                 return parts[0]
             return "unknown"
 
-        # 1. Canonical Persistence
+        # Pre-fetch metadata if indexing is enabled
+        needs_func_meta = False
+        needs_file_meta = False
+        target_coll = f"global:pool:{pool_id}" if pool_id else collection
+
+        if index_depth != "none":
+            propagated = get_propagated_fields("sim")
+            if index_depth == "minimal":
+                needs_func_meta = False
+                needs_file_meta = False
+            else:
+                needs_func_meta = len(propagated.get("func", [])) > 0
+                needs_file_meta = (
+                    len([f for f, t in propagated.get("file", []) if f != "file_md5"])
+                    > 0
+                )
+
+            if not hasattr(self, "_func_meta_cache"):
+                self._func_meta_cache = {}
+            if not hasattr(self, "_file_meta_cache"):
+                self._file_meta_cache = {}
+
+            if needs_func_meta or needs_file_meta:
+                func_ids_needed = set()
+                file_ids_needed = set()
+
+                for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+                    if t_total < min_features:
+                        continue
+                    if fid not in self._func_meta_cache:
+                        func_ids_needed.add(fid)
+                    if needs_file_meta:
+                        t_md5_key = f"{extract_coll(fid)}:file:{t_md5}"
+                        if t_md5_key not in self._file_meta_cache:
+                            file_ids_needed.add(t_md5_key)
+
+                    for item in candidates:
+                        if item["c_total"] < min_features:
+                            continue
+                        if item["id"] not in self._func_meta_cache:
+                            func_ids_needed.add(item["id"])
+                        if needs_file_meta:
+                            md5 = (
+                                item["id"].split(":")[2]
+                                if ":" in item["id"]
+                                else "unknown"
+                            )
+                            file_key = f"{extract_coll(item['id'])}:file:{md5}"
+                            if file_key not in self._file_meta_cache:
+                                file_ids_needed.add(file_key)
+
+                if func_ids_needed:
+                    func_ids_list = list(func_ids_needed)
+                    raw_func_metas = r.json().mget(
+                        [f"{fid}:meta" for fid in func_ids_list], "$"
+                    )
+                    for fid, raw in zip(func_ids_list, raw_func_metas):
+                        if raw:
+                            m = raw[0] if isinstance(raw, list) else raw
+                            if isinstance(m, str):
+                                m = json.loads(m)
+                            self._func_meta_cache[fid] = m
+                        else:
+                            self._func_meta_cache[fid] = None
+
+                if file_ids_needed:
+                    file_ids_list = list(file_ids_needed)
+                    raw_file_metas = r.json().mget(
+                        [f"{fid}:meta" for fid in file_ids_list], "$"
+                    )
+                    for fid, raw in zip(file_ids_list, raw_file_metas):
+                        if raw:
+                            m = raw[0] if isinstance(raw, list) else raw
+                            if isinstance(m, str):
+                                m = json.loads(m)
+                            self._file_meta_cache[fid] = m
+                        else:
+                            self._file_meta_cache[fid] = None
+
+        # Execute persistence and indexing in chunked batches
+        # ponytail: batch size set to 2000 to balance serialization latency and worker contention
+        batch_size = 500
+        persist_pipe = r.pipeline(transaction=False)
+        sim_count = 0
+
         for fid, t_md5, t_addr, t_total, candidates in discovery_results:
             # Skip if target function has too few features
             if t_total < min_features:
@@ -584,132 +672,35 @@ class SimilarityService:
                     f"{cross_binary_prefix}{sim_doc['is_cross_binary']}", {sid: 0}
                 )
 
-        persist_pipe.execute()
+                # 2. Metadata Propagation (Search Index)
+                if index_depth != "none":
+                    sim_doc_for_idx = {
+                        "md5_1": md5_a,
+                        "md5_2": md5_b,
+                        "tags": [],
+                        "user_tags": [],
+                    }
 
-        # 2. Metadata Propagation (Search Index)
-        if index_depth == "none":
-            return
-
-        propagated = get_propagated_fields("sim")
-        # Optimization: use pool_id for coll param in save_similarity if provided
-        target_coll = f"global:pool:{pool_id}" if pool_id else collection
-
-        if index_depth == "minimal":
-            needs_func_meta = False
-            needs_file_meta = False
-        else:
-            needs_func_meta = len(propagated.get("func", [])) > 0
-            needs_file_meta = (
-                len([f for f, t in propagated.get("file", []) if f != "file_md5"]) > 0
-            )
-
-        if not hasattr(self, "_func_meta_cache"):
-            self._func_meta_cache = {}
-        if not hasattr(self, "_file_meta_cache"):
-            self._file_meta_cache = {}
-
-        if needs_func_meta or needs_file_meta:
-            func_ids_needed = set()
-            file_ids_needed = set()
-
-            for fid, t_md5, t_addr, t_total, candidates in discovery_results:
-                if fid not in self._func_meta_cache:
-                    func_ids_needed.add(fid)
-                if needs_file_meta:
-                    md5 = fid.split(":")[2] if ":" in fid else "unknown"
-                    file_key = f"{extract_coll(fid)}:file:{md5}"
-                    if file_key not in self._file_meta_cache:
-                        file_ids_needed.add(file_key)
-
-                for item in candidates:
-                    if item["id"] not in self._func_meta_cache:
-                        func_ids_needed.add(item["id"])
-                    if needs_file_meta:
-                        md5 = (
-                            item["id"].split(":")[2] if ":" in item["id"] else "unknown"
-                        )
-                        file_key = f"{extract_coll(item['id'])}:file:{md5}"
-                        if file_key not in self._file_meta_cache:
-                            file_ids_needed.add(file_key)
-
-            if func_ids_needed:
-                func_ids_list = list(func_ids_needed)
-                raw_func_metas = r.json().mget(
-                    [f"{fid}:meta" for fid in func_ids_list], "$"
-                )
-                for fid, raw in zip(func_ids_list, raw_func_metas):
-                    if raw:
-                        m = raw[0] if isinstance(raw, list) else raw
-                        if isinstance(m, str):
-                            m = json.loads(m)
-                        self._func_meta_cache[fid] = m
-                    else:
-                        self._func_meta_cache[fid] = None
-
-            if file_ids_needed:
-                file_ids_list = list(file_ids_needed)
-                raw_file_metas = r.json().mget(
-                    [f"{fid}:meta" for fid in file_ids_list], "$"
-                )
-                for fid, raw in zip(file_ids_list, raw_file_metas):
-                    if raw:
-                        m = raw[0] if isinstance(raw, list) else raw
-                        if isinstance(m, str):
-                            m = json.loads(m)
-                        self._file_meta_cache[fid] = m
-                    else:
-                        self._file_meta_cache[fid] = None
-
-        idx_pipe = r.pipeline()
-        for fid, t_md5, t_addr, t_total, candidates in discovery_results:
-            for item in candidates:
-                if fid > item["id"]:
-                    id_a, id_b = fid, item["id"]
-                    md5_a, md5_b = t_md5, extract_md5(item["id"])
-                    coll_a, coll_b = extract_coll(fid), extract_coll(item["id"])
-                else:
-                    id_a, id_b = item["id"], fid
-                    md5_a, md5_b = extract_md5(item["id"]), t_md5
-                    coll_a, coll_b = extract_coll(item["id"]), extract_coll(fid)
-
-                if pool_id:
-                    sid = f"global:pool:{pool_id}:sim:{id_a}::{id_b}"
-                else:
-                    func_prefix = f"{collection}:func:"
-                    clean_id_a = (
-                        id_a[len(func_prefix) :]
-                        if id_a.startswith(func_prefix)
-                        else id_a
+                    save_similarity(
+                        persist_pipe,
+                        target_coll,
+                        sid,
+                        sim_doc_for_idx,
+                        func_meta1=self._func_meta_cache.get(id_a),
+                        func_meta2=self._func_meta_cache.get(id_b),
+                        file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
+                        file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
+                        index_depth=index_depth,
                     )
-                    clean_id_b = (
-                        id_b[len(func_prefix) :]
-                        if id_b.startswith(func_prefix)
-                        else id_b
-                    )
-                    sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
 
-                # We pass a minimal sim_doc to save_similarity because it only needs md5s and tags
-                # Native sim tags are handled by save_similarity internally
-                sim_doc_for_idx = {
-                    "md5_1": md5_a,
-                    "md5_2": md5_b,
-                    "tags": [],
-                    "user_tags": [],
-                }
+                sim_count += 1
+                if sim_count >= batch_size:
+                    persist_pipe.execute()
+                    persist_pipe = r.pipeline(transaction=False)
+                    sim_count = 0
 
-                save_similarity(
-                    idx_pipe,
-                    target_coll,
-                    sid,
-                    sim_doc_for_idx,
-                    func_meta1=self._func_meta_cache.get(id_a),
-                    func_meta2=self._func_meta_cache.get(id_b),
-                    file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
-                    file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
-                    index_depth=index_depth,
-                )
-
-        idx_pipe.execute()
+        if sim_count > 0:
+            persist_pipe.execute()
 
     def build_function(
         self,
@@ -1183,7 +1174,7 @@ class SimilarityService:
             )
 
         start_time = time.time()
-        chunk_size = 5
+        chunk_size = 100
         for i in range(0, total, chunk_size):
             chunk = all_function_ids[i : i + chunk_size]
 
@@ -1198,14 +1189,19 @@ class SimilarityService:
                     f"Building pool: {done}/{total} functions ({speed:.1f} fn/s)",
                 )
 
+            # Bulk fetch feature vectors for the chunk
+            vec_pipe = r.pipeline(transaction=False)
+            for fid in chunk:
+                vec_pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+            chunk_features = vec_pipe.execute()
+
             # Use a pipeline to batch any LSH setup writes for this chunk
-            lsh_pipe = r.pipeline()
+            lsh_pipe = r.pipeline(transaction=False)
             has_lsh_writes = False
             targets_with_lua = []
 
-            for fid in chunk:
-                vec_key = f"{fid}:vec:tf"
-                features_raw = r.zrange(vec_key, 0, -1, withscores=True)
+            for idx, fid in enumerate(chunk):
+                features_raw = chunk_features[idx]
                 if not features_raw:
                     continue
 
@@ -1288,7 +1284,7 @@ class SimilarityService:
                 continue
 
             # Pipeline all EVAL calls across all functions × collections → 1 RTT
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid, _, lua_args in targets_with_lua:
                 if algo == "minhash_lsh":
                     self._minhash_lsh_script(args=lua_args, client=pipe)
@@ -1439,7 +1435,7 @@ class SimilarityService:
                 )
 
             # Use a pipeline to batch any LSH setup writes for this chunk
-            lsh_pipe = r.pipeline()
+            lsh_pipe = r.pipeline(transaction=False)
             has_lsh_writes = False
             targets_with_lua = []
 
@@ -1528,7 +1524,7 @@ class SimilarityService:
                 continue
 
             # Pipeline all EVAL calls across all functions × collections → 1 RTT
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid, _, lua_args in targets_with_lua:
                 if algo == "minhash_lsh":
                     self._minhash_lsh_script(args=lua_args, client=pipe)
@@ -1637,7 +1633,7 @@ class SimilarityService:
         fid_to_cids = defaultdict(set)
         cluster_meta = {}
         if cluster_labels:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for label in cluster_labels:
                 pipe.smembers(f"global:pool:{pool_id}:cluster:{algo}:{label}:members")
                 pipe.get(f"global:pool:{pool_id}:cluster:{algo}:{label}:meta")
@@ -1723,7 +1719,7 @@ class SimilarityService:
 
         # Pre-fetch file metadata
         file_meta_cache = {}
-        pipe_meta = r.pipeline()
+        pipe_meta = r.pipeline(transaction=False)
         for coll, md5 in binaries:
             pipe_meta.get(f"{coll}:file:{md5}:meta")
         meta_results = pipe_meta.execute()
@@ -1752,7 +1748,7 @@ class SimilarityService:
                     f"[*] Loading metadata for {len(all_unique_fids)} functions...",
                 )
             fids_list = list(all_unique_fids)
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid in fids_list:
                 pipe.get(f"{fid}:meta")
             meta_results = pipe.execute()
@@ -1777,7 +1773,7 @@ class SimilarityService:
                     pairs.append((b2, b1))
 
         # 4. Process Pairs (Greedy Sweep)
-        persist_pipe = r.pipeline()
+        persist_pipe = r.pipeline(transaction=False)
         now = int(time.time() * 1000)
 
         for b1, b2 in pairs:
@@ -2286,7 +2282,7 @@ class SimilarityService:
                         self._file_meta_cache[fid] = None
 
             # 4. Write indexes
-            idx_pipe = r.pipeline()
+            idx_pipe = r.pipeline(transaction=False)
             for sid, doc in valid_docs:
                 id_a, id_b = doc.get("id1"), doc.get("id2")
                 md5_a, md5_b = doc.get("md5_1"), doc.get("md5_2")

@@ -13,7 +13,15 @@ def run_job(host, port, args):
     API_BASE = f"http://{host}:{port}/api"
 
     if args.action == "list":
-        list_jobs(args.limit)
+        list_jobs(
+            args.limit,
+            getattr(args, "tree", False),
+            getattr(args, "depth", 2),
+            getattr(args, "follow", False),
+            getattr(args, "parent", None),
+            getattr(args, "collection", None),
+            getattr(args, "pool", None),
+        )
     elif args.action == "status":
         job_status(args.job_id, args.watch, args.logs)
     elif args.action == "cancel":
@@ -129,33 +137,281 @@ def job_perf(job_id, top_n=10):
         print(f"Error fetching performance stats: {e}", file=sys.stderr)
 
 
-def list_jobs(limit):
-    """Fetch and display a list of jobs from the API.
+# ANSI helpers
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+_BOLD = "\033[1m"
+_GREEN = "\033[32m"
+_YELLOW = "\033[33m"
+_RED = "\033[31m"
+_CYAN = "\033[36m"
+_BLUE = "\033[34m"
 
-    The API returns a JSON object with an 'items' list and a 'total' count.
-    This function now correctly extracts the list and prints a formatted table.
-    """
+_STATUS_COLOR = {
+    "completed": _GREEN,
+    "running": _YELLOW,
+    "failed": _RED,
+    "cancelled": _RED,
+    "pending": _DIM,
+}
+
+_TYPE_COLOR = {
+    "pipeline": _CYAN,
+    "group": _BLUE,
+}
+
+
+def _fmt_status(status):
+    color = _STATUS_COLOR.get(status, "")
+    return f"{color}{status.upper():<10}{_RESET}"
+
+
+def _fmt_type(jtype):
+    color = _TYPE_COLOR.get(jtype, "")
+    return f"{color}{_BOLD}{jtype.upper():<12}{_RESET}"
+
+
+def _fmt_date(ts_ms):
     try:
-        resp = requests.get(f"{API_BASE}/jobs", params={"limit": limit})
+        val = float(ts_ms)
+    except (ValueError, TypeError):
+        return "-"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(val / 1000)) if val else "-"
+
+
+def _fmt_duration(created_ms, updated_ms, status, started_ms=0):
+    try:
+        start = float(started_ms) if started_ms else float(created_ms)
+    except (ValueError, TypeError):
+        return ""
+    if not start:
+        return ""
+    try:
+        end = (
+            float(updated_ms)
+            if updated_ms and status in ("completed", "failed", "cancelled")
+            else time.time() * 1000
+        )
+    except (ValueError, TypeError):
+        end = time.time() * 1000
+
+    secs = int(max(0.0, (end - start)) // 1000)
+    if secs < 60:
+        return f"{secs}s"
+    m, s = divmod(secs, 60)
+    if m < 60:
+        return f"{m}m{s:02d}s"
+    h, m = divmod(m, 60)
+    return f"{h}m{m:02d}s"
+
+
+def _trunc(s, n):
+    if not s:
+        return ""
+    s = str(s)
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _fetch_and_render(limit, tree, max_depth, parent, collection, pool):
+    import io, contextlib
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _render_jobs(limit, tree, max_depth, parent, collection, pool)
+    return buf.getvalue()
+
+
+def _render_jobs(limit, tree, max_depth, parent=None, collection=None, pool=None):
+    # --parent: fetch sub-tasks of the given parent directly
+    if parent:
+        r = requests.get(f"{API_BASE}/jobs/{parent}")
+        r.raise_for_status()
+        detail = r.json()
+        jobs = detail.get("sub_tasks", [])
+        total = len(jobs)
+    else:
+        params = {"limit": limit}
+        if collection:
+            params["collection"] = collection
+        if pool:
+            params["pool"] = pool
+        resp = requests.get(f"{API_BASE}/jobs", params=params)
         resp.raise_for_status()
         data = resp.json()
-        # Expected structure: {"items": [...], "total": N}
         jobs = data.get("items", [])
         total = data.get("total")
 
-        print(
-            f"{'ID':<30} | {'TYPE':<15} | {'STATUS':<10} | {'PROGRESS':<8} | {'CREATED'}"
-        )
-        print("-" * 85)
+    if not tree:
+        H = f"{_BOLD}{'ID':<28} {'TYPE':<16} {'STATUS':<11} {'PROG':>5}  {'DUR':>7}  {'COLLECTION':<18} {'TARGET':<18} CREATED{_RESET}"
+        print(H)
+        print("-" * 120)
         for j in jobs:
-            created = time.strftime(
-                "%Y-%m-%d %H:%M", time.localtime(j["created_at"] / 1000)
+            col = _trunc(j.get("collection") or "-", 18)
+            tgt = _trunc(j.get("target") or "-", 18)
+            dur = _fmt_duration(
+                j.get("created_at", 0),
+                j.get("updated_at", 0),
+                j.get("status", ""),
+                j.get("started_at", 0),
             )
+            crtd = _fmt_date(j.get("created_at", 0))
             print(
-                f"{j['id']:<30} | {j['type']:<15} | {j['status']:<10} | {j['progress']:<7}% | {created}"
+                f"{j['id']:<28} {_fmt_type(j.get('type','job'))} {_fmt_status(j.get('status','pending'))} {j.get('progress',0):>4}%  {dur:>7}  {col:<18} {tgt:<18} {crtd}"
             )
         if total is not None:
-            print(f"\nTotal jobs reported by server: {total}")
+            print(f"\n{_DIM}Total: {total}{_RESET}")
+        return
+
+    # Tree mode: build full hierarchy map by resolving missing parent chains.
+    # If a filter (like collection) is active, the top-level pipeline might not be in the initial jobs list.
+    # We resolve parents upwards to find the true roots, ensuring we render the full context tree.
+    all_jobs_map = {j["id"]: j for j in jobs}
+    resolved_parents = {}
+
+    def _resolve_parent_chain(job_item):
+        pid = job_item.get("parent_id")
+        if not pid:
+            return job_item["id"]  # This is a true root
+
+        # Check if already in our pool
+        if pid in all_jobs_map:
+            return _resolve_parent_chain(all_jobs_map[pid])
+        if pid in resolved_parents:
+            return _resolve_parent_chain(resolved_parents[pid])
+
+        # Fetch parent from API
+        try:
+            r = requests.get(f"{API_BASE}/jobs/{pid}")
+            if r.ok:
+                parent_job = r.json()
+                # Parse basic keys
+                parent_job["id"] = pid
+                resolved_parents[pid] = parent_job
+                return _resolve_parent_chain(parent_job)
+        except Exception:
+            pass
+
+        return job_item[
+            "id"
+        ]  # Fallback: treat this item as root if parent cannot be resolved
+
+    # Trace root for each job
+    roots = set()
+    for j in jobs:
+        root_id = _resolve_parent_chain(j)
+        roots.add(root_id)
+
+    # Combine initial jobs and resolved parents
+    merged_jobs = {**all_jobs_map, **resolved_parents}
+
+    # Now recursively populate children map for all pipelines/groups from the resolved roots down
+    children_map = {}
+
+    def _fetch_children(job_id, depth):
+        if job_id in children_map:
+            return
+        if max_depth and depth >= max_depth:
+            return
+        try:
+            # If we already have the job status locally (with sub_tasks), use it. Otherwise API fetch.
+            job_obj = merged_jobs.get(job_id)
+            if job_obj and "sub_tasks" in job_obj:
+                kids = job_obj["sub_tasks"]
+            else:
+                r = requests.get(f"{API_BASE}/jobs/{job_id}")
+                kids = r.json().get("sub_tasks", []) if r.ok else []
+
+            children_map[job_id] = kids
+            for kid in kids:
+                # Merge kids back into merged_jobs if missing (so we can get their metadata)
+                if kid["id"] not in merged_jobs:
+                    merged_jobs[kid["id"]] = kid
+                if kid.get("type") in ("pipeline", "group"):
+                    _fetch_children(kid["id"], depth + 1)
+        except Exception:
+            pass
+
+    for r_id in roots:
+        _fetch_children(r_id, 0)
+
+    top_level = [merged_jobs[rid] for rid in roots if rid in merged_jobs]
+    top_level.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+
+    print(
+        f"{_BOLD}{'TYPE':<12} {'ID':<30} {'STATUS':<10} {'PROG':>5}  {'DUR':>7}  {'COLLECTION':<16} {'TARGET':<16} CREATED{_RESET}"
+    )
+    print("─" * 115)
+
+    def render_node(j, prefix="", is_last=True, depth=0):
+        connector = "└─ " if is_last else "├─ "
+        line_prefix = prefix + ("   " if is_last else "│  ")
+        jtype = j.get("type", "job")
+        status = j.get("status", "pending")
+        progress = j.get("progress", 0)
+        jid = j.get("id", "-")
+        dur = _fmt_duration(
+            j.get("created_at", 0),
+            j.get("updated_at", 0),
+            status,
+            j.get("started_at", 0),
+        )
+        col = _trunc(j.get("collection") or "-", 16)
+        tgt = _trunc(j.get("target") or "-", 16)
+        crtd = _fmt_date(j.get("created_at", 0))
+
+        if depth == 0:
+            row = (
+                f"{_fmt_type(jtype)} {jid:<30} {_fmt_status(status)} {progress:>4}%"
+                f"  {dur:>7}  {col:<16} {tgt:<16} {crtd}"
+            )
+        else:
+            row = (
+                f"{prefix}{connector}{_fmt_type(jtype)} {jid:<30}"
+                f" {_fmt_status(status)} {progress:>4}%  {dur:>7}  {col:<16} {tgt:<16}"
+            )
+        print(row)
+
+        kids = children_map.get(jid, [])
+        if max_depth and depth >= max_depth and kids:
+            print(
+                f"{line_prefix}└─ {_DIM}[{len(kids)} sub-tasks — use -d {max_depth + 1} to expand]{_RESET}"
+            )
+            return
+        for i, kid in enumerate(kids):
+            render_node(kid, line_prefix, is_last=(i == len(kids) - 1), depth=depth + 1)
+
+    for i, j in enumerate(top_level):
+        render_node(j, "", is_last=(i == len(top_level) - 1), depth=0)
+        if j.get("type") in ("pipeline", "group"):
+            print()
+
+    if total is not None:
+        print(f"{_DIM}Total: {total}{_RESET}")
+
+
+def list_jobs(
+    limit,
+    tree=False,
+    max_depth=2,
+    follow=False,
+    parent=None,
+    collection=None,
+    pool=None,
+):
+    try:
+        if not follow:
+            _render_jobs(limit, tree, max_depth, parent, collection, pool)
+            return
+        print(f"{_DIM}Following job list (Ctrl+C to stop)...{_RESET}")
+        while True:
+            output = _fetch_and_render(limit, tree, max_depth, parent, collection, pool)
+            print("\033[H\033[J", end="")  # clear screen
+            ts = time.strftime("%H:%M:%S")
+            print(f"{_DIM}Last updated: {ts} — Ctrl+C to stop{_RESET}\n")
+            print(output, end="")
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print(f"\n{_DIM}Stopped.{_RESET}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
 

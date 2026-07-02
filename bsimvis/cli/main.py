@@ -348,6 +348,24 @@ def main():
 
     j_list = job_actions.add_parser("list", help="List recent jobs")
     j_list.add_argument("--limit", type=int, default=20)
+    j_list.add_argument(
+        "-t", "--tree", action="store_true", help="Show hierarchy as a tree"
+    )
+    j_list.add_argument(
+        "-d",
+        "--depth",
+        type=int,
+        default=2,
+        help="Max depth in tree mode (0 = unlimited, default: 2)",
+    )
+    j_list.add_argument(
+        "--follow", action="store_true", help="Keep refreshing the output every 2s"
+    )
+    j_list.add_argument(
+        "-p", "--parent", help="Filter: show children of this job/pipeline ID"
+    )
+    j_list.add_argument("-c", "--collection", help="Filter: jobs for this collection")
+    j_list.add_argument("--pool", help="Filter: jobs for this pool")
 
     j_status = job_actions.add_parser("status", help="Get job status & logs")
     j_status.add_argument(

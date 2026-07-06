@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -51,6 +52,42 @@ class GhidraService:
                     self._launcher.add_vmargs(arg)
             self._launcher.start()
         return self._launcher
+
+    def _function_id_hash(self, func, program):
+        """Deterministic per-function hash for exact-matching small functions.
+
+        Primary: Ghidra FunctionID full-hash (masks relocatable operands, so it
+        is stable across binaries). Fallback: sha1 of the mnemonic+operand-type
+        sequence when FID declines — it refuses functions below its shingle
+        floor, which are exactly the tiniest ones we still want to match.
+        Returns None only if the function has no instructions.
+        """
+        try:
+            from ghidra.feature.fid.service import FidService
+
+            quad = FidService().hashFunction(func)
+            if quad is not None:
+                return format(quad.getFullHash() & 0xFFFFFFFFFFFFFFFF, "016x")
+        except Exception:
+            pass
+
+        # ponytail: fallback keys on mnemonic + operand *types* only, not operand
+        # values — loose for pathological tiny funcs. Tighten with operand-value
+        # masking if false 100% matches show up.
+        try:
+            listing = program.getListing()
+            parts = []
+            for instr in listing.getInstructions(func.getBody(), True):
+                ops = ",".join(
+                    str(instr.getOperandType(i))
+                    for i in range(instr.getNumOperands())
+                )
+                parts.append(f"{instr.getMnemonicString()}|{ops}")
+            if not parts:
+                return None
+            return "f" + hashlib.sha1("\n".join(parts).encode()).hexdigest()[:15]
+        except Exception:
+            return None
 
     def get_token_type(self, clazz):
         if clazz == "ClangVariableToken":
@@ -599,6 +636,7 @@ class GhidraService:
                         "namespace": namespace,
                         "parameters": parameters,
                         "entrypoint_address": entry_str,
+                        "function_id_hash": self._function_id_hash(func, program),
                         "bsim_features_count": len(bsim_raw),
                         "bsim_unique_features_count": len(bsim_tf),
                         "callees": callees_list,

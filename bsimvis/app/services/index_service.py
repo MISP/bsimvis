@@ -141,8 +141,12 @@ FEATURE_NUM_FIELDS = get_native_fields("feature", is_num=True)
 # ---------------------------------------------------------------------------
 
 
-def _index_tag(pipe, coll, level, field, value, doc_id):
-    """Add doc_id to the tag set for field=value in a standardized registry/bucket structure."""
+def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
+    """Add doc_id to the tag set for field=value in a standardized registry/bucket structure.
+
+    seen: optional set to dedupe the registry sadd across many calls in one build
+    (the registry maps field->bucket and is identical for every doc sharing a value).
+    """
     if value is None:
         return
     # Handle list values (e.g. tags) and deduplicate them
@@ -163,7 +167,11 @@ def _index_tag(pipe, coll, level, field, value, doc_id):
         pipe.sadd(bucket_key, doc_id)
         # Standardized Registry: {coll}:reg:{level}:{field} (points to many buckets)
         registry_key = f"{coll}:reg:{level}:{field}"
-        pipe.sadd(registry_key, bucket_key)
+        if seen is None:
+            pipe.sadd(registry_key, bucket_key)
+        elif (registry_key, bucket_key) not in seen:
+            pipe.sadd(registry_key, bucket_key)
+            seen.add((registry_key, bucket_key))
 
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
@@ -268,9 +276,11 @@ def save_similarity(
     file_meta1=None,
     file_meta2=None,
     index_depth="full",
+    seen=None,
 ):
     """Write sim-level secondary indexes for all propagated fields.
     Pulls data from the sim doc itself, function meta, or file meta based on field source.
+    seen: optional set to dedupe registry writes across a build (see _index_tag).
     """
     propagated = get_propagated_fields("sim")
 
@@ -278,7 +288,7 @@ def save_similarity(
     for orig_field, target_field in propagated["sim"]:
         value = sim_doc.get(orig_field)
         if value is not None:
-            _index_tag(pipe, coll, "sim", target_field, value, sid)
+            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
     if index_depth == "minimal":
         # Only index file_md5 from file level
@@ -286,7 +296,7 @@ def save_similarity(
             if orig_field == "file_md5":
                 value = [v for v in [sim_doc.get("md5_1"), sim_doc.get("md5_2")] if v]
                 if value:
-                    _index_tag(pipe, coll, "sim", target_field, value, sid)
+                    _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
         return
 
     # 2. Propagated Func Fields (source: func)
@@ -301,7 +311,7 @@ def save_similarity(
                     else:
                         value.append(v)
         if value:
-            _index_tag(pipe, coll, "sim", target_field, value, sid)
+            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
     # 3. Propagated File Fields (source: file)
     for orig_field, target_field in propagated["file"]:
@@ -319,7 +329,7 @@ def save_similarity(
                         else:
                             value.append(v)
         if value:
-            _index_tag(pipe, coll, "sim", target_field, value, sid)
+            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
 
 def delete_similarity(

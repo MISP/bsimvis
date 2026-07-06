@@ -54,27 +54,25 @@ class FeatureService:
             pipe.set(f"{func_id}:vec:norm", math.sqrt(sum_sq))
 
             # B. Build Reverse Index (ZSETs)
-            tf_dict = {h: float(score) for h, score in new_tf_data}
+            tf_dict = {
+                h.decode() if isinstance(h, bytes) else str(h): float(score)
+                for h, score in new_tf_data
+            }
 
+            for f_hash, new_tf in tf_dict.items():
+                indexed_features.add(f_hash)
+                # Update function mapping for this feature
+                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
+                # Update global TF counter for this feature
+                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
+
+            # Store feature metadata as a JSON string in a HASH keyed by function_id
             for feat_item in raw_meta:
                 f_hash = feat_item.get("hash")
                 if not f_hash:
                     continue
-
-                indexed_features.add(f_hash)
-                new_tf = tf_dict.get(f_hash, 0)
-
-                # Update function mapping for this feature
-                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
-
-                # Update global TF counter for this feature
-                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
-
-                # Store feature metadata as a JSON string in a HASH keyed by function_id
-                # This allows the API to pick any function's context for a feature.
                 meta_entry = dict(feat_item)
                 meta_entry["function_id"] = func_id
-
                 # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
                 pipe.hset(
                     f"{collection}:feature:{f_hash}:meta",

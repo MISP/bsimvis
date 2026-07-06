@@ -234,6 +234,14 @@ class ProcessingService:
             pipe.set(f"{base_func_key}:meta", json.dumps(func_meta))
             pipe.set(f"{base_func_key}:source", json.dumps(func_source))
 
+            # ponytail: exact-match bucket for small functions (below min_features
+            # BSim gives false positives, so we match them by FunctionID hash instead).
+            # {fid}:funcid pointer lets the sim builder read a func's hash without parsing meta.
+            fid_hash = func_meta.get("function_id_hash")
+            if fid_hash:
+                pipe.sadd(f"{collection}:funcid:{fid_hash}", base_func_key)
+                pipe.set(f"{base_func_key}:funcid", fid_hash)
+
             vec_meta = func_features.get("bsim_features_meta", [])
             pipe.set(f"{base_func_key}:vec:meta", json.dumps(vec_meta))
 

@@ -177,7 +177,10 @@ function renderBinarySimilarityView(params) {
     if (md5a && md5b) {
         // pool_id is encoded as a query param in the diff URL
         const urlParams = new URLSearchParams(window.location.search);
-        const poolId = params.get('pool_id') || urlParams.get('pool_id') || null;
+        let poolId = params.get('pool_id') || urlParams.get('pool_id') || null;
+        if (!poolId && window.getRoutingState) {
+            poolId = window.getRoutingState().pool || null;
+        }
         fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId);
     }
 }

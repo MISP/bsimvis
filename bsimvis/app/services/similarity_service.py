@@ -97,16 +97,24 @@ class SimilarityService:
         start_time = time.time()
         chunk_size = 100
         total_sims = 0
+        last_t, last_done, last_sims = start_time, 0, 0
 
         for i in range(0, total, chunk_size):
             chunk = function_ids[i : i + chunk_size]
 
             # 1. Update Progress & Metrics
             if job_service and job_id:
-                elapsed = time.time() - start_time
+                now = time.time()
+                elapsed = now - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
                 sim_speed = total_sims / elapsed if elapsed > 0 else 0
+                # Instantaneous speed over the last chunk (isolates real slowdowns
+                # from the cumulative average, which lags after one slow chunk)
+                d_t = now - last_t
+                cur_speed = (done - last_done) / d_t if d_t > 0 else 0
+                cur_sim_speed = (total_sims - last_sims) / d_t if d_t > 0 else 0
+                last_t, last_done, last_sims = now, done, total_sims
                 remaining = total - done
                 eta = remaining / speed if speed > 0 else 0
 
@@ -114,7 +122,7 @@ class SimilarityService:
                 job_service.update_progress(
                     job_id,
                     pct,
-                    f"Building similarities: {i}/{total} ({speed:.1f} fn/s, {sim_speed:.1f} sim/s, ETA: {int(eta)}s)",
+                    f"Building similarities: {i}/{total} ({speed:.1f} fn/s, {sim_speed:.1f} sim/s, cur {cur_speed:.1f} fn/s, {cur_sim_speed:.1f} sim/s, ETA: {int(eta)}s)",
                 )
 
                 # Store metrics in job hash for global visibility
@@ -1379,6 +1387,7 @@ class SimilarityService:
         start_time = time.time()
         chunk_size = 100
         total_sims = 0
+        last_t, last_done, last_sims = start_time, 0, 0
         pool_small_fids = (
             []
         )  # below min_features -> exact FunctionID-hash match instead
@@ -1387,14 +1396,19 @@ class SimilarityService:
 
             # Update Progress
             if job_service and job_id:
-                elapsed = time.time() - start_time
+                now = time.time()
+                elapsed = now - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
                 sim_speed = total_sims / elapsed if elapsed > 0 else 0
+                d_t = now - last_t
+                cur_speed = (done - last_done) / d_t if d_t > 0 else 0
+                cur_sim_speed = (total_sims - last_sims) / d_t if d_t > 0 else 0
+                last_t, last_done, last_sims = now, done, total_sims
                 job_service.update_progress(
                     job_id,
                     int(done / total * 100),
-                    f"Building pool: {done}/{total} functions ({speed:.1f} fn/s, {sim_speed:.1f} sim/s)",
+                    f"Building pool: {done}/{total} functions ({speed:.1f} fn/s, {sim_speed:.1f} sim/s, cur {cur_speed:.1f} fn/s, {cur_sim_speed:.1f} sim/s)",
                 )
 
             # Bulk fetch feature vectors for the chunk
@@ -1665,6 +1679,7 @@ class SimilarityService:
         start_time = time.time()
         chunk_size = 5
         total_sims = 0
+        last_t, last_done, last_sims = start_time, 0, 0
         pool_small_fids = (
             []
         )  # below min_features -> exact FunctionID-hash match instead
@@ -1673,14 +1688,19 @@ class SimilarityService:
 
             # Update Progress
             if job_service and job_id:
-                elapsed = time.time() - start_time
+                now = time.time()
+                elapsed = now - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
                 sim_speed = total_sims / elapsed if elapsed > 0 else 0
+                d_t = now - last_t
+                cur_speed = (done - last_done) / d_t if d_t > 0 else 0
+                cur_sim_speed = (total_sims - last_sims) / d_t if d_t > 0 else 0
+                last_t, last_done, last_sims = now, done, total_sims
                 job_service.update_progress(
                     job_id,
                     int(done / total * 100),
-                    f"Building file {file_md5} pool sim: {done}/{total} functions ({speed:.1f} fn/s, {sim_speed:.1f} sim/s)",
+                    f"Building file {file_md5} pool sim: {done}/{total} functions ({speed:.1f} fn/s, {sim_speed:.1f} sim/s, cur {cur_speed:.1f} fn/s, {cur_sim_speed:.1f} sim/s)",
                 )
 
             # Use a pipeline to batch any LSH setup writes for this chunk
@@ -2483,6 +2503,7 @@ class SimilarityService:
 
         batch_size = 200
         start_time = time.time()
+        last_t, last_done = start_time, 0
 
         for i in range(0, total, batch_size):
             batch_ids = similarity_ids[i : i + batch_size]
@@ -2583,14 +2604,18 @@ class SimilarityService:
 
             # 5. Progress updates
             if job_service and job_id:
-                elapsed = time.time() - start_time
+                now = time.time()
+                elapsed = now - start_time
                 done = min(i + batch_size, total)
                 speed = done / elapsed if elapsed > 0 else 0
+                d_t = now - last_t
+                cur_speed = (done - last_done) / d_t if d_t > 0 else 0
+                last_t, last_done = now, done
                 pct = int(done / total * 100)
                 job_service.update_progress(
                     job_id,
                     pct,
-                    f"Indexing similarities: {done}/{total} ({speed:.1f} sim/s)",
+                    f"Indexing similarities: {done}/{total} ({speed:.1f} sim/s, cur {cur_speed:.1f} sim/s)",
                 )
 
         if job_service and job_id:

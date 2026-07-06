@@ -1379,7 +1379,9 @@ class SimilarityService:
         start_time = time.time()
         chunk_size = 100
         total_sims = 0
-        pool_small_fids = []  # below min_features -> exact FunctionID-hash match instead
+        pool_small_fids = (
+            []
+        )  # below min_features -> exact FunctionID-hash match instead
         for i in range(0, total, chunk_size):
             chunk = all_function_ids[i : i + chunk_size]
 
@@ -1663,7 +1665,9 @@ class SimilarityService:
         start_time = time.time()
         chunk_size = 5
         total_sims = 0
-        pool_small_fids = []  # below min_features -> exact FunctionID-hash match instead
+        pool_small_fids = (
+            []
+        )  # below min_features -> exact FunctionID-hash match instead
         for i in range(0, total, chunk_size):
             chunk = all_function_ids[i : i + chunk_size]
 
@@ -1985,7 +1989,8 @@ class SimilarityService:
 
         def pick_cluster(full_a, full_b):
             """Best function cluster for a matched pair (mirrors bin_sim_service):
-            prefer a cluster both share, else any either belongs to; tightest cohesion wins."""
+            prefer a cluster both share, else any either belongs to; tightest cohesion wins.
+            """
             la = fid_to_cids.get(full_a, set())
             lb = fid_to_cids.get(full_b, set())
             shared = la & lb
@@ -2152,17 +2157,21 @@ class SimilarityService:
                     best_cluster = pick_cluster(full_a, full_b)
                     diff_matched.append(
                         {
-                            "cluster_id": best_cluster.get("cluster_id", "")
-                            if best_cluster
-                            else "",
-                            "cluster_uuid": best_cluster.get("cluster_uuid", "")
-                            if best_cluster
-                            else "",
-                            "cluster_name": best_cluster.get(
-                                "cluster_name", "Matched Functions"
-                            )
-                            if best_cluster
-                            else "Matched Functions",
+                            "cluster_id": (
+                                best_cluster.get("cluster_id", "")
+                                if best_cluster
+                                else ""
+                            ),
+                            "cluster_uuid": (
+                                best_cluster.get("cluster_uuid", "")
+                                if best_cluster
+                                else ""
+                            ),
+                            "cluster_name": (
+                                best_cluster.get("cluster_name", "Matched Functions")
+                                if best_cluster
+                                else "Matched Functions"
+                            ),
                             "cohesion": score,
                             "sim_rarity": 1.0,
                             "collection_rarity": 1.0,
@@ -2199,14 +2208,36 @@ class SimilarityService:
                 if f_features <= 0:
                     f_features = 1.0
 
+                full_fid = (
+                    fid if fid.startswith(f"{coll_a}:func:") else f"{coll_a}:func:{fid}"
+                )
+                best_cluster = None
+                if full_fid in fid_to_cids:
+                    best = None
+                    best_coh = -1.0
+                    for cid in fid_to_cids[full_fid]:
+                        meta = cluster_meta.get(cid)
+                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
+                            best_coh = float(meta.get("cohesion_score", 0.0))
+                            best = meta
+                    best_cluster = best
+
                 unique_to_a.append(
                     {
                         "func_id": fid,
                         "funcs": [fid],
-                        "is_clustered": False,
-                        "cluster_id": "",
-                        "cluster_uuid": "",
-                        "cluster_name": "Unclustered",
+                        "is_clustered": best_cluster is not None,
+                        "cluster_id": (
+                            best_cluster.get("cluster_id", "") if best_cluster else ""
+                        ),
+                        "cluster_uuid": (
+                            best_cluster.get("cluster_uuid", "") if best_cluster else ""
+                        ),
+                        "cluster_name": (
+                            best_cluster.get("cluster_name", "Unclustered")
+                            if best_cluster
+                            else "Unclustered"
+                        ),
                         "cohesion": 0.0,
                         "sim_rarity": 1.0,
                         "collection_rarity": 1.0,
@@ -2225,14 +2256,36 @@ class SimilarityService:
                 if f_features <= 0:
                     f_features = 1.0
 
+                full_fid = (
+                    fid if fid.startswith(f"{coll_b}:func:") else f"{coll_b}:func:{fid}"
+                )
+                best_cluster = None
+                if full_fid in fid_to_cids:
+                    best = None
+                    best_coh = -1.0
+                    for cid in fid_to_cids[full_fid]:
+                        meta = cluster_meta.get(cid)
+                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
+                            best_coh = float(meta.get("cohesion_score", 0.0))
+                            best = meta
+                    best_cluster = best
+
                 unique_to_b.append(
                     {
                         "func_id": fid,
                         "funcs": [fid],
-                        "is_clustered": False,
-                        "cluster_id": "",
-                        "cluster_uuid": "",
-                        "cluster_name": "Unclustered",
+                        "is_clustered": best_cluster is not None,
+                        "cluster_id": (
+                            best_cluster.get("cluster_id", "") if best_cluster else ""
+                        ),
+                        "cluster_uuid": (
+                            best_cluster.get("cluster_uuid", "") if best_cluster else ""
+                        ),
+                        "cluster_name": (
+                            best_cluster.get("cluster_name", "Unclustered")
+                            if best_cluster
+                            else "Unclustered"
+                        ),
                         "cohesion": 0.0,
                         "sim_rarity": 1.0,
                         "collection_rarity": 1.0,

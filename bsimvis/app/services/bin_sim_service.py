@@ -257,7 +257,8 @@ class BinSimService:
 
         def pick_cluster_label(fid_a, fid_b):
             """Best function cluster label for a matched pair: prefer a cluster both
-            share, else any cluster either belongs to; tie-break on tightest cohesion."""
+            share, else any cluster either belongs to; tie-break on tightest cohesion.
+            """
             la = fid_clusters.get(fid_a, set())
             lb = fid_clusters.get(fid_b, set())
             shared = la & lb
@@ -448,17 +449,21 @@ class BinSimService:
                     rarity = get_col_rarity(best_label)
                     diff_matched.append(
                         {
-                            "cluster_id": best_cluster.get("cluster_id", "")
-                            if best_cluster
-                            else "",
-                            "cluster_uuid": best_cluster.get("cluster_uuid", "")
-                            if best_cluster
-                            else "",
-                            "cluster_name": best_cluster.get(
-                                "cluster_name", "Matched Functions"
-                            )
-                            if best_cluster
-                            else "Matched Functions",
+                            "cluster_id": (
+                                best_cluster.get("cluster_id", "")
+                                if best_cluster
+                                else ""
+                            ),
+                            "cluster_uuid": (
+                                best_cluster.get("cluster_uuid", "")
+                                if best_cluster
+                                else ""
+                            ),
+                            "cluster_name": (
+                                best_cluster.get("cluster_name", "Matched Functions")
+                                if best_cluster
+                                else "Matched Functions"
+                            ),
                             "cohesion": score,
                             "sim_rarity": rarity,
                             "collection_rarity": rarity,
@@ -494,15 +499,26 @@ class BinSimService:
                 if f_features <= 0:
                     f_features = 1.0
 
-                rarity = get_col_rarity(_pick_label(fid_clusters.get(fid, set())))
+                cids = fid_clusters.get(fid, set())
+                best_label = _pick_label(cids)
+                best_cluster = cluster_meta.get(best_label) if best_label else None
+                rarity = get_col_rarity(best_label)
                 unique_to_a.append(
                     {
                         "func_id": fid,
                         "funcs": [fid],
-                        "is_clustered": False,
-                        "cluster_id": "",
-                        "cluster_uuid": "",
-                        "cluster_name": "Unclustered",
+                        "is_clustered": best_cluster is not None,
+                        "cluster_id": (
+                            best_cluster.get("cluster_id", "") if best_cluster else ""
+                        ),
+                        "cluster_uuid": (
+                            best_cluster.get("cluster_uuid", "") if best_cluster else ""
+                        ),
+                        "cluster_name": (
+                            best_cluster.get("cluster_name", "Unclustered")
+                            if best_cluster
+                            else "Unclustered"
+                        ),
                         "cohesion": 0.0,
                         "sim_rarity": rarity,
                         "collection_rarity": rarity,
@@ -521,15 +537,26 @@ class BinSimService:
                 if f_features <= 0:
                     f_features = 1.0
 
-                rarity = get_col_rarity(_pick_label(fid_clusters.get(fid, set())))
+                cids = fid_clusters.get(fid, set())
+                best_label = _pick_label(cids)
+                best_cluster = cluster_meta.get(best_label) if best_label else None
+                rarity = get_col_rarity(best_label)
                 unique_to_b.append(
                     {
                         "func_id": fid,
                         "funcs": [fid],
-                        "is_clustered": False,
-                        "cluster_id": "",
-                        "cluster_uuid": "",
-                        "cluster_name": "Unclustered",
+                        "is_clustered": best_cluster is not None,
+                        "cluster_id": (
+                            best_cluster.get("cluster_id", "") if best_cluster else ""
+                        ),
+                        "cluster_uuid": (
+                            best_cluster.get("cluster_uuid", "") if best_cluster else ""
+                        ),
+                        "cluster_name": (
+                            best_cluster.get("cluster_name", "Unclustered")
+                            if best_cluster
+                            else "Unclustered"
+                        ),
                         "cohesion": 0.0,
                         "sim_rarity": rarity,
                         "collection_rarity": rarity,

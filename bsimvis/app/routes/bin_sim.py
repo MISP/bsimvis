@@ -3,6 +3,7 @@ from flask import request
 from flask_restx import abort
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_service import normalize_tags
 import json
 
 job_service = JobService()
@@ -235,10 +236,18 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
                     except ValueError:
                         pass
                 if isinstance(meta, dict):
+                    normalize_tags(meta)
                     funcs_metadata[fid] = {
                         "name": meta.get("function_name"),
                         "return_type": meta.get("return_type"),
                         "parameters": meta.get("parameters"),
+                        "namespace": meta.get("namespace"),
+                        "entrypoint_address": meta.get("entrypoint_address")
+                        or fid.split(":")[-1],
+                        "tags": meta.get("tags", []),
+                        "user_tags": meta.get("user_tags", []),
+                        "note_owners": meta.get("note_owners", []),
+                        "note_count": meta.get("note_count", 0),
                         "bsim_features_count": int(
                             meta.get("bsim_features_count") or 0
                         ),
@@ -251,6 +260,12 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
                 "name": f"sub_{addr}",
                 "return_type": "void",
                 "parameters": [],
+                "namespace": "",
+                "entrypoint_address": addr,
+                "tags": [],
+                "user_tags": [],
+                "note_owners": [],
+                "note_count": 0,
                 "bsim_features_count": 0,
             }
         diff_data["functions_metadata"] = funcs_metadata

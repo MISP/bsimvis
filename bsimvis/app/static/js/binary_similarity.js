@@ -940,7 +940,9 @@ function setBinSimSort(table, col) {
 function binSimFilterChange(shouldApply = false) {
     const prefixes = ['matched', 'ua', 'ub'];
     prefixes.forEach(prefix => {
-        const suffixes = prefix === 'matched' ? ['feat', 'ca', 'cb', 'coh', 'rar'] : ['feat', 'c', 'coh'];
+        const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
+        if (qEl) window[`bsim-flt-${prefix}-q-val`] = qEl.value;
+        const suffixes = prefix === 'matched' ? ['feat', 'ca', 'cb', 'coh', 'rar'] : ['feat', 'rar'];
         suffixes.forEach(suffix => {
             const minEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-min`);
             const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
@@ -954,8 +956,24 @@ function binSimFilterChange(shouldApply = false) {
     }
 }
 
+const funcSearchHaystack = (fid) => {
+    const meta = (binSimDataCache && binSimDataCache.functions_metadata)
+        ? (binSimDataCache.functions_metadata[fid] || {}) : {};
+    const addr = meta.entrypoint_address || fid.split(':').pop();
+    return [meta.name, meta.namespace, addr, ...(meta.tags || []), ...(meta.user_tags || [])]
+        .filter(Boolean).join(' ').toLowerCase();
+};
+
 const applyFilters = (items, prefix) => {
+    const q = (document.getElementById(`bsim-flt-${prefix}-q`)?.value || '').trim().toLowerCase();
     return items.filter(item => {
+        if (q) {
+            const fids = item.funcs_a
+                ? [...(item.funcs_a || []), ...(item.funcs_b || [])]
+                : (item.funcs || (item.func_id ? [item.func_id] : []));
+            const hay = fids.map(funcSearchHaystack).join(' ');
+            if (!hay.includes(q)) return false;
+        }
         const count = item.count_a !== undefined ? Math.max(item.count_a, item.count_b) : item.funcs.length;
         const caMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-ca-min`)?.value || document.getElementById(`bsim-flt-${prefix}-c-min`)?.value);
         const caMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-ca-max`)?.value || document.getElementById(`bsim-flt-${prefix}-c-max`)?.value);
@@ -1018,36 +1036,52 @@ function renderBinSimTables(isFilterChange = false) {
         });
     }
 
-    const renderFuncBadge = (fid) => {
+    // Build a full function object from the enriched functions_metadata so the diff
+    // tables can reuse the same rich renderers (colored signature, tags, notes, diff
+    // buttons) as the function-search view.
+    const buildFuncObj = (fid) => {
         const parts = fid.split(':');
         const entry = parts.pop();
         const md5 = parts.pop();
-        const type = parts.pop();
+        parts.pop(); // type segment (func/function/idx marker)
         const col = parts.join(':');
-        
-        const meta = (binSimDataCache && binSimDataCache.functions_metadata) ? binSimDataCache.functions_metadata[fid] : null;
-        const name = meta && meta.name ? meta.name : ('sub_' + entry);
-        const retType = meta && meta.return_type ? meta.return_type : 'void';
-        const params = meta && meta.parameters ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]).join(', ') : '';
-        const titleStr = `${retType} ${name}(${params})`;
-        
-        const cleanName = name.replace(/'/g, "\\'");
-        
-        const fData = {
+
+        const meta = (binSimDataCache && binSimDataCache.functions_metadata)
+            ? binSimDataCache.functions_metadata[fid] : null;
+        const params = meta && meta.parameters
+            ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
+        return {
             function_id: fid,
-            function_name: name,
+            function_name: (meta && meta.name) ? meta.name : ('sub_' + entry),
+            return_type: (meta && meta.return_type) ? meta.return_type : 'void',
+            parameters: params,
+            namespace: (meta && meta.namespace) ? meta.namespace : '',
+            entrypoint_address: (meta && meta.entrypoint_address) ? meta.entrypoint_address : entry,
+            bsim_features_count: (meta && meta.bsim_features_count) ? meta.bsim_features_count : 0,
             file_md5: md5,
-            entrypoint_address: entry,
-            collection: col
+            collection: col,
+            tags: (meta && meta.tags) || [],
+            user_tags: (meta && meta.user_tags) || [],
+            note_owners: (meta && meta.note_owners) || [],
+            note_count: (meta && meta.note_count) || 0,
         };
-        
-        return `<span class="badge clickable" title="${titleStr}" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); margin:2px;" 
-            data-entity-data='${JSON.stringify(fData).replace(/'/g, "&apos;")}'
-            onmouseenter="showCodePreview('${fid}', '${cleanName}', '${cleanName}', '${md5}', 0, event)" 
-            onmouseleave="hideCodePreview(event)" 
-            onmousemove="moveCodePreview(event)"
-            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)"
-            onclick="showFunctionCodeById('${fid}', '${cleanName}', '', event)">${name}</span>`;
+    };
+
+    const renderFuncBadge = (fid) => {
+        const f = buildFuncObj(fid);
+        const sig = (typeof EntityRenderer !== 'undefined')
+            ? EntityRenderer.renderFunction(f, { isTable: true })
+            : (f.function_name || fid);
+        const tagsHtml = (typeof EntityRenderer !== 'undefined')
+            ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags) : '';
+        return `
+            <div class="bsim-func-cell" style="display:flex; flex-direction:column; gap:2px; min-width:0; text-align:left; width:100%;">
+                ${sig}
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <span class="mono dim" style="font-size:0.65rem;">@ ${f.entrypoint_address}</span>
+                    ${tagsHtml}
+                </div>
+            </div>`;
     };
 
 
@@ -1066,7 +1100,15 @@ function renderBinSimTables(isFilterChange = false) {
             <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
         </div>`;
 
+    // Free-text search over function name / namespace / address / tags for a table.
+    const searchHtml = (prefix) => `
+        <div onclick="event.stopPropagation()">
+            <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
+        </div>`;
+
     const restoreFilters = (prefix, suffixes) => {
+        const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
+        if (qEl && window[`bsim-flt-${prefix}-q-val`]) qEl.value = window[`bsim-flt-${prefix}-q-val`];
         suffixes.forEach(suffix => {
             const minEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-min`);
             const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
@@ -1089,7 +1131,7 @@ function renderBinSimTables(isFilterChange = false) {
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Sim Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
-                    <th></th>
+                    <th>${searchHtml('matched')}</th>
                     <th>${filterHtml('matched', 'feat')}</th>
                     <th>${filterHtml('matched', 'ca')}</th>
                     <th>${filterHtml('matched', 'cb')}</th>
@@ -1133,15 +1175,15 @@ function renderBinSimTables(isFilterChange = false) {
                     <td style="padding:10px; text-align:center;">
                         <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
                     </td>
-                    <td style="padding:10px; text-align:center;">
-                        <div style="margin-bottom:4px; font-weight:bold;">${m.count_a}</div>
-                        <div style="display:flex; flex-wrap:wrap; justify-content:center; max-height:60px; overflow-y:auto;">
+                    <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
+                        ${m.count_a > 1 ? `<div style="margin-bottom:4px; font-weight:bold; font-size:0.7rem;" class="dim">${m.count_a} funcs</div>` : ''}
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
                             ${m.funcs_a.map(renderFuncBadge).join('')}
                         </div>
                     </td>
-                    <td style="padding:10px; text-align:center;">
-                        <div style="margin-bottom:4px; font-weight:bold;">${m.count_b}</div>
-                        <div style="display:flex; flex-wrap:wrap; justify-content:center; max-height:60px; overflow-y:auto;">
+                    <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
+                        ${m.count_b > 1 ? `<div style="margin-bottom:4px; font-weight:bold; font-size:0.7rem;" class="dim">${m.count_b} funcs</div>` : ''}
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
                             ${m.funcs_b.map(renderFuncBadge).join('')}
                         </div>
                     </td>
@@ -1172,31 +1214,42 @@ function renderBinSimTables(isFilterChange = false) {
                 <tr>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
-                    <th></th>
+                    <th>${searchHtml(prefix)}</th>
                     <th>${filterHtml(prefix, 'feat')}</th>
+                    <th>${filterHtml(prefix, 'rar')}</th>
                 </tr>
             `;
-            restoreFilters(prefix, ['feat']);
+            restoreFilters(prefix, ['feat', 'rar']);
         }
 
         let items = applyFilters(itemsRaw || [], prefix);
         items = sortItems(items, state);
-        
+
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
             return;
         }
         tbody.innerHTML = items.map(u => {
             const avgFeat = u.avg_features || 0;
+            const rarity = (u.sim_rarity !== undefined) ? u.sim_rarity : 0;
             return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:10px;">
+                <td style="padding:8px;">
                     ${renderFuncBadge(u.func_id)}
                 </td>
                 <td style="padding:10px; text-align:center;">
                     <div class="mono dim">${avgFeat.toFixed(0)}</div>
+                </td>
+                <td style="padding:10px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:30px;">
+                            <div style="height:100%; background:var(--warning, #fd971f); width:${(rarity * 100).toFixed(0)}%"></div>
+                        </div>
+                        <span class="dim">${rarity.toFixed(2)}</span>
+                    </div>
                 </td>
             </tr>
             `;

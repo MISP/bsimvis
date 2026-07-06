@@ -241,13 +241,8 @@ class BinSimService:
                 if isinstance(m, dict):
                     cluster_meta[lbl] = m
 
-        def pick_cluster(fid_a, fid_b):
-            """Best function cluster for a matched pair: prefer a cluster both share,
-            else any cluster either belongs to; among candidates pick tightest cohesion."""
-            la = fid_clusters.get(fid_a, set())
-            lb = fid_clusters.get(fid_b, set())
-            shared = la & lb
-            candidates = shared if shared else (la | lb)
+        def _pick_label(candidates):
+            """Among candidate cluster labels, pick the one with tightest cohesion."""
             best = None
             best_coh = -1.0
             for lbl in candidates:
@@ -257,16 +252,37 @@ class BinSimService:
                 coh = float(meta.get("cohesion_score", 0.0))
                 if coh > best_coh:
                     best_coh = coh
-                    best = meta
+                    best = lbl
             return best
 
+        def pick_cluster_label(fid_a, fid_b):
+            """Best function cluster label for a matched pair: prefer a cluster both
+            share, else any cluster either belongs to; tie-break on tightest cohesion."""
+            la = fid_clusters.get(fid_a, set())
+            lb = fid_clusters.get(fid_b, set())
+            shared = la & lb
+            return _pick_label(shared if shared else (la | lb))
+
+        def pick_cluster(fid_a, fid_b):
+            """Best-matching cluster meta for a matched pair (name/uuid for the UI)."""
+            lbl = pick_cluster_label(fid_a, fid_b)
+            return cluster_meta.get(lbl) if lbl else None
+
         def get_col_rarity(cid):
-            # Try to get the true collection count from cluster meta (set during HDBSCAN)
-            # Fallback to local job count if missing
+            # Rarity from how many distinct binaries in the collection share this
+            # function cluster: a rarer cluster => higher score. Primary source is the
+            # collection-wide unique_files_count (set during HDBSCAN); fall back to the
+            # local job count when that field is missing, and to maximal rarity when the
+            # function belongs to no cluster at all.
+            if not cid:
+                # ponytail: no cluster => function does not recur across the collection,
+                # so treat it as maximally rare. Upgrade path: per-function similarity
+                # neighbour count if a cheaper signal than clustering is ever stored.
+                return 1.0
             global_count = cluster_meta.get(cid, {}).get(
                 "unique_files_count", cluster_binary_count_job.get(cid, 0)
             )
-            return 1.0 / math.log(1 + global_count + 1)
+            return min(1.0, 1.0 / math.log(1 + global_count + 1))
 
         # 3. Load function metadata (for bsim_features_count & names)
         func_meta_cache = {}
@@ -425,8 +441,11 @@ class BinSimService:
                     f_features = max(f_features_a, f_features_b)
 
                     # Tag the matched pair with its best-matching function cluster so the
-                    # API/UI cluster column resolves to a real cluster (name + preview tooltip).
-                    best_cluster = pick_cluster(fid_a, fid_b)
+                    # API/UI cluster column resolves to a real cluster (name + preview tooltip),
+                    # and derive collection rarity from that same cluster.
+                    best_label = pick_cluster_label(fid_a, fid_b)
+                    best_cluster = cluster_meta.get(best_label) if best_label else None
+                    rarity = get_col_rarity(best_label)
                     diff_matched.append(
                         {
                             "cluster_id": best_cluster.get("cluster_id", "")
@@ -441,8 +460,8 @@ class BinSimService:
                             if best_cluster
                             else "Matched Functions",
                             "cohesion": score,
-                            "sim_rarity": 1.0,
-                            "collection_rarity": 1.0,
+                            "sim_rarity": rarity,
+                            "collection_rarity": rarity,
                             "avg_features": f_features,
                             "funcs_a": [fid_a],
                             "funcs_b": [fid_b],
@@ -475,6 +494,7 @@ class BinSimService:
                 if f_features <= 0:
                     f_features = 1.0
 
+                rarity = get_col_rarity(_pick_label(fid_clusters.get(fid, set())))
                 unique_to_a.append(
                     {
                         "func_id": fid,
@@ -484,8 +504,8 @@ class BinSimService:
                         "cluster_uuid": "",
                         "cluster_name": "Unclustered",
                         "cohesion": 0.0,
-                        "sim_rarity": 1.0,
-                        "collection_rarity": 1.0,
+                        "sim_rarity": rarity,
+                        "collection_rarity": rarity,
                         "avg_features": f_features,
                     }
                 )
@@ -501,6 +521,7 @@ class BinSimService:
                 if f_features <= 0:
                     f_features = 1.0
 
+                rarity = get_col_rarity(_pick_label(fid_clusters.get(fid, set())))
                 unique_to_b.append(
                     {
                         "func_id": fid,
@@ -510,8 +531,8 @@ class BinSimService:
                         "cluster_uuid": "",
                         "cluster_name": "Unclustered",
                         "cohesion": 0.0,
-                        "sim_rarity": 1.0,
-                        "collection_rarity": 1.0,
+                        "sim_rarity": rarity,
+                        "collection_rarity": rarity,
                         "avg_features": f_features,
                     }
                 )

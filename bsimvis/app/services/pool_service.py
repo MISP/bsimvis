@@ -44,7 +44,7 @@ class PoolService:
             # Keep old fields as fallback for backward compatibility
             "algo": config.get("algo", "unweighted_cosine"),
             "top_k": config.get("top_k", 1000),
-            "min_score": config.get("min_score", 0.3),
+            "min_score": config.get("min_score", 0.9),
             "cluster_algo": config.get("cluster_algo", "hdbscan"),
             "cluster_params": json.dumps(config.get("cluster_params", {})),
         }
@@ -542,18 +542,38 @@ class PoolService:
 
                 if bucket_values:
                     pool_reg_key = f"{pool_coll}:reg:{level}:{field}"
-                    pipe = r.pipeline()
-                    pipe.delete(pool_reg_key)
-                    for val in bucket_values:
-                        pool_bucket_key = f"{pool_coll}:idx:{level}:{field}:{val}"
-                        source_buckets = [
-                            f"{coll}:idx:{level}:{field}:{val}" for coll in collections
-                        ]
-                        existing_sources = [sb for sb in source_buckets if r.exists(sb)]
-                        if existing_sources:
-                            pipe.sunionstore(pool_bucket_key, *existing_sources)
-                            pipe.sadd(pool_reg_key, pool_bucket_key)
-                    pipe.execute()
+                    bucket_list = list(bucket_values)
+
+                    # Chunk to avoid holding lock / freezing redis
+                    chunk_size = 500
+                    for i in range(0, len(bucket_list), chunk_size):
+                        chunk = bucket_list[i : i + chunk_size]
+
+                        exists_pipe = r.pipeline(transaction=False)
+                        for val in chunk:
+                            for coll in collections:
+                                exists_pipe.exists(f"{coll}:idx:{level}:{field}:{val}")
+                        exists_results = exists_pipe.execute()
+
+                        pipe = r.pipeline()
+                        if i == 0:
+                            pipe.delete(pool_reg_key)
+
+                        idx = 0
+                        for val in chunk:
+                            pool_bucket_key = f"{pool_coll}:idx:{level}:{field}:{val}"
+                            existing_sources = []
+                            for coll in collections:
+                                if exists_results[idx]:
+                                    existing_sources.append(
+                                        f"{coll}:idx:{level}:{field}:{val}"
+                                    )
+                                idx += 1
+
+                            if existing_sources:
+                                pipe.sunionstore(pool_bucket_key, *existing_sources)
+                                pipe.sadd(pool_reg_key, pool_bucket_key)
+                        pipe.execute()
 
         # 2. Merge NUM ZSets (excluding 'sim')
         for level, fields in [
@@ -562,7 +582,15 @@ class PoolService:
         ]:
             for field in fields:
                 source_zsets = [f"{coll}:idx:{level}:{field}" for coll in collections]
-                existing_zsets = [sz for sz in source_zsets if r.exists(sz)]
+                # Check existences in a single pipeline
+                exists_pipe = r.pipeline(transaction=False)
+                for sz in source_zsets:
+                    exists_pipe.exists(sz)
+                exists_results = exists_pipe.execute()
+
+                existing_zsets = [
+                    sz for sz, exists in zip(source_zsets, exists_results) if exists
+                ]
                 if existing_zsets:
                     pool_zset_key = f"{pool_coll}:idx:{level}:{field}"
                     r.zunionstore(pool_zset_key, existing_zsets)
@@ -571,19 +599,30 @@ class PoolService:
         pipe = r.pipeline()
         pipe.delete(f"{pool_coll}:all_files")
         pipe.delete(f"{pool_coll}:all_functions")
-        all_files_sources = [
-            f"{coll}:all_files" for coll in collections if r.exists(f"{coll}:all_files")
-        ]
-        if all_files_sources:
-            pipe.sunionstore(f"{pool_coll}:all_files", *all_files_sources)
 
-        all_funcs_sources = [
-            f"{coll}:all_functions"
-            for coll in collections
-            if r.exists(f"{coll}:all_functions")
+        # Check existence in a pipeline
+        all_files_sources = [f"{coll}:all_files" for coll in collections]
+        all_funcs_sources = [f"{coll}:all_functions" for coll in collections]
+
+        exists_pipe = r.pipeline(transaction=False)
+        for path in all_files_sources + all_funcs_sources:
+            exists_pipe.exists(path)
+        exists_results = exists_pipe.execute()
+
+        files_exists = exists_results[: len(all_files_sources)]
+        funcs_exists = exists_results[len(all_files_sources) :]
+
+        existing_files = [
+            path for path, exists in zip(all_files_sources, files_exists) if exists
         ]
-        if all_funcs_sources:
-            pipe.sunionstore(f"{pool_coll}:all_functions", *all_funcs_sources)
+        existing_funcs = [
+            path for path, exists in zip(all_funcs_sources, funcs_exists) if exists
+        ]
+
+        if existing_files:
+            pipe.sunionstore(f"{pool_coll}:all_files", *existing_files)
+        if existing_funcs:
+            pipe.sunionstore(f"{pool_coll}:all_functions", *existing_funcs)
 
         # 4. Merge idx:file:functions:*
         md5_set = set()
@@ -593,16 +632,31 @@ class PoolService:
                 md5 = key_str.split(":")[-1]
                 md5_set.add(md5)
 
-        for md5 in md5_set:
-            sources = [
-                f"{coll}:idx:file:functions:{md5}"
-                for coll in collections
-                if r.exists(f"{coll}:idx:file:functions:{md5}")
-            ]
-            if sources:
-                pipe.sunionstore(f"{pool_coll}:idx:file:functions:{md5}", *sources)
+        if md5_set:
+            md5_list = list(md5_set)
+            chunk_size = 500
+            for i in range(0, len(md5_list), chunk_size):
+                chunk = md5_list[i : i + chunk_size]
 
-        pipe.execute()
+                exists_pipe = r.pipeline(transaction=False)
+                for md5 in chunk:
+                    for coll in collections:
+                        exists_pipe.exists(f"{coll}:idx:file:functions:{md5}")
+                exists_results = exists_pipe.execute()
+
+                pipe = r.pipeline()
+                idx = 0
+                for md5 in chunk:
+                    sources = []
+                    for coll in collections:
+                        if exists_results[idx]:
+                            sources.append(f"{coll}:idx:file:functions:{md5}")
+                        idx += 1
+                    if sources:
+                        pipe.sunionstore(
+                            f"{pool_coll}:idx:file:functions:{md5}", *sources
+                        )
+                pipe.execute()
 
         # 5. Merge tags_metadata
         pool_tags_meta_key = f"{pool_coll}:tags_metadata"

@@ -38,8 +38,12 @@ def create_pool():
             parts = k.split(":")
             if len(parts) >= 3:
                 md5 = parts[2]
+                skip_write = config.get("skip_write", False)
                 file_tasks.append(
-                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
+                    (
+                        JobType.BUILD_POOL_SIM,
+                        {"pool_id": pool_id, "file_md5": md5, "skip_write": skip_write},
+                    )
                 )
 
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
@@ -105,8 +109,15 @@ def build_pool(pool_id):
             parts = k.split(":")
             if len(parts) >= 3:
                 md5 = parts[2]
+                func_sim_params = pool.get("func_sim_params", {})
+                skip_write = func_sim_params.get(
+                    "skip_write", pool.get("skip_write", False)
+                )
                 file_tasks.append(
-                    (JobType.BUILD_POOL_SIM, {"pool_id": pool_id, "file_md5": md5})
+                    (
+                        JobType.BUILD_POOL_SIM,
+                        {"pool_id": pool_id, "file_md5": md5, "skip_write": skip_write},
+                    )
                 )
 
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
@@ -131,10 +142,37 @@ def build_pool(pool_id):
 
 
 def cluster_pool(pool_id):
-    """Enqueues a job to cluster pool similarities."""
+    """Enqueues a job to cluster pool similarities, cleaning previous clusters and binary similarities first."""
     pool = pool_service.get_pool(pool_id)
     if not pool:
         return {"error": "Pool not found"}, 404
+
+    # ponytail: Clean previous function clusters, bin sim, and bin clusters before rebuilding
+    r = pool_service.r
+    pipe = r.pipeline()
+
+    # 1. Clear function clusters
+    pipe.delete(f"global:pool:{pool_id}:cluster:list")
+
+    # 2. Clear binary similarities and scores
+    algo = pool.get("algo", "unweighted_cosine")
+    pipe.delete(f"global:pool:{pool_id}:bin_sim:score:{algo}")
+    pipe.delete(f"global:pool:{pool_id}:bin_sim:built:{algo}")
+
+    # Clean binary similarity documents and involves indexes
+    cursor = 0
+    pattern_sim = f"global:pool:{pool_id}:bin_sim:*"
+    while True:
+        cursor, keys = r.scan(cursor=cursor, match=pattern_sim, count=1000)
+        if keys:
+            pipe.delete(*keys)
+        if cursor == 0:
+            break
+
+    # 3. Clear binary clusters
+    pipe.delete(f"global:pool:{pool_id}:bin_cluster:list")
+
+    pipe.execute()
 
     pipeline_id = job_service.create_pipeline(
         [

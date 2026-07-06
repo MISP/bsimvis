@@ -198,6 +198,7 @@ window.PoolDetailView = {
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                     <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     ${buildBtnHtml}
+                    <button onclick="window.poolDetailCluster('${poolId}', this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
                     <button onclick="window.poolDetailRebuild('${poolId}', this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-rotate"></i> Rebuild</button>
                     <button onclick="window.poolDetailDelete('${poolId}', this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
                 </div>
@@ -435,6 +436,22 @@ window.poolDetailRebuild = async function(poolId, btn) {
     } catch(e) {
         alert(`Failed to rebuild pool: ${e.message}`);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Rebuild'; }
+    }
+};
+
+window.poolDetailCluster = async function(poolId, btn) {
+    if (!confirm(`Re-cluster pool "${poolId}"? This will clear old function clusters, binary similarities, and binary clusters before rebuilding.`)) return;
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/cluster`, { method: 'POST' });
+        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
+        const data = await res.json();
+        alert(`Pool clustering enqueued! Job ID: ${data.job_id}`);
+        if (typeof refreshData === 'function') refreshData(false, true);
+        else Nav.openPath(window.location.pathname);
+    } catch(e) {
+        alert(`Failed to cluster pool: ${e.message}`);
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> Cluster'; }
     }
 };
 

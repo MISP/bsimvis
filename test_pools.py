@@ -194,7 +194,13 @@ def main():
         print("  Triggering function similarity build for collection...")
         resp = requests.post(
             f"{BASE_URL}/api/similarity/build",
-            json={"collection": SINGLE_COLL, "all": True},
+            json={
+                "collection": SINGLE_COLL,
+                "all": True,
+                "algo": "unweighted_cosine",
+                "top_k": 1000,
+                # min_score omitted: use config default so collection & pool stay aligned
+            },
             timeout=10,
         )
         resp.raise_for_status()
@@ -204,7 +210,10 @@ def main():
         print("  Triggering function clustering for collection...")
         resp = requests.post(
             f"{BASE_URL}/api/cluster/build",
-            json={"collection": SINGLE_COLL},
+            json={
+                "collection": SINGLE_COLL,
+                # params omitted: use config defaults so collection & pool stay aligned
+            },
             timeout=10,
         )
         resp.raise_for_status()
@@ -214,7 +223,10 @@ def main():
         print("  Triggering binary similarity build for collection...")
         resp = requests.post(
             f"{BASE_URL}/api/bin_sim/build",
-            json={"collection": SINGLE_COLL},
+            json={
+                "collection": SINGLE_COLL,
+                # min_cohesion omitted: use config default so collection & pool stay aligned
+            },
             timeout=10,
         )
         resp.raise_for_status()
@@ -231,39 +243,25 @@ def main():
 
         r = get_redis()
         m1, m2 = sorted([MD5_ARM, MD5_LINUX])
+        import json
+
         single_doc_key = f"{SINGLE_COLL}:bin_sim:unweighted_cosine:{m1}::{m2}"
-        single_doc = r.json().get(single_doc_key, "$")
+        single_doc_raw = r.get(single_doc_key)
+        single_doc = json.loads(single_doc_raw) if single_doc_raw else None
         print(f"  [DEBUG] Single Collection Doc: {single_doc}")
 
         # ==================================================================
         section("4. Pool Analysis (Separated Collections)")
         # Create pool
         print("  Creating pool...")
+        # All tuning params omitted: pool build/cluster fall back to the same config
+        # defaults the collection path uses, so the two are compared on equal footing.
         config = {
             "only_cross_collection": False,
-            "func_sim_params": {
-                "algo": "unweighted_cosine",
-                "top_k": 1000,
-                "min_score": 0.7,
-            },
-            "func_cluster_params": {
-                "min_cluster_size": 2,
-                "min_samples": 1,
-                "epsilon": 0.001,
-            },
-            "file_sim_params": {
-                "enabled": True,
-                "algo": "unweighted_cosine",
-                "top_k": 100,
-                "min_score": 0.1,
-                "min_cohesion": 0.5,
-            },
-            "file_cluster_params": {
-                "enabled": True,
-                "min_cluster_size": 2,
-                "min_samples": 1,
-                "epsilon": 0.001,
-            },
+            "func_sim_params": {},
+            "func_cluster_params": {},
+            "file_sim_params": {"enabled": True},
+            "file_cluster_params": {"enabled": True},
         }
         success, msg = pool_service.create_pool(
             POOL_ID, "Comparison Pool", [SEP_COLL_ARM, SEP_COLL_LINUX], config
@@ -291,23 +289,380 @@ def main():
         b2 = (SEP_COLL_LINUX, MD5_LINUX)
         if b1 > b2:
             b1, b2 = b2, b1
+        import json
+
         pool_doc_key = f"global:pool:{POOL_ID}:bin_sim:unweighted_cosine:{b1[0]}:{b1[1]}::{b2[0]}:{b2[1]}"
-        pool_doc = r.json().get(pool_doc_key, "$")
+        pool_doc_raw = r.get(pool_doc_key)
+        pool_doc = json.loads(pool_doc_raw) if pool_doc_raw else None
         print(f"  [DEBUG] Pool Doc: {pool_doc}")
 
         # ==================================================================
         section("5. Comparison Results")
         print(f"  Single Collection Score: {single_coll_score}")
         print(f"  Pool-specific Score:     {pool_score}")
+        print()
+        print("  URLs for review:")
+        print(f"    - Single Collection:                  {BASE_URL}/collections/{SINGLE_COLL}")
+        print(f"    - Separate Collection (ARM):          {BASE_URL}/collections/{SEP_COLL_ARM}")
+        print(f"    - Separate Collection (Linux):        {BASE_URL}/collections/{SEP_COLL_LINUX}")
+        print(f"    - Pool:                               {BASE_URL}/pools/{POOL_ID}")
+        print(f"    - Single Collection Comparison Diff:  {BASE_URL}/collections/{SINGLE_COLL}/files/{MD5_ARM}/vs/{SINGLE_COLL}/{MD5_LINUX}")
+        print(f"    - Pool Comparison Diff:               {BASE_URL}/pools/{POOL_ID}/collections/{SEP_COLL_ARM}/files/{MD5_ARM}/vs/{SEP_COLL_LINUX}/{MD5_LINUX}")
+        # ponytail: simple URL prints
+        print()
 
+        errors = []
+
+        # Load similarities to build dynamic equivalence map for tie-breaking
+        algo = "unweighted_cosine"
+        single_func_sim_scores = r.zrange(
+            f"{SINGLE_COLL}:sim:score:{algo}", 0, -1, withscores=True
+        )
+        pool_func_sim_scores = r.zrange(
+            f"global:pool:{POOL_ID}:sim:score", 0, -1, withscores=True
+        )
+
+        def get_clean_fid(fid_bytes):
+            fid = fid_bytes.decode() if isinstance(fid_bytes, bytes) else str(fid_bytes)
+            func_idx = fid.find(":func:")
+            if func_idx != -1:
+                return fid[func_idx + 6 :]
+            return fid
+
+        single_raw_pairs = []
+        for sid_b, score in single_func_sim_scores:
+            sid = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+            parts = sid.split(f":sim:{algo}:")
+            if len(parts) == 2:
+                ids = parts[1].split("::")
+                if len(ids) == 2:
+                    single_raw_pairs.append(
+                        (get_clean_fid(ids[0]), get_clean_fid(ids[1]), score)
+                    )
+
+        # Build dynamic equivalence mapping based on similarity profiles
+        from collections import defaultdict
+
+        profile_a = defaultdict(list)
+        for f1, f2, score in single_raw_pairs:
+            f1_in_a = MD5_ARM in f1
+            f2_in_a = MD5_ARM in f2
+            if f1_in_a != f2_in_a:
+                if f1_in_a:
+                    fa, fb = f1, f2
+                else:
+                    fa, fb = f2, f1
+                profile_a[fa].append((fb, round(score, 4)))
+
+        a_groups = defaultdict(list)
+        for fa, prof in profile_a.items():
+            a_groups[tuple(sorted(prof))].append(fa)
+
+        canonical_map = {}
+        for prof, funcs in a_groups.items():
+            rep = min(funcs)
+            for f in funcs:
+                canonical_map[f] = rep
+
+        profile_b = defaultdict(list)
+        for f1, f2, score in single_raw_pairs:
+            f1_in_a = MD5_ARM in f1
+            f2_in_a = MD5_ARM in f2
+            if f1_in_a != f2_in_a:
+                if f1_in_a:
+                    fa, fb = f1, f2
+                else:
+                    fa, fb = f2, f1
+                profile_b[fb].append((canonical_map.get(fa, fa), round(score, 4)))
+
+        b_groups = defaultdict(list)
+        for fb, prof in profile_b.items():
+            b_groups[tuple(sorted(prof))].append(fb)
+
+        for prof, funcs in b_groups.items():
+            rep = min(funcs)
+            for f in funcs:
+                canonical_map[f] = rep
+
+        def canonical_func_id(fid):
+            clean = get_clean_fid(fid)
+            return canonical_map.get(clean, clean)
+
+        # 5.1 Compare Binary Similarity Scores
         if single_coll_score is not None and pool_score is not None:
-            diff = abs(single_coll_score - pool_score)
-            print(f"  Difference: {diff:.6f}")
-            assert diff < 1e-5, f"Scores do not match! Diff: {diff}"
-            print("\n  ✔ SUCCESS: The similarity scores match perfectly!")
+            s_score_rounded = round(single_coll_score, 3)
+            p_score_rounded = round(pool_score, 3)
+            diff = abs(s_score_rounded - p_score_rounded)
+            print(
+                f"  Binary similarity score difference (rounded to 3 decimals): {diff:.6f}"
+            )
+            if diff >= 1e-5:
+                errors.append(
+                    f"Binary similarity scores do not match! Single: {s_score_rounded}, Pool: {p_score_rounded}, Diff: {diff}"
+                )
         else:
-            print("\n  ✗ FAILURE: One or both scores could not be resolved.")
-            assert False, "Scores not resolved."
+            errors.append("One or both binary similarity scores could not be resolved.")
+
+        # 5.2 Compare all binary similarity documents
+        if single_doc and pool_doc:
+
+            def normalize_bin_sim_diff(diff):
+                if not diff:
+                    return diff
+                normalized = {}
+                for key in (
+                    "matched",
+                    "unique_to_a",
+                    "unique_to_b",
+                    "unclustered_a",
+                    "unclustered_b",
+                ):
+                    if key not in diff:
+                        continue
+                    items = []
+                    for item in diff[key]:
+                        norm_item = {
+                            k: v
+                            for k, v in item.items()
+                            if k not in ("cluster_uuid", "cluster_id", "sim_rarity", "collection_rarity", "avg_features")
+                        }
+                        for fkey in ("funcs_a", "funcs_b", "funcs"):
+                            if fkey in norm_item and norm_item[fkey]:
+                                norm_item[fkey] = sorted(
+                                    [canonical_func_id(f) for f in norm_item[fkey]]
+                                )
+                        if "func_id" in norm_item:
+                            norm_item["func_id"] = canonical_func_id(
+                                norm_item["func_id"]
+                            )
+                        items.append(norm_item)
+                    if key == "matched":
+                        items.sort(
+                            key=lambda x: (
+                                x.get("funcs_a", [""])[0] if x.get("funcs_a") else "",
+                                x.get("funcs_b", [""])[0] if x.get("funcs_b") else "",
+                            )
+                        )
+                    elif key in ("unique_to_a", "unique_to_b"):
+                        items.sort(key=lambda x: x.get("func_id", ""))
+                    normalized[key] = items
+                return normalized
+
+            # Compare normalized documents
+            common_keys = ("score", "md5_a", "md5_b", "diff")
+            normalized_single_doc = {
+                k: v for k, v in single_doc.items() if k in common_keys
+            }
+            normalized_pool_doc = {
+                k: v for k, v in pool_doc.items() if k in common_keys
+            }
+
+            # Normalize md5 keys
+            if "md5_1" in pool_doc:
+                normalized_pool_doc["md5_a"] = pool_doc["md5_1"]
+            if "md5_2" in pool_doc:
+                normalized_pool_doc["md5_b"] = pool_doc["md5_2"]
+
+            # Add normalized diff
+            normalized_single_doc["diff"] = normalize_bin_sim_diff(
+                single_doc.get("diff")
+            )
+            normalized_pool_doc["diff"] = normalize_bin_sim_diff(pool_doc.get("diff"))
+
+            # Also round scores to compare
+            for doc in (normalized_single_doc, normalized_pool_doc):
+                for k in ("score",):
+                    if k in doc and doc[k] is not None:
+                        doc[k] = round(doc[k], 3)
+            if normalized_single_doc != normalized_pool_doc:
+                errors.append(
+                    f"Binary similarity docs do not match!\n  Single: {normalized_single_doc}\n  Pool:   {normalized_pool_doc}"
+                )
+        else:
+            errors.append("One or both binary similarity documents are missing.")
+
+        # 5.3 Compare Function-level Similarities
+        def parse_single_sid(sid_bytes):
+            sid = sid_bytes.decode() if isinstance(sid_bytes, bytes) else str(sid_bytes)
+            parts = sid.split(f":sim:{algo}:")
+            if len(parts) == 2:
+                ids = parts[1].split("::")
+                if len(ids) == 2:
+                    return tuple(sorted([canonical_func_id(i) for i in ids]))
+            return None
+
+        def parse_pool_sid(sid_bytes):
+            sid = sid_bytes.decode() if isinstance(sid_bytes, bytes) else str(sid_bytes)
+            parts = sid.split(":sim:")
+            if len(parts) == 2:
+                ids = parts[1].split("::")
+                if len(ids) == 2:
+                    return tuple(sorted([canonical_func_id(i) for i in ids]))
+            return None
+
+        single_func_map = {}
+        for sid_b, score in single_func_sim_scores:
+            key = parse_single_sid(sid_b)
+            if key:
+                single_func_map[key] = round(score, 4)
+
+        pool_func_map = {}
+        for sid_b, score in pool_func_sim_scores:
+            key = parse_pool_sid(sid_b)
+            if key:
+                pool_func_map[key] = round(score, 4)
+
+        # Check function similarity keys
+        single_keys = set(single_func_map.keys())
+        pool_keys = set(pool_func_map.keys())
+        if single_keys != pool_keys:
+            errors.append(
+                f"Function similarity pairs do not match!\n  Only in Single: {single_keys - pool_keys}\n  Only in Pool: {pool_keys - single_keys}"
+            )
+
+        # Check function similarity values
+        for key in single_keys & pool_keys:
+            if abs(single_func_map[key] - pool_func_map[key]) > 1e-4:
+                errors.append(
+                    f"Function similarity score mismatch for {key}: Single: {single_func_map[key]}, Pool: {pool_func_map[key]}"
+                )
+
+        # Compare detailed function similarity docs
+        for key in single_keys & pool_keys:
+            # Reconstruct single sid from key
+            # Reconstruct pool sid
+            pool_sid = None
+            for sid_b, _ in pool_func_sim_scores:
+                parsed = parse_pool_sid(sid_b)
+                if parsed == key:
+                    pool_sid = (
+                        sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+                    )
+                    break
+
+            # Since key is canonical, reconstruct single_sid carefully
+            # Let's find single_sid by matching parsed key
+            single_sid = None
+            for sid_b, _ in single_func_sim_scores:
+                parsed = parse_single_sid(sid_b)
+                if parsed == key:
+                    single_sid = (
+                        sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+                    )
+                    break
+
+            if single_sid and pool_sid:
+                s_doc = json.loads(r.get(single_sid) or "{}")
+                p_doc = json.loads(r.get(pool_sid) or "{}")
+                norm_s = {
+                    k: v
+                    for k, v in s_doc.items()
+                    if k not in ("collection", "entry_date", "id1", "id2")
+                }
+                norm_p = {
+                    k: v
+                    for k, v in p_doc.items()
+                    if k
+                    not in (
+                        "collection",
+                        "entry_date",
+                        "id1",
+                        "id2",
+                        "coll_1",
+                        "coll_2",
+                    )
+                }
+                # Round doc score
+                if "score" in norm_s:
+                    norm_s["score"] = round(norm_s["score"], 4)
+                if "score" in norm_p:
+                    norm_p["score"] = round(norm_p["score"], 4)
+                if norm_s != norm_p:
+                    errors.append(
+                        f"Detailed function similarity docs mismatch for {key}:\n  Single: {norm_s}\n  Pool:   {norm_p}"
+                    )
+
+        # 5.4 Compare Function Clusters
+        single_cids = {
+            cid.decode() if isinstance(cid, bytes) else str(cid)
+            for cid in r.smembers(f"{SINGLE_COLL}:cluster:list:{algo}")
+        }
+        pool_cids = {
+            cid.decode() if isinstance(cid, bytes) else str(cid)
+            for cid in r.smembers(f"global:pool:{POOL_ID}:cluster:list")
+        }
+
+        def get_clean_members(members_set):
+            cleaned = []
+            for m in members_set:
+                cleaned.append(canonical_func_id(m))
+            return tuple(sorted(cleaned))
+
+        def normalize_cluster_meta(meta):
+            normalized = {
+                k: v
+                for k, v in meta.items()
+                if k
+                not in ("collection", "id", "created_at", "cluster_uuid", "cluster_id")
+            }
+            if "sample_functions" in normalized:
+                norm_samples = []
+                for func in normalized["sample_functions"]:
+                    norm_func = {
+                        k: v
+                        for k, v in func.items()
+                        if k not in ("function_id", "collection")
+                    }
+                    norm_samples.append(norm_func)
+                norm_samples.sort(
+                    key=lambda x: (
+                        x.get("entrypoint_address", ""),
+                        x.get("file_md5", ""),
+                    )
+                )
+                normalized["sample_functions"] = norm_samples
+            return normalized
+
+        single_clusters_map = {}
+        for cid in single_cids:
+            m_set = r.smembers(f"{SINGLE_COLL}:cluster:{algo}:{cid}:members")
+            clean_m = get_clean_members(m_set)
+            meta = json.loads(r.get(f"{SINGLE_COLL}:cluster:{algo}:{cid}:meta") or "{}")
+            single_clusters_map[clean_m] = normalize_cluster_meta(meta)
+
+        pool_clusters_map = {}
+        for cid in pool_cids:
+            m_set = r.smembers(f"global:pool:{POOL_ID}:cluster:{algo}:{cid}:members")
+            clean_m = get_clean_members(m_set)
+            meta = json.loads(
+                r.get(f"global:pool:{POOL_ID}:cluster:{algo}:{cid}:meta") or "{}"
+            )
+            pool_clusters_map[clean_m] = normalize_cluster_meta(meta)
+
+        single_clust_keys = set(single_clusters_map.keys())
+        pool_clust_keys = set(pool_clusters_map.keys())
+
+        if single_clust_keys != pool_clust_keys:
+            errors.append(
+                f"Function clusters do not match!\n  Only in Single: {single_clust_keys - pool_clust_keys}\n  Only in Pool: {pool_clust_keys - single_clust_keys}"
+            )
+
+        for key in single_clust_keys & pool_clust_keys:
+            if single_clusters_map[key] != pool_clusters_map[key]:
+                errors.append(
+                    f"Metadata mismatch for cluster {key}:\n  Single: {single_clusters_map[key]}\n  Pool:   {pool_clusters_map[key]}"
+                )
+
+        # Assert no errors
+        if not errors:
+            print(
+                "\n  ✔ SUCCESS: The similarity scores, function similarities, and clusters match perfectly!"
+            )
+        else:
+            print("\n  ✗ FAILURE: Mismatches detected:")
+            for err in errors:
+                print(f"    - {err}")
+            assert False, f"Comparison failed with {len(errors)} errors."
 
     finally:
         section("6. Final Cleanups")

@@ -573,11 +573,13 @@ class Worker:
                 "algo", config_service.get("similarity.algo", "unweighted_cosine")
             )
             top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
-            min_score = payload.get(
-                "min_score", config_service.get("similarity.min_score", 0.3)
-            )
-            min_features = payload.get(
-                "min_features", config_service.get("similarity.min_features", 0)
+            # Collection-sticky: first build locks these; later payload values ignored
+            # so the BSim-vs-hash split (and canonical file score) stays stable.
+            from bsimvis.app.services.collection_config import resolve_and_lock
+
+            min_score = resolve_and_lock(collection, "min_score", payload.get("min_score"))
+            min_features = resolve_and_lock(
+                collection, "min_features", payload.get("min_features")
             )
             # ponytail: Default to 'minimal' index depth to save indexing writes during build_sim
             index_depth = payload.get("index_depth", "minimal")
@@ -605,6 +607,7 @@ class Worker:
                 job_service=self.job_service,
                 job_id=job_id,
                 index_depth=index_depth,
+                skip_write=payload.get("skip_write", False),  # ponytail
             )
 
         elif jtype == JobType.INDEX_SIM.value:
@@ -806,6 +809,7 @@ class Worker:
             pool_id = payload.get("pool_id")
             file_md5 = payload.get("file_md5")
             index_depth = payload.get("index_depth", "none")
+            skip_write = payload.get("skip_write", False)
             if file_md5:
                 return self.similarity_service.build_pool_file(
                     pool_id,
@@ -813,6 +817,7 @@ class Worker:
                     job_service=self.job_service,
                     job_id=job_id,
                     index_depth=index_depth,
+                    skip_write=skip_write,
                 )
             else:
                 return self.similarity_service.build_pool(
@@ -820,6 +825,7 @@ class Worker:
                     job_service=self.job_service,
                     job_id=job_id,
                     index_depth=index_depth,
+                    skip_write=skip_write,
                 )
 
         elif jtype == JobType.CLUSTER_POOL.value:

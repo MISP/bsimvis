@@ -140,7 +140,7 @@ def main():
             dp.add_argument(
                 "--min-score",
                 type=float,
-                default=config_service.get("similarity.min_score", 0.0),
+                default=config_service.get("similarity.min_score", 0.9),
             )
             dp.add_argument(
                 "--min-feature",

@@ -31,7 +31,7 @@ def get_config():
         },
         "similarity": {
             "top_k": config_service.get("similarity.top_k", 1000),
-            "min_score": config_service.get("similarity.min_score", 0.3),
+            "min_score": config_service.get("similarity.min_score", 0.9),
             "min_features": config_service.get("similarity.min_features", 0),
             "algo": config_service.get("similarity.algo", "unweighted_cosine"),
         },

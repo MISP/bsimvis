@@ -119,14 +119,14 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
 
     // Grouping Metadata
     const funcMetaKeys = [
-        'calling_convention', 'instruction_count', 'instructions_count', 'basic_blocks_count', 
-        'cyclomatic_complexity', 'size_bytes'
+        'calling_convention', 'instruction_count', 'instructions_count', 'basic_blocks_count',
+        'cyclomatic_complexity', 'size_bytes', 'function_id_hash'
     ];
     const bsimMetaKeys = ['bsim_features_count', 'bsim_unique_features_count', 'score', 'milvus_id'];
     const fileMetaKeys = ['file_name', 'language_id', 'file_size', 'file_md5'];
     
     const renderRow = (key, val, icon = null) => {
-        const labelText = key.replace(/_/g, ' ');
+        const labelText = key === 'function_id_hash' ? 'function hash' : key.replace(/_/g, ' ');
         const prefix = icon ? `<i class="fa-solid ${icon}" style="margin-right:8px; opacity:0.5; width:14px;"></i>` : '';
         let valueDisplay = (key === 'entrypoint_address') ? `@ ${val}` : (key === 'file_md5' ? `# ${val}` : val);
         const valueColor = (key.includes('address') || key.includes('md5') || key.includes('id') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
@@ -151,6 +151,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
         if (k === 'basic_blocks_count') return 'fa-cubes';
         if (k === 'cyclomatic_complexity') return 'fa-diagram-project';
         if (k === 'size_bytes') return 'fa-weight-hanging';
+        if (k === 'function_id_hash') return 'fa-hashtag';
         if (k === 'language_id') return 'fa-globe';
         if (k === 'file_name') return 'fa-file';
         if (k === 'file_size') return 'fa-floppy-disk';

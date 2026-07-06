@@ -3,6 +3,23 @@
 const windowManager = new WindowManager();
 window.windowManager = windowManager;
 
+// Backend config defaults, loaded once at startup (see get_config in index.py).
+// Falls back to the same values baked into bsimvis_config.toml.
+window.APP_CONFIG = null;
+async function loadAppConfig() {
+    try {
+        const res = await fetch('/api/index/config');
+        if (res.ok) window.APP_CONFIG = await res.json();
+    } catch (e) {
+        console.error("Failed to load app config", e);
+    }
+}
+loadAppConfig();
+function defaultMinScore() {
+    const v = window.APP_CONFIG?.similarity?.min_score;
+    return (v !== undefined && v !== null) ? String(v) : '0.9';
+}
+
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
@@ -490,7 +507,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         }
     } else if (viewKey === 'function-similarity') {
         if (!params.has('min_score')) {
-            params.set('min_score', '0.95');
+            params.set('min_score', defaultMinScore());
         }
         if (!params.has('max_score')) {
             params.set('max_score', '1.0');
@@ -1200,7 +1217,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         headHtml += `
                             <th style="vertical-align: middle;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                    <input type="number" id="sim-min-score" value="${p.get('min_score') || defaultMinScore()}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                                 </div>
@@ -1734,7 +1751,7 @@ function applySimSearch() {
 
     params.set('q', globalQ || '');
     if (lang) params.set('language', lang); else params.delete('language');
-    params.set('min_score', minScore || '0.95');
+    params.set('min_score', minScore || defaultMinScore());
     params.set('max_score', maxScore || '1.0');
     params.set('algo', algo || 'unweighted_cosine');
     params.set('min_features', minFeatures || '0');
@@ -3516,7 +3533,7 @@ function getFilterSummary(path, params) {
         if (name) summary.push(`Func: "${name}"`);
         if (md5) summary.push(`MD5: ${md5.substring(0, 6)}`);
         if (address) summary.push(`Addr: ${address}`);
-        if (min_score && min_score !== '0.95') summary.push(`Score >= ${min_score}`);
+        if (min_score && min_score !== defaultMinScore()) summary.push(`Score >= ${min_score}`);
         if (max_score && max_score !== '1.0') summary.push(`Score <= ${max_score}`);
         if (algo && algo !== 'unweighted_cosine') summary.push(`Algo: ${algo}`);
         if (cross_binary) {
@@ -4062,7 +4079,7 @@ async function renderPoolCreationForm() {
 
     const funcAlgo = similarity.algo || 'unweighted_cosine';
     const funcTopK = similarity.top_k !== undefined ? similarity.top_k : 1000;
-    const funcMinScore = similarity.min_score !== undefined ? similarity.min_score : 0.1;
+    const funcMinScore = similarity.min_score !== undefined ? similarity.min_score : 0.9;
     const funcMinFeatures = similarity.min_features !== undefined ? similarity.min_features : 0;
     const funcClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
     const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
@@ -4326,7 +4343,7 @@ async function submitCreatePool(btn) {
     const crossOnly = document.getElementById('pool-cross-only')?.checked ?? false;
     const funcAlgo = document.getElementById('pool-func-algo')?.value ?? 'unweighted_cosine';
     const funcTopK = parseInt(document.getElementById('pool-func-topk')?.value || '1000');
-    const funcMinScore = parseFloat(document.getElementById('pool-func-minscore')?.value || '0.1');
+    const funcMinScore = parseFloat(document.getElementById('pool-func-minscore')?.value || defaultMinScore());
     const funcMinFeatures = parseInt(document.getElementById('pool-func-minfeatures')?.value || '0');
     const funcClusterMinSize = parseInt(document.getElementById('pool-cluster-min-size')?.value || '2');
     const funcClusterMinSamples = parseInt(document.getElementById('pool-cluster-min-samples')?.value || '1');

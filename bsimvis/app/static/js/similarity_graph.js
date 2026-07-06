@@ -232,7 +232,7 @@ class SimilarityGraph {
 
         // 3. Prepare Links
         const minScoreParam = params.get('min_score');
-        const minScore = (minScoreParam !== null && minScoreParam !== "") ? parseFloat(minScoreParam) : 0.95;
+        const minScore = (minScoreParam !== null && minScoreParam !== "") ? parseFloat(minScoreParam) : parseFloat(defaultMinScore());
 
         const colorBinaryBy = document.getElementById('graph-color-binary')?.value || 'binary';
         const colorFunctionBy = document.getElementById('graph-color-function')?.value || 'binary';

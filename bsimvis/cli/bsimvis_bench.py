@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import uuid
 import argparse
 import requests
 import sys
@@ -193,7 +194,14 @@ def print_comparison(baseline, current):
 
 
 def run_single_file(
-    data_dir, filename, collection, top_k, min_score, min_features, algo=None
+    data_dir,
+    filename,
+    collection,
+    top_k,
+    min_score,
+    min_features,
+    algo=None,
+    skip_write=False,
 ):
     """Process a single file and return results. Thread-safe."""
     path = os.path.join(data_dir, filename)
@@ -213,6 +221,8 @@ def run_single_file(
             data["min_features"] = min_features
         if algo:
             data["algo"] = algo
+        if skip_write:
+            data["skip_write"] = True
         num_funcs_in_file = len(data.get("functions", []))
 
         print(f"\n[*] Processing {filename}")
@@ -290,6 +300,7 @@ def run_bench(
     compare_path=None,
     sequential=False,
     algo=None,
+    skip_write=False,
 ):
     """Run benchmark by uploading all JSON files in a directory."""
     if not os.path.exists(data_dir):
@@ -320,7 +331,14 @@ def run_bench(
         print(f"\n[*] Uploading {len(json_files)} files sequentially...")
         for f in json_files:
             result = run_single_file(
-                data_dir, f, collection, top_k, min_score, min_features, algo=algo
+                data_dir,
+                f,
+                collection,
+                top_k,
+                min_score,
+                min_features,
+                algo=algo,
+                skip_write=skip_write,
             )
             if result:
                 results.append(result)
@@ -339,6 +357,7 @@ def run_bench(
                     min_score,
                     min_features,
                     algo,
+                    skip_write,
                 ): f
                 for f in json_files
             }
@@ -422,46 +441,46 @@ def run_single_file_for_pool(
     size_mb, lines = get_file_stats(path)
 
     try:
-        with open(path, "r") as f:
-            data = json.load(f)
-
-        # Rewrite collection and add parameters
-        data["collection"] = collection
-        data["skip_sim"] = True
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        params = {
+            "collection": collection,
+            "file_name": os.path.basename(path),
+            "batch_name": "Benchmark Pool",
+            "profile": "fast",
+            "min_func_len": 10,
+            "skip_sim": "true",  # pool handles it
+        }
         if top_k is not None:
-            data["top_k"] = top_k
+            params["top_k"] = top_k
         if min_score is not None:
-            data["min_score"] = min_score
+            params["min_score"] = min_score
         if min_features is not None:
-            data["min_features"] = min_features
-        num_funcs_in_file = len(data.get("functions", []))
+            params["min_features"] = min_features
 
         print(f"\n[*] Processing {filename} -> Collection: {collection}")
-        print(
-            f"    - Size: {size_mb:.2f} MB | Lines: {lines:,} | Functions: {num_funcs_in_file}"
-        )
+        print(f"    - Size: {size_mb:.2f} MB | Lines: {lines:,}")
 
-        # Post to API
-        resp = requests.post(f"{API_BASE}/file/upload_file_data", json=data)
+        resp = requests.post(
+            f"{API_BASE}/file/upload",
+            params=params,
+            data=raw,
+            headers={"Content-Type": "application/octet-stream"},
+            timeout=60,
+        )
         resp.raise_for_status()
-        res = resp.json()
-        pipeline_id = res.get("pipeline_id")
+        body = resp.json()
+        pipeline_id = body.get("pipeline_id")
 
         if not pipeline_id:
             print(f"[!] No pipeline ID returned for {filename}")
             return None
 
-        # Wait for completion
-        print(f"[*] Waiting for ingestion pipeline {pipeline_id} to complete...")
-        finished_job = poll_job(pipeline_id)
-
-        if finished_job:
-            status = finished_job.get("status")
-            return {
-                "filename": filename,
-                "collection": collection,
-                "status": status,
-            }
+        return {
+            "filename": filename,
+            "collection": collection,
+            "pipeline_id": pipeline_id,
+        }
     except Exception as e:
         print(f"[!] Failed to process {filename} into {collection}: {e}")
 
@@ -480,6 +499,7 @@ def run_bench_pools(
     compare_path=None,
     sequential=False,
     algo=None,
+    skip_write=False,
 ):
     """Run benchmark by creating a pool across separate collections."""
     if not os.path.exists(data_dir):
@@ -575,6 +595,38 @@ def run_bench_pools(
             )
             return
 
+        # Wait for all uploaded file ingestion pipelines to finish
+        print("\n[*] Waiting for all file ingestion pipelines to complete...")
+        pids = [res["pipeline_id"] for res in results if res.get("pipeline_id")]
+        for pid in pids:
+            poll_job(pid)
+
+        # Call batch_finalize to complete the indexing (but skip binary similarity as pool handles it)
+        batch_uuid = str(uuid.uuid4())
+        print("\n[*] Finalizing batch uploads for collections...")
+        for res in results:
+            col_name = res["collection"]
+            pid = res["pipeline_id"]
+            api_url = f"{API_BASE}/file/upload/batch_finalize"
+            payload = {
+                "pipeline_ids": [pid],
+                "batch_uuid": batch_uuid,
+                "collection": col_name,
+                "algo": algo or "unweighted_cosine",
+                "skip_sim": True,
+            }
+            try:
+                resp = requests.post(api_url, json=payload, timeout=300)
+                resp.raise_for_status()
+                master_pipeline_id = resp.json().get("master_pipeline_id")
+                if master_pipeline_id:
+                    print(
+                        f"[*] Waiting for batch finalize pipeline {master_pipeline_id} to complete..."
+                    )
+                    poll_job(master_pipeline_id)
+            except Exception as e:
+                print(f"[!] Batch finalize failed for {col_name}: {e}")
+
     # 3. Create the pool and trigger building
     print(f"\n[*] Creating Pool '{pool_id}'...")
     func_sim_params = {}
@@ -595,6 +647,9 @@ def run_bench_pools(
             "skip_clustering": True,
         },
     }
+    if skip_write:
+        func_sim_params["skip_write"] = True
+        pool_payload["config"]["skip_write"] = True
     if func_sim_params:
         pool_payload["config"]["func_sim_params"] = func_sim_params
 
@@ -706,6 +761,11 @@ def main():
         action="store_true",
         help="Run file uploads sequentially rather than concurrently",
     )
+    parser.add_argument(
+        "--skip-write",
+        action="store_true",
+        help="Run benchmark in discovery-only mode without writing similarities to disk/DB",
+    )
 
     args = parser.parse_args()
 
@@ -722,6 +782,7 @@ def main():
             args.compare,
             args.sequential,
             args.algo,
+            skip_write=args.skip_write,
         )
     else:
         run_bench(
@@ -736,6 +797,7 @@ def main():
             args.compare,
             args.sequential,
             args.algo,
+            skip_write=args.skip_write,
         )
 
 

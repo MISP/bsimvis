@@ -79,8 +79,7 @@ class GhidraService:
             parts = []
             for instr in listing.getInstructions(func.getBody(), True):
                 ops = ",".join(
-                    str(instr.getOperandType(i))
-                    for i in range(instr.getNumOperands())
+                    str(instr.getOperandType(i)) for i in range(instr.getNumOperands())
                 )
                 parts.append(f"{instr.getMnemonicString()}|{ops}")
             if not parts:

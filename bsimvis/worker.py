@@ -577,7 +577,9 @@ class Worker:
             # so the BSim-vs-hash split (and canonical file score) stays stable.
             from bsimvis.app.services.collection_config import resolve_and_lock
 
-            min_score = resolve_and_lock(collection, "min_score", payload.get("min_score"))
+            min_score = resolve_and_lock(
+                collection, "min_score", payload.get("min_score")
+            )
             min_features = resolve_and_lock(
                 collection, "min_features", payload.get("min_features")
             )

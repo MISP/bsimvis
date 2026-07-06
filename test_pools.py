@@ -302,12 +302,22 @@ def main():
         print(f"  Pool-specific Score:     {pool_score}")
         print()
         print("  URLs for review:")
-        print(f"    - Single Collection:                  {BASE_URL}/collections/{SINGLE_COLL}")
-        print(f"    - Separate Collection (ARM):          {BASE_URL}/collections/{SEP_COLL_ARM}")
-        print(f"    - Separate Collection (Linux):        {BASE_URL}/collections/{SEP_COLL_LINUX}")
+        print(
+            f"    - Single Collection:                  {BASE_URL}/collections/{SINGLE_COLL}"
+        )
+        print(
+            f"    - Separate Collection (ARM):          {BASE_URL}/collections/{SEP_COLL_ARM}"
+        )
+        print(
+            f"    - Separate Collection (Linux):        {BASE_URL}/collections/{SEP_COLL_LINUX}"
+        )
         print(f"    - Pool:                               {BASE_URL}/pools/{POOL_ID}")
-        print(f"    - Single Collection Comparison Diff:  {BASE_URL}/collections/{SINGLE_COLL}/files/{MD5_ARM}/vs/{SINGLE_COLL}/{MD5_LINUX}")
-        print(f"    - Pool Comparison Diff:               {BASE_URL}/pools/{POOL_ID}/collections/{SEP_COLL_ARM}/files/{MD5_ARM}/vs/{SEP_COLL_LINUX}/{MD5_LINUX}")
+        print(
+            f"    - Single Collection Comparison Diff:  {BASE_URL}/collections/{SINGLE_COLL}/files/{MD5_ARM}/vs/{SINGLE_COLL}/{MD5_LINUX}"
+        )
+        print(
+            f"    - Pool Comparison Diff:               {BASE_URL}/pools/{POOL_ID}/collections/{SEP_COLL_ARM}/files/{MD5_ARM}/vs/{SEP_COLL_LINUX}/{MD5_LINUX}"
+        )
         # ponytail: simple URL prints
         print()
 
@@ -424,7 +434,14 @@ def main():
                         norm_item = {
                             k: v
                             for k, v in item.items()
-                            if k not in ("cluster_uuid", "cluster_id", "sim_rarity", "collection_rarity", "avg_features")
+                            if k
+                            not in (
+                                "cluster_uuid",
+                                "cluster_id",
+                                "sim_rarity",
+                                "collection_rarity",
+                                "avg_features",
+                            )
                         }
                         for fkey in ("funcs_a", "funcs_b", "funcs"):
                             if fkey in norm_item and norm_item[fkey]:

@@ -183,8 +183,18 @@ window.DiffView = {
                     newP.collection_b = tmp.collection_a;
                     newP.md5_b = tmp.md5_a;
                     newP.addr_b = tmp.addr_a;
-                    
-                    const newUrl = `/api/diff${window.encodeDiffParams ? window.encodeDiffParams(newP) : ''}`;
+                    let newUrl = '';
+                    if (window.buildDiffUrl) {
+                        const id1 = `${newP.collection_a}:func:${newP.md5_a}:${newP.addr_a}`;
+                        const id2 = `${newP.collection_b}:func:${newP.md5_b}:${newP.addr_b}`;
+                        newUrl = window.buildDiffUrl(id1, id2);
+                    } else {
+                        newUrl = `/collections/${encodeURIComponent(newP.collection_a)}/files/${newP.md5_a}/functions/${newP.addr_a}/vs/${encodeURIComponent(newP.collection_b)}/${newP.md5_b}/${newP.addr_b}`;
+                        const poolId = window.getRoutingState?.()?.pool || null;
+                        if (poolId) {
+                            newUrl = `/pools/${encodeURIComponent(poolId)}` + newUrl;
+                        }
+                    }
                     Nav.openPath(newUrl);
                 }
             }

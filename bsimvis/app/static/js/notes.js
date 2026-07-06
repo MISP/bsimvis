@@ -539,6 +539,8 @@ async function submitEditNote(funcId, noteId) {
         if (data.status === 'success') {
             currentEditingNoteId = null;
             await refreshNotes(funcId);
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         } else {
             alert(data.error || 'Failed to update note');
         }
@@ -722,6 +724,8 @@ async function saveMessageAsNote(funcId, index, btn) {
             await refreshNotes(funcId);
             btn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
             btn.disabled = true;
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
     } catch (e) { alert(e.message); }
 }

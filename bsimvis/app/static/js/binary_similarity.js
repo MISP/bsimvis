@@ -949,6 +949,11 @@ function binSimFilterChange(shouldApply = false) {
             if (minEl) window[`bsim-flt-${prefix}-${suffix}-min-val`] = minEl.value;
             if (maxEl) window[`bsim-flt-${prefix}-${suffix}-max-val`] = maxEl.value;
         });
+        const noteSuffixes = prefix === 'matched' ? ['note-a', 'note-b'] : ['note'];
+        noteSuffixes.forEach(suffix => {
+            const el = document.getElementById(`bsim-flt-${prefix}-${suffix}`);
+            if (el) window[`bsim-flt-${prefix}-${suffix}-val`] = el.value;
+        });
     });
 
     if (shouldApply) {
@@ -966,6 +971,14 @@ const funcSearchHaystack = (fid) => {
 
 const applyFilters = (items, prefix) => {
     const q = (document.getElementById(`bsim-flt-${prefix}-q`)?.value || '').trim().toLowerCase();
+    const checkNotes = (funcsList, searchOwner) => {
+        if (!searchOwner) return true;
+        return funcsList.some(fid => {
+            const owners = (binSimDataCache.functions_metadata && binSimDataCache.functions_metadata[fid]?.note_owners) || [];
+            return owners.some(o => o.toLowerCase().includes(searchOwner));
+        });
+    };
+
     return items.filter(item => {
         if (q) {
             const fids = item.funcs_a
@@ -974,6 +987,19 @@ const applyFilters = (items, prefix) => {
             const hay = fids.map(funcSearchHaystack).join(' ');
             if (!hay.includes(q)) return false;
         }
+
+        const noteA = (document.getElementById(`bsim-flt-${prefix}-note-a`)?.value || '').trim().toLowerCase();
+        if (noteA && !checkNotes(item.funcs_a || [], noteA)) return false;
+
+        const noteB = (document.getElementById(`bsim-flt-${prefix}-note-b`)?.value || '').trim().toLowerCase();
+        if (noteB && !checkNotes(item.funcs_b || [], noteB)) return false;
+
+        const noteU = (document.getElementById(`bsim-flt-${prefix}-note`)?.value || '').trim().toLowerCase();
+        if (noteU) {
+            const fids = item.funcs || (item.func_id ? [item.func_id] : []);
+            if (!checkNotes(fids, noteU)) return false;
+        }
+
         const count = item.count_a !== undefined ? Math.max(item.count_a, item.count_b) : item.funcs.length;
         const caMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-ca-min`)?.value || document.getElementById(`bsim-flt-${prefix}-c-min`)?.value);
         const caMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-ca-max`)?.value || document.getElementById(`bsim-flt-${prefix}-c-max`)?.value);
@@ -1070,7 +1096,7 @@ function renderBinSimTables(isFilterChange = false) {
     const renderFuncBadge = (fid) => {
         const f = buildFuncObj(fid);
         const sig = (typeof EntityRenderer !== 'undefined')
-            ? EntityRenderer.renderFunction(f, { isTable: true })
+            ? EntityRenderer.renderFunction(f, { isTable: true, hideNote: true, showActions: false })
             : (f.function_name || fid);
         const tagsHtml = (typeof EntityRenderer !== 'undefined')
             ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags) : '';
@@ -1106,7 +1132,12 @@ function renderBinSimTables(isFilterChange = false) {
             <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
         </div>`;
 
-    const restoreFilters = (prefix, suffixes) => {
+    const noteFilterHtml = (prefix, suffix) => `
+        <div onclick="event.stopPropagation()">
+            <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}" placeholder="Note Owner..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
+        </div>`;
+
+    const restoreFilters = (prefix, suffixes, noteSuffixes = []) => {
         const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
         if (qEl && window[`bsim-flt-${prefix}-q-val`]) qEl.value = window[`bsim-flt-${prefix}-q-val`];
         suffixes.forEach(suffix => {
@@ -1114,6 +1145,10 @@ function renderBinSimTables(isFilterChange = false) {
             const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
             if (minEl && window[`bsim-flt-${prefix}-${suffix}-min-val`]) minEl.value = window[`bsim-flt-${prefix}-${suffix}-min-val`];
             if (maxEl && window[`bsim-flt-${prefix}-${suffix}-max-val`]) maxEl.value = window[`bsim-flt-${prefix}-${suffix}-max-val`];
+        });
+        noteSuffixes.forEach(suffix => {
+            const el = document.getElementById(`bsim-flt-${prefix}-${suffix}`);
+            if (el && window[`bsim-flt-${prefix}-${suffix}-val`]) el.value = window[`bsim-flt-${prefix}-${suffix}-val`];
         });
     };
 
@@ -1123,23 +1158,25 @@ function renderBinSimTables(isFilterChange = false) {
         if (thead && !isFilterChange) {
             thead.innerHTML = `
                 <tr>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cluster_name')">Cluster <small>${getSortIcon('matched', 'cluster_name')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'avg_features')">Avg Feat <small>${getSortIcon('matched', 'avg_features')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cohesion')">Similarity <small>${getSortIcon('matched', 'cohesion')}</small><div class="resizer"></div></th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes A</th>
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'count_a')">Funcs A <small>${getSortIcon('matched', 'count_a')}</small><div class="resizer"></div></th>
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'count_b')">Funcs B <small>${getSortIcon('matched', 'count_b')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cohesion')">Cohesion <small>${getSortIcon('matched', 'cohesion')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Sim Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes B</th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cluster_name')">Cluster <small>${getSortIcon('matched', 'cluster_name')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
-                    <th>${searchHtml('matched')}</th>
-                    <th>${filterHtml('matched', 'feat')}</th>
+                    <th>${filterHtml('matched', 'coh')}</th>
+                    <th>${noteFilterHtml('matched', 'note-a')}</th>
                     <th>${filterHtml('matched', 'ca')}</th>
                     <th>${filterHtml('matched', 'cb')}</th>
-                    <th>${filterHtml('matched', 'coh')}</th>
+                    <th>${noteFilterHtml('matched', 'note-b')}</th>
                     <th>${filterHtml('matched', 'rar')}</th>
+                    <th>${searchHtml('matched')}</th>
                 </tr>
             `;
-            restoreFilters('matched', ['feat', 'ca', 'cb', 'coh', 'rar']);
+            restoreFilters('matched', ['feat', 'ca', 'cb', 'coh', 'rar'], ['note-a', 'note-b']);
         }
     }
 
@@ -1151,9 +1188,58 @@ function renderBinSimTables(isFilterChange = false) {
             tbodyMatched.innerHTML = matched.map(m => {
                 const cleanName = m.cluster_name.replace(/'/g, "\\'");
                 const escUuid = m.cluster_uuid;
-                const size = m.count_a + m.count_b;
-                const cohesion = m.cohesion || 0;
-                const avgFeat = m.avg_features || 0;
+                const notesAHtml = m.funcs_a.map(fid => {
+                    const fObj = buildFuncObj(fid);
+                    return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
+                }).join('');
+                
+                const notesBHtml = m.funcs_b.map(fid => {
+                    const fObj = buildFuncObj(fid);
+                    return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
+                }).join('');
+
+                let similarityHtml = '';
+                if (m.funcs_a.length > 0 && m.funcs_b.length > 0) {
+                    const fA = buildFuncObj(m.funcs_a[0]);
+                    const fB = buildFuncObj(m.funcs_b[0]);
+                    let diffUrl = '';
+                    if (window.buildDiffUrl) {
+                        diffUrl = window.buildDiffUrl(fA.function_id, fB.function_id);
+                    } else {
+                        // Fallback just in case
+                        let poolId = null;
+                        if (window.getRoutingState && window.getRoutingState().pool) {
+                            poolId = window.getRoutingState().pool;
+                        } else {
+                            poolId = new URLSearchParams(window.location.search).get('pool_id');
+                        }
+                        diffUrl = `/collections/${encodeURIComponent(fA.collection)}/files/${fA.file_md5}/functions/${fA.entrypoint_address}/vs/${encodeURIComponent(fB.collection)}/${fB.file_md5}/${fB.entrypoint_address}`;
+                        if (poolId) {
+                            diffUrl = `/pools/${encodeURIComponent(poolId)}` + diffUrl;
+                        }
+                    }
+
+                    const pairId = `${fA.function_id}|${fB.function_id}|unweighted_cosine`;
+
+                    similarityHtml = `
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(m.cohesion * 100).toFixed(1)}%</div>
+                        <button class="btn-diff-action" 
+                            onmouseenter="showDiffPreview('${fA.function_id}', '${(fA.function_name || '').replace(/'/g, "\\'")}', '${fB.function_id}', '${(fB.function_name || '').replace(/'/g, "\\'")}', ${m.cohesion}, event)" 
+                            onmousemove="moveCodePreview(event)"
+                            onmouseleave="hideDiffPreview(event)"
+                            onclick="Nav.openPath('${diffUrl}', event, { title: 'Diff: ${fA.function_name} vs ${fB.function_name}', type: 'diff' })" 
+                            title="Run Aligned Diff" 
+                            style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
+                            <span>±</span>
+                        </button>
+                    </div>
+                    ${EntityRenderer.renderTag('similarity', pairId, m.tags || [], m.user_tags || [])}
+                    `;
+                } else {
+                    similarityHtml = `<span class="mono" style="color:var(--accent); font-weight:bold;">${(m.cohesion * 100).toFixed(1)}%</span>`;
+                }
+
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
                     data-entity-data='${JSON.stringify({
@@ -1163,17 +1249,12 @@ function renderBinSimTables(isFilterChange = false) {
                     }).replace(/'/g, "&apos;")}'
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                     <td style="padding:10px;">
-                        <div class="clickable" style="font-weight:bold; color:var(--accent);"
-                             onmouseenter="if(window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) { window.parent.showClusterTableTooltipFromIframe(window.name, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}, event); } else if(window.showClusterTableTooltip) { window.showClusterTableTooltip(event, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}); }"
-                             onmousemove="if(window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) { window.parent.moveClusterTableTooltipFromIframe(window.name, event); } else if(window.moveClusterTableTooltip) { window.moveClusterTableTooltip(event); }"
-                             onmouseleave="if(window.parent && window.parent.hideClusterTableTooltipFromIframe && window.parent !== window) { window.parent.hideClusterTableTooltipFromIframe(); } else if(window.hideClusterTableTooltip) { window.hideClusterTableTooltip(); }"
-                             onclick="openClusterView('${escUuid}', '${cleanName}', event)">
-                             ${m.cluster_name}
-                        </div>
-                        <div class="mono dim" style="font-size:0.65rem;">UUID: ${m.cluster_uuid}</div>
+                        ${similarityHtml}
                     </td>
                     <td style="padding:10px; text-align:center;">
-                        <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
+                            ${notesAHtml}
+                        </div>
                     </td>
                     <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
                         ${m.count_a > 1 ? `<div style="margin-bottom:4px; font-weight:bold; font-size:0.7rem;" class="dim">${m.count_a} funcs</div>` : ''}
@@ -1187,16 +1268,22 @@ function renderBinSimTables(isFilterChange = false) {
                             ${m.funcs_b.map(renderFuncBadge).join('')}
                         </div>
                     </td>
-                    <td style="padding:10px;">
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:40px;">
-                                <div style="height:100%; background:var(--info); width:${(m.cohesion * 100).toFixed(0)}%"></div>
-                            </div>
-                            <span class="dim">${m.cohesion.toFixed(2)}</span>
+                    <td style="padding:10px; text-align:center;">
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
+                            ${notesBHtml}
                         </div>
                     </td>
                     <td style="padding:10px;">
                         <div class="mono dim">${m.sim_rarity.toFixed(2)}</div>
+                    </td>
+                    <td style="padding:10px;">
+                        ${EntityRenderer.renderClusterCard([{
+                            cluster_id: m.cluster_id,
+                            cluster_uuid: m.cluster_uuid,
+                            cluster_name: m.cluster_name,
+                            cohesion_score: m.cohesion || 1.0,
+                            member_count: 1 // ponytail: simple placeholder count for matched pairs card
+                        }])}
                     </td>
                 </tr>
                 `;
@@ -1213,43 +1300,72 @@ function renderBinSimTables(isFilterChange = false) {
             thead.innerHTML = `
                 <tr>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
                     <th>${searchHtml(prefix)}</th>
-                    <th>${filterHtml(prefix, 'feat')}</th>
+                    <th>${noteFilterHtml(prefix, 'note')}</th>
                     <th>${filterHtml(prefix, 'rar')}</th>
+                    <th>${searchHtml(prefix + '-cl')}</th>
                 </tr>
             `;
-            restoreFilters(prefix, ['feat', 'rar']);
+            restoreFilters(prefix, ['feat', 'rar'], ['note']);
         }
 
-        let items = applyFilters(itemsRaw || [], prefix);
+        // Apply secondary text search filter for cluster name if present
+        let items = (itemsRaw || []).filter(u => {
+            const clFltVal = window[`bsim-flt-${prefix}-cl-q-val`] || document.getElementById(`bsim-flt-${prefix}-cl-q`)?.value || '';
+            if (clFltVal) {
+                const term = clFltVal.toLowerCase();
+                const clName = (u.cluster_name || 'unclustered').toLowerCase();
+                if (!clName.includes(term)) return false;
+            }
+            return true;
+        });
+
+        items = applyFilters(items, prefix);
         items = sortItems(items, state);
 
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
             return;
         }
         tbody.innerHTML = items.map(u => {
-            const avgFeat = u.avg_features || 0;
             const rarity = (u.sim_rarity !== undefined) ? u.sim_rarity : 0;
+            const funcs = u.funcs || (u.func_id ? [u.func_id] : []);
+            const notesHtml = funcs.map(fid => {
+                const fObj = buildFuncObj(fid);
+                return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
+            }).join('');
             return `
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
+                data-entity-data='${JSON.stringify({
+                    cluster_id: u.cluster_id,
+                    cluster_uuid: u.cluster_uuid,
+                    cluster_name: u.cluster_name
+                }).replace(/'/g, "&apos;")}'
+                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                 <td style="padding:8px;">
-                    ${renderFuncBadge(u.func_id)}
+                    ${funcs.map(renderFuncBadge).join('')}
                 </td>
                 <td style="padding:10px; text-align:center;">
-                    <div class="mono dim">${avgFeat.toFixed(0)}</div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        ${notesHtml}
+                    </div>
                 </td>
                 <td style="padding:10px;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:30px;">
-                            <div style="height:100%; background:var(--warning, #fd971f); width:${(rarity * 100).toFixed(0)}%"></div>
-                        </div>
-                        <span class="dim">${rarity.toFixed(2)}</span>
-                    </div>
+                    <span class="dim">${rarity.toFixed(2)}</span>
+                </td>
+                <td style="padding:10px;">
+                    ${(u.cluster_id || u.cluster_uuid) ? EntityRenderer.renderClusterCard([{
+                        cluster_id: u.cluster_id,
+                        cluster_uuid: u.cluster_uuid,
+                        cluster_name: u.cluster_name,
+                        cohesion_score: u.cohesion || 1.0,
+                        member_count: 1
+                    }]) : ''}
                 </td>
             </tr>
             `;
@@ -1481,5 +1597,33 @@ if (typeof window.showFunctionCodeById === 'undefined') {
         }
     };
 }
+
+// Refresh logic for function rows on note updates
+window.refreshFunctionRow = async function(funcId) {
+    if (!binSimDataCache) return;
+    try {
+        const parts = funcId.split(':');
+        const collection = parts[0];
+        const md5 = parts[2];
+        const addr = parts[3];
+        const res = await fetch(`/api/function/search?collection=${collection}&entrypoint_address=${addr}&file_md5=${md5}`);
+        const data = await res.json();
+        if (data.functions && data.functions.length > 0) {
+            const f = data.functions[0];
+            if (!binSimDataCache.functions_metadata) {
+                binSimDataCache.functions_metadata = {};
+            }
+            binSimDataCache.functions_metadata[funcId] = {
+                ...(binSimDataCache.functions_metadata[funcId] || {}),
+                note_owners: f.note_owners || [],
+                note_count: f.note_count || 0
+            };
+            renderBinSimTables();
+        }
+    } catch (e) {
+        console.error("Failed to refresh function note badge in comparison view:", e);
+    }
+};
+
 
 

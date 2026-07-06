@@ -103,7 +103,7 @@ def build_similarity():
 
     min_score = data.get("min_score")
     if min_score is None:
-        min_score = config_service.get("similarity.min_score", 0.95)
+        min_score = config_service.get("similarity.min_score", 0.9)
 
     top_k = data.get("top_k")
     if top_k is None:
@@ -122,20 +122,22 @@ def build_similarity():
         "top_k": top_k,
         "min_features": min_features,
         "all": data.get("all", False),
+        "skip_write": data.get("skip_write", False),  # ponytail
     }
 
-    tasks = [
-        (JobType.BUILD_SIM, payload),
-        (
-            JobType.INDEX_SIM,
-            {
-                "collection": collection,
-                "algo": algo,
-                "md5": md5,
-                "batch_uuid": batch_uuid,
-            },
-        ),
-    ]
+    tasks = [(JobType.BUILD_SIM, payload)]
+    if not data.get("skip_write", False):
+        tasks.append(
+            (
+                JobType.INDEX_SIM,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "md5": md5,
+                    "batch_uuid": batch_uuid,
+                },
+            )
+        )
 
     if algo in ["milvus_sparse"]:
         if not milvus_service.enabled:
@@ -166,7 +168,7 @@ def rebuild_similarity():
 
     min_score = data.get("min_score")
     if min_score is None:
-        min_score = config_service.get("similarity.min_score", 0.95)
+        min_score = config_service.get("similarity.min_score", 0.9)
 
     top_k = data.get("top_k")
     if top_k is None:

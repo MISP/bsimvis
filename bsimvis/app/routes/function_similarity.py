@@ -48,7 +48,9 @@ def similarity_api():
 
         scores = {}
 
-        if id1.startswith("global:pool:"):
+        if pool_id:
+            pass  # keep collection as f"global:pool:{pool_id}:col:{collection}"
+        elif id1.startswith("global:pool:"):
             parts = id1.split(":")
             if len(parts) >= 5 and parts[3] == "col":
                 collection = ":".join(parts[:5])
@@ -68,13 +70,19 @@ def similarity_api():
         user_tags = []
 
         for algo in algorithms:
-            # Use service to get score, which triggers on-demand build if missing
-            score = service.get_pair_score(id1, id2, algo=algo)
+            # Use service to get score, passing the resolved collection namespace
+            score = service.get_pair_score(id1, id2, algo=algo, collection=collection)
             scores[algo] = score
 
             # Fetch the actual document to extract tags
             sid = service._canonicalize_sid(collection, id1, id2, algo)
             raw_doc = service.r.get(sid)
+            if not raw_doc and pool_id:
+                # Fall back to base pool namespace for document retrieval
+                base_pool = f"global:pool:{pool_id}"
+                sid_base = service._canonicalize_sid(base_pool, id1, id2, algo)
+                raw_doc = service.r.get(sid_base)
+
             if raw_doc:
                 d = json.loads(raw_doc)
                 if d.get("tags") and not tags:
@@ -87,13 +95,22 @@ def similarity_api():
                     if d.get("user_tags") and not user_tags:
                         user_tags = d.get("user_tags")
 
+        # Determine if any score was calculated on-demand or loaded from pool/cache
+        source = "pool" if pool_id else "cache"
+        for algo in algorithms:
+            # If the score doesn't exist in the database (pool or collection cache), source becomes on-demand
+            cached_score = service.check_cache(id1, id2, collection, algo)
+            if cached_score is None:
+                source = "on-demand"
+                break
+
         return {
             "id1": id1,
             "id2": id2,
             "scores": scores,
             "tags": tags,
             "user_tags": user_tags,
-            "source": "on-demand",
+            "source": source,
         }
 
     except Exception as e:

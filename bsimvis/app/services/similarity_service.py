@@ -43,6 +43,7 @@ class SimilarityService:
         job_id=None,
         sleep_time=0,
         index_depth="none",
+        skip_write=False,
     ):
         """
         Builds similarities for all functions in a batch or for a specific file.
@@ -50,6 +51,7 @@ class SimilarityService:
         """
         self._func_meta_cache = {}
         self._file_meta_cache = {}
+        self._sim_registry_seen = set()
         from bsimvis.app.services.config_service import config_service
 
         if algo is None:
@@ -57,7 +59,7 @@ class SimilarityService:
         if top_k is None:
             top_k = config_service.get("similarity.top_k", 1000)
         if min_score is None:
-            min_score = config_service.get("similarity.min_score", 0.3)
+            min_score = config_service.get("similarity.min_score", 0.9)
         if min_features is None:
             min_features = config_service.get("similarity.min_features", 0)
         r = self.r
@@ -94,6 +96,7 @@ class SimilarityService:
 
         start_time = time.time()
         chunk_size = 100
+        total_sims = 0
 
         for i in range(0, total, chunk_size):
             chunk = function_ids[i : i + chunk_size]
@@ -103,6 +106,7 @@ class SimilarityService:
                 elapsed = time.time() - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
+                sim_speed = total_sims / elapsed if elapsed > 0 else 0
                 remaining = total - done
                 eta = remaining / speed if speed > 0 else 0
 
@@ -110,7 +114,7 @@ class SimilarityService:
                 job_service.update_progress(
                     job_id,
                     pct,
-                    f"Building similarities: {i}/{total} ({speed:.1f} fn/s, ETA: {int(eta)}s)",
+                    f"Building similarities: {i}/{total} ({speed:.1f} fn/s, {sim_speed:.1f} sim/s, ETA: {int(eta)}s)",
                 )
 
                 # Store metrics in job hash for global visibility
@@ -119,6 +123,7 @@ class SimilarityService:
                     f"job:{job_id}",
                     mapping={
                         "speed": f"{speed:.2f}",
+                        "sim_speed": f"{sim_speed:.2f}",
                         "eta": str(int(eta)),
                         "total_items": str(total),
                         "processed_items": str(i),
@@ -126,7 +131,7 @@ class SimilarityService:
                 )
 
             # 2. Process Chunk with Pipelining
-            self._process_chunk(
+            written = self._process_chunk(
                 collection,
                 chunk,
                 algo,
@@ -134,7 +139,9 @@ class SimilarityService:
                 min_score,
                 min_features,
                 index_depth=index_depth,
+                skip_write=skip_write,
             )
+            total_sims += written or 0
 
             # 3. Dashboard Protection: Yield
             if sleep_time > 0 and i + chunk_size < total:
@@ -189,6 +196,7 @@ class SimilarityService:
         min_score,
         min_features=0,
         index_depth="full",
+        skip_write=False,
     ):
         """Processes a chunk of functions using Redis pipelining."""
         if algo in ["milvus_sparse"]:
@@ -226,19 +234,30 @@ class SimilarityService:
 
         # Phase 2: Filter and prepare Lua bursts
         targets_to_build = []
+        small_fids = []
         for fid, features in zip(targets_needing_vectors, vectors):
             if not features or len(features) < min_features:
-                # Shortcut: Too few features = Mark as built immediately
-                r.sadd(built_set_key, fid)
+                # Shortcut: Too few features = Mark as built immediately.
+                # BSim is false-positive-prone here; these get exact FunctionID-hash
+                # matches instead (see _hash_match_small).
+                if not skip_write:
+                    r.sadd(built_set_key, fid)
+                    small_fids.append(fid)
                 continue
 
             targets_to_build.append((fid, features))
+
+        # Small functions: deterministic 1.0 / 0 similarity via exact FunctionID hash.
+        # ponytail: skip_write (bench dry-run) skips this — it measures BSim perf only.
+        # Pools go through build_pool (crosses every member's buckets), not this path.
+        if small_fids and not collection.startswith("global:pool:"):
+            self._hash_match_small(collection, algo, small_fids, index_depth)
 
         if not targets_to_build:
             return
 
         # Pre-populate LSH buckets if algorithm is minhash_lsh
-        if algo == "minhash_lsh":
+        if algo == "minhash_lsh" and not skip_write:
             num_bands = 30
             lsh_pipe = r.pipeline(transaction=False)
             for fid, features in targets_to_build:
@@ -319,14 +338,16 @@ class SimilarityService:
                     self._minhash_lsh_script(args=lua_args, client=pipe)
                 else:
                     self._find_script(args=lua_args, client=pipe)
-                pipe.sadd(built_set_key, fid)
+                if not skip_write:
+                    pipe.sadd(built_set_key, fid)
 
             pipe_results = pipe.execute()
 
             for idx, (fid, md5, addr, target_feat_total, lua_args) in enumerate(
                 prepared_targets
             ):
-                candidates_raw = pipe_results[idx * 2]
+                res_idx = idx if skip_write else idx * 2
+                candidates_raw = pipe_results[res_idx]
                 if candidates_raw:
                     # Parse flat array return into triples (id, score, c_total)
                     candidates = []
@@ -348,13 +369,25 @@ class SimilarityService:
 
         # Phase 4: Persistence and Indexing
         if discovery_results:
-            self._persist_and_index_batch(
+            if skip_write:
+                # ponytail: just count similarities found without writing to DB/disk
+                total_sims_found = 0
+                for fid, t_md5, t_addr, t_total, candidates in discovery_results:
+                    if t_total < min_features:
+                        continue
+                    for item in candidates:
+                        if item["c_total"] < min_features:
+                            continue
+                        total_sims_found += 1
+                return total_sims_found
+            return self._persist_and_index_batch(
                 collection,
                 algo,
                 discovery_results,
                 min_features=min_features,
                 index_depth=index_depth,
             )
+        return 0
 
     def _process_chunk_milvus(
         self,
@@ -371,7 +404,7 @@ class SimilarityService:
             logging.error(
                 "[!] Attempted to use milvus_sparse algorithm while Milvus is disabled."
             )
-            return
+            return 0
 
         r = self.r
         built_set_key = f"{collection}:built:functions:{algo}"
@@ -385,6 +418,7 @@ class SimilarityService:
         results = pipe.execute()
 
         targets_to_build = []
+        small_fids = []
         for idx, fid in enumerate(chunk):
             is_built = results[idx * 2]
             features_raw = results[idx * 2 + 1]
@@ -392,11 +426,17 @@ class SimilarityService:
                 continue
             if not features_raw or len(features_raw) < min_features:
                 r.sadd(built_set_key, fid)
+                small_fids.append(fid)
                 continue
 
             tf_dict = {h: float(s) for h, s in features_raw}
             total_feat = sum(tf_dict.values())
             targets_to_build.append((fid, tf_dict, total_feat))
+
+        # Small functions: exact FunctionID-hash matches (see _hash_match_small).
+        # Pools go through build_pool, not this path.
+        if small_fids and not collection.startswith("global:pool:"):
+            self._hash_match_small(collection, algo, small_fids, index_depth)
 
         if not targets_to_build:
             return
@@ -458,13 +498,119 @@ class SimilarityService:
 
         # Phase 3: Persistence and Indexing
         if discovery_results:
-            self._persist_and_index_batch(
+            return self._persist_and_index_batch(
                 collection,
                 algo,
                 discovery_results,
                 min_features=min_features,
                 index_depth=index_depth,
             )
+        return 0
+
+    def _hash_match_small(
+        self,
+        collection,
+        algo,
+        small_fids,
+        index_depth,
+        search_collections=None,
+        pool_id=None,
+        only_cross_collection=False,
+    ):
+        """Give small functions a deterministic similarity from exact FunctionID-hash
+        matches: score 1.0 against cross-binary functions sharing the same hash, no
+        edge otherwise. Reuses _persist_and_index_batch with min_features=0 so its
+        BSim feature-floor guards don't drop these (that's the whole point).
+
+        For pools, pass search_collections (the member collections) + pool_id: the
+        buckets are per-collection, so matching across a pool means crossing every
+        member's {coll}:funcid:{hash} set. only_cross_collection mirrors the pool's
+        same-name filter.
+        """
+        r = self.r
+        # Non-pool: match within the one collection. Pool: cross every member bucket.
+        colls = search_collections or [collection]
+
+        # Each small func's hash (cheap {fid}:funcid pointer written at ingestion)
+        pipe = r.pipeline(transaction=False)
+        for fid in small_fids:
+            pipe.get(f"{fid}:funcid")
+        hashes = pipe.execute()
+
+        # Group fids by hash so each bucket is read once (small funcs sharing a hash
+        # are exactly the ones that match each other)
+        fids_by_hash = {}
+        for fid, h in zip(small_fids, hashes):
+            if not h or len(fid.split(":")) < 4:
+                continue
+            h = h.decode() if isinstance(h, bytes) else h
+            fids_by_hash.setdefault(h, []).append(fid)
+        if not fids_by_hash:
+            return
+
+        # Read each hash bucket once (union across searched collections). No size cap:
+        # an (A,B) match is intrinsic to the two functions, so it must not depend on how
+        # many other binaries share the hash — that's what keeps the file score canonical.
+        buckets = {}
+        for h in fids_by_hash:
+            members = set()
+            for c in colls:
+                for m in r.smembers(f"{c}:funcid:{h}"):
+                    members.add(m.decode() if isinstance(m, bytes) else m)
+            buckets[h] = members
+
+        synth = []  # (fid, md5, addr, [mate_fid, ...])
+        for h, fids in fids_by_hash.items():
+            bucket = buckets.get(h)
+            if not bucket:
+                continue
+            for fid in fids:
+                parts = fid.split(":")
+                my_coll, my_md5 = parts[0], parts[2]
+                mates = []
+                for m in bucket:
+                    mp = m.split(":")
+                    # ponytail: cross-binary only (same-binary dupes aren't a file-diff signal)
+                    if m == fid or len(mp) < 3 or mp[2] == my_md5:
+                        continue
+                    if only_cross_collection and mp[0] == my_coll:
+                        continue
+                    mates.append(m)
+                if mates:
+                    synth.append((fid, my_md5, parts[3], mates))
+
+        if not synth:
+            return
+
+        # Feature counts (unique features = zcard of the tf vector) for the sim_doc
+        all_fids = set()
+        for fid, md5, addr, mates in synth:
+            all_fids.add(fid)
+            all_fids.update(mates)
+        fid_list = list(all_fids)
+        pipe = r.pipeline(transaction=False)
+        for f in fid_list:
+            pipe.zcard(f"{f}:vec:tf")
+        counts = {f: float(c or 0) for f, c in zip(fid_list, pipe.execute())}
+
+        discovery = []
+        for fid, md5, addr, mates in synth:
+            items = [
+                {"id": m, "score": 1.0, "c_total": counts.get(m, 0.0)} for m in mates
+            ]
+            discovery.append((fid, md5, addr, counts.get(fid, 0.0), items))
+
+        # index_depth="none": skip search-index propagation (save_similarity) — it's the
+        # per-doc bottleneck and hash dupes flood it. involves:file + the sim doc (all
+        # build_bin_sim reads) are written regardless. Exact tiny-func dupes needn't be searchable.
+        self._persist_and_index_batch(
+            collection,
+            algo,
+            discovery,
+            pool_id=pool_id,
+            min_features=0,
+            index_depth="none",
+        )
 
     def _persist_and_index_batch(
         self,
@@ -474,10 +620,12 @@ class SimilarityService:
         pool_id=None,
         min_features=0,
         index_depth="full",
+        skip_write=False,
     ):
         """Unified helper to persist similarity results and propagate metadata to search indexes."""
         r = self.r
         now = int(time.time() * 1000)
+        total_written = 0
 
         def extract_md5(fid):
             # FID is {coll}:func:{md5}:{addr}
@@ -572,9 +720,12 @@ class SimilarityService:
                         else:
                             self._file_meta_cache[fid] = None
 
+        if skip_write:
+            return 0
+
         # Execute persistence and indexing in chunked batches
         # ponytail: batch size set to 2000 to balance serialization latency and worker contention
-        batch_size = 500
+        batch_size = 200
         persist_pipe = r.pipeline(transaction=False)
         sim_count = 0
 
@@ -605,7 +756,6 @@ class SimilarityService:
                     # Pool Namespace: global:pool:{pool_id}:sim:{fid1}::{fid2}
                     sid = f"global:pool:{pool_id}:sim:{id_a}::{id_b}"
                     score_key = f"global:pool:{pool_id}:sim:score"
-                    all_key = f"global:pool:{pool_id}:sim:all"
                     involves_func_prefix = f"global:pool:{pool_id}:sim:involves:func:"
                     involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
                     min_feat_key = f"global:pool:{pool_id}:sim:min_features"
@@ -625,7 +775,6 @@ class SimilarityService:
                     )
                     sid = f"{collection}:sim:{algo}:{clean_id_a}::{clean_id_b}"
                     score_key = f"{collection}:sim:score:{algo}"
-                    all_key = f"{collection}:sim:all"
                     involves_func_prefix = f"{collection}:sim:involves:func:"
                     involves_file_prefix = f"{collection}:sim:involves:file:"
                     min_feat_key = f"{collection}:sim:min_features"
@@ -653,7 +802,6 @@ class SimilarityService:
 
                 persist_pipe.set(sid, json.dumps(sim_doc))
                 persist_pipe.zadd(score_key, {sid: score_rounded})
-                persist_pipe.zadd(all_key, {sid: 0})
 
                 # For involves, we use the full FID if it's a pool
                 inv_id_a = id_a if pool_id else clean_id_a
@@ -691,9 +839,11 @@ class SimilarityService:
                         file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
                         file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
                         index_depth=index_depth,
+                        seen=getattr(self, "_sim_registry_seen", None),
                     )
 
                 sim_count += 1
+                total_written += 1
                 if sim_count >= batch_size:
                     persist_pipe.execute()
                     persist_pipe = r.pipeline(transaction=False)
@@ -701,6 +851,8 @@ class SimilarityService:
 
         if sim_count > 0:
             persist_pipe.execute()
+
+        return total_written
 
     def build_function(
         self,
@@ -724,7 +876,7 @@ class SimilarityService:
         if top_k is None:
             top_k = config_service.get("similarity.top_k", 1000)
         if min_score is None:
-            min_score = config_service.get("similarity.min_score", 0.3)
+            min_score = config_service.get("similarity.min_score", 0.9)
         if min_features is None:
             min_features = config_service.get("similarity.min_features", 0)
         parts = base_id.split(":")
@@ -856,7 +1008,7 @@ class SimilarityService:
 
         return True
 
-    def get_pair_score(self, id1, id2, algo="unweighted_cosine"):
+    def get_pair_score(self, id1, id2, algo="unweighted_cosine", collection=None):
         """
         Returns the score for a specific pair.
         Uses cache if already built, otherwise performs direct calculation in Python.
@@ -871,16 +1023,26 @@ class SimilarityService:
             coll1 = parts1[0]
             coll2 = parts2[0]
 
-            # 1. Cross-collection diff: Always direct calculation (No Cache, No Build)
-            if coll1 != coll2:
-                return self.calculate_exact_score(id1, id2, algo=algo)
+            # 1. Use the provided collection parameter if specified
+            if collection:
+                score = self.check_cache(id1, id2, collection, algo)
+                if score is not None:
+                    return score
 
             # 2. Same collection: Check Cache first
-            score = self.check_cache(id1, id2, coll1, algo)
-            if score is not None:
-                return score
+            if coll1 == coll2:
+                score = self.check_cache(id1, id2, coll1, algo)
+                if score is not None:
+                    return score
 
-            # 3. Fallback: Direct Calculation (No on-demand baking)
+            # 3. Check cache under pool collection if IDs differ but pool is active
+            if id1.startswith("global:pool:"):
+                pool_prefix = ":".join(parts1[:3])
+                score = self.check_cache(id1, id2, pool_prefix, algo)
+                if score is not None:
+                    return score
+
+            # 4. Fallback: Direct Calculation (No on-demand baking)
             return self.calculate_exact_score(id1, id2, algo=algo)
 
         except Exception as e:
@@ -941,11 +1103,29 @@ class SimilarityService:
 
     def check_cache(self, id1, id2, collection, algo):
         """Checks if a similarity pair is already built."""
-        sid = self._canonicalize_sid(collection, id1, id2, algo)
-        zset_key = f"{collection}:sim:score:{algo}"
+        is_pool = collection.startswith("global:pool:") or collection.startswith(
+            "pool:"
+        )
 
+        # 1. Try directly with collection
+        sid = self._canonicalize_sid(collection, id1, id2, algo)
+        zset_key = (
+            f"{collection}:sim:score" if is_pool else f"{collection}:sim:score:{algo}"
+        )
         score = self.r.zscore(zset_key, sid)
-        return float(score) if score is not None else None
+        if score is not None:
+            return float(score)
+
+        # 2. If collection is sub-collection of pool (e.g. global:pool:UUID:col:coll), try base pool namespace
+        if collection.startswith("global:pool:") and ":col:" in collection:
+            base_pool = collection.split(":col:")[0]
+            sid_base = self._canonicalize_sid(base_pool, id1, id2, algo)
+            zset_key_base = f"{base_pool}:sim:score"
+            score = self.r.zscore(zset_key_base, sid_base)
+            if score is not None:
+                return float(score)
+
+        return None
 
     def get_build_status(
         self, collection, batch_uuid=None, md5=None, algo="unweighted_cosine"
@@ -1076,9 +1256,17 @@ class SimilarityService:
         c1 = id1[len(func_prefix) :] if id1.startswith(func_prefix) else id1
         c2 = id2[len(func_prefix) :] if id2.startswith(func_prefix) else id2
 
+        is_pool = collection.startswith("global:pool:") or collection.startswith(
+            "pool:"
+        )
+
         if c1 > c2:
+            if is_pool:
+                return f"{collection}:sim:{c1}::{c2}"
             return f"{collection}:sim:{algo}:{c1}::{c2}"
         else:
+            if is_pool:
+                return f"{collection}:sim:{c2}::{c1}"
             return f"{collection}:sim:{algo}:{c2}::{c1}"
 
     def tag_similarity(
@@ -1124,12 +1312,14 @@ class SimilarityService:
         job_service=None,
         job_id=None,
         index_depth="none",
+        skip_write=False,
     ):
         """
         Orchestrates cross-collection similarity discovery for a pool.
         """
         self._func_meta_cache = {}
         self._file_meta_cache = {}
+        self._sim_registry_seen = set()
         from bsimvis.app.services.pool_service import pool_service
 
         pool = pool_service.get_pool(pool_id)
@@ -1139,15 +1329,28 @@ class SimilarityService:
 
         collections = pool.get("collections", [])
 
-        # New structured config handling
+        # New structured config handling. Fall back to the same config defaults the
+        # collection path uses, so an unset pool param == the collection default.
+        from bsimvis.app.services.config_service import config_service
+
         only_cross_collection = pool.get("only_cross_collection", False)
         func_sim_params = pool.get("func_sim_params", {})
 
-        algo = func_sim_params.get("algo", pool.get("algo", "unweighted_cosine"))
-        top_k = int(func_sim_params.get("top_k", pool.get("top_k", 1000)))
-        min_score = float(func_sim_params.get("min_score", pool.get("min_score", 0.3)))
+        algo = func_sim_params.get(
+            "algo", config_service.get("similarity.algo", "unweighted_cosine")
+        )
+        top_k = int(
+            func_sim_params.get("top_k", config_service.get("similarity.top_k", 1000))
+        )
+        min_score = float(
+            func_sim_params.get(
+                "min_score", config_service.get("similarity.min_score", 0.9)
+            )
+        )
         min_features = int(
-            func_sim_params.get("min_features", pool.get("min_features", 0))
+            func_sim_params.get(
+                "min_features", config_service.get("similarity.min_features", 10)
+            )
         )
 
         r = self.r
@@ -1175,6 +1378,8 @@ class SimilarityService:
 
         start_time = time.time()
         chunk_size = 100
+        total_sims = 0
+        pool_small_fids = []  # below min_features -> exact FunctionID-hash match instead
         for i in range(0, total, chunk_size):
             chunk = all_function_ids[i : i + chunk_size]
 
@@ -1183,10 +1388,11 @@ class SimilarityService:
                 elapsed = time.time() - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
+                sim_speed = total_sims / elapsed if elapsed > 0 else 0
                 job_service.update_progress(
                     job_id,
                     int(done / total * 100),
-                    f"Building pool: {done}/{total} functions ({speed:.1f} fn/s)",
+                    f"Building pool: {done}/{total} functions ({speed:.1f} fn/s, {sim_speed:.1f} sim/s)",
                 )
 
             # Bulk fetch feature vectors for the chunk
@@ -1202,7 +1408,9 @@ class SimilarityService:
 
             for idx, fid in enumerate(chunk):
                 features_raw = chunk_features[idx]
-                if not features_raw:
+                if not features_raw or len(features_raw) < min_features:
+                    # Small: skip BSim, match by exact FunctionID hash after the loop
+                    pool_small_fids.append(fid)
                     continue
 
                 target_feat_total = 0
@@ -1323,14 +1531,33 @@ class SimilarityService:
                     discovery_results.append((fid, md5, "", t_total, candidates))
 
             if discovery_results:
-                self._persist_and_index_batch(
+                written = self._persist_and_index_batch(
                     "",
                     algo,
                     discovery_results,
                     pool_id=pool_id,
                     min_features=min_features,
                     index_depth=index_depth,
+                    skip_write=skip_write,
                 )
+                total_sims += written or 0
+
+        # Cross every member collection's FunctionID-hash buckets for the small funcs
+        if pool_small_fids and not skip_write:
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"[*] FunctionID-hash matching {len(pool_small_fids)} small functions (<{min_features} features)...",
+                )
+            self._hash_match_small(
+                "",
+                algo,
+                pool_small_fids,
+                index_depth,
+                search_collections=collections,
+                pool_id=pool_id,
+                only_cross_collection=only_cross_collection,
+            )
 
         # 2. Update Sync Snapshots and Indexes
         pool_service.update_sync_snapshots(pool_id)
@@ -1363,12 +1590,14 @@ class SimilarityService:
         job_service=None,
         job_id=None,
         index_depth="none",
+        skip_write=False,
     ):
         """
         Orchestrates cross-collection similarity discovery for a single file in the pool.
         """
         self._func_meta_cache = {}
         self._file_meta_cache = {}
+        self._sim_registry_seen = set()
         from bsimvis.app.services.pool_service import pool_service
 
         pool = pool_service.get_pool(pool_id)
@@ -1378,15 +1607,28 @@ class SimilarityService:
 
         collections = pool.get("collections", [])
 
-        # New structured config handling
+        # New structured config handling. Fall back to the same config defaults the
+        # collection path uses, so an unset pool param == the collection default.
+        from bsimvis.app.services.config_service import config_service
+
         only_cross_collection = pool.get("only_cross_collection", False)
         func_sim_params = pool.get("func_sim_params", {})
 
-        algo = func_sim_params.get("algo", pool.get("algo", "unweighted_cosine"))
-        top_k = int(func_sim_params.get("top_k", pool.get("top_k", 1000)))
-        min_score = float(func_sim_params.get("min_score", pool.get("min_score", 0.3)))
+        algo = func_sim_params.get(
+            "algo", config_service.get("similarity.algo", "unweighted_cosine")
+        )
+        top_k = int(
+            func_sim_params.get("top_k", config_service.get("similarity.top_k", 1000))
+        )
+        min_score = float(
+            func_sim_params.get(
+                "min_score", config_service.get("similarity.min_score", 0.9)
+            )
+        )
         min_features = int(
-            func_sim_params.get("min_features", pool.get("min_features", 0))
+            func_sim_params.get(
+                "min_features", config_service.get("similarity.min_features", 10)
+            )
         )
 
         r = self.r
@@ -1420,6 +1662,8 @@ class SimilarityService:
 
         start_time = time.time()
         chunk_size = 5
+        total_sims = 0
+        pool_small_fids = []  # below min_features -> exact FunctionID-hash match instead
         for i in range(0, total, chunk_size):
             chunk = all_function_ids[i : i + chunk_size]
 
@@ -1428,10 +1672,11 @@ class SimilarityService:
                 elapsed = time.time() - start_time
                 done = i
                 speed = done / elapsed if elapsed > 0 else 0
+                sim_speed = total_sims / elapsed if elapsed > 0 else 0
                 job_service.update_progress(
                     job_id,
                     int(done / total * 100),
-                    f"Building file {file_md5} pool sim: {done}/{total} functions ({speed:.1f} fn/s)",
+                    f"Building file {file_md5} pool sim: {done}/{total} functions ({speed:.1f} fn/s, {sim_speed:.1f} sim/s)",
                 )
 
             # Use a pipeline to batch any LSH setup writes for this chunk
@@ -1442,7 +1687,9 @@ class SimilarityService:
             for fid in chunk:
                 vec_key = f"{fid}:vec:tf"
                 features_raw = r.zrange(vec_key, 0, -1, withscores=True)
-                if not features_raw:
+                if not features_raw or len(features_raw) < min_features:
+                    # Small: skip BSim, match by exact FunctionID hash after the loop
+                    pool_small_fids.append(fid)
                     continue
 
                 target_feat_total = 0
@@ -1561,14 +1808,33 @@ class SimilarityService:
                     discovery_results.append((fid, md5, "", t_total, candidates))
 
             if discovery_results:
-                self._persist_and_index_batch(
+                written = self._persist_and_index_batch(
                     "",
                     algo,
                     discovery_results,
                     pool_id=pool_id,
                     min_features=min_features,
                     index_depth=index_depth,
+                    skip_write=skip_write,
                 )
+                total_sims += written or 0
+
+        # Cross every member collection's FunctionID-hash buckets for this file's small funcs
+        if pool_small_fids and not skip_write:
+            if job_service and job_id:
+                job_service.add_log(
+                    job_id,
+                    f"[*] FunctionID-hash matching {len(pool_small_fids)} small functions (<{min_features} features)...",
+                )
+            self._hash_match_small(
+                "",
+                algo,
+                pool_small_fids,
+                index_depth,
+                search_collections=collections,
+                pool_id=pool_id,
+                only_cross_collection=only_cross_collection,
+            )
 
         if job_service and job_id:
             job_service.add_log(
@@ -1717,6 +1983,25 @@ class SimilarityService:
             )
             return 1.0 / math.log(1 + global_count + 1)
 
+        def pick_cluster(full_a, full_b):
+            """Best function cluster for a matched pair (mirrors bin_sim_service):
+            prefer a cluster both share, else any either belongs to; tightest cohesion wins."""
+            la = fid_to_cids.get(full_a, set())
+            lb = fid_to_cids.get(full_b, set())
+            shared = la & lb
+            candidates = shared if shared else (la | lb)
+            best = None
+            best_coh = -1.0
+            for cid in candidates:
+                meta = cluster_meta.get(cid)
+                if not meta:
+                    continue
+                coh = float(meta.get("cohesion_score", 0.0))
+                if coh > best_coh:
+                    best_coh = coh
+                    best = meta
+            return best
+
         # Pre-fetch file metadata
         file_meta_cache = {}
         pipe_meta = r.pipeline(transaction=False)
@@ -1735,7 +2020,7 @@ class SimilarityService:
             else:
                 file_meta_cache[(coll, md5)] = {}
 
-        # Load function metadata (for bsim_features_count of unclustered/unmatched functions)
+        # Load function metadata (for bsim_features_count of functions)
         func_meta_cache = {}
         all_unique_fids = set()
         for fids_set in binary_fids.values():
@@ -1772,27 +2057,59 @@ class SimilarityService:
                 else:
                     pairs.append((b2, b1))
 
-        # 4. Process Pairs (Greedy Sweep)
+        # 4. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
         persist_pipe = r.pipeline(transaction=False)
         now = int(time.time() * 1000)
+
+        involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
 
         for b1, b2 in pairs:
             coll_a, md5_a = b1
             coll_b, md5_b = b2
 
-            cmap_a = binary_cluster_maps[b1]
-            cmap_b = binary_cluster_maps[b2]
+            # ponytail: Use Kvrocks SINTER to fetch similarities involving both files without temporary keys
+            involves_a = f"{involves_file_prefix}{coll_a}:{md5_a}"
+            involves_b = f"{involves_file_prefix}{coll_b}:{md5_b}"
+            sim_keys = [
+                k.decode() if isinstance(k, bytes) else str(k)
+                for k in r.sinter(involves_a, involves_b)
+            ]
 
-            def get_pair_sim_rarity(cid):
-                count_in_pair = len(cmap_a.get(cid, [])) + len(cmap_b.get(cid, []))
-                return 1.0 / math.log(1 + count_in_pair + 1)
+            # Fetch similarity documents in parallel
+            sim_docs = []
+            if sim_keys:
+                pipe_sim = r.pipeline(transaction=False)
+                for k in sim_keys:
+                    pipe_sim.get(k)
+                sim_res = pipe_sim.execute()
+                for res in sim_res:
+                    if res:
+                        sim_docs.append(
+                            json.loads(res.decode() if isinstance(res, bytes) else res)
+                        )
 
-            shared_cids = set(cmap_a.keys()).intersection(set(cmap_b.keys()))
-            shared_cids_sorted = sorted(
-                list(shared_cids),
-                key=lambda c: float(cluster_meta.get(c, {}).get("cohesion_score", 0.0)),
-                reverse=True,
-            )
+            # Filter/extract edges
+            edges = []
+            for doc in sim_docs:
+                fid1 = doc.get("id1")
+                fid2 = doc.get("id2")
+                score = doc.get("score", 0.0)
+                if fid1 and fid2:
+                    # ponytail: Extract exact MD5 out of function IDs (casing-insensitive)
+                    parts1 = fid1.split(":")
+                    parts2 = fid2.split(":")
+                    if len(parts1) >= 2 and len(parts2) >= 2:
+                        m1 = parts1[-2].lower()
+                        m2 = parts2[-2].lower()
+                        m_a_clean = md5_a.lower()
+                        m_b_clean = md5_b.lower()
+                        if m1 == m_a_clean and m2 == m_b_clean:
+                            edges.append((fid1, fid2, score))
+                        elif m1 == m_b_clean and m2 == m_a_clean:
+                            edges.append((fid2, fid1, score))
+
+            # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
+            edges.sort(key=lambda x: (-x[2], x[0], x[1]))
 
             assigned_a = set()
             assigned_b = set()
@@ -1800,75 +2117,72 @@ class SimilarityService:
 
             sum_weighted_cohesion_sim = 0.0
             sum_weights_sim = 0.0
+
             sum_weighted_cohesion_col = 0.0
             sum_weights_col = 0.0
+
             sum_weighted_cohesion_unweighted = 0.0
             sum_weights_unweighted = 0.0
 
-            for cid in shared_cids_sorted:
-                pool_a = cmap_a[cid] - assigned_a
-                pool_b = cmap_b[cid] - assigned_b
+            for fid_a, fid_b, score in edges:
+                if fid_a not in assigned_a and fid_b not in assigned_b:
+                    assigned_a.add(fid_a)
+                    assigned_b.add(fid_b)
 
-                if pool_a and pool_b:
-                    cohesion = float(
-                        cluster_meta.get(cid, {}).get("cohesion_score", 0.0)
+                    f_features_a = float(
+                        func_meta_cache.get(fid_a, {}).get("bsim_features_count", 1.0)
                     )
-                    if cohesion < min_cohesion:
-                        continue
-
-                    s_rarity = get_pair_sim_rarity(cid)
-                    c_rarity = get_col_rarity(cid)
-                    cluster_feat = float(
-                        cluster_meta.get(cid, {}).get("avg_features", 1.0)
+                    f_features_b = float(
+                        func_meta_cache.get(fid_b, {}).get("bsim_features_count", 1.0)
                     )
-                    if cluster_feat <= 0:
-                        cluster_feat = 1.0
+                    f_features = max(f_features_a, f_features_b)
 
-                    count_a = len(pool_a)
-                    count_b = len(pool_b)
-                    match_ratio = min(count_a, count_b) / max(count_a, count_b)
-
+                    # Tag the matched pair with its best-matching function cluster so the
+                    # API/UI cluster column resolves to a real cluster (matches collection path).
+                    full_a = (
+                        fid_a
+                        if fid_a.startswith(f"{coll_a}:func:")
+                        else f"{coll_a}:func:{fid_a}"
+                    )
+                    full_b = (
+                        fid_b
+                        if fid_b.startswith(f"{coll_b}:func:")
+                        else f"{coll_b}:func:{fid_b}"
+                    )
+                    best_cluster = pick_cluster(full_a, full_b)
                     diff_matched.append(
                         {
-                            "cluster_id": cid,
-                            "cluster_uuid": cluster_meta.get(cid, {}).get(
-                                "cluster_uuid", ""
-                            ),
-                            "cluster_name": cluster_meta.get(cid, {}).get(
-                                "cluster_name", str(cid)
-                            ),
-                            "cohesion": cohesion,
-                            "sim_rarity": s_rarity,
-                            "collection_rarity": c_rarity,
-                            "avg_features": cluster_feat,
-                            "funcs_a": list(pool_a),
-                            "funcs_b": list(pool_b),
-                            "count_a": count_a,
-                            "count_b": count_b,
-                            "match_ratio": match_ratio,
+                            "cluster_id": best_cluster.get("cluster_id", "")
+                            if best_cluster
+                            else "",
+                            "cluster_uuid": best_cluster.get("cluster_uuid", "")
+                            if best_cluster
+                            else "",
+                            "cluster_name": best_cluster.get(
+                                "cluster_name", "Matched Functions"
+                            )
+                            if best_cluster
+                            else "Matched Functions",
+                            "cohesion": score,
+                            "sim_rarity": 1.0,
+                            "collection_rarity": 1.0,
+                            "avg_features": f_features,
+                            "funcs_a": [fid_a],
+                            "funcs_b": [fid_b],
+                            "count_a": 1,
+                            "count_b": 1,
+                            "match_ratio": 1.0,
                         }
                     )
 
-                    assigned_a.update(pool_a)
-                    assigned_b.update(pool_b)
+                    sum_weighted_cohesion_sim += score * f_features
+                    sum_weights_sim += f_features
 
-                    num_matched = min(count_a, count_b)
-                    num_total = count_a + count_b
+                    sum_weighted_cohesion_col += score * f_features
+                    sum_weights_col += f_features
 
-                    sum_weighted_cohesion_sim += (
-                        2.0 * num_matched * cohesion * s_rarity * cluster_feat
-                    )
-                    sum_weights_sim += num_total * s_rarity * cluster_feat
-
-                    sum_weighted_cohesion_col += (
-                        2.0 * num_matched * cohesion * c_rarity * cluster_feat
-                    )
-                    sum_weights_col += num_total * c_rarity * cluster_feat
-
-                    sum_weighted_cohesion_unweighted += (
-                        2.0 * num_matched * cohesion * cluster_feat
-                    )
-                    sum_weights_unweighted += num_total * cluster_feat
+                    sum_weighted_cohesion_unweighted += score * f_features
+                    sum_weights_unweighted += f_features
 
             # Unique/Unmatched functions logic
             all_funcs_a_total = binary_fids[b1]
@@ -1878,152 +2192,56 @@ class SimilarityService:
             unassigned_b = all_funcs_b_total - assigned_b
 
             unique_to_a = []
-            unclustered_a = []
-            if unassigned_a:
-                cmap_a_funcs = set()
-                for funcs in cmap_a.values():
-                    cmap_a_funcs.update(funcs)
-                unclustered_a_set = unassigned_a - cmap_a_funcs
-                unclustered_a = list(unclustered_a_set)
+            for fid in sorted(list(unassigned_a)):
+                f_features = float(
+                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                )
+                if f_features <= 0:
+                    f_features = 1.0
 
-                for fid in sorted(list(unassigned_a)):
-                    cids = []
-                    for cid, funcs in cmap_a.items():
-                        if fid in funcs:
-                            cids.append(cid)
-
-                    is_clustered = len(cids) > 0
-                    if is_clustered:
-                        best_cid = max(
-                            cids,
-                            key=lambda c: float(
-                                cluster_meta.get(c, {}).get("cohesion_score", 0.0)
-                            ),
-                        )
-                        f_features = float(
-                            cluster_meta.get(best_cid, {}).get("avg_features", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = get_pair_sim_rarity(best_cid)
-                        c_rarity = get_col_rarity(best_cid)
-
-                        cluster_name = cluster_meta.get(best_cid, {}).get(
-                            "cluster_name", str(best_cid)
-                        )
-                        cluster_uuid = cluster_meta.get(best_cid, {}).get(
-                            "cluster_uuid", ""
-                        )
-                        cohesion = float(
-                            cluster_meta.get(best_cid, {}).get("cohesion_score", 0.0)
-                        )
-                    else:
-                        best_cid = ""
-                        cluster_uuid = ""
-                        cluster_name = "Unclustered"
-                        cohesion = 0.0
-
-                        f_features = float(
-                            func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = 1.0 / math.log(1 + 1 + 1)
-                        c_rarity = 1.0 / math.log(1 + 1 + 1)
-
-                    unique_to_a.append(
-                        {
-                            "func_id": fid,
-                            "funcs": [fid],
-                            "is_clustered": is_clustered,
-                            "cluster_id": best_cid,
-                            "cluster_uuid": cluster_uuid,
-                            "cluster_name": cluster_name,
-                            "cohesion": cohesion,
-                            "sim_rarity": s_rarity,
-                            "collection_rarity": c_rarity,
-                            "avg_features": f_features,
-                        }
-                    )
-                    sum_weights_sim += s_rarity * f_features
-                    sum_weights_col += c_rarity * f_features
-                    sum_weights_unweighted += 1.0 * f_features
+                unique_to_a.append(
+                    {
+                        "func_id": fid,
+                        "funcs": [fid],
+                        "is_clustered": False,
+                        "cluster_id": "",
+                        "cluster_uuid": "",
+                        "cluster_name": "Unclustered",
+                        "cohesion": 0.0,
+                        "sim_rarity": 1.0,
+                        "collection_rarity": 1.0,
+                        "avg_features": f_features,
+                    }
+                )
+                sum_weights_sim += f_features
+                sum_weights_col += f_features
+                sum_weights_unweighted += f_features
 
             unique_to_b = []
-            unclustered_b = []
-            if unassigned_b:
-                cmap_b_funcs = set()
-                for funcs in cmap_b.values():
-                    cmap_b_funcs.update(funcs)
-                unclustered_b_set = unassigned_b - cmap_b_funcs
-                unclustered_b = list(unclustered_b_set)
+            for fid in sorted(list(unassigned_b)):
+                f_features = float(
+                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                )
+                if f_features <= 0:
+                    f_features = 1.0
 
-                for fid in sorted(list(unassigned_b)):
-                    cids = []
-                    for cid, funcs in cmap_b.items():
-                        if fid in funcs:
-                            cids.append(cid)
-
-                    is_clustered = len(cids) > 0
-                    if is_clustered:
-                        best_cid = max(
-                            cids,
-                            key=lambda c: float(
-                                cluster_meta.get(c, {}).get("cohesion_score", 0.0)
-                            ),
-                        )
-                        f_features = float(
-                            cluster_meta.get(best_cid, {}).get("avg_features", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = get_pair_sim_rarity(best_cid)
-                        c_rarity = get_col_rarity(best_cid)
-
-                        cluster_name = cluster_meta.get(best_cid, {}).get(
-                            "cluster_name", str(best_cid)
-                        )
-                        cluster_uuid = cluster_meta.get(best_cid, {}).get(
-                            "cluster_uuid", ""
-                        )
-                        cohesion = float(
-                            cluster_meta.get(best_cid, {}).get("cohesion_score", 0.0)
-                        )
-                    else:
-                        best_cid = ""
-                        cluster_uuid = ""
-                        cluster_name = "Unclustered"
-                        cohesion = 0.0
-
-                        f_features = float(
-                            func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = 1.0 / math.log(1 + 1 + 1)
-                        c_rarity = 1.0 / math.log(1 + 1 + 1)
-
-                    unique_to_b.append(
-                        {
-                            "func_id": fid,
-                            "funcs": [fid],
-                            "is_clustered": is_clustered,
-                            "cluster_id": best_cid,
-                            "cluster_uuid": cluster_uuid,
-                            "cluster_name": cluster_name,
-                            "cohesion": cohesion,
-                            "sim_rarity": s_rarity,
-                            "collection_rarity": c_rarity,
-                            "avg_features": f_features,
-                        }
-                    )
-                    sum_weights_sim += s_rarity * f_features
-                    sum_weights_col += c_rarity * f_features
-                    sum_weights_unweighted += 1.0 * f_features
+                unique_to_b.append(
+                    {
+                        "func_id": fid,
+                        "funcs": [fid],
+                        "is_clustered": False,
+                        "cluster_id": "",
+                        "cluster_uuid": "",
+                        "cluster_name": "Unclustered",
+                        "cohesion": 0.0,
+                        "sim_rarity": 1.0,
+                        "collection_rarity": 1.0,
+                        "avg_features": f_features,
+                    }
+                )
+                sum_weights_sim += f_features
+                sum_weights_col += f_features
+                sum_weights_unweighted += f_features
 
             sim_score = (
                 (sum_weighted_cohesion_sim / sum_weights_sim)
@@ -2047,8 +2265,6 @@ class SimilarityService:
             elif algo == "weighted_cosine":
                 final_score = col_weighted_score
 
-            final_score = round(final_score, 4)
-
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
             doc = {
@@ -2060,9 +2276,9 @@ class SimilarityService:
                 "md5_2": md5_b,
                 "coll_1": coll_a,
                 "coll_2": coll_b,
-                "sim_weighted_score": round(sim_score, 4),
-                "collection_weighted_score": round(col_weighted_score, 4),
-                "unweighted_score": round(unweighted_score, 4),
+                "sim_weighted_score": sim_score,
+                "collection_weighted_score": col_weighted_score,
+                "unweighted_score": unweighted_score,
                 "matched_clusters_count": len(diff_matched),
                 "matched_clusters": diff_matched,
                 "entry_date": now,
@@ -2070,14 +2286,14 @@ class SimilarityService:
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,
                     "unique_to_b": unique_to_b,
-                    "unclustered_a": unclustered_a,
-                    "unclustered_b": unclustered_b,
+                    "unclustered_a": [],
+                    "unclustered_b": [],
                 },
             }
 
             persist_pipe.set(sid, json.dumps(doc))
             persist_pipe.zadd(
-                f"global:pool:{pool_id}:bin_sim:score:{algo}", {sid: col_weighted_score}
+                f"global:pool:{pool_id}:bin_sim:score:{algo}", {sid: final_score}
             )
             persist_pipe.sadd(
                 f"global:pool:{pool_id}:bin_sim:involves:{coll_a}:{md5_a}", sid
@@ -2114,12 +2330,13 @@ class SimilarityService:
         """
         r = self.r
         if pool_id:
-            all_key = f"global:pool:{pool_id}:sim:all"
+            # score zset holds every sid; :sim:all removed as redundant
+            all_key = f"global:pool:{pool_id}:sim:score"
             target_coll = f"global:pool:{pool_id}"
             involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
             involves_func_prefix = f"global:pool:{pool_id}:sim:involves:func:"
         else:
-            all_key = f"{collection}:sim:all"
+            all_key = f"{collection}:sim:score:{algo}"
             target_coll = collection
             involves_file_prefix = f"{collection}:sim:involves:file:"
             involves_func_prefix = f"{collection}:sim:involves:func:"
@@ -2127,6 +2344,7 @@ class SimilarityService:
         # Prep caches
         self._func_meta_cache = {}
         self._file_meta_cache = {}
+        self._sim_registry_seen = set()
 
         if md5:
             if pool_id:
@@ -2210,7 +2428,7 @@ class SimilarityService:
                 return parts[0]
             return "unknown"
 
-        batch_size = 500
+        batch_size = 200
         start_time = time.time()
 
         for i in range(0, total, batch_size):
@@ -2306,6 +2524,7 @@ class SimilarityService:
                     file_meta1=self._file_meta_cache.get(f"{coll_a}:file:{md5_a}"),
                     file_meta2=self._file_meta_cache.get(f"{coll_b}:file:{md5_b}"),
                     index_depth="full",
+                    seen=getattr(self, "_sim_registry_seen", None),
                 )
             idx_pipe.execute()
 

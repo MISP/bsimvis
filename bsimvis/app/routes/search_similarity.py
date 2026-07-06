@@ -12,6 +12,7 @@ from bsimvis.app.services.index_service import (
     enrich_pool_data,
     get_pool_id,
 )
+from bsimvis.app.services.config_service import config_service
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -180,7 +181,11 @@ def similarity_search():
         intersection_configs = []
 
         try:
-            min_score = float(request.args.get("min_score", 0.95))
+            min_score = float(
+                request.args.get(
+                    "min_score", config_service.get("similarity.min_score", 0.9)
+                )
+            )
             max_score = float(request.args.get("max_score", 1.0))
             offset = int(request.args.get("offset", 0))
             limit = int(request.args.get("limit", DEFAULT_LIMIT))

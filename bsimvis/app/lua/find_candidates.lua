@@ -20,22 +20,25 @@ if algo == 'unweighted_cosine' then
     min_shared_norm_sq = (threshold * target_norm) * (threshold * target_norm)
 end
 
--- 1. Identify all candidates and calculate dot product / sum(min(tf))
--- ZREVRANGE: highest-TF entries first. This skips low-TF bucket entries
--- that have no realistic chance of reaching threshold. For 0.99 threshold
--- this cuts 22K bucket scans to ~500-1000.
+-- 1. Sort features by bucket size (rarest first) to find candidates efficiently
+local features_sorted = {}
 for f_hash, target_tf in pairs(target_features) do
     local f_key = collection .. ':feature:' .. f_hash .. ':functions'
-    local bucket_size = redis.call('ZCARD', f_key)
-    -- Cap: enough to fill top_k candidates. With ~47 features, limit*5 is safe
-    -- for all thresholds -- valid candidates at high scores appear in the high-TF
-    -- portion of every bucket they share.
-    local scan_limit = math.min(limit * 5, bucket_size)
-    local functions = redis.call('ZREVRANGE', f_key, 0, scan_limit - 1, 'WITHSCORES')
+    local size = redis.call('ZCARD', f_key)
+    table.insert(features_sorted, {hash = f_hash, tf = target_tf, key = f_key, size = size})
+end
+table.sort(features_sorted, function(a, b) return a.size < b.size end)
+
+-- 2. Identify all candidates and calculate dot product / sum(min(tf))
+for idx, feat in ipairs(features_sorted) do
+    -- ponytail: Scan all buckets fully to ensure absolutely no matches are lost
+    local scan_limit = feat.size
+    
+    local functions = redis.call('ZREVRANGE', feat.key, 0, scan_limit - 1, 'WITHSCORES')
     
     local target_tf_sq = 0
     if algo == 'unweighted_cosine' then
-        target_tf_sq = target_tf * target_tf
+        target_tf_sq = feat.tf * feat.tf
     end
     
     for i = 1, #functions, 2 do
@@ -44,9 +47,9 @@ for f_hash, target_tf in pairs(target_features) do
         
         if func_id ~= target_id then
             if algo == 'jaccard' then
-                intersection_counts[func_id] = (intersection_counts[func_id] or 0) + math.min(target_tf, cand_tf)
+                intersection_counts[func_id] = (intersection_counts[func_id] or 0) + math.min(feat.tf, cand_tf)
             elseif algo == 'unweighted_cosine' then
-                intersection_counts[func_id] = (intersection_counts[func_id] or 0) + (target_tf * cand_tf)
+                intersection_counts[func_id] = (intersection_counts[func_id] or 0) + (feat.tf * cand_tf)
                 shared_target_norm_sq[func_id] = (shared_target_norm_sq[func_id] or 0) + target_tf_sq
             end
         end

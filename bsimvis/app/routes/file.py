@@ -63,7 +63,7 @@ def upload_file_data():
 
         min_score = data.get("min_score")
         if min_score is None:
-            min_score = config_service.get("similarity.min_score", 0.3)
+            min_score = config_service.get("similarity.min_score", 0.9)
 
         min_features = data.get("min_features")
         if min_features is None:
@@ -77,6 +77,7 @@ def upload_file_data():
             "top_k": top_k,
             "min_score": min_score,
             "min_features": min_features,
+            "skip_write": data.get("skip_write", False),  # ponytail
         }
 
         if (
@@ -125,16 +126,17 @@ def upload_file_data():
             ):
                 pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
             pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
-            pipeline_tasks.append(
-                (
-                    JobType.INDEX_SIM,
-                    {
-                        "collection": collection,
-                        "md5": file_md5,
-                        "algo": build_sim_payload.get("algo"),
-                    },
+            if not data.get("skip_write", False):
+                pipeline_tasks.append(
+                    (
+                        JobType.INDEX_SIM,
+                        {
+                            "collection": collection,
+                            "md5": file_md5,
+                            "algo": build_sim_payload.get("algo"),
+                        },
+                    )
                 )
-            )
 
         if enqueue:
             pipeline_tasks.append((JobType.ENRICH_FEATURES, {"collection": collection}))
@@ -272,7 +274,7 @@ def upload_chunk():
             )
             top_k = data.get("top_k") or config_service.get("similarity.top_k", 1000)
             min_score = data.get("min_score") or config_service.get(
-                "similarity.min_score", 0.3
+                "similarity.min_score", 0.9
             )
             min_features = data.get("min_features") or config_service.get(
                 "similarity.min_features", 0
@@ -310,18 +312,20 @@ def upload_chunk():
                     "top_k": top_k,
                     "min_score": min_score,
                     "min_features": min_features,
+                    "skip_write": data.get("skip_write", False),  # ponytail
                 }
                 if algo == "milvus_sparse" and milvus_service.enabled:
                     pipeline_tasks.append(
                         (JobType.SYNC_MILVUS, {"collection": collection})
                     )
                 pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
-                pipeline_tasks.append(
-                    (
-                        JobType.INDEX_SIM,
-                        {"collection": collection, "md5": file_md5, "algo": algo},
+                if not data.get("skip_write", False):
+                    pipeline_tasks.append(
+                        (
+                            JobType.INDEX_SIM,
+                            {"collection": collection, "md5": file_md5, "algo": algo},
+                        )
                     )
-                )
 
             if parent_pipeline_id:
                 # Splice tasks into parent pipeline
@@ -465,9 +469,12 @@ def upload_raw_binary():
                 )
             )
 
-        # Default enqueue to false if we are part of a batch upload (batch_uuid exists)
-        default_enqueue = "false" if batch_uuid else "true"
-        enqueue = request.args.get("enqueue", default_enqueue).lower() == "true"
+        # Default enqueue to true unless explicitly disabled
+        enqueue_arg = request.args.get("enqueue")
+        if enqueue_arg is not None:
+            enqueue = enqueue_arg.lower() == "true"
+        else:
+            enqueue = True
         pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
 
         return {

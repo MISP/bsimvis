@@ -64,7 +64,7 @@ for p in "$APP_PORT" "$REDIS_PORT" "$KVROCKS_PORT"; do
   fi
 done
 echo "=== launching stack (session $PROJECT_NAME, app :$APP_PORT) ==="
-./launch_tmux.sh || { echo "launch failed"; exit 1; }
+./launch_tmux.sh --clear || { echo "launch failed"; exit 1; }
 
 # app.py needs a moment after datastores; poll its port (max 40s)
 echo -n "  waiting for app on :$APP_PORT..."

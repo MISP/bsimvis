@@ -30,33 +30,78 @@ end
 table.sort(features_sorted, function(a, b) return a.size < b.size end)
 
 -- 2. Identify all candidates and calculate dot product / sum(min(tf))
+local target_norm_sq = target_norm * target_norm
+local processed_target_norm_sq = 0
+local processed_target_total = 0
+local num_candidates = 0
+
 for idx, feat in ipairs(features_sorted) do
-    -- ponytail: Scan all buckets fully to ensure absolutely no matches are lost
-    local scan_limit = feat.size
+    local remaining_target_norm_sq = target_norm_sq - processed_target_norm_sq
+    local remaining_target_total = target_total - processed_target_total
     
-    local functions = redis.call('ZREVRANGE', feat.key, 0, scan_limit - 1, 'WITHSCORES')
-    
+    local can_add_new = true
+    if algo == 'unweighted_cosine' then
+        if remaining_target_norm_sq < min_shared_norm_sq then
+            can_add_new = false
+        end
+    elseif algo == 'jaccard' then
+        if remaining_target_total < threshold * target_total then
+            can_add_new = false
+        end
+    end
+
+    if not can_add_new and num_candidates == 0 then
+        break
+    end
+
     local target_tf_sq = 0
     if algo == 'unweighted_cosine' then
         target_tf_sq = feat.tf * feat.tf
     end
-    
-    for i = 1, #functions, 2 do
-        local func_id = functions[i]
-        local cand_tf = tonumber(functions[i+1])
-        
-        if func_id ~= target_id then
-            if algo == 'jaccard' then
-                intersection_counts[func_id] = (intersection_counts[func_id] or 0) + math.min(feat.tf, cand_tf)
-            elseif algo == 'unweighted_cosine' then
-                intersection_counts[func_id] = (intersection_counts[func_id] or 0) + (feat.tf * cand_tf)
-                shared_target_norm_sq[func_id] = (shared_target_norm_sq[func_id] or 0) + target_tf_sq
+
+    local offset = 0
+    local batch_size = 1000
+    while true do
+        local functions = redis.call('ZREVRANGE', feat.key, offset, offset + batch_size - 1, 'WITHSCORES')
+        if #functions == 0 then
+            break
+        end
+
+        for i = 1, #functions, 2 do
+            local func_id = functions[i]
+            local cand_tf = tonumber(functions[i+1])
+            
+            if func_id ~= target_id then
+                local is_existing = (intersection_counts[func_id] ~= nil)
+                if is_existing or can_add_new then
+                    if not is_existing then
+                        intersection_counts[func_id] = 0
+                        if algo == 'unweighted_cosine' then
+                            shared_target_norm_sq[func_id] = 0
+                        end
+                        num_candidates = num_candidates + 1
+                    end
+                    if algo == 'jaccard' then
+                        intersection_counts[func_id] = intersection_counts[func_id] + math.min(feat.tf, cand_tf)
+                    elseif algo == 'unweighted_cosine' then
+                        intersection_counts[func_id] = intersection_counts[func_id] + (feat.tf * cand_tf)
+                        shared_target_norm_sq[func_id] = shared_target_norm_sq[func_id] + target_tf_sq
+                    end
+                end
             end
         end
+
+        if #functions < batch_size * 2 then
+            break
+        end
+        offset = offset + batch_size
     end
+
+    processed_target_norm_sq = processed_target_norm_sq + feat.tf * feat.tf
+    processed_target_total = processed_target_total + feat.tf
 end
 
--- 2. Scored Candidates (Filtered by Threshold)
+-- 3. Scored Candidates (Filtered by Threshold)
 local candidate_list = {}
 local count_idx = collection .. ':idx:func:bsim_features_count'
 
@@ -100,10 +145,10 @@ for id, intersect in pairs(intersection_counts) do
     end
 end
 
--- 3. Sort by score
+-- 4. Sort by score
 table.sort(candidate_list, function(a, b) return a.score > b.score end)
 
--- 4. Limit and Format Return
+-- 5. Limit and Format Return
 local limit_val = math.min(limit, #candidate_list)
 local result = {}
 

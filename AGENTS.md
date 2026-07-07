@@ -38,6 +38,18 @@ Since its only for jobs, the jobs are in :
 | `global:job:{id}` | **Hash** | Status and metadata for a background job. |
 | `global:pipeline:{id}:jobs` | **List** | Ordered list of job IDs for a multi-step pipeline. |
 
+## Worktree testing
+
+Never read `data/kvrocks/` or `hs_err_pid*.log` — confidential (real binary md5s /
+function data). Tests use only the git-tracked `data/test/` fixtures.
+
+In a linked worktree, run `./scripts/wt-test.sh` before committing. It symlinks
+`bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an
+isolated `.env` (own `PROJECT_NAME` + offset ports + fresh local data dir, so it can
+run alongside the main stack without touching its confidential DB), launches the full
+stack via `launch_tmux.sh`, runs `test_api_endpoints.py` + `test_pools.py`, and tears
+down. Do NOT commit if it prints `RESULT: FAIL` or the run was skipped. Show the output.
+
 ## Contributions
 
 Always minimal code change unless user asks drastic change.

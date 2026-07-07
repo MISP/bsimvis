@@ -4,6 +4,12 @@
 start_tmux() {
     window_name=$1
     command=$2
+    # Build env prefix string for tmux command
+    local env_prefix=""
+    if [ -f .env ]; then
+        env_prefix=$(grep -v '^#' .env | xargs)
+        env_prefix="$env_prefix "
+    fi
     if tmux has-session -t "${PROJECT_NAME}" 2>/dev/null; then
         # Session exists, create a new window
         # Check if window already exists
@@ -11,12 +17,12 @@ start_tmux() {
             echo "Window ${window_name} is already running."
         else
             echo "Starting window ${window_name}..."
-            tmux new-window -t "${PROJECT_NAME}" -n "${window_name}" bash -c "${command}"
+            tmux new-window -t "${PROJECT_NAME}" -n "${window_name}" bash -c "${env_prefix}${command}"
         fi
     else
         # Create new session with the first window
         echo "Starting session ${PROJECT_NAME} with window ${window_name}..."
-        tmux new-session -d -s "${PROJECT_NAME}" -n "${window_name}" bash -c "${command}"
+        tmux new-session -d -s "${PROJECT_NAME}" -n "${window_name}" bash -c "${env_prefix}${command}"
     fi
 }
 

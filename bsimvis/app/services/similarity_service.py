@@ -95,7 +95,9 @@ class SimilarityService:
         )
 
         start_time = time.time()
-        chunk_size = 100
+        # Count total functions in the collection to size chunks dynamically
+        db_func_count = r.scard(f"{collection}:indexed:functions") or total
+        chunk_size = max(1, min(100, int(100000 / max(1, db_func_count))))
         total_sims = 0
         last_t, last_done, last_sims = start_time, 0, 0
 
@@ -150,6 +152,10 @@ class SimilarityService:
                 skip_write=skip_write,
             )
             total_sims += written or 0
+
+            # Clear caches to prevent unbounded memory growth and GC stalls
+            self._func_meta_cache.clear()
+            self._file_meta_cache.clear()
 
             # 3. Dashboard Protection: Yield
             if sleep_time > 0 and i + chunk_size < total:
@@ -1385,7 +1391,8 @@ class SimilarityService:
             )
 
         start_time = time.time()
-        chunk_size = 100
+        # Count total functions in all pool collections to size chunks dynamically
+        chunk_size = max(1, min(100, int(100000 / max(1, total))))
         total_sims = 0
         last_t, last_done, last_sims = start_time, 0, 0
         pool_small_fids = (
@@ -1558,6 +1565,10 @@ class SimilarityService:
                 )
                 total_sims += written or 0
 
+            # Clear caches to prevent unbounded memory growth and GC stalls
+            self._func_meta_cache.clear()
+            self._file_meta_cache.clear()
+
         # Cross every member collection's FunctionID-hash buckets for the small funcs
         if pool_small_fids and not skip_write:
             if job_service and job_id:
@@ -1677,7 +1688,9 @@ class SimilarityService:
             )
 
         start_time = time.time()
-        chunk_size = 5
+        # Count total functions in all pool collections to size chunks dynamically
+        db_func_count = sum(r.scard(f"{coll}:all_functions") for coll in collections)
+        chunk_size = max(1, min(5, int(100000 / max(1, db_func_count))))
         total_sims = 0
         last_t, last_done, last_sims = start_time, 0, 0
         pool_small_fids = (
@@ -1842,6 +1855,10 @@ class SimilarityService:
                     skip_write=skip_write,
                 )
                 total_sims += written or 0
+
+            # Clear caches to prevent unbounded memory growth and GC stalls
+            self._func_meta_cache.clear()
+            self._file_meta_cache.clear()
 
         # Cross every member collection's FunctionID-hash buckets for this file's small funcs
         if pool_small_fids and not skip_write:

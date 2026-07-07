@@ -54,6 +54,15 @@ set -a; . ./.env; set +a
 APP_PORT=${APP_PORT:-5100}
 
 # --- 3. launch full stack (launch_tmux.sh reads the .env above) -------------
+# Clean up any existing session/services for this worktree first.
+if tmux has-session -t "$PROJECT_NAME" 2>/dev/null; then
+  echo "Session $PROJECT_NAME already exists. Cleaning up..."
+  redis-cli -p "$REDIS_PORT"   shutdown nosave 2>/dev/null || true
+  redis-cli -p "$KVROCKS_PORT" shutdown nosave 2>/dev/null || true
+  tmux kill-session -t "$PROJECT_NAME" 2>/dev/null || true
+  sleep 1
+fi
+
 # Fail loud if any of our ports is already held (another worktree/main stack).
 # Sharing a kvrocks data dir across two live processes corrupts it.
 for p in "$APP_PORT" "$REDIS_PORT" "$KVROCKS_PORT"; do

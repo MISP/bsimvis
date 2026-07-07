@@ -146,7 +146,7 @@ class PoolService:
 
         return meta
 
-    def list_pools(self, collection=None):
+    def list_pools(self, collection=None, refresh_sync=False):
         r = self.r
         if collection:
             pool_ids = [
@@ -161,8 +161,13 @@ class PoolService:
 
         pools = []
         for pid in pool_ids:
-            # Dynamically verify sync status on list to show accurate state
-            self.check_sync_status(pid)
+            # ponytail: refresh_sync recomputes live sync state per pool (extra
+            # per-collection scans + a 2nd get_pool). Off by default so the list
+            # stays cheap at ~1k pools; sync_status is read from cached meta.
+            # Upgrade path if this ever gets hot: pipeline get_pool reads / ZSET
+            # date index + page-before-hydrate.
+            if refresh_sync:
+                self.check_sync_status(pid)
             meta = self.get_pool(pid)
             if meta:
                 meta["id"] = pid

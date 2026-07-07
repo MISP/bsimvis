@@ -1,6 +1,7 @@
 from flask import request, jsonify
 from bsimvis.app.services.pool_service import pool_service
 from bsimvis.app.services.job_service import JobService, JobType
+from bsimvis.app.routes import _list_query as lq
 
 job_service = JobService()
 
@@ -76,9 +77,65 @@ def get_pool(pool_id):
 
 
 def list_pools():
+    """Lists pools with keyword search (q), specific-field filters, and sorting.
+
+    Params: q, name, sync_status, collection (membership), sort_by, sort_order,
+    offset, limit, refresh_sync, min_/max_ ranges on created_at/last_built_at
+    and the count fields.
+    """
+    try:
+        offset = int(request.args.get("offset", 0))
+        limit = int(request.args.get("limit", 100))
+    except ValueError:
+        return {"error": "offset and limit must be integers"}, 400
+
     collection = request.args.get("collection")
-    pools = pool_service.list_pools(collection=collection)
-    return {"pools": pools}
+    refresh_sync = request.args.get("refresh_sync") in ("1", "true", "True")
+    pools = pool_service.list_pools(collection=collection, refresh_sync=refresh_sync)
+
+    count_fields = [
+        "total_func_similarities",
+        "total_func_clusters",
+        "total_file_similarities",
+        "total_file_clusters",
+    ]
+
+    # Filter: q over name/id/collections/sync_status, plus specific-field filters
+    kws = lq.keywords()
+    name_filter = request.args.get("name", "").lower().strip()
+    id_filter = request.args.get("id", "").lower().strip()
+    status_filter = request.args.get("sync_status", "").lower().strip()
+    ranges = {f: lq.num_range(f) for f in ["created_at", "last_built_at"] + count_fields}
+
+    def keep(p):
+        colls = " ".join(p.get("collections", []))
+        if not lq.matches_keywords(
+            kws, p.get("name"), p.get("id"), colls, p.get("sync_status")
+        ):
+            return False
+        if name_filter and name_filter not in str(p.get("name", "")).lower():
+            return False
+        if id_filter and id_filter not in str(p.get("id", "")).lower():
+            return False
+        if status_filter and status_filter != str(p.get("sync_status", "")).lower():
+            return False
+        return all(lq.in_range(p.get(f, 0), rng) for f, rng in ranges.items())
+
+    pools = [p for p in pools if keep(p)]
+
+    key_fns = {
+        "name": lambda p: str(p.get("name", "")).lower(),
+        "id": lambda p: str(p.get("id", "")).lower(),
+        "sync_status": lambda p: str(p.get("sync_status", "")).lower(),
+        "created_at": lambda p: int(p.get("created_at", 0) or 0),
+        "last_built_at": lambda p: int(p.get("last_built_at", 0) or 0),
+    }
+    key_fns.update({f: (lambda f: lambda p: int(p.get(f, 0) or 0))(f) for f in count_fields})
+
+    page, total = lq.sort_and_paginate(
+        pools, offset, limit, "created_at", True, key_fns
+    )
+    return {"pools": page, "total": total, "offset": offset, "limit": limit}
 
 
 def delete_pool(pool_id):

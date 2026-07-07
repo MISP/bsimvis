@@ -463,6 +463,20 @@ class CollectionSearch(Resource):
                 "description": "Keyword search across collection names",
                 "example": "main",
             },
+            "name": {"description": "Substring filter on collection name"},
+            "sort_by": {
+                "description": "name | total_files | total_functions | total_batches | last_updated",
+                "example": "last_updated",
+            },
+            "sort_order": {"description": "asc | desc", "example": "desc"},
+            "min_files": {"description": "Min file count"},
+            "max_files": {"description": "Max file count"},
+            "min_functions": {"description": "Min function count"},
+            "max_functions": {"description": "Max function count"},
+            "min_batches": {"description": "Min batch count"},
+            "max_batches": {"description": "Max batch count"},
+            "min_last_updated": {"description": "Min last-updated (Unix ms)"},
+            "max_last_updated": {"description": "Max last-updated (Unix ms)"},
             "format": {"description": "Export format: csv or json", "example": "json"},
         }
     )
@@ -2205,9 +2219,33 @@ pool_create_model = api.model(
 
 @ns_pool.route("")
 class PoolList(Resource):
-    @ns_pool.doc(params={"collection": "Filter pools by collection membership"})
+    @ns_pool.doc(
+        params={
+            "collection": "Filter pools by collection membership",
+            "q": {
+                "description": "Keyword search across pool name / id / member collections / sync status",
+                "example": "mirai",
+            },
+            "name": {"description": "Substring filter on pool name"},
+            "sync_status": {"description": "Exact sync status: current | outdated | created"},
+            "sort_by": {
+                "description": "name | id | created_at | last_built_at | sync_status | count fields",
+                "example": "created_at",
+            },
+            "sort_order": {"description": "asc | desc", "example": "desc"},
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Max results", "default": 100},
+            "refresh_sync": {
+                "description": "Recompute live sync status per pool (slower). 1 to enable.",
+            },
+            "min_created_at": {"description": "Min created-at (Unix ms)"},
+            "max_created_at": {"description": "Max created-at (Unix ms)"},
+            "min_last_built_at": {"description": "Min last-built (Unix ms)"},
+            "max_last_built_at": {"description": "Max last-built (Unix ms)"},
+        }
+    )
     def get(self):
-        """Lists all defined pools."""
+        """Lists and searches defined pools with keyword filtering and sorting."""
         from bsimvis.app.routes.pools import list_pools
 
         return list_pools()

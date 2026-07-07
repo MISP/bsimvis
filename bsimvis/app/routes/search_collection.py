@@ -3,6 +3,7 @@ import logging
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import parse_timestamp
+from bsimvis.app.routes import _list_query as lq
 
 
 def search_collections():
@@ -15,7 +16,6 @@ def search_collections():
         except ValueError:
             return {"error": "offset and limit must be integers"}, 400
 
-        q = request.args.get("q", "").lower().strip()
         format_arg = request.args.get("format")
         if format_arg in ("csv", "json"):
             offset = 0
@@ -28,17 +28,9 @@ def search_collections():
             ]
         )
 
-        if q:
-            keywords = [k for k in q.split() if k]
-            filtered_names = []
-            for name in collection_names:
-                name_lower = name.lower()
-                if all(kw in name_lower for kw in keywords):
-                    filtered_names.append(name)
-            collection_names = filtered_names
-
-        total = len(collection_names)
-        page_names = collection_names[offset : offset + limit]
+        # Hydrate ALL collection metas up front so we can filter/sort/paginate
+        # in-memory (bounded to hundreds/low-thousands of collections).
+        page_names = collection_names
 
         # 1. Fetch metadata hashes first
         pipe = r.pipeline(transaction=False)
@@ -121,6 +113,37 @@ def search_collections():
                     "last_updated": int(meta_decoded.get("last_updated", 0)),
                 }
             )
+
+        # 5. Filter (q over name, plus specific-field filters), sort, paginate
+        kws = lq.keywords()
+        name_filter = request.args.get("name", "").lower().strip()
+        ranges = {
+            "total_files": lq.num_range("files"),
+            "total_functions": lq.num_range("functions"),
+            "total_batches": lq.num_range("batches"),
+            "last_updated": lq.num_range("last_updated"),
+        }
+        results = [
+            c
+            for c in results
+            if lq.matches_keywords(kws, c["name"])
+            and (not name_filter or name_filter in c["name"].lower())
+            and all(lq.in_range(c[f], rng) for f, rng in ranges.items())
+        ]
+        results, total = lq.sort_and_paginate(
+            results,
+            offset,
+            limit,
+            default_key="name",
+            default_reverse=False,
+            key_fns={
+                "name": lambda c: c["name"].lower(),
+                "total_files": lambda c: c["total_files"],
+                "total_functions": lambda c: c["total_functions"],
+                "total_batches": lambda c: c["total_batches"],
+                "last_updated": lambda c: c["last_updated"],
+            },
+        )
 
         response_data = {
             "collections": results,

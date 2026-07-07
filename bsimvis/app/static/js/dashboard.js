@@ -190,13 +190,27 @@ const routes = {
     'collections': {
         title: 'Collections',
         api: '/api/collection/search',
-        headers: ['Name', 'Batches', 'Files', 'Functions', 'Last Updated', 'Actions'],
+        headers: [
+            { label: 'Name', sort: 'name' },
+            { label: 'Batches', sort: 'total_batches' },
+            { label: 'Files', sort: 'total_files' },
+            { label: 'Functions', sort: 'total_functions' },
+            { label: 'Last Updated', sort: 'last_updated' },
+            'Actions'
+        ],
         renderer: renderCollections
     },
     'pools': {
         title: 'Pools',
         api: '/api/pool',
-        headers: ['Pool ID', 'Name', 'Collections', 'Sync Status', 'Created At', 'Actions'],
+        headers: [
+            { label: 'Pool ID', sort: 'id' },
+            { label: 'Name', sort: 'name' },
+            'Collections',
+            { label: 'Sync Status', sort: 'sync_status' },
+            { label: 'Created At', sort: 'created_at' },
+            'Actions'
+        ],
         renderer: renderPools
     },
     'batches': {
@@ -1060,8 +1074,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
     }
 
     if (pathChanged) {
-        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs') {
-            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : 'applyJobSearch'))))));
+        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
 
             let settingsHtml = '';
             settingsEl.style.display = 'flex';
@@ -1350,6 +1364,31 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
+            } else if (path === 'collections') {
+                const msToDate = (ms) => ms ? new Date(+ms).toISOString().slice(0, 10) : '';
+                const numRange = (minId, maxId, minP, maxP) => `<th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="${minId}" placeholder="Min..." min="0" value="${p.get(minP) || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="${maxId}" placeholder="Max..." min="0" value="${p.get(maxP) || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"></div></th>`;
+                headHtml += `<tr class="filter-row">
+                    <th><input type="text" id="flt-coll-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    ${numRange('flt-coll-min-batches', 'flt-coll-max-batches', 'min_batches', 'max_batches')}
+                    ${numRange('flt-coll-min-files', 'flt-coll-max-files', 'min_files', 'max_files')}
+                    ${numRange('flt-coll-min-functions', 'flt-coll-max-functions', 'min_functions', 'max_functions')}
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-coll-min-date" title="From" value="${msToDate(p.get('min_last_updated'))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-coll-max-date" title="To" value="${msToDate(p.get('max_last_updated'))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+            } else if (path === 'pools') {
+                const msToDate = (ms) => ms ? new Date(+ms).toISOString().slice(0, 10) : '';
+                const status = p.get('sync_status') || '';
+                const statusOpts = ['', 'current', 'outdated', 'created'].map(s => `<option value="${s}" ${status === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All'}</option>`).join('');
+                headHtml += `<tr class="filter-row">
+                    <th><input type="text" id="flt-pool-id" placeholder="ID..." value="${p.get('id') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th><input type="text" id="flt-pool-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th></th>
+                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${msToDate(p.get('min_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${msToDate(p.get('max_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
             }
 
             // Graph/Hierarchy Container Visibility Logic
@@ -1395,6 +1434,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="bin-cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinClusterSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'binary-similarity') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="bsim-search-input" placeholder="Search similarities by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinSimSearch()" title="Search"></i></div></div></div>`;
+                } else if (path === 'collections') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="collection-search-input" placeholder="Search collections by name..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyCollectionSearch()" title="Search"></i></div></div>`;
+                } else if (path === 'pools') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="pool-search-input" placeholder="Search pools by name, id, collection..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyPoolSearch()" title="Search"></i></div></div>`;
                 } else { searchArea.innerHTML = ''; }
             }
         } else {
@@ -1414,7 +1457,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
         syncInput('cluster-search-input', 'q');
         syncInput('bin-cluster-search-input', 'q');
         syncInput('bsim-search-input', 'q');
- 
+        syncInput('collection-search-input', 'q');
+        syncInput('pool-search-input', 'q');
+
         // Sync view settings
         syncInput('sim-pool-limit', 'pool_limit');
         syncInput('sim-limit', 'limit');
@@ -1452,6 +1497,17 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type', 'file');
             syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion');
             syncInput('flt-bin-cluster-file-name', 'file_name'); syncInput('flt-bin-cluster-file-md5', 'file_md5');
+        } else if (path === 'collections') {
+            const syncDate = (id, paramName) => { const el = document.getElementById(id); if (el) { const ms = p.get(paramName); el.value = ms ? new Date(+ms).toISOString().slice(0, 10) : ''; } };
+            syncInput('flt-coll-name', 'name');
+            syncInput('flt-coll-min-batches', 'min_batches'); syncInput('flt-coll-max-batches', 'max_batches');
+            syncInput('flt-coll-min-files', 'min_files'); syncInput('flt-coll-max-files', 'max_files');
+            syncInput('flt-coll-min-functions', 'min_functions'); syncInput('flt-coll-max-functions', 'max_functions');
+            syncDate('flt-coll-min-date', 'min_last_updated'); syncDate('flt-coll-max-date', 'max_last_updated');
+        } else if (path === 'pools') {
+            const syncDate = (id, paramName) => { const el = document.getElementById(id); if (el) { const ms = p.get(paramName); el.value = ms ? new Date(+ms).toISOString().slice(0, 10) : ''; } };
+            syncInput('flt-pool-id', 'id'); syncInput('flt-pool-name', 'name'); syncSelect('flt-pool-status', 'sync_status', '');
+            syncDate('flt-pool-min-date', 'min_created_at'); syncDate('flt-pool-max-date', 'max_created_at');
         } else if (path === 'binary-similarity') {
             syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
             syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
@@ -3016,6 +3072,61 @@ function applyClusterSearch() {
     navigate(viewKey, params);
 }
 
+// Set param from an element value, or delete when empty
+function _setOrDel(params, key, val) {
+    if (val !== undefined && val !== null && val !== '') params.set(key, val);
+    else params.delete(key);
+}
+// Date input (YYYY-MM-DD) -> Unix ms. endOfDay adds a day span for max bounds.
+function _dateToMs(val, endOfDay) {
+    if (!val) return '';
+    const ms = Date.parse(val);
+    if (isNaN(ms)) return '';
+    return String(endOfDay ? ms + 86399999 : ms);
+}
+
+function applyCollectionSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+
+    _setOrDel(params, 'q', document.getElementById('collection-search-input')?.value);
+    _setOrDel(params, 'name', document.getElementById('flt-coll-name')?.value);
+    _setOrDel(params, 'min_batches', document.getElementById('flt-coll-min-batches')?.value);
+    _setOrDel(params, 'max_batches', document.getElementById('flt-coll-max-batches')?.value);
+    _setOrDel(params, 'min_files', document.getElementById('flt-coll-min-files')?.value);
+    _setOrDel(params, 'max_files', document.getElementById('flt-coll-max-files')?.value);
+    _setOrDel(params, 'min_functions', document.getElementById('flt-coll-min-functions')?.value);
+    _setOrDel(params, 'max_functions', document.getElementById('flt-coll-max-functions')?.value);
+    _setOrDel(params, 'min_last_updated', _dateToMs(document.getElementById('flt-coll-min-date')?.value, false));
+    _setOrDel(params, 'max_last_updated', _dateToMs(document.getElementById('flt-coll-max-date')?.value, true));
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+
+function applyPoolSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+
+    _setOrDel(params, 'q', document.getElementById('pool-search-input')?.value);
+    _setOrDel(params, 'id', document.getElementById('flt-pool-id')?.value);
+    _setOrDel(params, 'name', document.getElementById('flt-pool-name')?.value);
+    _setOrDel(params, 'sync_status', document.getElementById('flt-pool-status')?.value);
+    _setOrDel(params, 'min_created_at', _dateToMs(document.getElementById('flt-pool-min-date')?.value, false));
+    _setOrDel(params, 'max_created_at', _dateToMs(document.getElementById('flt-pool-max-date')?.value, true));
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+
 function renderBinClusters(items) {
     const { collection, params } = getRoutingState();
     const nameType = params.get('cluster_name_type') || 'file';
@@ -3368,6 +3479,8 @@ window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
 window.applySimSearch = applySimSearch;
 window.applyBinSimSearch = applyBinSimSearch;
 window.applyClusterSearch = applyClusterSearch;
+window.applyCollectionSearch = applyCollectionSearch;
+window.applyPoolSearch = applyPoolSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
 window.refreshData = refreshData;

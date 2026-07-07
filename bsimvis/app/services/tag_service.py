@@ -5,9 +5,40 @@ from .redis_client import get_redis
 from bsimvis.app.services.index_service import get_pool_id
 
 
-def _normalize_collection(collection):
-    pool_id = get_pool_id(collection)
-    return f"global:pool:{pool_id}" if pool_id else collection
+def _normalize_collection(collection, entity_id=None):
+    if not collection:
+        return collection
+    if ":col:" in collection:
+        return collection.split(":col:")[-1]
+    if collection.startswith("global:pool:") or collection.startswith("pool:"):
+        if entity_id:
+            if ":col:" in entity_id:
+                return entity_id.split(":col:")[-1].split(":")[0]
+            parts = entity_id.split(":")
+            clean_parts = [
+                p
+                for p in parts
+                if p
+                not in (
+                    "global",
+                    "pool",
+                    "col",
+                    "sim",
+                    "file",
+                    "func",
+                    "function",
+                    "similarity",
+                    "meta",
+                    "vec",
+                    "tf",
+                    "source",
+                )
+                and not p.startswith("pool")
+                and p != ""
+            ]
+            if clean_parts:
+                return clean_parts[0]
+    return collection
 
 
 class TagService:
@@ -16,21 +47,32 @@ class TagService:
 
     def _resolve_doc_id(self, collection, entity_type, entity_id):
         """Resolves a frontend ID into a backend Redis key."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, entity_id)
+        resolved_id = entity_id.replace(":function:", ":func:")
+        if ":col:" in resolved_id:
+            resolved_id = resolved_id.split(":col:")[-1]
+
         if entity_type in ["file", "function"]:
-            resolved_id = entity_id.replace(":function:", ":func:")
             if resolved_id.endswith(":meta"):
                 return resolved_id
             return f"{resolved_id}:meta"
 
         if entity_type == "similarity":
-            if "|" in entity_id:
-                parts = entity_id.split("|")
+            if "|" in resolved_id:
+                parts = resolved_id.split("|")
                 if len(parts) == 3:
                     id1, id2, algo = parts
                     id1_clean = id1.replace(":function:", ":func:")
                     id2_clean = id2.replace(":function:", ":func:")
-                    func_prefix = f"{collection}:func:"
+                    if ":col:" in id1_clean:
+                        id1_clean = id1_clean.split(":col:")[-1]
+                    if ":col:" in id2_clean:
+                        id2_clean = id2_clean.split(":col:")[-1]
+
+                    func_parts = id1_clean.split(":")
+                    base_coll = func_parts[0] if func_parts else collection
+
+                    func_prefix = f"{base_coll}:func:"
                     c1 = (
                         id1_clean[len(func_prefix) :]
                         if id1_clean.startswith(func_prefix)
@@ -43,12 +85,12 @@ class TagService:
                     )
 
                     if c1 > c2:
-                        return f"{collection}:sim:{algo}:{c1}::{c2}"
+                        return f"{base_coll}:sim:{algo}:{c1}::{c2}"
                     else:
-                        return f"{collection}:sim:{algo}:{c2}::{c1}"
-            return entity_id
+                        return f"{base_coll}:sim:{algo}:{c2}::{c1}"
+            return resolved_id
 
-        return entity_id
+        return resolved_id
 
     def _get_doc(self, doc_id):
         raw = self.r.get(doc_id)
@@ -67,7 +109,7 @@ class TagService:
         """
         Adds a user tag to an entity (file, function, or similarity).
         """
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
         if not tag:
@@ -84,10 +126,6 @@ class TagService:
                 return False
 
             json_field = "user_tags"
-            pool_id = get_pool_id(collection)
-            if pool_id:
-                json_field = f"pool_tags_{pool_id}"
-
             user_tags = data.get(json_field, [])
             if not isinstance(user_tags, list):
                 user_tags = []
@@ -115,6 +153,16 @@ class TagService:
                 registry_key = f"{collection}:reg:{lvl}:user_tags"
                 r.sadd(registry_key, index_key)
 
+                # Propagate index to all associated pools
+                associated_pools = r.smembers(f"{collection}:pools")
+                for p_id in associated_pools:
+                    p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_coll = f"global:pool:{p_id}"
+                    pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
+                    r.sadd(pool_index_key, indexed_id)
+                    pool_registry_key = f"{pool_coll}:reg:{lvl}:user_tags"
+                    r.sadd(pool_registry_key, pool_index_key)
+
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="add"
                 )
@@ -128,17 +176,13 @@ class TagService:
 
     def remove_user_tag(self, collection, entity_type, entity_id, tag):
         """Removes a user tag from an entity."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, entity_id)
         r = self.r
         tag = tag.strip()
         try:
             doc_id = self._resolve_doc_id(collection, entity_type, entity_id)
 
             json_field = "user_tags"
-            pool_id = get_pool_id(collection)
-            if pool_id:
-                json_field = f"pool_tags_{pool_id}"
-
             data = self._get_doc(doc_id)
             if not data:
                 return False
@@ -167,6 +211,14 @@ class TagService:
                 index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
                 r.srem(index_key, indexed_id)
 
+                # Propagate index removal to all associated pools
+                associated_pools = r.smembers(f"{collection}:pools")
+                for p_id in associated_pools:
+                    p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_coll = f"global:pool:{p_id}"
+                    pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
+                    r.srem(pool_index_key, indexed_id)
+
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="remove"
                 )
@@ -178,7 +230,9 @@ class TagService:
 
     def bulk_add_user_tag(self, collection, entity_type, entity_ids, tag):
         """Adds a user tag to multiple entities."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(
+            collection, entity_ids[0] if entity_ids else None
+        )
         r = self.r
         tag = tag.strip()
         if not tag:
@@ -194,6 +248,8 @@ class TagService:
             registry_key = f"{collection}:reg:{lvl}:user_tags"
             index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
 
+            associated_pools = r.smembers(f"{collection}:pools")
+
             for eid in entity_ids:
                 doc_id = self._resolve_doc_id(collection, entity_type, eid)
                 data = self._get_doc(doc_id)
@@ -201,10 +257,6 @@ class TagService:
                     continue
 
                 json_field = "user_tags"
-                pool_id = get_pool_id(collection)
-                if pool_id:
-                    json_field = f"pool_tags_{pool_id}"
-
                 user_tags = data.get(json_field, [])
                 if not isinstance(user_tags, list):
                     user_tags = []
@@ -218,6 +270,15 @@ class TagService:
                     r.sadd(index_key, indexed_id)
                     r.sadd(registry_key, index_key)
 
+                    # Propagate to pools
+                    for p_id in associated_pools:
+                        p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                        pool_coll = f"global:pool:{p_id}"
+                        pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
+                        r.sadd(pool_index_key, indexed_id)
+                        pool_registry_key = f"{pool_coll}:reg:{lvl}:user_tags"
+                        r.sadd(pool_registry_key, pool_index_key)
+
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="add"
                     )
@@ -230,7 +291,9 @@ class TagService:
 
     def bulk_remove_user_tag(self, collection, entity_type, entity_ids, tag):
         """Removes a user tag from multiple entities."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(
+            collection, entity_ids[0] if entity_ids else None
+        )
         r = self.r
         tag = tag.strip()
         try:
@@ -241,6 +304,7 @@ class TagService:
                 else "sim" if entity_type == "similarity" else entity_type
             )
             index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
+            associated_pools = r.smembers(f"{collection}:pools")
 
             for eid in entity_ids:
                 doc_id = self._resolve_doc_id(collection, entity_type, eid)
@@ -249,10 +313,6 @@ class TagService:
                     continue
 
                 json_field = "user_tags"
-                pool_id = get_pool_id(collection)
-                if pool_id:
-                    json_field = f"pool_tags_{pool_id}"
-
                 user_tags = data.get(json_field, [])
                 if not isinstance(user_tags, list):
                     continue
@@ -264,6 +324,13 @@ class TagService:
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
                     r.srem(index_key, indexed_id)
+
+                    # Propagate removal to pools
+                    for p_id in associated_pools:
+                        p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                        pool_coll = f"global:pool:{p_id}"
+                        pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
+                        r.srem(pool_index_key, indexed_id)
 
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="remove"
@@ -302,6 +369,16 @@ class TagService:
             color = palette[tag_hash % len(palette)]
 
             self.r.hset(meta_key, tag, json.dumps({"color": color, "priority": 0}))
+
+            # Propagate tag metadata to pools containing this collection
+            associated_pools = self.r.smembers(f"{collection}:pools")
+            for p_id in associated_pools:
+                p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                pool_meta_key = f"global:pool:{p_id}:tags_metadata"
+                if not self.r.hexists(pool_meta_key, tag):
+                    self.r.hset(
+                        pool_meta_key, tag, json.dumps({"color": color, "priority": 0})
+                    )
 
     def get_tags(self, collection):
         """Returns the global tag index for a collection."""
@@ -350,6 +427,13 @@ class TagService:
         meta = json.loads(raw) if raw else {"priority": 0}
         meta["color"] = color
         self.r.hset(meta_key, tag, json.dumps(meta))
+
+        # Propagate to pools
+        associated_pools = self.r.smembers(f"{collection}:pools")
+        for p_id in associated_pools:
+            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+            pool_meta_key = f"global:pool:{p_id}:tags_metadata"
+            self.r.hset(pool_meta_key, tag, json.dumps(meta))
         return True
 
     def set_tag_priority(self, collection, tag, priority):
@@ -359,11 +443,18 @@ class TagService:
         meta = json.loads(raw) if raw else {"color": "#66d9ef"}
         meta["priority"] = int(priority)
         self.r.hset(meta_key, tag, json.dumps(meta))
+
+        # Propagate to pools
+        associated_pools = self.r.smembers(f"{collection}:pools")
+        for p_id in associated_pools:
+            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+            pool_meta_key = f"global:pool:{p_id}:tags_metadata"
+            self.r.hset(pool_meta_key, tag, json.dumps(meta))
         return True
 
     def _propagate_user_tag(self, collection, entity_type, entity_id, tag, op="add"):
         """Propagates a user tag to other levels if configured in INDEX_CONFIG."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, entity_id)
         from bsimvis.app.services.index_config import (
             get_propagation_targets,
             resolve_target_field,
@@ -386,6 +477,8 @@ class TagService:
         if indexed_id.endswith(":meta"):
             indexed_id = indexed_id[:-5]
 
+        associated_pools = r.smembers(f"{collection}:pools")
+
         if src_level == "file":
             md5 = indexed_id.split(":")[-1]
             for target_lvl in prop_levels:
@@ -405,8 +498,20 @@ class TagService:
                     if op == "add":
                         r.sadd(index_key, *id_list)
                         r.sadd(registry_key, index_key)
+                        for p_id in associated_pools:
+                            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                            pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
+                            pool_registry_key = (
+                                f"global:pool:{p_id}:reg:{target_lvl}:{target_field}"
+                            )
+                            r.sadd(pool_index_key, *id_list)
+                            r.sadd(pool_registry_key, pool_index_key)
                     else:
                         r.srem(index_key, *id_list)
+                        for p_id in associated_pools:
+                            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                            pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
+                            r.srem(pool_index_key, *id_list)
 
         elif src_level == "func":
             parts = indexed_id.split(":")
@@ -430,8 +535,26 @@ class TagService:
                             if op == "add":
                                 r.sadd(index_key, *id_list)
                                 r.sadd(registry_key, index_key)
+                                for p_id in associated_pools:
+                                    p_id = (
+                                        p_id.decode()
+                                        if isinstance(p_id, bytes)
+                                        else p_id
+                                    )
+                                    pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
+                                    pool_registry_key = f"global:pool:{p_id}:reg:{target_lvl}:{target_field}"
+                                    r.sadd(pool_index_key, *id_list)
+                                    r.sadd(pool_registry_key, pool_index_key)
                             else:
                                 r.srem(index_key, *id_list)
+                                for p_id in associated_pools:
+                                    p_id = (
+                                        p_id.decode()
+                                        if isinstance(p_id, bytes)
+                                        else p_id
+                                    )
+                                    pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
+                                    r.srem(pool_index_key, *id_list)
 
 
 tag_service = TagService()

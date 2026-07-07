@@ -380,7 +380,7 @@ async function startBatchUpload() {
 
 async function populateUploadCollectionDropdown(currentCollection) {
     try {
-        const res = await fetch('/api/collection/search');
+        const res = await fetch('/api/collection/search?limit=10000'); // ponytail: lift limit to get all collections
         if (!res.ok) return;
         const data = await res.json();
         const collections = data.collections || (Array.isArray(data) ? data : []);

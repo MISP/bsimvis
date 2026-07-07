@@ -4054,7 +4054,7 @@ async function renderPoolCreationForm() {
     // Fetch existing collections to select from
     let collections = [];
     try {
-        const res = await fetch('/api/collection/search');
+        const res = await fetch('/api/collection/search?limit=10000'); // ponytail: lift limit to get all collections
         if (res.ok) {
             const data = await res.json();
             collections = data.collections || data || [];

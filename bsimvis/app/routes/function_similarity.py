@@ -87,13 +87,12 @@ def similarity_api():
                 d = json.loads(raw_doc)
                 if d.get("tags") and not tags:
                     tags = d.get("tags")
-                if pool_id:
+                if d.get("user_tags") and not user_tags:
+                    user_tags = d.get("user_tags")
+                elif pool_id:
                     p_tags = d.get(f"pool_tags_{pool_id}")
                     if p_tags and not user_tags:
                         user_tags = p_tags
-                else:
-                    if d.get("user_tags") and not user_tags:
-                        user_tags = d.get("user_tags")
 
         # Determine if any score was calculated on-demand or loaded from pool/cache
         source = "pool" if pool_id else "cache"

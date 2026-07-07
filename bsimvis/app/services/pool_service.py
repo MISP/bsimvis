@@ -623,6 +623,7 @@ class PoolService:
             pipe.sunionstore(f"{pool_coll}:all_files", *existing_files)
         if existing_funcs:
             pipe.sunionstore(f"{pool_coll}:all_functions", *existing_funcs)
+        pipe.execute()  # section 4 reassigns `pipe`, so flush section 3 first
 
         # 4. Merge idx:file:functions:*
         md5_set = set()

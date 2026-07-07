@@ -55,34 +55,29 @@ def enrich_pool_data(data, pool_id):
     if not pool_id or not isinstance(data, dict):
         return data
 
-    pool_tags_field = f"pool_tags_{pool_id}"
-    pool_notes_field = f"pool_notes_{pool_id}"
-    pool_note_owners_field = f"pool_note_owners_{pool_id}"
-    pool_note_count_field = f"pool_note_count_{pool_id}"
+    # Keep standard keys if populated, otherwise fallback to pool-specific ones
+    if not data.get("user_tags"):
+        pool_tags_field = f"pool_tags_{pool_id}"
+        if pool_tags_field in data:
+            data["user_tags"] = data[pool_tags_field]
+        elif "user_tags" not in data:
+            data["user_tags"] = []
 
-    # Pool-specific user_tags
-    if pool_tags_field in data:
-        data["user_tags"] = data[pool_tags_field]
-    else:
-        data["user_tags"] = []
-
-    # Pool-specific notes
-    if pool_notes_field in data:
-        data["notes"] = data[pool_notes_field]
-    else:
-        data["notes"] = []
-
-    # Pool-specific note owners
-    if pool_note_owners_field in data:
-        data["note_owners"] = data[pool_note_owners_field]
-    else:
-        data["note_owners"] = []
-
-    # Pool-specific note count
-    if pool_note_count_field in data:
-        data["note_count"] = data[pool_note_count_field]
-    else:
-        data["note_count"] = len(data["notes"])
+    if not data.get("notes"):
+        pool_notes_field = f"pool_notes_{pool_id}"
+        if pool_notes_field in data:
+            data["notes"] = data[pool_notes_field]
+            data["note_owners"] = data.get(f"pool_note_owners_{pool_id}", [])
+            data["note_count"] = data.get(
+                f"pool_note_count_{pool_id}", len(data["notes"])
+            )
+        else:
+            if "notes" not in data:
+                data["notes"] = []
+            if "note_owners" not in data:
+                data["note_owners"] = []
+            if "note_count" not in data:
+                data["note_count"] = len(data["notes"])
 
     return data
 

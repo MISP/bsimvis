@@ -6,9 +6,40 @@ from .redis_client import get_redis
 from bsimvis.app.services.index_service import get_pool_id
 
 
-def _normalize_collection(collection):
-    pool_id = get_pool_id(collection)
-    return f"global:pool:{pool_id}" if pool_id else collection
+def _normalize_collection(collection, entity_id=None):
+    if not collection:
+        return collection
+    if ":col:" in collection:
+        return collection.split(":col:")[-1]
+    if collection.startswith("global:pool:") or collection.startswith("pool:"):
+        if entity_id:
+            if ":col:" in entity_id:
+                return entity_id.split(":col:")[-1].split(":")[0]
+            parts = entity_id.split(":")
+            clean_parts = [
+                p
+                for p in parts
+                if p
+                not in (
+                    "global",
+                    "pool",
+                    "col",
+                    "sim",
+                    "file",
+                    "func",
+                    "function",
+                    "similarity",
+                    "meta",
+                    "vec",
+                    "tf",
+                    "source",
+                )
+                and not p.startswith("pool")
+                and p != ""
+            ]
+            if clean_parts:
+                return clean_parts[0]
+    return collection
 
 
 class NoteService:
@@ -17,9 +48,11 @@ class NoteService:
 
     def _resolve_func_id(self, collection, entity_id):
         """Resolves a function ID into its meta document key."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, entity_id)
         resolved_id = entity_id.replace(":function:", ":func:")
-        if resolved_id.startswith("idx:"):
+        if ":col:" in resolved_id:
+            resolved_id = resolved_id.split(":col:")[-1]
+        elif resolved_id.startswith("idx:"):
             parts = resolved_id.split(":")
             if len(parts) >= 5:
                 resolved_id = f"{parts[1]}:func:{parts[3]}:{parts[4]}"
@@ -43,8 +76,7 @@ class NoteService:
 
     def add_note(self, collection, func_id, text, owner="user"):
         """Adds a note to a function and updates indices."""
-        orig_collection = collection
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, func_id)
         r = self.r
         text = text.strip()
         if not text:
@@ -68,11 +100,6 @@ class NoteService:
             json_field = "notes"
             count_field = "note_count"
             owner_field = "note_owners"
-            pool_id = get_pool_id(collection)
-            if pool_id:
-                json_field = f"pool_notes_{pool_id}"
-                count_field = f"pool_note_count_{pool_id}"
-                owner_field = f"pool_note_owners_{pool_id}"
 
             # 2. Update Notes
             notes = doc.get(json_field, [])
@@ -96,15 +123,17 @@ class NoteService:
             # Indexing
             if owner not in doc.get(owner_field, []) or True:  # enforce check/index
                 indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
-                index_key = f"{orig_collection}:idx:func:note_owners:{owner.lower()}"
+                index_key = f"{collection}:idx:func:note_owners:{owner.lower()}"
                 r.sadd(index_key, indexed_id)
 
-                registry_key = f"{orig_collection}:reg:func:note_owners"
+                registry_key = f"{collection}:reg:func:note_owners"
                 r.sadd(registry_key, index_key)
 
-                pool_id = get_pool_id(orig_collection)
-                if pool_id:
-                    pool_coll = f"global:pool:{pool_id}"
+                # Propagate to all associated pools
+                associated_pools = r.smembers(f"{collection}:pools")
+                for p_id in associated_pools:
+                    p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_coll = f"global:pool:{p_id}"
                     pool_index_key = f"{pool_coll}:idx:func:note_owners:{owner.lower()}"
                     r.sadd(pool_index_key, indexed_id)
                     pool_registry_key = f"{pool_coll}:reg:func:note_owners"
@@ -117,15 +146,11 @@ class NoteService:
 
     def update_note(self, collection, func_id, note_id, text):
         """Updates an existing note's text."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, func_id)
         doc_id = self._resolve_func_id(collection, func_id)
 
         try:
             json_field = "notes"
-            pool_id = get_pool_id(collection)
-            if pool_id:
-                json_field = f"pool_notes_{pool_id}"
-
             doc = self._get_doc(doc_id)
             if not doc:
                 return None
@@ -145,8 +170,7 @@ class NoteService:
 
     def remove_note(self, collection, func_id, note_id):
         """Removes a note and updates indices if necessary."""
-        orig_collection = collection
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, func_id)
         r = self.r
         doc_id = self._resolve_func_id(collection, func_id)
 
@@ -154,11 +178,6 @@ class NoteService:
             json_field = "notes"
             count_field = "note_count"
             owner_field = "note_owners"
-            pool_id = get_pool_id(collection)
-            if pool_id:
-                json_field = f"pool_notes_{pool_id}"
-                count_field = f"pool_note_count_{pool_id}"
-                owner_field = f"pool_note_owners_{pool_id}"
 
             doc = self._get_doc(doc_id)
             if not doc:
@@ -182,12 +201,13 @@ class NoteService:
             self._set_doc(doc_id, doc)
 
             indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
-            pool_id = get_pool_id(orig_collection)
             for owner in removed_owners:
-                index_key = f"{orig_collection}:idx:func:note_owners:{owner.lower()}"
+                index_key = f"{collection}:idx:func:note_owners:{owner.lower()}"
                 r.srem(index_key, indexed_id)
-                if pool_id:
-                    pool_coll = f"global:pool:{pool_id}"
+                associated_pools = r.smembers(f"{collection}:pools")
+                for p_id in associated_pools:
+                    p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_coll = f"global:pool:{p_id}"
                     pool_index_key = f"{pool_coll}:idx:func:note_owners:{owner.lower()}"
                     r.srem(pool_index_key, indexed_id)
 
@@ -198,10 +218,9 @@ class NoteService:
 
     def get_notes(self, collection, func_id):
         """Returns all notes for a function."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, func_id)
         doc_id = self._resolve_func_id(collection, func_id)
-        pool_id = get_pool_id(collection)
-        json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
+        json_field = "notes"
         try:
             doc = self._get_doc(doc_id)
             if not doc:
@@ -214,15 +233,17 @@ class NoteService:
 
     def _resolve_file_id(self, collection, file_id):
         """Resolves a file ID into its meta document key."""
-        collection = _normalize_collection(collection)
-        if file_id.endswith(":meta"):
-            return file_id
-        return f"{file_id}:meta"
+        collection = _normalize_collection(collection, file_id)
+        resolved_id = file_id
+        if ":col:" in resolved_id:
+            resolved_id = resolved_id.split(":col:")[-1]
+        if resolved_id.endswith(":meta"):
+            return resolved_id
+        return f"{resolved_id}:meta"
 
     def add_file_note(self, collection, file_id, text, owner="user"):
         """Adds a note to a file and updates indices."""
-        orig_collection = collection
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, file_id)
         r = self.r
         text = text.strip()
         if not text:
@@ -245,11 +266,6 @@ class NoteService:
             json_field = "notes"
             count_field = "note_count"
             owner_field = "note_owners"
-            pool_id = get_pool_id(collection)
-            if pool_id:
-                json_field = f"pool_notes_{pool_id}"
-                count_field = f"pool_note_count_{pool_id}"
-                owner_field = f"pool_note_owners_{pool_id}"
 
             notes = doc.get(json_field, [])
             if not isinstance(notes, list):
@@ -271,15 +287,16 @@ class NoteService:
             # Indexing
             if owner not in doc.get(owner_field, []) or True:
                 indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
-                index_key = f"{orig_collection}:idx:file:note_owners:{owner.lower()}"
+                index_key = f"{collection}:idx:file:note_owners:{owner.lower()}"
                 r.sadd(index_key, indexed_id)
 
-                registry_key = f"{orig_collection}:reg:file:note_owners"
+                registry_key = f"{collection}:reg:file:note_owners"
                 r.sadd(registry_key, index_key)
 
-                pool_id = get_pool_id(orig_collection)
-                if pool_id:
-                    pool_coll = f"global:pool:{pool_id}"
+                associated_pools = r.smembers(f"{collection}:pools")
+                for p_id in associated_pools:
+                    p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_coll = f"global:pool:{p_id}"
                     pool_index_key = f"{pool_coll}:idx:file:note_owners:{owner.lower()}"
                     r.sadd(pool_index_key, indexed_id)
                     pool_registry_key = f"{pool_coll}:reg:file:note_owners"
@@ -292,10 +309,9 @@ class NoteService:
 
     def update_file_note(self, collection, file_id, note_id, text):
         """Updates an existing file note's text."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, file_id)
         doc_id = self._resolve_file_id(collection, file_id)
-        pool_id = get_pool_id(collection)
-        json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
+        json_field = "notes"
 
         try:
             doc = self._get_doc(doc_id)
@@ -316,14 +332,12 @@ class NoteService:
 
     def remove_file_note(self, collection, file_id, note_id):
         """Removes a file note and updates indices if necessary."""
-        orig_collection = collection
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, file_id)
         r = self.r
         doc_id = self._resolve_file_id(collection, file_id)
-        pool_id = get_pool_id(collection)
-        json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
-        count_field = f"pool_note_count_{pool_id}" if pool_id else "note_count"
-        owner_field = f"pool_note_owners_{pool_id}" if pool_id else "note_owners"
+        json_field = "notes"
+        count_field = "note_count"
+        owner_field = "note_owners"
 
         try:
             doc = self._get_doc(doc_id)
@@ -346,12 +360,13 @@ class NoteService:
             self._set_doc(doc_id, doc)
 
             indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
-            pool_id = get_pool_id(orig_collection)
             for owner in removed_owners:
-                index_key = f"{orig_collection}:idx:file:note_owners:{owner.lower()}"
+                index_key = f"{collection}:idx:file:note_owners:{owner.lower()}"
                 r.srem(index_key, indexed_id)
-                if pool_id:
-                    pool_coll = f"global:pool:{pool_id}"
+                associated_pools = r.smembers(f"{collection}:pools")
+                for p_id in associated_pools:
+                    p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_coll = f"global:pool:{p_id}"
                     pool_index_key = f"{pool_coll}:idx:file:note_owners:{owner.lower()}"
                     r.srem(pool_index_key, indexed_id)
 
@@ -362,10 +377,9 @@ class NoteService:
 
     def get_file_notes(self, collection, file_id):
         """Returns all notes for a file."""
-        collection = _normalize_collection(collection)
+        collection = _normalize_collection(collection, file_id)
         doc_id = self._resolve_file_id(collection, file_id)
-        pool_id = get_pool_id(collection)
-        json_field = f"pool_notes_{pool_id}" if pool_id else "notes"
+        json_field = "notes"
         try:
             doc = self._get_doc(doc_id)
             if not doc:

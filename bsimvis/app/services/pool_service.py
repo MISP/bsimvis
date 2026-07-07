@@ -60,6 +60,15 @@ class PoolService:
         pipe.execute()
         return True, "Pool created successfully"
 
+    def edit_pool_name(self, pool_id, name):
+        """Edits the name of a pool."""
+        r = self.r
+        pool_meta_key = f"global:pool:{pool_id}:meta"
+        if not r.exists(pool_meta_key):
+            return False, "Pool not found"
+        r.hset(pool_meta_key, "name", name)
+        return True, "Pool name updated successfully"
+
     def get_pool(self, pool_id):
         r = self.r
         meta = r.hgetall(f"global:pool:{pool_id}:meta")
@@ -140,6 +149,14 @@ class PoolService:
             updated_meta["total_file_clusters"] = total_file_clust
         else:
             meta["total_file_clusters"] = int(meta["total_file_clusters"])
+
+        # Real files count
+        total_files = r.scard(f"global:pool:{pool_id}:all_files")
+        meta["total_files"] = total_files
+
+        # Real functions count
+        total_functions = r.scard(f"global:pool:{pool_id}:all_functions")
+        meta["total_functions"] = total_functions
 
         if updated_meta:
             r.hset(f"global:pool:{pool_id}:meta", mapping=updated_meta)

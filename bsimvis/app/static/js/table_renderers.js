@@ -82,8 +82,17 @@ window.TableRenderers = {
             return `
             <tr data-id="${pool.id}">
                 <td><a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
-                <td><b>${pool.name || 'Unnamed'}</b></td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;" id="pool-name-${pool.id}">${pool.name || 'Unnamed'}</a>
+                        <button class="btn-action" title="Rename" onclick="event.stopPropagation(); renamePool('${pool.id}')"><i class="fa-solid fa-pen"></i></button>
+                    </div>
+                </td>
                 <td><div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">${collectionsList}${crossCollectionOnlyIndicator}</div></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/files" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:#60a5fa; font-weight:700; text-decoration:none;">${pool.total_files || 0}</a></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/functions" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:#a78bfa; font-weight:700; text-decoration:none;">${pool.total_functions || 0}</a></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/functions/similarities" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:var(--info); font-weight:700; text-decoration:none;">${pool.total_func_similarities || 0}</a></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/functions/clusters" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:#f59e0b; font-weight:700; text-decoration:none;">${pool.total_func_clusters || 0}</a></td>
                 <td>
                     <div style="display:inline-flex; align-items:center;">
                         ${syncStatusBadge}

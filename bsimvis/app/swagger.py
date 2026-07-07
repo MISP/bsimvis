@@ -2273,6 +2273,13 @@ class PoolDetail(Resource):
 
         return delete_pool(pool_id)
 
+    @ns_pool.expect(api.model("PoolUpdate", {"name": fields.String(required=True, example="New Name")}))
+    def put(self, pool_id):
+        """Updates the pool's name."""
+        from bsimvis.app.routes.pools import edit_pool
+
+        return edit_pool(pool_id)
+
 
 @ns_pool.route("/<string:pool_id>/build")
 class PoolBuild(Resource):

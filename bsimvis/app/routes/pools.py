@@ -98,6 +98,8 @@ def list_pools():
         "total_func_clusters",
         "total_file_similarities",
         "total_file_clusters",
+        "total_files",
+        "total_functions",
     ]
 
     # Filter: q over name/id/collections/sync_status, plus specific-field filters
@@ -140,6 +142,17 @@ def list_pools():
 
 def delete_pool(pool_id):
     success, message = pool_service.delete_pool(pool_id)
+    if not success:
+        return {"error": message}, 404
+    return {"message": message}
+
+
+def edit_pool(pool_id):
+    data = request.json
+    name = data.get("name") if data else None
+    if not name:
+        return {"error": "Missing name parameter"}, 400
+    success, message = pool_service.edit_pool_name(pool_id, name)
     if not success:
         return {"error": message}, 404
     return {"message": message}

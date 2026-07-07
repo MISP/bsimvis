@@ -185,7 +185,10 @@ window.PoolDetailView = {
                 <div>
                     <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px; flex-wrap:wrap;">
                         <i class="fa-solid fa-diagram-project" style="font-size:1.4rem; color:var(--accent);"></i>
-                        <h1 style="margin:0; font-size:1.5rem; color:var(--text);">${name}</h1>
+                        <h1 style="margin:0; font-size:1.5rem; color:var(--text); display:inline-flex; align-items:center; gap:8px;">
+                            <span id="pool-detail-name-text">${name}</span>
+                            <button class="btn-action" title="Rename" onclick="window.poolDetailRename('${poolId}')" style="background:transparent; border:none; padding:4px; font-size:1rem;"><i class="fa-solid fa-pen"></i></button>
+                        </h1>
                         ${crossOnly ? `<span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); color:#f59e0b; padding:3px 10px; border-radius:20px; font-size:0.72rem; font-weight:700; display:inline-flex; align-items:center; gap:5px;"><i class="fa-solid fa-arrow-right-arrow-left"></i> Cross-Only</span>` : ''}
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -465,5 +468,33 @@ window.poolDetailDelete = async function(poolId, btn) {
     } catch(e) {
         alert(`Failed to delete pool: ${e.message}`);
         if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash-can"></i> Delete'; }
+    }
+};
+
+window.poolDetailRename = async function(poolId) {
+    const el = document.getElementById('pool-detail-name-text');
+    const currentName = el ? el.textContent : '';
+    const newName = prompt(`Enter new name for pool "${poolId}":`, currentName);
+    if (newName === null || newName.trim() === '' || newName === currentName) return;
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName.trim() })
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        if (el) el.textContent = newName.trim();
+        if (typeof Breadcrumbs !== 'undefined' && Breadcrumbs.setPoolName) {
+            Breadcrumbs.setPoolName(poolId, newName.trim());
+            Breadcrumbs.refresh();
+        }
+    } catch (e) {
+        alert(`Failed to rename pool: ${e.message}`);
     }
 };

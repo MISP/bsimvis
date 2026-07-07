@@ -204,12 +204,16 @@ const routes = {
         title: 'Pools',
         api: '/api/pool',
         headers: [
-            { label: 'Pool ID', sort: 'id' },
-            { label: 'Name', sort: 'name' },
-            'Collections',
-            { label: 'Sync Status', sort: 'sync_status' },
-            { label: 'Created At', sort: 'created_at' },
-            'Actions'
+            { label: 'Pool ID', sort: 'id', width: '15%' },
+            { label: 'Name', sort: 'name', width: '15%' },
+            { label: 'Collections', width: '20%' },
+            { label: 'Files', sort: 'total_files', width: '6%' },
+            { label: 'Funcs', sort: 'total_functions', width: '6%' },
+            { label: 'Sims', sort: 'total_func_similarities', width: '6%' },
+            { label: 'Clusters', sort: 'total_func_clusters', width: '7%' },
+            { label: 'Sync Status', sort: 'sync_status', width: '8%' },
+            { label: 'Created At', sort: 'created_at', width: '10%' },
+            { label: 'Actions', width: '7%' }
         ],
         renderer: renderPools
     },
@@ -1384,6 +1388,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><input type="text" id="flt-pool-id" placeholder="ID..." value="${p.get('id') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
                     <th><input type="text" id="flt-pool-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
                     <th></th>
+                    <th></th>
+                    <th></th>
+                    <th></th>
+                    <th></th>
                     <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${msToDate(p.get('min_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${msToDate(p.get('max_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
                     <th></th>
@@ -1582,7 +1590,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
     // Sync body colgroup from the header row's actual rendered widths.
     // We use requestAnimationFrame so the header table has laid out first.
-    if (pathChanged) {
+    if (true) {
         const syncColgroups = () => {
             const headerTable = document.getElementById('data-table-header');
             const bodyColgroup = document.getElementById('table-colgroup');
@@ -2445,7 +2453,8 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
         col = null;
     }
     const pool = window.getRoutingState ? window.getRoutingState().pool : null;
-    if ((!col && !pool) || col === 'null' || col === 'undefined') {
+    const isGlobalView = viewKey === 'pools' || viewKey === 'collections' || viewKey === 'jobs' || parts[0] === 'pools' || parts[0] === 'collections';
+    if (!isGlobalView && ((!col && !pool) || col === 'null' || col === 'undefined')) {
         showNullContextWarning(col, pool, viewKey);
     }
     const params = queryParams || currentParams;
@@ -4609,6 +4618,31 @@ async function deletePool(poolId, btn) {
     }
 }
 window.deletePool = deletePool;
+
+async function renamePool(poolId) {
+    const el = document.getElementById(`pool-name-${poolId}`);
+    const currentName = el ? el.textContent : '';
+    const newName = prompt(`Enter new name for pool "${poolId}":`, currentName);
+    if (newName === null || newName.trim() === '' || newName === currentName) return;
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName.trim() })
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to rename pool: ${e.message}`);
+    }
+}
+window.renamePool = renamePool;
 
 async function buildPool(poolId, btn) {
     if (btn) {

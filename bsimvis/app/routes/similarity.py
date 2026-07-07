@@ -1,3 +1,5 @@
+import json
+
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.similarity_service import SimilarityService

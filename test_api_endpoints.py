@@ -18,10 +18,29 @@ import os
 import requests
 import uuid
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()  # pick up APP_HOST/APP_PORT from .env like the app does
+except ImportError:
+    pass
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BASE_URL = os.getenv("API_URL", "http://localhost:5000")
+
+
+def _default_base_url():
+    """Mirror the app's host resolution (bsimvis/cli/main.py)."""
+    host = os.getenv("APP_HOST") or "localhost"
+    port = os.getenv("APP_PORT") or "5000"
+    # APP_HOST is the bind address (often 0.0.0.0); connect via localhost.
+    if host in ("0.0.0.0", ""):
+        host = "localhost"
+    return f"http://{host}:{port}"
+
+
+BASE_URL = os.getenv("API_URL", _default_base_url())
 COLLECTION = f"test_collection_{uuid.uuid4().hex[:8]}"
 TEST_BINARY = "./data/test/crypto_test"
 POLL_INTERVAL = 3  # seconds between pipeline status polls
@@ -99,6 +118,10 @@ def test_endpoint(
                 resp = requests.post(url, files=files, **kwargs)
             else:
                 resp = requests.post(url, json=data, **kwargs)
+        elif method == "PATCH":
+            resp = requests.patch(url, json=data, **kwargs)
+        elif method == "PUT":
+            resp = requests.put(url, json=data, **kwargs)
         elif method == "DELETE":
             resp = requests.delete(url, **kwargs)
         else:
@@ -672,6 +695,42 @@ def run_all_tests():
             "GET",
             "/api/bin_sim/list",
             params={"collection": COLLECTION, "md5": file_md5},
+        )
+
+    # ── Binary Clusters ────────────────────────────────────────────────────
+    print(_color("\n  [Binary Clusters]", BOLD))
+    test_endpoint("GET", "/api/bin_cluster/list", params={"collection": COLLECTION})
+
+    # ── Pools ──────────────────────────────────────────────────────────────
+    print(_color("\n  [Pools]", BOLD))
+    test_endpoint("GET", "/api/pool", params={"collection": COLLECTION})
+
+    # ── Notes ──────────────────────────────────────────────────────────────
+    print(_color("\n  [Notes]", BOLD))
+    if func_id1:
+        test_endpoint(
+            "GET",
+            "/api/notes/list",
+            params={"collection": COLLECTION, "func_id": func_id1},
+            label="GET /api/notes/list?func_id=<id>",
+        )
+    if file_md5:
+        test_endpoint(
+            "GET",
+            "/api/notes/file/list",
+            params={"collection": COLLECTION, "file_id": f"{COLLECTION}:file:{file_md5}"},
+            label="GET /api/notes/file/list?file_id=<id>",
+        )
+
+    # ── Misc (index config / details) ──────────────────────────────────────
+    print(_color("\n  [Misc]", BOLD))
+    test_endpoint("GET", "/api/index/config")
+    if file_md5:
+        test_endpoint(
+            "GET",
+            f"/api/file/details/{file_md5}",
+            params={"collection": COLLECTION},
+            label="GET /api/file/details/<md5>",
         )
 
     # ── Metadata Propagation ───────────────────────────────────────────────

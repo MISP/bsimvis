@@ -2686,6 +2686,106 @@ class SimilarityService:
         )
 
         self.r.hdel(f"global:pool:{pool_id}:meta", "total_file_similarities")
+        self.reindex_pool_bin_sim(
+            pool_id, algo=algo, job_service=job_service, job_id=job_id
+        )
+        return True
+
+    def reindex_pool_bin_sim(
+        self, pool_id, algo="unweighted_cosine", job_service=None, job_id=None
+    ):
+        """Build the same secondary indexes collections have for a pool's bin_sim
+        pairs, so pool search can filter/sort/paginate server-side instead of
+        materializing every pair. Idempotent; runs in-place on an already-built
+        pool (no rebuild needed)."""
+        from bsimvis.app.services.bin_sim_service import _index_bin_sim_pair
+
+        r = self.r
+        prefix = f"global:pool:{pool_id}"
+        sids = [
+            s.decode() if isinstance(s, bytes) else s
+            for s in r.smembers(f"{prefix}:bin_sim:built:{algo}")
+        ]
+        if not sids:
+            if job_service and job_id:
+                job_service.add_log(job_id, "No pool bin_sim docs to reindex.")
+                job_service.update_progress(job_id, 100)
+            return True
+        total = len(sids)
+        if job_service and job_id:
+            job_service.add_log(
+                job_id, f"[*] Reindexing {total} pool bin_sim pairs for pool {pool_id}"
+            )
+
+        pipe = r.pipeline(transaction=False)
+        for sid in sids:
+            pipe.get(sid)
+        docs = []
+        md5set = set()
+        for sid, raw in zip(sids, pipe.execute()):
+            if not raw:
+                continue
+            d = json.loads(raw) if not isinstance(raw, dict) else raw
+            if isinstance(d, str):
+                d = json.loads(d)
+            docs.append((sid, d))
+            md5set.add((d.get("coll_1", ""), d.get("md5_1", "")))
+            md5set.add((d.get("coll_2", ""), d.get("md5_2", "")))
+
+        # File meta (arch/tags/name) + function counts for every referenced binary.
+        md5list = list(md5set)
+        pipe = r.pipeline(transaction=False)
+        for c, m in md5list:
+            pipe.get(f"{c}:file:{m}:meta")
+            pipe.scard(f"{c}:idx:file:functions:{m}")
+        mres = pipe.execute()
+        meta_map, func_map = {}, {}
+        for i, (c, m) in enumerate(md5list):
+            raw = mres[2 * i]
+            mm = {}
+            if raw:
+                mm = json.loads(raw) if not isinstance(raw, dict) else raw
+                if isinstance(mm, str):
+                    mm = json.loads(mm)
+            meta_map[(c, m)] = mm if isinstance(mm, dict) else {}
+            func_map[(c, m)] = mres[2 * i + 1] or 0
+
+        pipe = r.pipeline(transaction=False)
+        for i, (sid, d) in enumerate(docs):
+            c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
+            c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
+            matched = d.get("matched_clusters_count", 0)
+            # Normalize pool doc field names to the collection shape _index_bin_sim_pair expects.
+            norm = {
+                "md5_a": m1,
+                "md5_b": m2,
+                "algo": algo,
+                "architecture_a": meta_map.get((c1, m1), {}).get("language_id", ""),
+                "architecture_b": meta_map.get((c2, m2), {}).get("language_id", ""),
+                "functions_count_a": func_map.get((c1, m1), 0),
+                "functions_count_b": func_map.get((c2, m2), 0),
+                "score": d.get("unweighted_score", d.get("score", 0.0)),
+                "score_sim_weighted": d.get("sim_weighted_score", 0.0),
+                "score_collection_weighted": d.get("collection_weighted_score", 0.0),
+                # pool build doesn't persist coverage; approximate as legacy search did
+                "coverage_a": 1.0 if matched > 0 else 0.0,
+                "coverage_b": 1.0 if matched > 0 else 0.0,
+                "shared_clusters": matched,
+                "computed_at": d.get("entry_date", 0),
+            }
+            _index_bin_sim_pair(
+                pipe, prefix, sid, norm, meta_map.get((c1, m1)), meta_map.get((c2, m2))
+            )
+            if (i + 1) % 200 == 0:
+                pipe.execute()
+                pipe = r.pipeline(transaction=False)
+                if job_service and job_id:
+                    job_service.update_progress(job_id, int((i + 1) / total * 100))
+        pipe.execute()
+        if job_service and job_id:
+            job_service.update_progress(
+                job_id, 100, f"Reindexed {total} pool bin_sim pairs."
+            )
         return True
 
     def index_similarities(

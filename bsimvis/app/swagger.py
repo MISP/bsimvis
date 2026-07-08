@@ -2004,11 +2004,15 @@ class BinSimReindex(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
+                "pool_id": fields.String(
+                    required=False, description="Reindex a pool instead of a collection"
+                ),
             },
         )
     )
     def post(self):
-        """Rebuilds secondary indexes for all existing binary similarity pairs (backfill)."""
+        """Rebuilds secondary indexes for all existing binary similarity pairs (backfill).
+        Pass pool_id to index a pool (enables fast pool search)."""
         from bsimvis.app.routes.bin_sim import reindex_bin_sim
 
         return reindex_bin_sim()

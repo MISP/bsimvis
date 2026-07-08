@@ -369,14 +369,20 @@ def list_bin_sims():
 
 
 def reindex_bin_sim():
-    """Trigger background job to rebuild secondary indexes for existing bin_sim docs."""
+    """Trigger background job to rebuild secondary indexes for existing bin_sim docs.
+    Pass pool_id to reindex a pool (enables fast pool search) instead of a collection."""
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")
+    pool_id = data.get("pool_id") or data.get("pool")
+
+    payload = {"collection": collection, "algo": algo}
+    if pool_id:
+        payload["pool_id"] = pool_id
 
     job_id = job_service.create_job(
         JobType.REINDEX_BIN_SIM.value,
-        {"collection": collection, "algo": algo},
+        payload,
     )
     job_service.enqueue_job(job_id)
     return {

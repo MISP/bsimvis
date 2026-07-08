@@ -765,6 +765,14 @@ class Worker:
 
         elif jtype == JobType.REINDEX_BIN_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
+            pool_id = payload.get("pool_id")
+            if pool_id:
+                return self.similarity_service.reindex_pool_bin_sim(
+                    pool_id,
+                    algo=algo,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                )
             return bin_sim_service.reindex_bin_sim(
                 collection,
                 algo=algo,

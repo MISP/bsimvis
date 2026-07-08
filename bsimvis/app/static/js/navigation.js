@@ -75,15 +75,18 @@ window.Nav = {
      * @param {string} [options.type] - Window type for windowManager (e.g., 'diff').
      */
     openPath: function(path, event, options = {}) {
-        if (window.parent && window.parent !== window && window.parent.Nav && window.parent.Nav.openPath) {
-            window.parent.Nav.openPath(path, event, options);
-            return;
-        }
-
         if (event) {
+            if (typeof event.preventDefault === 'function') {
+                event.preventDefault();
+            }
             if (typeof event.stopPropagation === 'function') {
                 event.stopPropagation();
             }
+        }
+
+        if (window.parent && window.parent !== window && window.parent.Nav && window.parent.Nav.openPath) {
+            window.parent.Nav.openPath(path, null, options);
+            return;
         }
 
         // Standard logic for Ctrl/Meta + Click: Open in new tab

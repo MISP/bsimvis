@@ -2394,36 +2394,111 @@ class SimilarityService:
                 else:
                     pairs.append((b2, b1))
 
+        def log(msg):
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
         # 4. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
         persist_pipe = r.pipeline(transaction=False)
         now = int(time.time() * 1000)
 
         involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
 
-        for b1, b2 in pairs:
+        log(f"[*] {num_binaries} binaries -> {len(pairs)} pairs to compare")
+        prefetch_t = time.time()
+
+        # ponytail: batch prefetch instead of per-pair SINTER+GET.
+        # Old path did N^2/2 blocking SINTER round trips plus a GET pipeline per pair.
+        # Now: one smembers per binary, then MGET every referenced sim doc once,
+        # and intersect in Python per pair. All docs held in RAM for the build
+        # (that's the pool's function-pair sim payload; chunk MGET to bound command size).
+        binary_sim_sids = {}
+        pipe_inv = r.pipeline(transaction=False)
+        for coll, md5 in binaries:
+            pipe_inv.smembers(f"{involves_file_prefix}{coll}:{md5}")
+        all_sim_sids = set()
+        for (coll, md5), members in zip(binaries, pipe_inv.execute()):
+            sids = {m.decode() if isinstance(m, bytes) else str(m) for m in members}
+            binary_sim_sids[(coll, md5)] = sids
+            all_sim_sids.update(sids)
+
+        sim_doc_cache = {}
+        sim_sids_list = list(all_sim_sids)
+        for i in range(0, len(sim_sids_list), 10000):
+            chunk = sim_sids_list[i : i + 10000]
+            for sid, res in zip(chunk, r.mget(chunk)):
+                if res:
+                    try:
+                        sim_doc_cache[sid] = json.loads(
+                            res.decode() if isinstance(res, bytes) else res
+                        )
+                    except Exception:
+                        pass
+
+        log(
+            f"[*] Prefetched {len(sim_doc_cache)} sim docs in {time.time() - prefetch_t:.1f}s"
+        )
+
+        # ponytail: precompute per-function "unique" entry + weight once.
+        # An unmatched function's diff entry + cluster scan depend only on (coll, fid),
+        # so they're identical in every one of the ~N pairs the fn stays unmatched.
+        # Building once turns O(pairs * funcs) dict/cluster work into O(funcs). Entries
+        # are read-only downstream (json.dumps), so sharing the dict by reference is safe.
+        unique_entry = {}
+        unique_feat = {}
+        for coll, md5 in binaries:
+            for fid in binary_fids[(coll, md5)]:
+                key = (coll, fid)
+                if key in unique_entry:
+                    continue
+                f_features = float(
+                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                )
+                if f_features <= 0:
+                    f_features = 1.0
+                full_fid = (
+                    fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
+                )
+                best_cluster = None
+                if full_fid in fid_to_cids:
+                    best = None
+                    best_coh = -1.0
+                    for cid in fid_to_cids[full_fid]:
+                        meta = cluster_meta.get(cid)
+                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
+                            best_coh = float(meta.get("cohesion_score", 0.0))
+                            best = meta
+                    best_cluster = best
+                unique_entry[key] = {
+                    "func_id": fid,
+                    "funcs": [fid],
+                    "is_clustered": best_cluster is not None,
+                    "cluster_id": best_cluster.get("cluster_id", "") if best_cluster else "",
+                    "cluster_uuid": best_cluster.get("cluster_uuid", "") if best_cluster else "",
+                    "cluster_name": best_cluster.get("cluster_name", "Unclustered") if best_cluster else "Unclustered",
+                    "cohesion": 0.0,
+                    "sim_rarity": 1.0,
+                    "collection_rarity": 1.0,
+                    "avg_features": f_features,
+                }
+                unique_feat[key] = f_features
+
+        loop_t = time.time()
+        total_pairs = len(pairs)
+
+        for pair_idx, (b1, b2) in enumerate(pairs):
+            if pair_idx and pair_idx % 2000 == 0:
+                elapsed = time.time() - loop_t
+                rate = pair_idx / elapsed if elapsed else 0
+                eta = (total_pairs - pair_idx) / rate if rate else 0
+                log(
+                    f"[*] {pair_idx}/{total_pairs} pairs ({rate:.0f}/s, ETA {eta:.0f}s)"
+                )
             coll_a, md5_a = b1
             coll_b, md5_b = b2
 
-            # ponytail: Use Kvrocks SINTER to fetch similarities involving both files without temporary keys
-            involves_a = f"{involves_file_prefix}{coll_a}:{md5_a}"
-            involves_b = f"{involves_file_prefix}{coll_b}:{md5_b}"
-            sim_keys = [
-                k.decode() if isinstance(k, bytes) else str(k)
-                for k in r.sinter(involves_a, involves_b)
-            ]
-
-            # Fetch similarity documents in parallel
-            sim_docs = []
-            if sim_keys:
-                pipe_sim = r.pipeline(transaction=False)
-                for k in sim_keys:
-                    pipe_sim.get(k)
-                sim_res = pipe_sim.execute()
-                for res in sim_res:
-                    if res:
-                        sim_docs.append(
-                            json.loads(res.decode() if isinstance(res, bytes) else res)
-                        )
+            sim_keys = binary_sim_sids.get(b1, set()) & binary_sim_sids.get(b2, set())
+            sim_docs = [sim_doc_cache[k] for k in sim_keys if k in sim_doc_cache]
 
             # Filter/extract edges
             edges = []
@@ -2532,101 +2607,17 @@ class SimilarityService:
             unassigned_a = all_funcs_a_total - assigned_a
             unassigned_b = all_funcs_b_total - assigned_b
 
-            unique_to_a = []
-            for fid in sorted(list(unassigned_a)):
-                f_features = float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                )
-                if f_features <= 0:
-                    f_features = 1.0
+            unique_to_a = [unique_entry[(coll_a, fid)] for fid in sorted(unassigned_a)]
+            uw_a = sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
+            sum_weights_sim += uw_a
+            sum_weights_col += uw_a
+            sum_weights_unweighted += uw_a
 
-                full_fid = (
-                    fid if fid.startswith(f"{coll_a}:func:") else f"{coll_a}:func:{fid}"
-                )
-                best_cluster = None
-                if full_fid in fid_to_cids:
-                    best = None
-                    best_coh = -1.0
-                    for cid in fid_to_cids[full_fid]:
-                        meta = cluster_meta.get(cid)
-                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
-                            best_coh = float(meta.get("cohesion_score", 0.0))
-                            best = meta
-                    best_cluster = best
-
-                unique_to_a.append(
-                    {
-                        "func_id": fid,
-                        "funcs": [fid],
-                        "is_clustered": best_cluster is not None,
-                        "cluster_id": (
-                            best_cluster.get("cluster_id", "") if best_cluster else ""
-                        ),
-                        "cluster_uuid": (
-                            best_cluster.get("cluster_uuid", "") if best_cluster else ""
-                        ),
-                        "cluster_name": (
-                            best_cluster.get("cluster_name", "Unclustered")
-                            if best_cluster
-                            else "Unclustered"
-                        ),
-                        "cohesion": 0.0,
-                        "sim_rarity": 1.0,
-                        "collection_rarity": 1.0,
-                        "avg_features": f_features,
-                    }
-                )
-                sum_weights_sim += f_features
-                sum_weights_col += f_features
-                sum_weights_unweighted += f_features
-
-            unique_to_b = []
-            for fid in sorted(list(unassigned_b)):
-                f_features = float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                )
-                if f_features <= 0:
-                    f_features = 1.0
-
-                full_fid = (
-                    fid if fid.startswith(f"{coll_b}:func:") else f"{coll_b}:func:{fid}"
-                )
-                best_cluster = None
-                if full_fid in fid_to_cids:
-                    best = None
-                    best_coh = -1.0
-                    for cid in fid_to_cids[full_fid]:
-                        meta = cluster_meta.get(cid)
-                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
-                            best_coh = float(meta.get("cohesion_score", 0.0))
-                            best = meta
-                    best_cluster = best
-
-                unique_to_b.append(
-                    {
-                        "func_id": fid,
-                        "funcs": [fid],
-                        "is_clustered": best_cluster is not None,
-                        "cluster_id": (
-                            best_cluster.get("cluster_id", "") if best_cluster else ""
-                        ),
-                        "cluster_uuid": (
-                            best_cluster.get("cluster_uuid", "") if best_cluster else ""
-                        ),
-                        "cluster_name": (
-                            best_cluster.get("cluster_name", "Unclustered")
-                            if best_cluster
-                            else "Unclustered"
-                        ),
-                        "cohesion": 0.0,
-                        "sim_rarity": 1.0,
-                        "collection_rarity": 1.0,
-                        "avg_features": f_features,
-                    }
-                )
-                sum_weights_sim += f_features
-                sum_weights_col += f_features
-                sum_weights_unweighted += f_features
+            unique_to_b = [unique_entry[(coll_b, fid)] for fid in sorted(unassigned_b)]
+            uw_b = sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
+            sum_weights_sim += uw_b
+            sum_weights_col += uw_b
+            sum_weights_unweighted += uw_b
 
             sim_score = (
                 (sum_weighted_cohesion_sim / sum_weights_sim)
@@ -2688,12 +2679,11 @@ class SimilarityService:
             )
             persist_pipe.sadd(f"global:pool:{pool_id}:bin_sim:built:{algo}", sid)
 
+        log(f"[*] Pairs processed in {time.time() - loop_t:.1f}s; persisting...")
         persist_pipe.execute()
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Pool binary similarity build finished. Found {len(pairs)} comparisons.",
-            )
+        log(
+            f"Pool binary similarity build finished. Found {len(pairs)} comparisons in {time.time() - start_time:.1f}s."
+        )
 
         self.r.hdel(f"global:pool:{pool_id}:meta", "total_file_similarities")
         return True

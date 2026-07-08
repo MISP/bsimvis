@@ -22,9 +22,9 @@ class SimilarityService:
 
         from bsimvis.app.services.lua_manager import lua_manager
 
-        self._find_script = lua_manager.get_script("find_candidates")
+        # Build-sim discovery is pure Python now (see _discover) to avoid the
+        # kvrocks global EVAL lock that serialized concurrent workers.
         self._clear_script = lua_manager.get_script("clear_similarity")
-        self._minhash_lsh_script = lua_manager.get_script("minhash_lsh")
 
         from bsimvis.app.services.tag_service import tag_service
 
@@ -201,6 +201,245 @@ class SimilarityService:
             buckets.append((band, bucket_hash))
         return buckets
 
+    def _discover(self, args):
+        """Python reimplementation of the find_candidates.lua / minhash_lsh.lua
+        discovery step. Takes the same flat ARGV list the Lua scripts took and
+        returns the same flat result list [id, score, c_total, ...].
+
+        Why: kvrocks runs every EVAL under a single global interpreter lock, so
+        concurrent workers building similarity serialize on it. Plain read
+        commands (ZCARD/ZRANGE/ZSCORE/GET) take fine-grained RocksDB locks
+        instead, so workers no longer contend. Reads are pipelined to keep the
+        round-trip count close to the old single-EVAL cost.
+        """
+        if args[2] == "minhash_lsh":
+            return self._discover_minhash(args)
+        return self._discover_find(args)
+
+    def _discover_find(self, args):
+        """jaccard / unweighted_cosine discovery (mirrors find_candidates.lua)."""
+        r = self.r
+        target_id = args[0]
+        collection = args[1]
+        algo = args[2]
+        threshold = float(args[3])
+        target_total = float(args[4])
+        target_norm = float(args[5])
+        limit = int(args[6])
+        min_features = float(args[7] or 0)
+
+        target_features = {}
+        for i in range(8, len(args), 2):
+            target_features[args[i]] = float(args[i + 1])
+        if not target_features:
+            return []
+
+        min_shared_norm_sq = 0.0
+        if algo == "unweighted_cosine":
+            min_shared_norm_sq = (threshold * target_norm) ** 2
+
+        # 1. Size each feature's posting list, rarest-first (pipelined ZCARDs)
+        feats = list(target_features.items())
+        pipe = r.pipeline(transaction=False)
+        for f_hash, _ in feats:
+            pipe.zcard(f"{collection}:feature:{f_hash}:functions")
+        sizes = pipe.execute()
+        features_sorted = sorted(
+            (
+                {
+                    "hash": h,
+                    "tf": tf,
+                    "key": f"{collection}:feature:{h}:functions",
+                    "size": sz,
+                }
+                for (h, tf), sz in zip(feats, sizes)
+            ),
+            key=lambda x: x["size"],
+        )
+
+        # 2. Accumulate intersection (dot product / sum-min) with pruning bounds
+        intersection_counts = {}
+        shared_target_norm_sq = {}
+        target_norm_sq = target_norm * target_norm
+        processed_norm_sq = 0.0
+        processed_total = 0.0
+        num_candidates = 0
+
+        for feat in features_sorted:
+            remaining_norm_sq = target_norm_sq - processed_norm_sq
+            remaining_total = target_total - processed_total
+            can_add_new = True
+            if algo == "unweighted_cosine":
+                if remaining_norm_sq < min_shared_norm_sq:
+                    can_add_new = False
+            elif algo == "jaccard":
+                if remaining_total < threshold * target_total:
+                    can_add_new = False
+            if not can_add_new and num_candidates == 0:
+                break
+
+            target_tf_sq = feat["tf"] * feat["tf"] if algo == "unweighted_cosine" else 0
+            # ponytail: fetch whole posting list at once (Lua chunked at 1000 only to
+            # bound its own memory; behaviourally identical). Chunk if this bites RAM.
+            functions = r.zrevrange(feat["key"], 0, -1, withscores=True)
+            for func_id, cand_tf in functions:
+                if func_id == target_id:
+                    continue
+                is_existing = func_id in intersection_counts
+                if is_existing or can_add_new:
+                    if not is_existing:
+                        intersection_counts[func_id] = 0.0
+                        if algo == "unweighted_cosine":
+                            shared_target_norm_sq[func_id] = 0.0
+                        num_candidates += 1
+                    if algo == "jaccard":
+                        intersection_counts[func_id] += min(feat["tf"], cand_tf)
+                    elif algo == "unweighted_cosine":
+                        intersection_counts[func_id] += feat["tf"] * cand_tf
+                        shared_target_norm_sq[func_id] += target_tf_sq
+
+            processed_norm_sq += feat["tf"] * feat["tf"]
+            processed_total += feat["tf"]
+
+        # 3. Phase-1 bound filter
+        kept = []
+        for cid, intersect in intersection_counts.items():
+            if algo == "jaccard":
+                if intersect < threshold * target_total:
+                    continue
+            elif algo == "unweighted_cosine":
+                if shared_target_norm_sq.get(cid, 0) < min_shared_norm_sq:
+                    continue
+            kept.append(cid)
+        if not kept:
+            return []
+
+        # 4. Fetch candidate feature counts (pipelined ZSCOREs)
+        count_idx = f"{collection}:idx:func:bsim_features_count"
+        pipe = r.pipeline(transaction=False)
+        for cid in kept:
+            pipe.zscore(count_idx, cid)
+        totals = pipe.execute()
+
+        candidate_list = []
+        if algo == "jaccard":
+            for cid, cand_total in zip(kept, totals):
+                cand_total = float(cand_total or 0)
+                if cand_total < min_features or cand_total <= 0:
+                    continue
+                intersect = intersection_counts[cid]
+                union = target_total + cand_total - intersect
+                score = intersect / union if union > 0 else 0
+                if score >= threshold and score > 0:
+                    candidate_list.append((cid, score, cand_total))
+        else:  # unweighted_cosine — norm only fetched for phase-2 survivors
+            need_norm = []
+            for cid, cand_total in zip(kept, totals):
+                cand_total = float(cand_total or 0)
+                if cand_total < min_features or cand_total <= 0:
+                    continue
+                intersect = intersection_counts[cid]
+                denom = threshold * target_norm
+                max_cand_total = (intersect / denom) ** 2 if denom > 0 else 0
+                if cand_total <= max_cand_total:
+                    need_norm.append((cid, intersect, cand_total))
+            if need_norm:
+                pipe = r.pipeline(transaction=False)
+                for cid, _, _ in need_norm:
+                    pipe.get(f"{cid}:vec:norm")
+                norms = pipe.execute()
+                for (cid, intersect, cand_total), norm_raw in zip(need_norm, norms):
+                    cand_norm = float(norm_raw or 0)
+                    score = (
+                        intersect / (target_norm * cand_norm)
+                        if (target_norm > 0 and cand_norm > 0)
+                        else 0
+                    )
+                    if score >= threshold and score > 0:
+                        candidate_list.append((cid, score, cand_total))
+
+        candidate_list.sort(key=lambda x: x[1], reverse=True)
+        result = []
+        for cid, score, cand_total in candidate_list[:limit]:
+            result.extend([cid, str(score), str(cand_total)])
+        return result
+
+    def _discover_minhash(self, args):
+        """minhash_lsh discovery (mirrors minhash_lsh.lua)."""
+        r = self.r
+        target_id = args[0]
+        collection = args[1]
+        threshold = float(args[3])
+        target_norm = float(args[5])
+        limit = int(args[6])
+        min_features = float(args[7] or 0)
+        num_bands = int(args[8] or 10)
+
+        # 1. Candidate set = SUNION of the target's LSH buckets
+        bucket_keys = [
+            f"{collection}:lsh:bucket:{band}:{args[9 + band]}"
+            for band in range(num_bands)
+        ]
+        candidate_set = set()
+        if bucket_keys:
+            for cid in r.sunion(bucket_keys):
+                if cid != target_id:
+                    candidate_set.add(cid)
+        if not candidate_set:
+            return []
+
+        # 2. Features start after the bucket hashes
+        target_features = {}
+        for i in range(9 + num_bands, len(args), 2):
+            target_features[args[i]] = float(args[i + 1])
+
+        # 3. Dot product against candidates only (pipelined ZRANGEs per feature)
+        intersection_counts = {}
+        fhashes = list(target_features.keys())
+        pipe = r.pipeline(transaction=False)
+        for f_hash in fhashes:
+            pipe.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1, withscores=True)
+        feature_funcs = pipe.execute()
+        for f_hash, funcs in zip(fhashes, feature_funcs):
+            target_tf = target_features[f_hash]
+            for func_id, cand_tf in funcs:
+                if func_id in candidate_set:
+                    intersection_counts[func_id] = (
+                        intersection_counts.get(func_id, 0.0) + target_tf * cand_tf
+                    )
+        if not intersection_counts:
+            return []
+
+        # 4. Score: fetch count + norm per candidate (pipelined)
+        count_idx = f"{collection}:idx:func:bsim_features_count"
+        ids = list(intersection_counts.keys())
+        pipe = r.pipeline(transaction=False)
+        for cid in ids:
+            pipe.zscore(count_idx, cid)
+            pipe.get(f"{cid}:vec:norm")
+        res = pipe.execute()
+
+        candidate_list = []
+        for idx, cid in enumerate(ids):
+            cand_total = float(res[idx * 2] or 0)
+            if cand_total < min_features or cand_total <= 0:
+                continue
+            cand_norm = float(res[idx * 2 + 1] or 0)
+            intersect = intersection_counts[cid]
+            score = (
+                intersect / (target_norm * cand_norm)
+                if (target_norm > 0 and cand_norm > 0)
+                else 0
+            )
+            if score >= threshold:
+                candidate_list.append((cid, score, cand_total))
+
+        candidate_list.sort(key=lambda x: x[1], reverse=True)
+        result = []
+        for cid, score, cand_total in candidate_list[:limit]:
+            result.extend([cid, str(score), str(cand_total)])
+        return result
+
     def _process_chunk(
         self,
         collection,
@@ -346,22 +585,21 @@ class SimilarityService:
 
         discovery_results = []
         if prepared_targets:
-            pipe = r.pipeline(transaction=False)
-            for fid, md5, addr, target_feat_total, lua_args in prepared_targets:
-                if algo == "minhash_lsh":
-                    self._minhash_lsh_script(args=lua_args, client=pipe)
-                else:
-                    self._find_script(args=lua_args, client=pipe)
-                if not skip_write:
-                    pipe.sadd(built_set_key, fid)
-
-            pipe_results = pipe.execute()
+            # Discover in Python (no EVAL lock); mark built in one pipelined batch.
+            per_target_raw = [
+                self._discover(lua_args)
+                for fid, md5, addr, target_feat_total, lua_args in prepared_targets
+            ]
+            if not skip_write:
+                built_pipe = r.pipeline(transaction=False)
+                for fid, md5, addr, target_feat_total, lua_args in prepared_targets:
+                    built_pipe.sadd(built_set_key, fid)
+                built_pipe.execute()
 
             for idx, (fid, md5, addr, target_feat_total, lua_args) in enumerate(
                 prepared_targets
             ):
-                res_idx = idx if skip_write else idx * 2
-                candidates_raw = pipe_results[res_idx]
+                candidates_raw = per_target_raw[idx]
                 if candidates_raw:
                     # Parse flat array return into triples (id, score, c_total)
                     candidates = []
@@ -935,7 +1173,7 @@ class SimilarityService:
                 min_features,
             ] + lua_features_args
 
-            candidates_raw = self._find_script(args=lua_args)
+            candidates_raw = self._discover(lua_args)
 
             # Mark as built
             self.r.sadd(built_set_key, base_id)
@@ -1514,14 +1752,10 @@ class SimilarityService:
             if not targets_with_lua:
                 continue
 
-            # Pipeline all EVAL calls across all functions × collections → 1 RTT
-            pipe = r.pipeline(transaction=False)
-            for fid, _, lua_args in targets_with_lua:
-                if algo == "minhash_lsh":
-                    self._minhash_lsh_script(args=lua_args, client=pipe)
-                else:
-                    self._find_script(args=lua_args, client=pipe)
-            raw_results = pipe.execute()
+            # Python discovery per (function × collection) — no EVAL lock.
+            raw_results = [
+                self._discover(lua_args) for fid, _, lua_args in targets_with_lua
+            ]
 
             # Parse pipeline results back into per-function groups
             # pipeline.execute() returns results in same order as commands were queued
@@ -1807,14 +2041,10 @@ class SimilarityService:
             if not targets_with_lua:
                 continue
 
-            # Pipeline all EVAL calls across all functions × collections → 1 RTT
-            pipe = r.pipeline(transaction=False)
-            for fid, _, lua_args in targets_with_lua:
-                if algo == "minhash_lsh":
-                    self._minhash_lsh_script(args=lua_args, client=pipe)
-                else:
-                    self._find_script(args=lua_args, client=pipe)
-            raw_results = pipe.execute()
+            # Python discovery per (function × collection) — no EVAL lock.
+            raw_results = [
+                self._discover(lua_args) for fid, _, lua_args in targets_with_lua
+            ]
 
             # Parse pipeline results back into per-function groups
             candidates_by_fid = []

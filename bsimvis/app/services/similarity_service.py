@@ -30,6 +30,82 @@ class SimilarityService:
 
         self.tag_service = tag_service
 
+        # Per-build read caches. Feature posting lists, vector norms and feature
+        # counts are all static during a build (they only change at ingestion),
+        # so memoizing them turns the repeated cross-target reads the old Lua did
+        # per target into one fetch each. Reset at every top-level build entry.
+        from collections import OrderedDict
+
+        self._pl_cache = OrderedDict()  # feature key -> [(func_id, tf_float), ...]
+        self._pl_pairs = 0
+        # ponytail: LRU-bounded by total cached pairs (~hundreds of MB) so a huge
+        # collection can't OOM the cache. Raise/lower if RAM vs hit-rate needs it.
+        self._pl_budget = 5_000_000
+        self._norm_cache = {}  # func_id -> vector norm (float)
+        self._count_cache = {}  # (count_idx_key, func_id) -> feature count (float)
+
+    def _reset_read_caches(self):
+        """Drop per-build read caches (call at each top-level build entry so a
+        later build never sees posting lists/norms stale from a prior ingestion)."""
+        self._pl_cache.clear()
+        self._pl_pairs = 0
+        self._norm_cache.clear()
+        self._count_cache.clear()
+
+    def _pl_warm(self, keys):
+        """Pipeline-fetch any uncached feature posting lists in `keys` in one RTT
+        and memoize them. Order within a list is irrelevant to the callers (they
+        sum over it), so a plain ZRANGE is fine."""
+        c = self._pl_cache
+        miss = [k for k in keys if k not in c]
+        if not miss:
+            return
+        pipe = self.r.pipeline(transaction=False)
+        for k in miss:
+            pipe.zrange(k, 0, -1, withscores=True)
+        for k, raw in zip(miss, pipe.execute()):
+            pl = [(fid, float(tf)) for fid, tf in raw]
+            c[k] = pl
+            c.move_to_end(k)
+            self._pl_pairs += len(pl)
+        while self._pl_pairs > self._pl_budget and len(c) > 1:
+            _, ev = c.popitem(last=False)
+            self._pl_pairs -= len(ev)
+
+    def _pl(self, key):
+        """Cached feature posting list [(func_id, tf_float), ...] for one feature."""
+        c = self._pl_cache
+        pl = c.get(key)
+        if pl is not None:
+            c.move_to_end(key)
+            return pl
+        self._pl_warm([key])
+        return c.get(key, [])
+
+    def _counts(self, count_idx, ids):
+        """Cached feature counts (ZSCORE count_idx) for ids; pipeline the misses."""
+        cache = self._count_cache
+        miss = [i for i in ids if (count_idx, i) not in cache]
+        if miss:
+            pipe = self.r.pipeline(transaction=False)
+            for i in miss:
+                pipe.zscore(count_idx, i)
+            for i, v in zip(miss, pipe.execute()):
+                cache[(count_idx, i)] = float(v or 0)
+        return [cache[(count_idx, i)] for i in ids]
+
+    def _norms(self, ids):
+        """Cached vector norms (GET {id}:vec:norm) for ids; pipeline the misses."""
+        cache = self._norm_cache
+        miss = [i for i in ids if i not in cache]
+        if miss:
+            pipe = self.r.pipeline(transaction=False)
+            for i in miss:
+                pipe.get(f"{i}:vec:norm")
+            for i, v in zip(miss, pipe.execute()):
+                cache[i] = float(v or 0)
+        return [cache[i] for i in ids]
+
     def build_batch(
         self,
         collection,
@@ -49,6 +125,7 @@ class SimilarityService:
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
         """
+        self._reset_read_caches()
         self._func_meta_cache = {}
         self._file_meta_cache = {}
         self._sim_registry_seen = set()
@@ -279,10 +356,9 @@ class SimilarityService:
                 break
 
             target_tf_sq = feat["tf"] * feat["tf"] if algo == "unweighted_cosine" else 0
-            # ponytail: fetch whole posting list at once (Lua chunked at 1000 only to
-            # bound its own memory; behaviourally identical). Chunk if this bites RAM.
-            functions = r.zrevrange(feat["key"], 0, -1, withscores=True)
-            for func_id, cand_tf in functions:
+            # Cached across targets in this build (feature posting lists are static
+            # during a build). Order is irrelevant — we sum over the whole list.
+            for func_id, cand_tf in self._pl(feat["key"]):
                 if func_id == target_id:
                     continue
                 is_existing = func_id in intersection_counts
@@ -314,17 +390,13 @@ class SimilarityService:
         if not kept:
             return []
 
-        # 4. Fetch candidate feature counts (pipelined ZSCOREs)
+        # 4. Fetch candidate feature counts (cached; pipeline the misses)
         count_idx = f"{collection}:idx:func:bsim_features_count"
-        pipe = r.pipeline(transaction=False)
-        for cid in kept:
-            pipe.zscore(count_idx, cid)
-        totals = pipe.execute()
+        totals = self._counts(count_idx, kept)
 
         candidate_list = []
         if algo == "jaccard":
             for cid, cand_total in zip(kept, totals):
-                cand_total = float(cand_total or 0)
                 if cand_total < min_features or cand_total <= 0:
                     continue
                 intersect = intersection_counts[cid]
@@ -335,7 +407,6 @@ class SimilarityService:
         else:  # unweighted_cosine — norm only fetched for phase-2 survivors
             need_norm = []
             for cid, cand_total in zip(kept, totals):
-                cand_total = float(cand_total or 0)
                 if cand_total < min_features or cand_total <= 0:
                     continue
                 intersect = intersection_counts[cid]
@@ -344,12 +415,8 @@ class SimilarityService:
                 if cand_total <= max_cand_total:
                     need_norm.append((cid, intersect, cand_total))
             if need_norm:
-                pipe = r.pipeline(transaction=False)
-                for cid, _, _ in need_norm:
-                    pipe.get(f"{cid}:vec:norm")
-                norms = pipe.execute()
-                for (cid, intersect, cand_total), norm_raw in zip(need_norm, norms):
-                    cand_norm = float(norm_raw or 0)
+                norms = self._norms([cid for cid, _, _ in need_norm])
+                for (cid, intersect, cand_total), cand_norm in zip(need_norm, norms):
                     score = (
                         intersect / (target_norm * cand_norm)
                         if (target_norm > 0 and cand_norm > 0)
@@ -393,16 +460,14 @@ class SimilarityService:
         for i in range(9 + num_bands, len(args), 2):
             target_features[args[i]] = float(args[i + 1])
 
-        # 3. Dot product against candidates only (pipelined ZRANGEs per feature)
+        # 3. Dot product against candidates only. Posting lists cached across
+        # targets (warm all misses for this target in one RTT first).
         intersection_counts = {}
-        fhashes = list(target_features.keys())
-        pipe = r.pipeline(transaction=False)
-        for f_hash in fhashes:
-            pipe.zrange(f"{collection}:feature:{f_hash}:functions", 0, -1, withscores=True)
-        feature_funcs = pipe.execute()
-        for f_hash, funcs in zip(fhashes, feature_funcs):
+        keys = [f"{collection}:feature:{h}:functions" for h in target_features]
+        self._pl_warm(keys)
+        for f_hash, key in zip(target_features, keys):
             target_tf = target_features[f_hash]
-            for func_id, cand_tf in funcs:
+            for func_id, cand_tf in self._pl(key):
                 if func_id in candidate_set:
                     intersection_counts[func_id] = (
                         intersection_counts.get(func_id, 0.0) + target_tf * cand_tf
@@ -410,21 +475,16 @@ class SimilarityService:
         if not intersection_counts:
             return []
 
-        # 4. Score: fetch count + norm per candidate (pipelined)
+        # 4. Score: fetch count + norm per candidate (cached; pipeline misses)
         count_idx = f"{collection}:idx:func:bsim_features_count"
         ids = list(intersection_counts.keys())
-        pipe = r.pipeline(transaction=False)
-        for cid in ids:
-            pipe.zscore(count_idx, cid)
-            pipe.get(f"{cid}:vec:norm")
-        res = pipe.execute()
+        totals = self._counts(count_idx, ids)
+        norms = self._norms(ids)
 
         candidate_list = []
-        for idx, cid in enumerate(ids):
-            cand_total = float(res[idx * 2] or 0)
+        for cid, cand_total, cand_norm in zip(ids, totals, norms):
             if cand_total < min_features or cand_total <= 0:
                 continue
-            cand_norm = float(res[idx * 2 + 1] or 0)
             intersect = intersection_counts[cid]
             score = (
                 intersect / (target_norm * cand_norm)
@@ -1121,6 +1181,9 @@ class SimilarityService:
         Builds similarities for a single function against the collection.
         base_id: coll:function:md5:addr
         """
+        # On-demand single target: drop any caches left from a prior build so we
+        # never read a posting list/norm that ingestion has since changed.
+        self._reset_read_caches()
         from bsimvis.app.services.config_service import config_service
 
         if algo is None:
@@ -1569,6 +1632,7 @@ class SimilarityService:
         """
         Orchestrates cross-collection similarity discovery for a pool.
         """
+        self._reset_read_caches()
         self._func_meta_cache = {}
         self._file_meta_cache = {}
         self._sim_registry_seen = set()
@@ -1856,6 +1920,7 @@ class SimilarityService:
         """
         Orchestrates cross-collection similarity discovery for a single file in the pool.
         """
+        self._reset_read_caches()
         self._func_meta_cache = {}
         self._file_meta_cache = {}
         self._sim_registry_seen = set()

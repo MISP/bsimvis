@@ -1164,6 +1164,7 @@ function renderBinSimTables(isFilterChange = false) {
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'count_b')">Funcs B <small>${getSortIcon('matched', 'count_b')}</small><div class="resizer"></div></th>
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes B</th>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'avg_features')">Avg Feat <small>${getSortIcon('matched', 'avg_features')}</small><div class="resizer"></div></th>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cluster_name')">Cluster <small>${getSortIcon('matched', 'cluster_name')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
@@ -1173,6 +1174,7 @@ function renderBinSimTables(isFilterChange = false) {
                     <th>${filterHtml('matched', 'cb')}</th>
                     <th>${noteFilterHtml('matched', 'note-b')}</th>
                     <th>${filterHtml('matched', 'rar')}</th>
+                    <th>${filterHtml('matched', 'feat')}</th>
                     <th>${searchHtml('matched')}</th>
                 </tr>
             `;
@@ -1277,6 +1279,9 @@ function renderBinSimTables(isFilterChange = false) {
                         <div class="mono dim">${m.sim_rarity.toFixed(2)}</div>
                     </td>
                     <td style="padding:10px;">
+                        <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
+                    </td>
+                    <td style="padding:10px;">
                         ${EntityRenderer.renderClusterCard([{
                             cluster_id: m.cluster_id,
                             cluster_uuid: m.cluster_uuid,
@@ -1289,7 +1294,7 @@ function renderBinSimTables(isFilterChange = false) {
                 `;
             }).join('');
         } else {
-            tbodyMatched.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No matched clusters</td></tr>';
+            tbodyMatched.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px;">No matched clusters</td></tr>';
         }
     }
 
@@ -1302,12 +1307,14 @@ function renderBinSimTables(isFilterChange = false) {
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
                     <th>${searchHtml(prefix)}</th>
                     <th>${noteFilterHtml(prefix, 'note')}</th>
                     <th>${filterHtml(prefix, 'rar')}</th>
+                    <th>${filterHtml(prefix, 'feat')}</th>
                     <th>${searchHtml(prefix + '-cl')}</th>
                 </tr>
             `;
@@ -1325,11 +1332,24 @@ function renderBinSimTables(isFilterChange = false) {
             return true;
         });
 
+        // Map function metadata bsim_features_count to u.avg_features for filtering/sorting compatibility
+        items.forEach(u => {
+            if (u.avg_features === undefined) {
+                const fids = u.funcs || (u.func_id ? [u.func_id] : []);
+                if (fids.length > 0) {
+                    const fObj = buildFuncObj(fids[0]);
+                    u.avg_features = fObj.bsim_features_count || 0;
+                } else {
+                    u.avg_features = 0;
+                }
+            }
+        });
+
         items = applyFilters(items, prefix);
         items = sortItems(items, state);
 
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
             return;
         }
         tbody.innerHTML = items.map(u => {
@@ -1357,6 +1377,9 @@ function renderBinSimTables(isFilterChange = false) {
                 </td>
                 <td style="padding:10px;">
                     <span class="dim">${rarity.toFixed(2)}</span>
+                </td>
+                <td style="padding:10px;">
+                    <span class="dim">${(u.avg_features || 0).toFixed(0)}</span>
                 </td>
                 <td style="padding:10px;">
                     ${(u.cluster_id || u.cluster_uuid) ? EntityRenderer.renderClusterCard([{

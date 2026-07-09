@@ -89,21 +89,14 @@ function renderBinarySimilarityView(params) {
             </div>
 
             <!-- Tab bar -->
-            <div class="view-toggle" id="bin-sim-tabs" style="margin: 0 0 15px 0;">
-                <button class="view-btn active" id="bin-sim-tab-btn-comparison" onclick="setBinSimTab('comparison')">Comparison</button>
-                <button class="view-btn" id="bin-sim-tab-btn-metadata" onclick="setBinSimTab('metadata')">Metadata</button>
+            <div class="view-toggle" id="bin-sim-tabs" style="margin:0 0 15px 0; align-items:center; gap:4px;">
+                <button class="view-btn active" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched functions</button>
+                <button class="view-btn" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched functions</button>
+                <button class="view-btn" id="bin-sim-tab-btn-graph" onclick="switchBinSimTab('graph')">Graph</button>
+                <button class="view-btn" id="bin-sim-tab-btn-metadata" onclick="switchBinSimTab('metadata')">Metadata</button>
             </div>
 
-            <div id="bin-sim-tab-comparison" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-
-            <!-- Sub-tab bar -->
-            <div class="view-toggle" id="bin-sim-subtabs" style="margin:0 0 15px 0; align-items:center; gap:4px;">
-                <button class="view-btn active" id="bsim-subtab-btn-matched" onclick="switchBinSimTab('matched')">Matched functions</button>
-                <button class="view-btn" id="bsim-subtab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched functions</button>
-                <button class="view-btn" id="bsim-subtab-btn-graph" onclick="switchBinSimTab('graph')">Graph</button>
-            </div>
-
-            <!-- Matched functions sub-tab -->
+            <!-- Matched functions tab -->
             <div class="bsim-subtab-panel" id="bsim-panel-matched" style="flex:1; min-height:0; display:flex; flex-direction:column;">
                 <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
                     <div style="flex:1; overflow:auto;">
@@ -159,9 +152,9 @@ function renderBinarySimilarityView(params) {
                     <div id="bin-sim-sankey" style="flex:1; width:100%; min-height:0; overflow-y:auto; position:relative;"></div>
                 </div>
             </div>
-            </div><!-- /bin-sim-tab-comparison -->
 
-            <div id="bin-sim-tab-metadata" style="display:none;">
+            <!-- Metadata tab -->
+            <div class="bsim-subtab-panel" id="bsim-panel-metadata" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto;">
                 <div id="bin-sim-meta-compare" style="color:var(--dim); text-align:center; padding:40px;">Loading metadata…</div>
             </div>
         </div>
@@ -1673,26 +1666,11 @@ function renderBinSimStrip(containerId, m, fileId) {
     `;
 }
 
-// ---- Tab switching ----
-function setBinSimTab(tab) {
-    const cmp = document.getElementById('bin-sim-tab-comparison');
-    const meta = document.getElementById('bin-sim-tab-metadata');
-    const bC = document.getElementById('bin-sim-tab-btn-comparison');
-    const bM = document.getElementById('bin-sim-tab-btn-metadata');
-    const isMeta = tab === 'metadata';
-    if (cmp) cmp.style.display = isMeta ? 'none' : 'flex';
-    if (meta) meta.style.display = isMeta ? 'block' : 'none';
-    if (bC) bC.classList.toggle('active', !isMeta);
-    if (bM) bM.classList.toggle('active', isMeta);
-    if (isMeta && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
-}
-window.setBinSimTab = setBinSimTab;
-
-// Sub-tabs inside the Comparison tab: Matched functions / Unmatched functions / Graph.
+// ---- Tab switching: Matched / Unmatched / Graph / Metadata ----
 window.switchBinSimTab = function(tab) {
-    ['matched', 'unmatched', 'graph'].forEach(t => {
+    ['matched', 'unmatched', 'graph', 'metadata'].forEach(t => {
         const panel = document.getElementById(`bsim-panel-${t}`);
-        const btn = document.getElementById(`bsim-subtab-btn-${t}`);
+        const btn = document.getElementById(`bin-sim-tab-btn-${t}`);
         if (panel) panel.style.display = (t === tab) ? 'flex' : 'none';
         if (btn) btn.classList.toggle('active', t === tab);
     });
@@ -1700,6 +1678,7 @@ window.switchBinSimTab = function(tab) {
     if (tab === 'graph' && binSimDataCache) {
         renderBinaryDiffSankey(binSimDataCache);
     }
+    if (tab === 'metadata' && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
 };
 
 // ---- Lazy full-metadata load for the Metadata tab ----

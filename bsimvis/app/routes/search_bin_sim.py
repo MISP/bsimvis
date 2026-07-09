@@ -375,7 +375,7 @@ def _pool_page(r, pool_id, algo, f):
         doc = json.loads(raw) if not isinstance(raw, dict) else raw
         if isinstance(doc, str):
             doc = json.loads(doc)
-        matched_cnt = doc.get("matched_clusters_count", 0)
+        matched_cnt = doc.get("matched_count", 0)
         ld["score"] = float(doc.get("score", 0.0))
         ld["score_sim_weighted"] = float(doc.get("sim_weighted_score") or doc.get("score", 0.0))
         ld["score_collection_weighted"] = float(doc.get("collection_weighted_score") or doc.get("score", 0.0))
@@ -577,8 +577,8 @@ def search_bin_sims():
             doc["md5_b"] = m_b
             doc["coll_a"] = coll_a
             doc["coll_b"] = coll_b
-            # Pool docs carry matched_clusters_count instead of coverage/shared_clusters.
-            matched = doc.get("matched_clusters_count", 0)
+            # Pool docs carry matched_count instead of coverage/shared_clusters.
+            matched = doc.get("matched_count", 0)
             doc["coverage_a"] = doc.get("coverage_a") or ld.get("coverage_a") or (1.0 if matched > 0 else 0.0)
             doc["coverage_b"] = doc.get("coverage_b") or ld.get("coverage_b") or (1.0 if matched > 0 else 0.0)
             doc["shared_clusters"] = doc.get("shared_clusters") or ld.get("shared_clusters") or matched

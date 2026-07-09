@@ -2493,12 +2493,11 @@ class SimilarityService:
                     best_cluster = best
                 unique_entry[key] = {
                     "func_id": fid,
-                    "funcs": [fid],
                     "is_clustered": best_cluster is not None,
                     "cluster_id": best_cluster.get("cluster_id", "") if best_cluster else "",
                     "cluster_uuid": best_cluster.get("cluster_uuid", "") if best_cluster else "",
                     "cluster_name": best_cluster.get("cluster_name", "Unclustered") if best_cluster else "Unclustered",
-                    "cohesion": 0.0,
+                    "cohesion": float(best_cluster.get("cohesion_score", 0.0)) if best_cluster else 0.0,
                     "sim_rarity": 1.0,
                     "collection_rarity": 1.0,
                     "avg_features": f_features,
@@ -2582,15 +2581,17 @@ class SimilarityService:
                                 if best_cluster
                                 else "Matched Functions"
                             ),
-                            "cohesion": score,
+                            "similarity": score,
+                            "cohesion": (
+                                float(best_cluster.get("cohesion_score", 0.0))
+                                if best_cluster
+                                else 0.0
+                            ),
                             "sim_rarity": 1.0,
                             "collection_rarity": 1.0,
                             "avg_features": f_features,
-                            "funcs_a": [fid_a],
-                            "funcs_b": [fid_b],
-                            "count_a": 1,
-                            "count_b": 1,
-                            "match_ratio": 1.0,
+                            "func_a": fid_a,
+                            "func_b": fid_b,
                         }
                     )
 
@@ -2658,8 +2659,7 @@ class SimilarityService:
                 "sim_weighted_score": sim_score,
                 "collection_weighted_score": col_weighted_score,
                 "unweighted_score": unweighted_score,
-                "matched_clusters_count": len(diff_matched),
-                "matched_clusters": diff_matched,
+                "matched_count": len(diff_matched),
                 "entry_date": now,
                 "diff": {
                     "matched": diff_matched,
@@ -2728,7 +2728,7 @@ class SimilarityService:
             )
 
         # Stream docs in chunks, keeping ONLY the scalar fields indexing needs.
-        # Pool bin_sim docs carry the full per-pair diff blob (matched_clusters +
+        # Pool bin_sim docs carry the full per-pair diff blob (diff.matched +
         # unique lists) which can be hundreds of KB-MB each. GETting all of them
         # at once and retaining every parsed dict held ~2x the whole payload
         # resident (raw strings + dicts) -> swap thrash. Drop the fat fields as we
@@ -2751,7 +2751,7 @@ class SimilarityService:
                     "md5_1": m1,
                     "coll_2": c2,
                     "md5_2": m2,
-                    "matched_clusters_count": d.get("matched_clusters_count", 0),
+                    "matched_count": d.get("matched_count", 0),
                     "unweighted_score": d.get("unweighted_score", d.get("score", 0.0)),
                     "sim_weighted_score": d.get("sim_weighted_score", 0.0),
                     "collection_weighted_score": d.get("collection_weighted_score", 0.0),
@@ -2783,7 +2783,7 @@ class SimilarityService:
         for i, (sid, d) in enumerate(docs):
             c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
             c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
-            matched = d.get("matched_clusters_count", 0)
+            matched = d.get("matched_count", 0)
             # Normalize pool doc field names to the collection shape _index_bin_sim_pair expects.
             norm = {
                 "md5_a": m1,

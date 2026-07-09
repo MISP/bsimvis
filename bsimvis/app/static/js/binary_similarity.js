@@ -1178,7 +1178,7 @@ function renderBinSimTables(isFilterChange = false) {
         }
     }
 
-    if (data.diff.matched) {
+    if (data.diff.matched && tbodyMatched) {
         let matched = applyFilters(data.diff.matched, 'matched');
         matched = sortItems(matched, binSimSortState.matched);
         
@@ -1292,6 +1292,7 @@ function renderBinSimTables(isFilterChange = false) {
     }
 
     const renderUnique = (itemsRaw, tbody, state, prefix) => {
+        if (!tbody) return;
         const stateKey = state === binSimSortState.uniqueA ? 'uniqueA' : 'uniqueB';
         const thead = tbody.previousElementSibling;
         if (thead && !isFilterChange) {

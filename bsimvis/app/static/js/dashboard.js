@@ -2586,11 +2586,19 @@ window.addEventListener('hashchange', (e) => {
     if (window.location.hash) {
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || null;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
 
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col);
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col);
+        }
     }
 });
 
@@ -2679,11 +2687,19 @@ window.addEventListener('load', () => {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || null;
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col, true);
-        return;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col, true);
+            return;
+        }
     }
 
     // Attach graph settings listeners

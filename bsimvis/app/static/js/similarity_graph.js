@@ -39,7 +39,7 @@ class SimilarityGraph {
             .attr("width", "100%")
             .attr("height", "100%")
             .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
-            .style("background-color", "#121212")
+            .style("background-color", "var(--bg)")
             .style("user-select", "none");
 
         this.g = this.svg.append("g");

@@ -2599,9 +2599,16 @@ const UIParams = {
     cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
-    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true'
+    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
+    lightTheme: localStorage.getItem('lightTheme') === 'true'
 };
 window.UIParams = UIParams;
+
+// Apply theme early on load
+// ponytail: light theme initialization
+if (UIParams.lightTheme) {
+    document.documentElement.classList.add('light-theme');
+}
 
 function toggleUISettings() {
     const panel = document.getElementById('ui-settings-panel');
@@ -2614,10 +2621,19 @@ function updateUIParams() {
     UIParams.colorByTag = document.getElementById('param-color-tags').checked;
     UIParams.includeHeaders = document.getElementById('param-include-headers').checked;
     UIParams.useFloatingWindows = document.getElementById('param-use-floating-windows').checked;
+    UIParams.lightTheme = document.getElementById('param-light-theme').checked;
 
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
+    localStorage.setItem('lightTheme', UIParams.lightTheme);
+
+    // ponytail: light theme toggle action
+    if (UIParams.lightTheme) {
+        document.documentElement.classList.add('light-theme');
+    } else {
+        document.documentElement.classList.remove('light-theme');
+    }
 
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
@@ -2661,9 +2677,11 @@ function loadUIParams() {
     const elColorTags = document.getElementById('param-color-tags');
     const elIncludeHeaders = document.getElementById('param-include-headers');
     const elFloatingWindows = document.getElementById('param-use-floating-windows');
+    const elLightTheme = document.getElementById('param-light-theme');
     if (elColorTags) elColorTags.checked = UIParams.colorByTag;
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
     if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
+    if (elLightTheme) elLightTheme.checked = UIParams.lightTheme;
 }
 
 window.addEventListener('load', () => {

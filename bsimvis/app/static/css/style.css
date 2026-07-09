@@ -8,6 +8,20 @@
     --info: #ae81ff;
     --border: #3e3d32;
     --hover: #2d2d2d;
+    --dim: #75715e;
+}
+
+html.light-theme {
+    --bg: #ffffff;
+    --card-bg: #f7f7f7;
+    --text: #1a1a1a;
+    --accent: #0066cc;
+    --subtle: #666666;
+    --success: #2e7d32;
+    --info: #6a1b9a;
+    --border: #dddddd;
+    --hover: #e8e8e8;
+    --dim: #777777;
 }
 
 /* ── Breadcrumb ───────────────────────────────────────────── */
@@ -84,8 +98,8 @@ a.breadcrumb-item:hover i {
 /* ── End Breadcrumb ──────────────────────────────────────── */
 
 body {
-    background-color: #121212;
-    color: #f8f8f2;
+    background-color: var(--bg);
+    color: var(--text);
     font-family: 'Inter', 'Segoe UI', sans-serif;
     margin: 0;
     padding: 0 20px 20px 20px;
@@ -596,7 +610,7 @@ body {
 
 .swap-btn:hover {
     background-color: #66d9ef;
-    color: #121212;
+    color: var(--bg);
 }
 
 #meta-container {
@@ -667,7 +681,7 @@ body {
 
 .meta-more-btn:hover {
     background: #66d9ef;
-    color: #121212;
+    color: var(--bg);
 }
 
 .meta-more-container {
@@ -722,8 +736,8 @@ body {
 /* Diff Styles */
 .c-code-container {
     font-family: 'Consolas', monospace;
-    background: #272822;
-    color: #f8f8f2;
+    background: var(--card-bg);
+    color: var(--text);
     padding: 0px;
     line-height: 24px;
     white-space: pre;
@@ -790,8 +804,8 @@ body {
 .code-spacer {
     height: 24px;
     max-height: 24px;
-    background-color: #1e1e1e;
-    background-image: linear-gradient(45deg, #222 25%, transparent 25%, transparent 50%, #222 50%, #222 75%, transparent 75%, transparent);
+    background-color: var(--card-bg);
+    background-image: linear-gradient(45deg, var(--hover) 25%, transparent 25%, transparent 50%, var(--hover) 50%, var(--hover) 75%, transparent 75%, transparent);
     background-size: 10px 10px;
     width: 100%;
 
@@ -922,8 +936,8 @@ body {
     overflow-y: auto;
     overflow-x: hidden;
     position: relative;
-    background: #1e1e1e;
-    border: 1px solid #3e3d32;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
     border-radius: 0 0 4px 4px;
     cursor: default;
 }
@@ -1463,9 +1477,9 @@ body {
 }
 
 .tag-input-field {
-    background: #000;
+    background: var(--bg);
     border: 1px solid var(--accent);
-    color: #fff;
+    color: var(--text);
     border-radius: 4px;
     padding: 2px 5px;
     font-size: 0.7rem;
@@ -1475,7 +1489,7 @@ body {
 
 .tag-autocomplete-dropdown {
     position: absolute;
-    background: #1A1A1A;
+    background: var(--card-bg);
     border: 1px solid var(--accent);
     border-radius: 4px;
     max-height: 200px;
@@ -1670,7 +1684,7 @@ body {
     flex: 1;
     font-size: 0.7rem;
     overflow: hidden;
-    background: #0d0f14;
+    background: var(--bg);
     border-radius: 4px;
 }
 
@@ -1690,12 +1704,12 @@ body {
 
 /* --- Diff Queue & Diff Preview Styles --- */
 .preview-card {
-    background: #1A1A1A;
-    color: #fff;
+    background: var(--card-bg);
+    color: var(--text);
     border: 2px solid var(--accent);
     border-radius: 8px;
     padding: 0;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1704,23 +1718,21 @@ body {
 #code-preview-tooltip .preview-card {
     padding: 10px;
     border-width: 1px;
-    border-color: #66d9ef;
+    border-color: var(--accent);
 }
 
 .others-count-card {
-    background: rgba(26, 26, 26, 0.95);
+    background: var(--card-bg);
     border-left: 4px solid var(--accent);
     padding: 8px 15px;
     border-radius: 4px;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
     color: var(--accent);
     font-weight: bold;
     font-size: 0.85rem;
     display: flex;
     align-items: center;
     gap: 10px;
-    backdrop-filter: blur(4px);
-    z-index: 1000;
 }
 
 .diff-queue-badge,
@@ -1748,18 +1760,18 @@ body {
     pointer-events: auto; /* Changed from none to allow interaction if needed, though usually fixed */
     max-height: 800px;
     overflow: hidden;
-    background: rgba(13, 15, 20, 0.98);
-    border: 1px solid var(--accent, #66d9ef);
+    background: var(--card-bg);
+    border: 1px solid var(--accent);
     border-radius: 8px;
-    box-shadow: 0 15px 50px rgba(0, 0, 0, 0.9);
+    box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
     backdrop-filter: blur(15px);
 }
 
 .diff-preview-header {
-    background: #1a1a1a;
+    background: var(--bg);
     padding: 8px 15px;
     font-size: 0.75rem;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     color: var(--accent);

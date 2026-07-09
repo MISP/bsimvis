@@ -28,7 +28,7 @@ body.sidebar-collapsed {
 /* Sidebar */
 .sidebar-nav {
     width: var(--sidebar-width);
-    background: #000;
+    background: var(--bg);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -235,7 +235,7 @@ table {
 }
 
 thead {
-    background: #000;
+    background: var(--bg);
 }
 
 tbody {
@@ -253,7 +253,7 @@ th {
     font-size: 0.7rem;
     letter-spacing: 1px;
     border-bottom: 2px solid var(--border);
-    background: #000;
+    background: var(--bg);
 }
 
 td {
@@ -267,7 +267,7 @@ tr:hover {
 }
 
 tr:nth-child(even) {
-    background-color: #1a1a1a;
+    background-color: var(--card-bg);
 }
 
 /* Utility */
@@ -408,15 +408,15 @@ tr:nth-child(even) {
     position: fixed;
     pointer-events: none;
     z-index: 20002;
-    background: #121212;
-    color: #fff;
-    border: 1px solid #a6e22e;
+    background: var(--card-bg);
+    color: var(--text);
+    border: 1px solid var(--accent);
     border-radius: 4px;
     padding: 10px;
     font-size: 0.8em;
     line-height: 1.2;
     max-width: 320px;
-    box-shadow: 0 4px 10px black;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
     display: none;
 }
 
@@ -453,7 +453,7 @@ tr:nth-child(even) {
 }
 
 .filter-bar input {
-    background: #000;
+    background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
     padding: 8px;
@@ -840,15 +840,15 @@ body.resizing {
 
 .filter-row th {
     padding: 5px 10px;
-    background: #080808;
+    background: var(--card-bg);
     border-bottom: 1px solid var(--border);
 }
 
 .filter-row input {
     width: 100%;
-    background: #000;
-    border: 1px solid #333;
-    color: #aaa;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
     font-size: 0.7rem;
     padding: 4px;
     border-radius: 2px;
@@ -857,7 +857,7 @@ body.resizing {
 .filter-row input:focus {
     border-color: var(--accent);
     outline: none;
-    color: #fff;
+    color: var(--text);
 }
 
 .code-preview-scroll::-webkit-scrollbar,
@@ -967,9 +967,9 @@ body.resizing {
 }
 
 .graph-setting-item select {
-    background: #000;
-    border: 1px solid #333;
-    color: #fff;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
     font-size: 0.75rem;
     padding: 2px 5px;
     border-radius: 3px;
@@ -979,6 +979,12 @@ body.resizing {
 
 .graph-setting-item select:hover {
     border-color: var(--accent);
+}
+
+select {
+    background-color: var(--bg) !important;
+    color: var(--text) !important;
+    border-color: var(--border) !important;
 }
 
 #graph-loading-overlay {
@@ -1359,7 +1365,7 @@ body.sidebar-collapsed #sidebar-toggle {
     opacity: 1;
 }
 .toggle-btn.active {
-    background: rgba(4, 217, 255, 0.1);
+    background: var(--hover);
     border-color: var(--accent);
     color: var(--accent);
     opacity: 1;
@@ -2025,9 +2031,9 @@ tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
 
 .upload-input {
     width: 100%;
-    background: #000;
+    background: var(--bg);
     border: 1px solid var(--border);
-    color: #fff;
+    color: var(--text);
     padding: 8px;
     border-radius: 4px;
     font-size: 0.85rem;
@@ -2184,7 +2190,7 @@ body.in-iframe main {
     flex: 1;
     position: relative;
     overflow-y: auto;
-    background: #272822;
+    background: var(--card-bg);
 }
 
 #v-height {

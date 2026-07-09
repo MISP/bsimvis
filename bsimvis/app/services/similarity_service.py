@@ -2405,57 +2405,61 @@ class SimilarityService:
         involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
 
         log(f"[*] {num_binaries} binaries -> {len(pairs)} pairs to compare")
-        prefetch_t = time.time()
 
-        # ponytail: invert the involves-sets into per-binary-pair edge buckets in ONE
-        # pass, instead of intersecting two full binary sim-id sets on every one of
-        # the ~N^2 pairs (the old path's real cost: a few big binaries got their
-        # ~100k+ member sets scanned 300x each). A sim doc links two functions -> two
-        # binaries, so it lands in exactly one bucket; the pair loop then does an O(1)
-        # lookup. We keep only oriented (fid_a, fid_b, score) tuples, not the full
-        # parsed docs, so peak RAM drops vs the old all-docs cache too.
-        sid_bins = defaultdict(list)
-        pipe_inv = r.pipeline(transaction=False)
-        for coll, md5 in binaries:
-            pipe_inv.smembers(f"{involves_file_prefix}{coll}:{md5}")
-        for (coll, md5), members in zip(binaries, pipe_inv.execute()):
-            for m in members:
-                sid = m.decode() if isinstance(m, bytes) else str(m)
-                sid_bins[sid].append((coll, md5))
+        # (coll, md5.lower()) -> canonical binary tuple. Pools are multi-collection and
+        # the SAME md5 can appear in two collections, so partner MUST be resolved by
+        # (collection, md5), never md5 alone. Pool sim docs carry both endpoints
+        # (coll_1/md5_1, coll_2/md5_2), so read them straight from the doc.
+        bin_by_norm = {(coll, md5.lower()): (coll, md5) for coll, md5 in binaries}
 
-        # (b1, b2) sorted -> [(fid_a, fid_b, score)], fid_a oriented to b1's md5.
-        pair_edges = defaultdict(list)
-        n_docs = 0
-        all_sids = list(sid_bins)
-        for i in range(0, len(all_sids), 10000):
-            chunk = all_sids[i : i + 10000]
-            for sid, res in zip(chunk, r.mget(chunk)):
-                if not res:
-                    continue
-                bins = sid_bins[sid]
-                if len(bins) != 2 or bins[0] == bins[1]:
-                    continue  # doc must straddle two distinct pool binaries
-                try:
-                    doc = json.loads(res.decode() if isinstance(res, bytes) else res)
-                except Exception:
-                    continue
-                fid1, fid2 = doc.get("id1"), doc.get("id2")
-                if not fid1 or not fid2:
-                    continue
-                key = (bins[0], bins[1]) if bins[0] < bins[1] else (bins[1], bins[0])
-                ma = key[0][1].lower()  # md5 of the lower (b1) binary
-                p1 = fid1.split(":")
-                score = doc.get("score", 0.0)
-                if len(p1) >= 2 and p1[-2].lower() == ma:
-                    pair_edges[key].append((fid1, fid2, score))
-                else:
-                    pair_edges[key].append((fid2, fid1, score))
-                n_docs += 1
-
-        log(
-            f"[*] Prefetched {n_docs} sim docs into {len(pair_edges)} pair buckets "
-            f"in {time.time() - prefetch_t:.1f}s"
-        )
+        # ponytail: stream one source-binary at a time instead of loading all ~26M
+        # edges up front. For binary b_src we SMEMBERS+MGET only ITS sim docs (bounded
+        # by a single binary), bucket them by partner, and yield each pair (b_src,
+        # b_par) with b_par > b_src so every pair is emitted exactly once (at its lower
+        # binary). Peak RAM = one binary's docs, not the whole pool. Cost: each doc is
+        # read ~twice (once per endpoint) -- the RAM/IO trade that keeps big pools off
+        # swap. Edges are pre-oriented fid_a -> b_src (== b1), so the consumer is O(1).
+        def stream_pair_edges():
+            for b_src in binaries:
+                coll_i, md5_i = b_src
+                member_sids = [
+                    s.decode() if isinstance(s, bytes) else str(s)
+                    for s in r.smembers(f"{involves_file_prefix}{coll_i}:{md5_i}")
+                ]
+                buckets = defaultdict(list)
+                for k in range(0, len(member_sids), 10000):
+                    chunk = member_sids[k : k + 10000]
+                    for res in r.mget(chunk):
+                        if not res:
+                            continue
+                        try:
+                            doc = json.loads(res.decode() if isinstance(res, bytes) else res)
+                        except Exception:
+                            continue
+                        f1, f2 = doc.get("id1"), doc.get("id2")
+                        if not f1 or not f2:
+                            continue
+                        e1 = bin_by_norm.get(
+                            (doc.get("coll_1"), (doc.get("md5_1") or "").lower())
+                        )
+                        e2 = bin_by_norm.get(
+                            (doc.get("coll_2"), (doc.get("md5_2") or "").lower())
+                        )
+                        score = doc.get("score", 0.0)
+                        if e1 == b_src:
+                            b_par, edge = e2, (f1, f2, score)
+                        elif e2 == b_src:
+                            b_par, edge = e1, (f2, f1, score)
+                        else:
+                            continue
+                        # only partners above b_src -> pair emitted once, and this
+                        # also drops intra-binary docs (partner resolves to b_src).
+                        if not b_par or b_par <= b_src:
+                            continue
+                        buckets[b_par].append(edge)
+                for b_par, edges in buckets.items():
+                    yield b_src, b_par, edges
+                # buckets dropped here -> one binary's edges reclaimed before the next
 
         # ponytail: precompute per-function "unique" entry + weight once.
         # An unmatched function's diff entry + cluster scan depend only on (coll, fid),
@@ -2503,22 +2507,22 @@ class SimilarityService:
 
         loop_t = time.time()
         total_pairs = len(pairs)
+        log(f"[*] Streaming {total_pairs} pairs (computed + saved incrementally)...")
 
-        for pair_idx, (b1, b2) in enumerate(pairs):
+        for pair_idx, (b1, b2, edges) in enumerate(stream_pair_edges()):
             if pair_idx and pair_idx % 2000 == 0:
                 elapsed = time.time() - loop_t
                 rate = pair_idx / elapsed if elapsed else 0
                 eta = (total_pairs - pair_idx) / rate if rate else 0
                 log(
-                    f"[*] {pair_idx}/{total_pairs} pairs ({rate:.0f}/s, ETA {eta:.0f}s)"
+                    f"[*] {pair_idx}/{total_pairs} pairs computed + saved "
+                    f"({rate:.0f}/s, ETA {eta:.0f}s)"
                 )
             coll_a, md5_a = b1
             coll_b, md5_b = b2
 
-            # Edges already extracted + oriented (fid_a -> b1) into this bucket during
-            # prefetch; b1 < b2 holds here (pairs are generated sorted), matching the key.
-            edges = pair_edges.get((b1, b2), [])
-
+            # Edges streamed pre-oriented (fid_a -> b1) for this source binary; b1 < b2
+            # holds (generator only emits partners above the source).
             # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
             edges.sort(key=lambda x: (-x[2], x[0], x[1]))
 
@@ -2678,7 +2682,14 @@ class SimilarityService:
             )
             persist_pipe.sadd(f"global:pool:{pool_id}:bin_sim:built:{algo}", sid)
 
-        log(f"[*] Pairs processed in {time.time() - loop_t:.1f}s; persisting...")
+            # ponytail: flush periodically so fat docs save over time and the client
+            # buffer stays bounded, instead of holding all ~45k docs to one final
+            # execute (re-held the whole pool in RAM + all-or-nothing on crash).
+            if (pair_idx + 1) % 500 == 0:
+                persist_pipe.execute()
+                persist_pipe = r.pipeline(transaction=False)
+
+        log(f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch...")
         persist_pipe.execute()
         log(
             f"Pool binary similarity build finished. Found {len(pairs)} comparisons in {time.time() - start_time:.1f}s."

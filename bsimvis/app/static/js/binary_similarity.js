@@ -288,7 +288,10 @@ function initResizableCards() {
 
         // Render Tables
         renderBinSimTables();
-        
+
+        // Restore the tab from the URL hash (e.g. after a Back navigation).
+        applyBinSimTabFromHash();
+
     } catch(err) {
         console.error(err);
         if (resultsEl) {
@@ -1667,8 +1670,13 @@ function renderBinSimStrip(containerId, m, fileId) {
 }
 
 // ---- Tab switching: Matched / Unmatched / Graph / Metadata ----
-window.switchBinSimTab = function(tab) {
-    ['matched', 'unmatched', 'graph', 'metadata'].forEach(t => {
+const BIN_SIM_TABS = ['matched', 'unmatched', 'graph', 'metadata'];
+
+// push=true (a real click) writes the tab into the URL hash so it lands in
+// browser history; Back/forward then fires hashchange and re-selects the tab.
+window.switchBinSimTab = function(tab, push = true) {
+    if (!BIN_SIM_TABS.includes(tab)) tab = 'matched';
+    BIN_SIM_TABS.forEach(t => {
         const panel = document.getElementById(`bsim-panel-${t}`);
         const btn = document.getElementById(`bin-sim-tab-btn-${t}`);
         if (panel) panel.style.display = (t === tab) ? 'flex' : 'none';
@@ -1679,7 +1687,24 @@ window.switchBinSimTab = function(tab) {
         renderBinaryDiffSankey(binSimDataCache);
     }
     if (tab === 'metadata' && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
+
+    if (push && location.hash.slice(1) !== tab) {
+        location.hash = tab;  // new history entry, fires hashchange (handled below, no-op via push=false)
+    }
 };
+
+// Select the tab named in the URL hash (default matched). Called on initial
+// render and on Back/forward navigation.
+function applyBinSimTabFromHash() {
+    const tab = location.hash.slice(1);
+    window.switchBinSimTab(BIN_SIM_TABS.includes(tab) ? tab : 'matched', false);
+}
+window.applyBinSimTabFromHash = applyBinSimTabFromHash;
+
+if (!window.__binSimHashBound) {
+    window.addEventListener('hashchange', applyBinSimTabFromHash);
+    window.__binSimHashBound = true;
+}
 
 // ---- Lazy full-metadata load for the Metadata tab ----
 async function loadBinSimMetadata() {

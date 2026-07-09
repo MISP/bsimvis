@@ -2177,16 +2177,12 @@ function renderTopCorrelations(items, clustersMap = {}) {
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                    <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)" 
+                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)"
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)" 
-                        title="Run Aligned Diff" 
-                        style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                        <span>±</span>
-                    </button>
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
                 </div>
                 ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
             </td>
@@ -2582,6 +2578,11 @@ window.addEventListener('popstate', (e) => {
 
 // Deprecated hashchange listener for compatibility during transition
 window.addEventListener('hashchange', (e) => {
+    // Only handle legacy hash routing if we're on the root path
+    if (window.location.pathname !== '/' && window.location.pathname !== '') {
+        return;
+    }
+    
     // If we have a hash, convert it to a restful path and navigate
     if (window.location.hash) {
         const [hashPath, queryString] = window.location.hash.split('?');
@@ -2683,7 +2684,7 @@ window.addEventListener('load', () => {
         history.replaceState(null, '', '/collections');
     }
     
-    if (window.location.hash) {
+    if (window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);

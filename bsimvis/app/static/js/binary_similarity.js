@@ -117,7 +117,7 @@ function renderBinarySimilarityView(params) {
                 <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; height:350px; min-height:200px; overflow:hidden; flex-shrink:0;">
                     <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--success);">Matched Clusters</h3>
                     <div style="flex:1; overflow:auto;">
-                        <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                        <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                             <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
                                 <!-- Rendered dynamically -->
                             </thead>
@@ -134,7 +134,7 @@ function renderBinarySimilarityView(params) {
                         <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
                             <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unmatched to Binary A</h3>
                             <div style="flex:1; overflow:auto;">
-                                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                                <table id="bin-sim-table-unique-a-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
                                         <!-- Rendered dynamically -->
                                     </thead>
@@ -146,7 +146,7 @@ function renderBinarySimilarityView(params) {
                         <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
                             <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unmatched to Binary B</h3>
                             <div style="flex:1; overflow:auto;">
-                                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                                <table id="bin-sim-table-unique-b-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
                                         <!-- Rendered dynamically -->
                                     </thead>
@@ -167,6 +167,12 @@ function renderBinarySimilarityView(params) {
             }
             .drag-handle-v:hover div {
                 background: var(--accent) !important;
+            }
+            #bin-sim-table-matched-table td,
+            #bin-sim-table-unique-a-table td,
+            #bin-sim-table-unique-b-table td {
+                position: relative;
+                user-select: text !important;
             }
         </style>
     `;
@@ -1242,6 +1248,14 @@ function renderBinSimTables(isFilterChange = false) {
                     similarityHtml = `<span class="mono" style="color:var(--accent); font-weight:bold;">${(m.cohesion * 100).toFixed(1)}%</span>`;
                 }
 
+                const clusterData = [{
+                    cluster_id: m.cluster_id,
+                    cluster_uuid: m.cluster_uuid,
+                    cluster_name: m.cluster_name,
+                    cohesion_score: m.cohesion || 1.0,
+                    member_count: 1
+                }];
+
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
                     data-entity-data='${JSON.stringify({
@@ -1281,14 +1295,8 @@ function renderBinSimTables(isFilterChange = false) {
                     <td style="padding:10px;">
                         <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
                     </td>
-                    <td style="padding:10px;">
-                        ${EntityRenderer.renderClusterCard([{
-                            cluster_id: m.cluster_id,
-                            cluster_uuid: m.cluster_uuid,
-                            cluster_name: m.cluster_name,
-                            cohesion_score: m.cohesion || 1.0,
-                            member_count: 1 // ponytail: simple placeholder count for matched pairs card
-                        }])}
+                    <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusterData).replace(/'/g, "&apos;")}' style="padding:10px;">
+                        ${EntityRenderer.renderClusterCard(clusterData)}
                     </td>
                 </tr>
                 `;
@@ -1359,6 +1367,13 @@ function renderBinSimTables(isFilterChange = false) {
                 const fObj = buildFuncObj(fid);
                 return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
             }).join('');
+            const clusterData = (u.cluster_id || u.cluster_uuid) ? [{
+                cluster_id: u.cluster_id,
+                cluster_uuid: u.cluster_uuid,
+                cluster_name: u.cluster_name,
+                cohesion_score: u.cohesion || 1.0,
+                member_count: 1
+            }] : [];
             return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
                 data-entity-data='${JSON.stringify({
@@ -1381,14 +1396,8 @@ function renderBinSimTables(isFilterChange = false) {
                 <td style="padding:10px;">
                     <span class="dim">${(u.avg_features || 0).toFixed(0)}</span>
                 </td>
-                <td style="padding:10px;">
-                    ${(u.cluster_id || u.cluster_uuid) ? EntityRenderer.renderClusterCard([{
-                        cluster_id: u.cluster_id,
-                        cluster_uuid: u.cluster_uuid,
-                        cluster_name: u.cluster_name,
-                        cohesion_score: u.cohesion || 1.0,
-                        member_count: 1
-                    }]) : ''}
+                <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusterData).replace(/'/g, "&apos;")}' style="padding:10px;">
+                    ${clusterData.length > 0 ? EntityRenderer.renderClusterCard(clusterData) : ''}
                 </td>
             </tr>
             `;
@@ -1397,6 +1406,12 @@ function renderBinSimTables(isFilterChange = false) {
 
     renderUnique(data.diff.unique_to_a, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');
     renderUnique(data.diff.unique_to_b, document.getElementById('bin-sim-table-unique-b'), binSimSortState.uniqueB, 'ub');
+
+    if (typeof TableSelection !== 'undefined') {
+        new TableSelection('bin-sim-table-matched-table');
+        new TableSelection('bin-sim-table-unique-a-table');
+        new TableSelection('bin-sim-table-unique-b-table');
+    }
 
     renderBinaryDiffSankey(data);
 }

@@ -141,11 +141,13 @@ def search_files():
         doc_ids = query_files_advanced(r, col, filters)
         t1 = time.perf_counter()
 
-        # 2. Sort (simple in-memory sort for now, assuming result sets aren't massive)
+        # 2. Sort — walk the pre-built numeric ZSET keeping only candidates
+        # (same idiom as search_bin_sim) for global order across pages.
         total = len(doc_ids)
+        ordered_ids = sort_doc_ids(r, col, doc_ids, sort_by, sort_order)
 
         # 3. Paginate
-        paged_ids = list(doc_ids)[offset : offset + limit]
+        paged_ids = ordered_ids[offset : offset + limit]
 
         # 4. Fetch full JSON, function counts, and cluster assignments for the page
         pipe = r.pipeline(transaction=False)
@@ -191,7 +193,13 @@ def search_files():
 
         # Second pass: fetch cluster metadata
         cluster_meta_map = {}
-        min_cohesion = float(request.args.get("min_cohesion", 0.95))  # Default to 0.95
+        from bsimvis.app.services.config_service import config_service
+
+        min_cohesion = float(
+            request.args.get(
+                "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+            )
+        )
         t3 = t2  # default: no cluster fetch
         if unique_cluster_ids:
             is_pool = pool_id is not None
@@ -233,9 +241,6 @@ def search_files():
 
             files_list.append(data)
 
-        # Re-sort paged results if needed
-        # ... (sort logic)
-
         response_data = {
             "total": total,
             "offset": offset,
@@ -269,15 +274,70 @@ def get_true_total_files(r, collection):
     return int(total) if total else 0
 
 
-def query_files_advanced(r, collection, filters):
-    # Start with all files as candidates
-    all_files_key = f"{collection}:all_files"
-    candidates = {
-        d.decode() if isinstance(d, bytes) else str(d)
-        for d in r.smembers(all_files_key)
-    }
+# Numeric file fields with a pre-built ZSET `{col}:idx:file:{field}` keyed by doc_id.
+SORTABLE_ZSET_FIELDS = {
+    "function_count",
+    "bsim_features_count",
+    "cohesion_score",
+    "entry_date",
+    "file_date",
+}
 
+
+def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order):
+    """Order a candidate set by a numeric ZSET field, keeping only candidates.
+
+    Non-numeric sorts (e.g. file_name) have no ZSET, so fall back to arbitrary
+    set order. ponytail: walks the full ZSET once (O(N)); fine at current sizes,
+    switch to per-id pipelined ZSCORE if the ZSET dwarfs the candidate set.
+    """
+    if sort_by not in SORTABLE_ZSET_FIELDS:
+        return list(doc_ids)
+
+    zset_key = f"{collection}:idx:file:{sort_by}"
+    desc = sort_order == "desc"
+    ranked = r.zrange(zset_key, 0, -1, desc=desc)
+    ranked = [d.decode() if isinstance(d, bytes) else str(d) for d in ranked]
+
+    candidates = set(doc_ids)
+    ordered = [d for d in ranked if d in candidates]
+    # Candidates missing from the ZSET (no score) go last, arbitrary order.
+    ordered.extend(candidates - set(ordered))
+    return ordered
+
+
+RANGE_FIELD_MAP = {
+    "min_function_count": "function_count",
+    "max_function_count": "function_count",
+    "min_bsim_features": "bsim_features_count",
+    "max_bsim_features": "bsim_features_count",
+    "min_entry_date": "entry_date",
+    "max_entry_date": "entry_date",
+}
+
+
+def query_files_advanced(r, collection, filters):
     fields = filters.get("fields", {})
+
+    # Seed candidates from a numeric range ZSET when a range filter is present,
+    # avoiding the full all_files load. The range filters below still intersect
+    # (harmless: seeding from one bound, they refine the rest).
+    # ponytail: O(N) full-set load only on the unfiltered path; add more indexes
+    # or a Lua path if broad queries get slow.
+    seed_field = next((f for f in fields if f in RANGE_FIELD_MAP), None)
+    if seed_field:
+        zset_key = f"{collection}:idx:file:{RANGE_FIELD_MAP[seed_field]}"
+        is_min = seed_field.startswith("min_")
+        lo, hi = (fields[seed_field], "+inf") if is_min else ("-inf", fields[seed_field])
+        candidates = {
+            d.decode() if isinstance(d, bytes) else str(d)
+            for d in r.zrange(zset_key, lo, hi, byscore=True)
+        }
+    else:
+        candidates = {
+            d.decode() if isinstance(d, bytes) else str(d)
+            for d in r.smembers(f"{collection}:all_files")
+        }
 
     # Helper: Get all doc IDs matching a substring in a specific field registry
     def get_field_matches(field_name, search_val, field_level="file"):
@@ -349,16 +409,7 @@ def query_files_advanced(r, collection, filters):
     for field, val in fields.items():
         if field.startswith("min_") or field.startswith("max_"):
             try:
-                # Map frontend range keys to Redis ZSET field names
-                range_map = {
-                    "min_function_count": "function_count",
-                    "max_function_count": "function_count",
-                    "min_bsim_features": "bsim_features_count",
-                    "max_bsim_features": "bsim_features_count",
-                    "min_entry_date": "entry_date",
-                    "max_entry_date": "entry_date",
-                }
-                zset_field = range_map.get(field)
+                zset_field = RANGE_FIELD_MAP.get(field)
                 if not zset_field:
                     continue
 

@@ -1,6 +1,7 @@
 // Binary Similarity View Logic
 
 let binSimDataCache = null;
+let binSimMetaCtx = null;
 let sankeyMode = 'simplified';
 let sankeyScale = 'count';
 let sankeySplit = 10;
@@ -75,20 +76,26 @@ function renderBinarySimilarityView(params) {
     // Set up layout: Header (Selection/Summary) + Body (Sankey / Tables)
     let html = `
         <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
-            <!-- File Metadata Cards -->
-            <div id="bin-sim-meta-cards" style="display: flex; gap: 20px; margin-bottom: 5px;">
-                <div id="bin-sim-meta-a" style="flex: 1; min-width: 0;"></div>
-                <div id="bin-sim-meta-b" style="flex: 1; min-width: 0;"></div>
+            <!-- Similarity Hero (prominent, score-colored) -->
+            <div id="bin-sim-hero" style="border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; background: var(--card-bg);">
+                <span style="color: var(--subtle); text-transform: uppercase; font-size: 0.8rem; font-weight: bold; letter-spacing: 0.08em;">Binary Similarity</span>
+                <span id="bin-sim-score-val" style="font-family: 'Consolas', monospace; font-weight: 800; font-size: 2.4rem; line-height: 1; color: var(--accent);">--%</span>
             </div>
 
-            <!-- Similarity Bar (exactly like function diff) -->
-            <div id="bin-sim-bar" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 15px; margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 20px; font-family: 'Inter', sans-serif; font-size: 0.9rem;">
-                <div class="sim-info" style="display: flex; align-items: center; gap: 10px;">
-                    <span class="sim-label" style="color: var(--subtle); text-transform: uppercase; font-size: 0.75rem; font-weight: bold; letter-spacing: 0.05em;">Binary Similarity</span>
-                    <span id="bin-sim-score-val" class="sim-score" style="color: var(--accent); font-family: 'Consolas', monospace; font-weight: bold; font-size: 1.1rem; min-width: 60px; text-align: center;">--%</span>
-                </div>
+            <!-- Slim per-binary strip: user tags + notes only -->
+            <div style="display: flex; gap: 20px; margin-bottom: 12px;">
+                <div id="bin-sim-strip-a" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
+                <div id="bin-sim-strip-b" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
             </div>
-            
+
+            <!-- Tab bar -->
+            <div class="view-toggle" id="bin-sim-tabs" style="margin: 0 0 15px 0;">
+                <button class="view-btn active" id="bin-sim-tab-btn-comparison" onclick="setBinSimTab('comparison')">Comparison</button>
+                <button class="view-btn" id="bin-sim-tab-btn-metadata" onclick="setBinSimTab('metadata')">Metadata</button>
+            </div>
+
+            <div id="bin-sim-tab-comparison">
+
             <!-- Sankey Graph Placeholder -->
             <div class="resizable-card" id="bin-sim-sankey-card" style="position:relative; width:100%; height:400px; min-height:200px; margin-bottom:20px; border:1px solid var(--border); background:#121212; border-radius:8px; flex-shrink:0; display:flex; flex-direction:column; overflow:hidden;">
                 <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
@@ -160,8 +167,20 @@ function renderBinarySimilarityView(params) {
                     </div>
                 </div>
             </div>
+            </div><!-- /bin-sim-tab-comparison -->
+
+            <div id="bin-sim-tab-metadata" style="display:none;">
+                <div id="bin-sim-meta-compare" style="color:var(--dim); text-align:center; padding:40px;">Loading metadata…</div>
+            </div>
         </div>
         <style>
+            .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
+            .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+            .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
+            .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+            .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
+            .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
+            .bin-sim-mc-diff td { background:rgba(249,38,114,0.10); }
             .drag-handle-v:hover {
                 background: rgba(255,255,255,0.08) !important;
             }
@@ -261,23 +280,24 @@ function initResizableCards() {
         Breadcrumbs.setFilename(md5b, data.file_metadata_b?.file_name || 'File');
         Breadcrumbs.refresh();
         
-        // Render Summary
+        // Render Summary — prominent, score-colored (red→yellow→green)
         const scoreVal = document.getElementById('bin-sim-score-val');
-        if (scoreVal) scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
-        
-        resultsEl.style.display = 'flex';
-        
-        // Render File Metadata Cards
-        if (typeof renderFileMetadata === 'function') {
-            const col = collection;
-            if (data.file_metadata_a) {
-                renderFileMetadata('bin-sim-meta-a', data.file_metadata_a, `${col}:file:${md5a}`, { side: 'l' });
-            }
-            if (data.file_metadata_b) {
-                renderFileMetadata('bin-sim-meta-b', data.file_metadata_b, `${col}:file:${md5b}`, { side: 'r' });
-            }
+        if (scoreVal) {
+            scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
+            scoreVal.style.color = d3.interpolateRdYlGn(data.score);
         }
-        
+
+        resultsEl.style.display = 'flex';
+
+        // Slim per-binary strip: user tags + notes only
+        renderBinSimStrip('bin-sim-strip-a', data.file_metadata_a, `${collection}:file:${md5a}`);
+        renderBinSimStrip('bin-sim-strip-b', data.file_metadata_b, `${collB || collection}:file:${md5b}`);
+
+        // Stash context for lazy Metadata tab load
+        binSimMetaCtx = {
+            collection, md5a, md5b, collB: collB || collection, poolId, loaded: false,
+        };
+
         // Save comparison data to cache
         binSimDataCache = data;
 
@@ -1662,6 +1682,134 @@ window.refreshFunctionRow = async function(funcId) {
         console.error("Failed to refresh function note badge in comparison view:", e);
     }
 };
+
+
+// ---- Slim per-binary strip (user tags + notes only) ----
+function renderBinSimStrip(containerId, m, fileId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    m = m || {};
+    const name = m.file_name || m.file_md5 || 'File';
+    // user tags only (pass empty static list)
+    const tags = (typeof EntityRenderer !== 'undefined')
+        ? EntityRenderer.renderTag('file', fileId, [], m.user_tags || [])
+        : '';
+    const noteBtn = (typeof EntityRenderer !== 'undefined')
+        ? EntityRenderer.renderFileNoteButton(fileId, m.note_owners || [], { raw_data: m })
+        : '';
+    el.innerHTML = `
+        <span style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40%;" title="${name}">${name}</span>
+        <span style="display:inline-flex; gap:4px; flex:1; min-width:0; flex-wrap:wrap;">${tags}</span>
+        <span style="margin-left:auto;">${noteBtn}</span>
+    `;
+}
+
+// ---- Tab switching ----
+function setBinSimTab(tab) {
+    const cmp = document.getElementById('bin-sim-tab-comparison');
+    const meta = document.getElementById('bin-sim-tab-metadata');
+    const bC = document.getElementById('bin-sim-tab-btn-comparison');
+    const bM = document.getElementById('bin-sim-tab-btn-metadata');
+    const isMeta = tab === 'metadata';
+    if (cmp) cmp.style.display = isMeta ? 'none' : 'block';
+    if (meta) meta.style.display = isMeta ? 'block' : 'none';
+    if (bC) bC.classList.toggle('active', !isMeta);
+    if (bM) bM.classList.toggle('active', isMeta);
+    if (isMeta && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
+}
+window.setBinSimTab = setBinSimTab;
+
+// ---- Lazy full-metadata load for the Metadata tab ----
+async function loadBinSimMetadata() {
+    const ctx = binSimMetaCtx;
+    if (!ctx) return;
+    const target = document.getElementById('bin-sim-meta-compare');
+    try {
+        const mkParams = (col) => {
+            let p = `collection=${encodeURIComponent(col)}`;
+            if (ctx.poolId) p += `&pool=${encodeURIComponent(ctx.poolId)}`;
+            return p;
+        };
+        const [ra, rb] = await Promise.all([
+            fetch(`/api/file/details/${encodeURIComponent(ctx.md5a)}?${mkParams(ctx.collection)}`),
+            fetch(`/api/file/details/${encodeURIComponent(ctx.md5b)}?${mkParams(ctx.collB)}`),
+        ]);
+        const da = await ra.json();
+        const db = await rb.json();
+        ctx.loaded = true;
+        if (target) target.outerHTML = buildMetaCompareTable(da, db);
+    } catch (e) {
+        console.error('Failed to load comparison metadata:', e);
+        if (target) target.innerHTML = '<div style="color:var(--dim); padding:20px;">Failed to load metadata.</div>';
+    }
+}
+
+// ---- Categorized side-by-side compare table with diff highlighting ----
+function buildMetaCompareTable(da, db) {
+    const fa = (da && da.file) || {};
+    const fb = (db && db.file) || {};
+    const ia = (da && da.inferred_meta) || {};
+    const ib = (db && db.inferred_meta) || {};
+
+    const fmt = (v) => {
+        if (v === undefined || v === null || v === '') return '<span style="color:var(--dim)">—</span>';
+        if (Array.isArray(v)) return v.length ? v.join(', ') : '<span style="color:var(--dim)">—</span>';
+        return String(v);
+    };
+    const inferredTop = (mapObj) => {
+        if (!mapObj) return '';
+        const keys = Object.keys(mapObj).sort((a, b) => mapObj[b].percent - mapObj[a].percent);
+        return keys.map(k => `${k} (${mapObj[k].percent}%)`).join(', ');
+    };
+
+    const categories = [
+        ['Identity', [
+            ['File Name', fa.file_name, fb.file_name],
+            ['Other Names', fa.file_names, fb.file_names],
+            ['MD5', fa.file_md5, fb.file_md5],
+            ['Batch UUID', fa.batch_uuid, fb.batch_uuid],
+        ]],
+        ['Classification', [
+            ['Language', fa.language_id || fa.language, fb.language_id || fb.language],
+            ['AV Type', fa.avtype, fb.avtype],
+            ['File Type', fa.filetype, fb.filetype],
+            ['Yara', fa.yara, fb.yara],
+            ['CC IP', fa.cc_ip, fb.cc_ip],
+        ]],
+        ['Statistics', [
+            ['Functions', fa.function_count, fb.function_count],
+            ['BSim Features', fa.bsim_features_count, fb.bsim_features_count],
+        ]],
+        ['Inferred (from clusters)', [
+            ['File Name', inferredTop(ia.filename), inferredTop(ib.filename)],
+            ['MD5', inferredTop(ia.md5), inferredTop(ib.md5)],
+            ['AV Type', inferredTop(ia.avtype), inferredTop(ib.avtype)],
+            ['File Type', inferredTop(ia.filetype), inferredTop(ib.filetype)],
+            ['Yara', inferredTop(ia.yara), inferredTop(ib.yara)],
+            ['CC IP', inferredTop(ia.ccip), inferredTop(ib.ccip)],
+        ]],
+    ];
+
+    const norm = (v) => Array.isArray(v) ? v.slice().sort().join('|') : (v === undefined || v === null ? '' : String(v));
+
+    let rows = '';
+    for (const [cat, fields] of categories) {
+        rows += `<tr><td class="bin-sim-mc-cat" colspan="3">${cat}</td></tr>`;
+        for (const [label, va, vb] of fields) {
+            const diff = norm(va) !== norm(vb);
+            rows += `<tr class="${diff ? 'bin-sim-mc-diff' : ''}">
+                <td class="bin-sim-mc-label">${label}</td>
+                <td>${fmt(va)}</td>
+                <td>${fmt(vb)}</td>
+            </tr>`;
+        }
+    }
+
+    return `<table class="bin-sim-mc-table">
+        <thead><tr><th></th><th>Binary A</th><th>Binary B</th></tr></thead>
+        <tbody>${rows}</tbody>
+    </table>`;
+}
 
 
 

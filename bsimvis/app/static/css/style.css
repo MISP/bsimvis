@@ -1595,29 +1595,42 @@ body {
     gap: 0;
     min-height: 400px;
     max-height: 600px;
+    max-width: 100%;
 }
 
 .hier-left-col, .diff-left-col {
     width: 350px;
+    min-width: 0;
+    flex-shrink: 1;
     display: flex;
     flex-direction: column;
     padding: 12px;
     border-right: 1px solid rgba(255, 255, 255, 0.1);
+    box-sizing: border-box;
 }
 
 .diff-left-col {
     width: 250px; /* Diff list can be narrower */
+    min-width: 0;
+    flex-shrink: 1;
+    box-sizing: border-box;
 }
 
 .hier-right-col, .diff-right-col {
     width: 600px;
+    min-width: 0;
+    flex-shrink: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
 .diff-right-col {
     width: 700px; /* Diffs need more horizontal space */
+    min-width: 0;
+    flex-shrink: 1;
+    box-sizing: border-box;
 }
 
 .hier-function-list, .diff-pair-list {

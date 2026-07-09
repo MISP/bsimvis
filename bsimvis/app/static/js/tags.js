@@ -500,15 +500,21 @@ window.showClusterCardTooltip = function(event, uuid, name, size, stability, coh
 
 window.hideClusterCardTooltip = function(event) {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+    const el = targetWindow.document.getElementById('hierarchy-tooltip');
+    const binEl = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+    
+    if (event && event.relatedTarget) {
+        if (el && (el === event.relatedTarget || el.contains(event.relatedTarget))) return;
+        if (binEl && (binEl === event.relatedTarget || binEl.contains(event.relatedTarget))) return;
+    }
+
     if (typeof targetWindow.hideClusterTableTooltip === 'function') {
         targetWindow.hideClusterTableTooltip(event);
     }
     if (typeof targetWindow.hideBinClusterTableTooltip === 'function') {
         targetWindow.hideBinClusterTableTooltip(event);
     }
-    const el = targetWindow.document.getElementById('hierarchy-tooltip');
     if (el) el.style.display = 'none';
-    const binEl = targetWindow.document.getElementById('bin-hierarchy-tooltip');
     if (binEl) binEl.style.display = 'none';
 };
 
@@ -555,6 +561,9 @@ window.moveClusterCardTooltip = function(e) {
         if (y + tooltipRect.height > window.innerHeight) {
             y = Math.max(10, window.innerHeight - tooltipRect.height - 15);
         }
+        
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         
         activeTooltip.style.left = x + 'px';
         activeTooltip.style.top = y + 'px';

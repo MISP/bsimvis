@@ -31,7 +31,7 @@ function getHierarchyTooltip() {
     if (!el) {
         el = document.createElement('div');
         el.id = 'hierarchy-tooltip';
-        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;";
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
         
         el.addEventListener('click', (event) => {
@@ -1133,6 +1133,8 @@ class ClusterHierarchy extends D3BaseLayout {
         const rect = tooltip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
         if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         tooltip.style.left = x + 'px';
         tooltip.style.top = y + 'px';
 
@@ -2174,6 +2176,8 @@ class ClusterPacking {
             const rect = tooltip.getBoundingClientRect();
             if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
             if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+            x = Math.max(5, x);
+            y = Math.max(5, y);
             tooltip.style.left = x + 'px';
             tooltip.style.top = y + 'px';
 
@@ -2448,6 +2452,8 @@ function moveClusterTableTooltip(e) {
         const rect = tooltip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - 20;
         if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - 20;
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         tooltip.style.left = x + 'px';
         tooltip.style.top = y + 'px';
     }

@@ -310,8 +310,9 @@ function initResizableCards() {
 
 function renderBinaryDiffSankey(data) {
     const container = document.getElementById('bin-sim-sankey');
+    if (!container) return;
     container.innerHTML = '';
-    
+
     if (!data.diff) {
         container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No diff data available</div>';
         return;
@@ -1690,7 +1691,11 @@ window.switchBinSimTab = function(tab, push = true) {
     if (tab === 'metadata' && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
 
     if (push && location.hash.slice(1) !== tab) {
-        location.hash = tab;  // new history entry, fires hashchange (handled below, no-op via push=false)
+        // pushState (not location.hash=) so the app's hashchange ROUTER doesn't
+        // re-render the whole view on every tab click. Adds a history entry;
+        // Back/forward fires popstate+hashchange -> the view re-renders and
+        // applyBinSimTabFromHash() restores the tab.
+        history.pushState(null, '', location.pathname + location.search + '#' + tab);
     }
 };
 

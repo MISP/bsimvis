@@ -37,6 +37,19 @@ def section(title):
     print(f"{'='*70}")
 
 
+# ponytail: simple context manager to measure execution time
+class Timer:
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f"  -> {self.name} took {time.time() - self.start:.2f}s")
+
+
 def upload_file_async(executor, file_path, collection):
     def _upload():
         print(
@@ -155,19 +168,21 @@ def get_pool_binary_similarity(pool_id, coll_1, md5_1, coll_2, md5_2):
 
 
 def main():
+    start_total = time.time()
     section("1. Preparations & Cleanups")
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        f1 = delete_collection_async(executor, SINGLE_COLL)
-        f2 = delete_collection_async(executor, SEP_COLL_ARM)
-        f3 = delete_collection_async(executor, SEP_COLL_LINUX)
+    with Timer("Preparations & Cleanups"):
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            f1 = delete_collection_async(executor, SINGLE_COLL)
+            f2 = delete_collection_async(executor, SEP_COLL_ARM)
+            f3 = delete_collection_async(executor, SEP_COLL_LINUX)
 
-        pids = [f1.result(), f2.result(), f3.result()]
-        wait_for_pipelines(pids)
+            pids = [f1.result(), f2.result(), f3.result()]
+            wait_for_pipelines(pids)
 
-    from bsimvis.app.services.pool_service import pool_service
+        from bsimvis.app.services.pool_service import pool_service
 
-    pool_service.delete_pool(POOL_ID)
+        pool_service.delete_pool(POOL_ID)
 
     try:
         # Check files exist
@@ -177,124 +192,132 @@ def main():
         # ==================================================================
         section("2. Parallel Ingestion (All Collections)")
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            # Upload to SINGLE_COLL
-            fu1 = upload_file_async(executor, FILE_ARM, SINGLE_COLL)
-            fu2 = upload_file_async(executor, FILE_LINUX, SINGLE_COLL)
-            # Upload to separate collections
-            fu3 = upload_file_async(executor, FILE_ARM, SEP_COLL_ARM)
-            fu4 = upload_file_async(executor, FILE_LINUX, SEP_COLL_LINUX)
+        with Timer("Parallel Ingestion"):
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                # Upload to SINGLE_COLL
+                fu1 = upload_file_async(executor, FILE_ARM, SINGLE_COLL)
+                fu2 = upload_file_async(executor, FILE_LINUX, SINGLE_COLL)
+                # Upload to separate collections
+                fu3 = upload_file_async(executor, FILE_ARM, SEP_COLL_ARM)
+                fu4 = upload_file_async(executor, FILE_LINUX, SEP_COLL_LINUX)
 
-            pids = [fu1.result(), fu2.result(), fu3.result(), fu4.result()]
-            wait_for_pipelines(pids)
+                pids = [fu1.result(), fu2.result(), fu3.result(), fu4.result()]
+                wait_for_pipelines(pids)
 
         # ==================================================================
         section("3. Single Collection Analysis")
-        # Trigger build_sim for collection
-        print("  Triggering function similarity build for collection...")
-        resp = requests.post(
-            f"{BASE_URL}/api/similarity/build",
-            json={
-                "collection": SINGLE_COLL,
-                "all": True,
-                "algo": "unweighted_cosine",
-                "top_k": 1000,
-                # min_score omitted: use config default so collection & pool stay aligned
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        wait_for_pipelines([resp.json()["job_id"]])
+        with Timer("Single Collection Analysis"):
+            # Trigger build_sim for collection
+            print("  Triggering function similarity build for collection...")
+            with Timer("Function similarity build"):
+                resp = requests.post(
+                    f"{BASE_URL}/api/similarity/build",
+                    json={
+                        "collection": SINGLE_COLL,
+                        "all": True,
+                        "algo": "unweighted_cosine",
+                        "top_k": 1000,
+                        # min_score omitted: use config default so collection & pool stay aligned
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                wait_for_pipelines([resp.json()["job_id"]])
 
-        # Trigger function clustering
-        print("  Triggering function clustering for collection...")
-        resp = requests.post(
-            f"{BASE_URL}/api/cluster/build",
-            json={
-                "collection": SINGLE_COLL,
-                # params omitted: use config defaults so collection & pool stay aligned
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        wait_for_pipelines([resp.json()["job_id"]])
+            # Trigger function clustering
+            print("  Triggering function clustering for collection...")
+            with Timer("Function clustering"):
+                resp = requests.post(
+                    f"{BASE_URL}/api/cluster/build",
+                    json={
+                        "collection": SINGLE_COLL,
+                        # params omitted: use config defaults so collection & pool stay aligned
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                wait_for_pipelines([resp.json()["job_id"]])
 
-        # Trigger binary similarity build
-        print("  Triggering binary similarity build for collection...")
-        resp = requests.post(
-            f"{BASE_URL}/api/bin_sim/build",
-            json={
-                "collection": SINGLE_COLL,
-                # min_cohesion omitted: use config default so collection & pool stay aligned
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        wait_for_pipelines([resp.json()["job_id"]])
+            # Trigger binary similarity build
+            print("  Triggering binary similarity build for collection...")
+            with Timer("Binary similarity build"):
+                resp = requests.post(
+                    f"{BASE_URL}/api/bin_sim/build",
+                    json={
+                        "collection": SINGLE_COLL,
+                        # min_cohesion omitted: use config default so collection & pool stay aligned
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                wait_for_pipelines([resp.json()["job_id"]])
 
-        # Fetch score
-        single_coll_score = get_collection_binary_similarity(
-            SINGLE_COLL, MD5_ARM, MD5_LINUX
-        )
-        print(f"  => Score in SINGLE COLLECTION: {single_coll_score}")
+            # Fetch score
+            single_coll_score = get_collection_binary_similarity(
+                SINGLE_COLL, MD5_ARM, MD5_LINUX
+            )
+            print(f"  => Score in SINGLE COLLECTION: {single_coll_score}")
 
-        # Print single collection doc
-        from bsimvis.app.services.redis_client import get_redis
+            # Print single collection doc
+            from bsimvis.app.services.redis_client import get_redis
 
-        r = get_redis()
-        m1, m2 = sorted([MD5_ARM, MD5_LINUX])
-        import json
+            r = get_redis()
+            m1, m2 = sorted([MD5_ARM, MD5_LINUX])
+            import json
 
-        single_doc_key = f"{SINGLE_COLL}:bin_sim:unweighted_cosine:{m1}::{m2}"
-        single_doc_raw = r.get(single_doc_key)
-        single_doc = json.loads(single_doc_raw) if single_doc_raw else None
-        print(f"  [DEBUG] Single Collection Doc: {single_doc}")
+            single_doc_key = f"{SINGLE_COLL}:bin_sim:unweighted_cosine:{m1}::{m2}"
+            single_doc_raw = r.get(single_doc_key)
+            single_doc = json.loads(single_doc_raw) if single_doc_raw else None
+            print(f"  [DEBUG] Single Collection Doc: {single_doc}")
 
         # ==================================================================
         section("4. Pool Analysis (Separated Collections)")
-        # Create pool
-        print("  Creating pool...")
-        # All tuning params omitted: pool build/cluster fall back to the same config
-        # defaults the collection path uses, so the two are compared on equal footing.
-        config = {
-            "only_cross_collection": False,
-            "func_sim_params": {},
-            "func_cluster_params": {},
-            "file_sim_params": {"enabled": True},
-            "file_cluster_params": {"enabled": True},
-        }
-        success, msg = pool_service.create_pool(
-            POOL_ID, "Comparison Pool", [SEP_COLL_ARM, SEP_COLL_LINUX], config
-        )
-        print(f"  Pool creation: {success} ({msg})")
+        with Timer("Pool Analysis"):
+            # Create pool
+            print("  Creating pool...")
+            # All tuning params omitted: pool build/cluster fall back to the same config
+            # defaults the collection path uses, so the two are compared on equal footing.
+            config = {
+                "only_cross_collection": False,
+                "func_sim_params": {},
+                "func_cluster_params": {},
+                "file_sim_params": {"enabled": True},
+                "file_cluster_params": {"enabled": True},
+            }
+            success, msg = pool_service.create_pool(
+                POOL_ID, "Comparison Pool", [SEP_COLL_ARM, SEP_COLL_LINUX], config
+            )
+            print(f"  Pool creation: {success} ({msg})")
 
-        print("  Triggering pool similarity build...")
-        resp = requests.post(f"{BASE_URL}/api/pool/{POOL_ID}/build", timeout=10)
-        resp.raise_for_status()
-        wait_for_pipelines([resp.json()["job_id"]])
+            print("  Triggering pool similarity build...")
+            with Timer("Pool similarity build"):
+                resp = requests.post(f"{BASE_URL}/api/pool/{POOL_ID}/build", timeout=10)
+                resp.raise_for_status()
+                wait_for_pipelines([resp.json()["job_id"]])
 
-        print("  Triggering pool clustering (and pool binary similarity)...")
-        resp = requests.post(f"{BASE_URL}/api/pool/{POOL_ID}/cluster", timeout=10)
-        resp.raise_for_status()
-        wait_for_pipelines([resp.json()["job_id"]])
+            print("  Triggering pool clustering (and pool binary similarity)...")
+            with Timer("Pool clustering"):
+                resp = requests.post(f"{BASE_URL}/api/pool/{POOL_ID}/cluster", timeout=10)
+                resp.raise_for_status()
+                wait_for_pipelines([resp.json()["job_id"]])
 
-        # Fetch score
-        pool_score = get_pool_binary_similarity(
-            POOL_ID, SEP_COLL_ARM, MD5_ARM, SEP_COLL_LINUX, MD5_LINUX
-        )
-        print(f"  => Score in POOL: {pool_score}")
+            # Fetch score
+            pool_score = get_pool_binary_similarity(
+                POOL_ID, SEP_COLL_ARM, MD5_ARM, SEP_COLL_LINUX, MD5_LINUX
+            )
+            print(f"  => Score in POOL: {pool_score}")
 
-        # Print pool doc
-        b1 = (SEP_COLL_ARM, MD5_ARM)
-        b2 = (SEP_COLL_LINUX, MD5_LINUX)
-        if b1 > b2:
-            b1, b2 = b2, b1
-        import json
+            # Print pool doc
+            b1 = (SEP_COLL_ARM, MD5_ARM)
+            b2 = (SEP_COLL_LINUX, MD5_LINUX)
+            if b1 > b2:
+                b1, b2 = b2, b1
+            import json
 
-        pool_doc_key = f"global:pool:{POOL_ID}:bin_sim:unweighted_cosine:{b1[0]}:{b1[1]}::{b2[0]}:{b2[1]}"
-        pool_doc_raw = r.get(pool_doc_key)
-        pool_doc = json.loads(pool_doc_raw) if pool_doc_raw else None
-        print(f"  [DEBUG] Pool Doc: {pool_doc}")
+            pool_doc_key = f"global:pool:{POOL_ID}:bin_sim:unweighted_cosine:{b1[0]}:{b1[1]}::{b2[0]}:{b2[1]}"
+            pool_doc_raw = r.get(pool_doc_key)
+            pool_doc = json.loads(pool_doc_raw) if pool_doc_raw else None
+            print(f"  [DEBUG] Pool Doc: {pool_doc}")
 
         # ==================================================================
         section("5. Comparison Results")
@@ -693,6 +716,8 @@ def main():
         #
         # pool_service.delete_pool(POOL_ID)
         pass
+
+    print(f"\n  [Total execution time: {time.time() - start_total:.2f}s]")
 
 
 if __name__ == "__main__":

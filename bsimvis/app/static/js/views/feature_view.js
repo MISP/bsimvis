@@ -325,18 +325,17 @@ window.FeatureView = {
                         <button class="btn-code-action" onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '', event)">
                             <span>↗</span> Code
                         </button>
-                        <button class="btn-diff-action" data-func-id="${funcId}" data-full-text="true"
-                            onmouseenter="onHoverDiffButton(event, '${funcId}', '${funcName.replace(/'/g, "\\'")}')"
-                            onmouseleave="hideDiffPreview(event)"
-                            onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"
-                            onclick="addToDiff('${funcId}', '${funcName.replace(/'/g, "\\'")}')">
-                            <span>±</span> Add to Diff
-                        </button>
-                        <button class="btn-sim-action" onclick="seeSimilar('${funcId}')">
-                            <i class="fa-solid fa-code-compare"></i> See Similar
-                        </button>
                     </div>
                 `;
+
+                // Add to Diff / See Similar available via right-click > Actions
+                const originEntityData = JSON.stringify({
+                    function_id: funcId,
+                    function_name: funcName,
+                    file_md5: md5,
+                    entrypoint_address: addr,
+                    collection: this.collection
+                }).replace(/'/g, "&apos;");
 
                 const metaHtml = `
                     <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${occ.type}</div>
@@ -411,7 +410,7 @@ window.FeatureView = {
                 }
 
                 tr.innerHTML = `
-                    <td class="code-cell">${originHtml}</td>
+                    <td class="code-cell" data-entity-data='${originEntityData}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">${originHtml}</td>
                     <td class="code-cell">${metaHtml}</td>
                     <td class="code-cell"><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${occ['seq'] || 'N/A'}</span></td>
                     <td class="code-cell">${pcodeHtml}</td>

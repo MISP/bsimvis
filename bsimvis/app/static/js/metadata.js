@@ -98,16 +98,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
     // Action Buttons - Compact versions for header
     let headerActionsHtml = '';
     
-    if (options.showDiffBtn) {
-        const fullTextAttr = options.diffBtnFullText ? 'data-full-text="true"' : '';
-        const onhover = `onmouseenter="if(window.currentFuncId || '${fullId}') onHoverDiffButton(event, '${fullId}', '${label}')" onmouseleave="hideDiffPreview(event)" onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"`;
-        headerActionsHtml += `
-            <button id="${options.diffBtnId || 'add-diff-btn'}" class="btn-diff-action ${window.diffSelection && window.diffSelection.some(item => item.id === normalizeFuncId(fullId)) ? 'active' : ''}" 
-                data-func-id="${normalizeFuncId(fullId)}" ${fullTextAttr} ${onhover} onclick="addToDiff('${fullId}', '${label}')" 
-                title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;">
-                <span>±</span>
-            </button>`;
-    }
+    // Add to Diff moved to right-click > Actions menu
 
     if (options.showCodeLink) {
         headerActionsHtml += `
@@ -201,10 +192,6 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                     <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
                     
                     <div class="meta-sig-actions" style="margin-left: 10px;">
-                        <a class="btn-sim-action" href="javascript:void(0)" onclick="seeSimilar('${fullId}')" 
-                           title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background: rgba(174, 129, 255, 0.1); color: var(--info); border: 1px solid rgba(174, 129, 255, 0.3);">
-                           <i class="fa-solid fa-code-compare"></i>
-                        </a>
                         ${EntityRenderer.renderNoteButton(fullId, m.note_owners, { raw_data: m })}
                         ${headerActionsHtml}
                     </div>

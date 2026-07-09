@@ -330,8 +330,18 @@
             </div>`;
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
+            const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
             const simUrl = Nav.buildUIUrl(col, ['functions', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5);
             actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcsUrl}', event, { title: 'Functions', type: 'functions' })">
+                <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>View Functions</span>
+            </div>`;
+            actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToFileDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', event)">
+                <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Add to File Diff</span>
+            </div>
             <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${cgUrl}', event, { title: 'Call Graph: ${norm.md5}', type: 'call_graph' })">
                 <i class="fa-solid fa-sitemap" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Call Graph</span>

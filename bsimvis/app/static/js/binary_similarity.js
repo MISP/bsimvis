@@ -1262,16 +1262,12 @@ function renderBinSimTables(isFilterChange = false) {
 
                     similarityHtml = `
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(m.similarity * 100).toFixed(1)}%</div>
-                        <button class="btn-diff-action"
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
                             onmouseenter="showDiffPreview('${fA.function_id}', '${(fA.function_name || '').replace(/'/g, "\\'")}', '${fB.function_id}', '${(fB.function_name || '').replace(/'/g, "\\'")}', ${m.similarity}, event)"
                             onmousemove="moveCodePreview(event)"
                             onmouseleave="hideDiffPreview(event)"
-                            onclick="Nav.openPath('${diffUrl}', event, { title: 'Diff: ${fA.function_name} vs ${fB.function_name}', type: 'diff' })" 
-                            title="Run Aligned Diff" 
-                            style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                            <span>±</span>
-                        </button>
+                            onclick="Nav.openPath('${diffUrl}', event, { title: 'Diff: ${fA.function_name} vs ${fB.function_name}', type: 'diff' })"
+                            title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
                     </div>
                     ${EntityRenderer.renderTag('similarity', pairId, m.tags || [], m.user_tags || [])}
                     `;
@@ -1583,10 +1579,7 @@ function renderBinSimPairs(items) {
             <tr class="sim-row">
                 <td>
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${scoreFormatted}</div>
-                        <button class="btn-diff-action" onclick="${onClickHandler}" title="Open Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                            <span>±</span>
-                        </button>
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${onClickHandler}" title="Open Diff">${scoreFormatted}</div>
                     </div>
                 </td>
                 <td class="sim-cell">

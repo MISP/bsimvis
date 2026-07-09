@@ -2407,36 +2407,54 @@ class SimilarityService:
         log(f"[*] {num_binaries} binaries -> {len(pairs)} pairs to compare")
         prefetch_t = time.time()
 
-        # ponytail: batch prefetch instead of per-pair SINTER+GET.
-        # Old path did N^2/2 blocking SINTER round trips plus a GET pipeline per pair.
-        # Now: one smembers per binary, then MGET every referenced sim doc once,
-        # and intersect in Python per pair. All docs held in RAM for the build
-        # (that's the pool's function-pair sim payload; chunk MGET to bound command size).
-        binary_sim_sids = {}
+        # ponytail: invert the involves-sets into per-binary-pair edge buckets in ONE
+        # pass, instead of intersecting two full binary sim-id sets on every one of
+        # the ~N^2 pairs (the old path's real cost: a few big binaries got their
+        # ~100k+ member sets scanned 300x each). A sim doc links two functions -> two
+        # binaries, so it lands in exactly one bucket; the pair loop then does an O(1)
+        # lookup. We keep only oriented (fid_a, fid_b, score) tuples, not the full
+        # parsed docs, so peak RAM drops vs the old all-docs cache too.
+        sid_bins = defaultdict(list)
         pipe_inv = r.pipeline(transaction=False)
         for coll, md5 in binaries:
             pipe_inv.smembers(f"{involves_file_prefix}{coll}:{md5}")
-        all_sim_sids = set()
         for (coll, md5), members in zip(binaries, pipe_inv.execute()):
-            sids = {m.decode() if isinstance(m, bytes) else str(m) for m in members}
-            binary_sim_sids[(coll, md5)] = sids
-            all_sim_sids.update(sids)
+            for m in members:
+                sid = m.decode() if isinstance(m, bytes) else str(m)
+                sid_bins[sid].append((coll, md5))
 
-        sim_doc_cache = {}
-        sim_sids_list = list(all_sim_sids)
-        for i in range(0, len(sim_sids_list), 10000):
-            chunk = sim_sids_list[i : i + 10000]
+        # (b1, b2) sorted -> [(fid_a, fid_b, score)], fid_a oriented to b1's md5.
+        pair_edges = defaultdict(list)
+        n_docs = 0
+        all_sids = list(sid_bins)
+        for i in range(0, len(all_sids), 10000):
+            chunk = all_sids[i : i + 10000]
             for sid, res in zip(chunk, r.mget(chunk)):
-                if res:
-                    try:
-                        sim_doc_cache[sid] = json.loads(
-                            res.decode() if isinstance(res, bytes) else res
-                        )
-                    except Exception:
-                        pass
+                if not res:
+                    continue
+                bins = sid_bins[sid]
+                if len(bins) != 2 or bins[0] == bins[1]:
+                    continue  # doc must straddle two distinct pool binaries
+                try:
+                    doc = json.loads(res.decode() if isinstance(res, bytes) else res)
+                except Exception:
+                    continue
+                fid1, fid2 = doc.get("id1"), doc.get("id2")
+                if not fid1 or not fid2:
+                    continue
+                key = (bins[0], bins[1]) if bins[0] < bins[1] else (bins[1], bins[0])
+                ma = key[0][1].lower()  # md5 of the lower (b1) binary
+                p1 = fid1.split(":")
+                score = doc.get("score", 0.0)
+                if len(p1) >= 2 and p1[-2].lower() == ma:
+                    pair_edges[key].append((fid1, fid2, score))
+                else:
+                    pair_edges[key].append((fid2, fid1, score))
+                n_docs += 1
 
         log(
-            f"[*] Prefetched {len(sim_doc_cache)} sim docs in {time.time() - prefetch_t:.1f}s"
+            f"[*] Prefetched {n_docs} sim docs into {len(pair_edges)} pair buckets "
+            f"in {time.time() - prefetch_t:.1f}s"
         )
 
         # ponytail: precompute per-function "unique" entry + weight once.
@@ -2497,28 +2515,9 @@ class SimilarityService:
             coll_a, md5_a = b1
             coll_b, md5_b = b2
 
-            sim_keys = binary_sim_sids.get(b1, set()) & binary_sim_sids.get(b2, set())
-            sim_docs = [sim_doc_cache[k] for k in sim_keys if k in sim_doc_cache]
-
-            # Filter/extract edges
-            edges = []
-            for doc in sim_docs:
-                fid1 = doc.get("id1")
-                fid2 = doc.get("id2")
-                score = doc.get("score", 0.0)
-                if fid1 and fid2:
-                    # ponytail: Extract exact MD5 out of function IDs (casing-insensitive)
-                    parts1 = fid1.split(":")
-                    parts2 = fid2.split(":")
-                    if len(parts1) >= 2 and len(parts2) >= 2:
-                        m1 = parts1[-2].lower()
-                        m2 = parts2[-2].lower()
-                        m_a_clean = md5_a.lower()
-                        m_b_clean = md5_b.lower()
-                        if m1 == m_a_clean and m2 == m_b_clean:
-                            edges.append((fid1, fid2, score))
-                        elif m1 == m_b_clean and m2 == m_a_clean:
-                            edges.append((fid2, fid1, score))
+            # Edges already extracted + oriented (fid_a -> b1) into this bucket during
+            # prefetch; b1 < b2 holds here (pairs are generated sorted), matching the key.
+            edges = pair_edges.get((b1, b2), [])
 
             # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
             edges.sort(key=lambda x: (-x[2], x[0], x[1]))
@@ -2717,20 +2716,39 @@ class SimilarityService:
                 job_id, f"[*] Reindexing {total} pool bin_sim pairs for pool {pool_id}"
             )
 
-        pipe = r.pipeline(transaction=False)
-        for sid in sids:
-            pipe.get(sid)
+        # Stream docs in chunks, keeping ONLY the scalar fields indexing needs.
+        # Pool bin_sim docs carry the full per-pair diff blob (matched_clusters +
+        # unique lists) which can be hundreds of KB-MB each. GETting all of them
+        # at once and retaining every parsed dict held ~2x the whole payload
+        # resident (raw strings + dicts) -> swap thrash. Drop the fat fields as we
+        # go so memory stays bounded to one chunk.
+        # ponytail: 5000/chunk bounds transient RAM; lower it if docs are huge.
         docs = []
         md5set = set()
-        for sid, raw in zip(sids, pipe.execute()):
-            if not raw:
-                continue
-            d = json.loads(raw) if not isinstance(raw, dict) else raw
-            if isinstance(d, str):
-                d = json.loads(d)
-            docs.append((sid, d))
-            md5set.add((d.get("coll_1", ""), d.get("md5_1", "")))
-            md5set.add((d.get("coll_2", ""), d.get("md5_2", "")))
+        for i in range(0, total, 5000):
+            chunk = sids[i : i + 5000]
+            for sid, raw in zip(chunk, r.mget(chunk)):
+                if not raw:
+                    continue
+                d = json.loads(raw) if not isinstance(raw, dict) else raw
+                if isinstance(d, str):
+                    d = json.loads(d)
+                c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
+                c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
+                slim = {
+                    "coll_1": c1,
+                    "md5_1": m1,
+                    "coll_2": c2,
+                    "md5_2": m2,
+                    "matched_clusters_count": d.get("matched_clusters_count", 0),
+                    "unweighted_score": d.get("unweighted_score", d.get("score", 0.0)),
+                    "sim_weighted_score": d.get("sim_weighted_score", 0.0),
+                    "collection_weighted_score": d.get("collection_weighted_score", 0.0),
+                    "entry_date": d.get("entry_date", 0),
+                }
+                docs.append((sid, slim))
+                md5set.add((c1, m1))
+                md5set.add((c2, m2))
 
         # File meta (arch/tags/name) + function counts for every referenced binary.
         md5list = list(md5set)

@@ -169,25 +169,20 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         md5_a = diff_data.get("md5_1") or md5_a
         md5_b = diff_data.get("md5_2") or md5_b
 
-        # Pool docs store clusters in `matched_clusters` with no `diff` wrapper.
-        # Normalize into the same shape the renderer expects.
-        if "diff" not in diff_data and "matched_clusters" in diff_data:
-            diff_data["diff"] = {
-                "matched": diff_data["matched_clusters"],
-                "unique_to_a": [],
-                "unique_to_b": [],
-            }
-
     # Extract all unique function IDs
     fids = set()
     diff = diff_data.get("diff", {})
     for m in diff.get("matched", []):
-        fids.update(m.get("funcs_a", []))
-        fids.update(m.get("funcs_b", []))
+        if m.get("func_a"):
+            fids.add(m["func_a"])
+        if m.get("func_b"):
+            fids.add(m["func_b"])
     for u in diff.get("unique_to_a", []):
-        fids.update(u.get("funcs", []))
+        if u.get("func_id"):
+            fids.add(u["func_id"])
     for u in diff.get("unique_to_b", []):
-        fids.update(u.get("funcs", []))
+        if u.get("func_id"):
+            fids.add(u["func_id"])
 
     # Fetch File Metadata for both sides (each from their own collection)
     pipe = r.pipeline(transaction=False)

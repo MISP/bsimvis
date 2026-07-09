@@ -517,7 +517,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     // Set default parameters for search views if not present
     if (viewKey === 'files') {
         if (!params.has('min_cohesion')) {
-            params.set('min_cohesion', '0.95');
+            params.set('min_cohesion', '0.5');
         }
     } else if (viewKey === 'functions') {
         if (!params.has('min_cohesion')) {
@@ -1217,7 +1217,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                 <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.5'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 </div>
@@ -1918,7 +1918,7 @@ function applyAdvancedFileSearch() {
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
     if (clusterUuidFlt) params.set('bin_cluster_uuid', clusterUuidFlt); else params.delete('bin_cluster_uuid');
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
-    params.set('min_cohesion', minCohesionFlt || '0.95');
+    params.set('min_cohesion', minCohesionFlt || '0.5');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
     if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
     if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
@@ -2177,16 +2177,12 @@ function renderTopCorrelations(items, clustersMap = {}) {
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                    <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)" 
+                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)"
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)" 
-                        title="Run Aligned Diff" 
-                        style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                        <span>±</span>
-                    </button>
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
                 </div>
                 ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
             </td>
@@ -2582,15 +2578,28 @@ window.addEventListener('popstate', (e) => {
 
 // Deprecated hashchange listener for compatibility during transition
 window.addEventListener('hashchange', (e) => {
+    // Only handle legacy hash routing if we're on the root path
+    if (window.location.pathname !== '/' && window.location.pathname !== '') {
+        return;
+    }
+    
     // If we have a hash, convert it to a restful path and navigate
     if (window.location.hash) {
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || null;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
 
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col);
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col);
+        }
     }
 });
 
@@ -2675,15 +2684,23 @@ window.addEventListener('load', () => {
         history.replaceState(null, '', '/collections');
     }
     
-    if (window.location.hash) {
+    if (window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || null;
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col, true);
-        return;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col, true);
+            return;
+        }
     }
 
     // Attach graph settings listeners
@@ -3482,6 +3499,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// Forward wheel/scroll events on the main content background to the active scrollable table/container inside it
+document.addEventListener('wheel', (e) => {
+    let element = e.target;
+    let isScrollableTarget = false;
+    while (element && element !== document.body) {
+        const style = window.getComputedStyle(element);
+        const overflowY = style.overflowY || style.overflow || '';
+        if ((overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight) {
+            isScrollableTarget = true;
+            break;
+        }
+        element = element.parentElement;
+    }
+    
+    if (!isScrollableTarget) {
+        const mainContent = document.getElementById('main-content');
+        if (!mainContent) return;
+        
+        const scrollables = Array.from(mainContent.querySelectorAll('.table-body-wrap, .bsim-subtab-panel, div')).filter(el => {
+            if (el.offsetWidth === 0 || el.offsetHeight === 0) return false;
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY || style.overflow || '';
+            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+        });
+        
+        if (scrollables.length > 0) {
+            scrollables[0].scrollTop += e.deltaY;
+            e.preventDefault();
+        }
+    }
+}, { passive: false });
+
 
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;

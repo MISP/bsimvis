@@ -35,37 +35,10 @@ window.EntityRenderer = {
         
         let actionsHtml = '';
         if (showActions) {
-            const isActive = (typeof diffSelection !== 'undefined' && typeof normalizeFuncId === 'function') 
-                ? diffSelection.some(item => item.id === normalizeFuncId(funcId)) 
-                : false;
-            
-            const diffButton = UI.Button.render({
-                className: `btn-diff-action ${isActive ? 'active' : ''}`,
-                label: '±',
-                tooltip: 'Add to Diff',
-                attr: {
-                    'data-func-id': typeof normalizeFuncId === 'function' ? normalizeFuncId(funcId) : funcId,
-                    'onmouseenter': `typeof onHoverDiffButton === 'function' && onHoverDiffButton(event, '${funcId}', '${safeName}')`,
-                    'onmousemove': `typeof moveCodePreview === 'function' && moveCodePreview(event)`,
-                    'onmouseleave': `typeof hideDiffPreview === 'function' && hideDiffPreview(event)`
-                },
-                onClick: `event.stopPropagation(); typeof addToDiff === 'function' && addToDiff('${funcId}', '${safeName}')`,
-                style: 'padding:0; font-size: 0.75rem; border-radius: 3px; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;'
-            });
-
-            const simButton = UI.Button.render({
-                className: 'btn-sim-action',
-                icon: 'fa-solid fa-code-compare',
-                tooltip: 'See Similar Functions',
-                onClick: `event.stopPropagation(); Nav.openPath('/collection/${collection}/functions/similarities?md5=${file_md5}&address=${entry}&algo=unweighted_cosine', event)`,
-                style: 'padding:0; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;'
-            });
-
+            // Add to Diff / See Similar moved to right-click > Actions menu
             actionsHtml = `
                 <div class="entity-actions" style="display:inline-flex; gap:4px; margin-left: auto; flex-shrink: 0; padding-left: 8px;">
                     ${hideNote ? '' : this.renderNoteButton(funcId, f.note_owners, { ...options, raw_data: f })}
-                    ${diffButton}
-                    ${simButton}
                 </div>
             `;
         }

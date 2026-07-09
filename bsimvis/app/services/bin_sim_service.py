@@ -464,15 +464,17 @@ class BinSimService:
                                 if best_cluster
                                 else "Matched Functions"
                             ),
-                            "cohesion": score,
+                            "similarity": score,
+                            "cohesion": (
+                                float(best_cluster.get("cohesion_score", 0.0))
+                                if best_cluster
+                                else 0.0
+                            ),
                             "sim_rarity": rarity,
                             "collection_rarity": rarity,
                             "avg_features": f_features,
-                            "funcs_a": [fid_a],
-                            "funcs_b": [fid_b],
-                            "count_a": 1,
-                            "count_b": 1,
-                            "match_ratio": 1.0,
+                            "func_a": fid_a,
+                            "func_b": fid_b,
                         }
                     )
 
@@ -506,7 +508,6 @@ class BinSimService:
                 unique_to_a.append(
                     {
                         "func_id": fid,
-                        "funcs": [fid],
                         "is_clustered": best_cluster is not None,
                         "cluster_id": (
                             best_cluster.get("cluster_id", "") if best_cluster else ""
@@ -519,7 +520,11 @@ class BinSimService:
                             if best_cluster
                             else "Unclustered"
                         ),
-                        "cohesion": 0.0,
+                        "cohesion": (
+                            float(best_cluster.get("cohesion_score", 0.0))
+                            if best_cluster
+                            else 0.0
+                        ),
                         "sim_rarity": rarity,
                         "collection_rarity": rarity,
                         "avg_features": f_features,
@@ -544,7 +549,6 @@ class BinSimService:
                 unique_to_b.append(
                     {
                         "func_id": fid,
-                        "funcs": [fid],
                         "is_clustered": best_cluster is not None,
                         "cluster_id": (
                             best_cluster.get("cluster_id", "") if best_cluster else ""
@@ -557,7 +561,11 @@ class BinSimService:
                             if best_cluster
                             else "Unclustered"
                         ),
-                        "cohesion": 0.0,
+                        "cohesion": (
+                            float(best_cluster.get("cohesion_score", 0.0))
+                            if best_cluster
+                            else 0.0
+                        ),
                         "sim_rarity": rarity,
                         "collection_rarity": rarity,
                         "avg_features": f_features,

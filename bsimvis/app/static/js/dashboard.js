@@ -3499,6 +3499,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// Forward wheel/scroll events on the main content background to the active scrollable table/container inside it
+document.addEventListener('wheel', (e) => {
+    let element = e.target;
+    let isScrollableTarget = false;
+    while (element && element !== document.body) {
+        const style = window.getComputedStyle(element);
+        const overflowY = style.overflowY || style.overflow || '';
+        if ((overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight) {
+            isScrollableTarget = true;
+            break;
+        }
+        element = element.parentElement;
+    }
+    
+    if (!isScrollableTarget) {
+        const mainContent = document.getElementById('main-content');
+        if (!mainContent) return;
+        
+        const scrollables = Array.from(mainContent.querySelectorAll('.table-body-wrap, .bsim-subtab-panel, div')).filter(el => {
+            if (el.offsetWidth === 0 || el.offsetHeight === 0) return false;
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY || style.overflow || '';
+            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+        });
+        
+        if (scrollables.length > 0) {
+            scrollables[0].scrollTop += e.deltaY;
+            e.preventDefault();
+        }
+    }
+}, { passive: false });
+
+
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
 window.applySimSearch = applySimSearch;

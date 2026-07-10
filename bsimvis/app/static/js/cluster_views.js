@@ -1214,7 +1214,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                         if (this.clusterType === 'file') {
                                             return `
                                                 <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
-                                                    <b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(getCurrentCollection(), '${m.file_md5}', '${(m.file_name || '').replace(/'/g, "\\'")}', event); }">${m.file_name || 'Unknown'}</b> ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                    ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
                                         }
@@ -2248,7 +2248,7 @@ class ClusterPacking {
                                         if (this.clusterType === 'file') {
                                             return `
                                                 <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
-                                                    <b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(getCurrentCollection(), '${m.file_md5}', '${(m.file_name || '').replace(/'/g, "\\'")}', event); }">${m.file_name || 'Unknown'}</b> ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                    ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
                                         }

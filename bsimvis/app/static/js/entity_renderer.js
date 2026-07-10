@@ -178,8 +178,14 @@ window.EntityRenderer = {
         if (!md5) return '<span class="mono dim">---</span>';
         const actualMd5 = md5.includes(':') ? md5.split(':').pop() : md5;
         const displayMd5 = options.full ? actualMd5 : actualMd5.substring(0, 8);
+        const collection = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+        const fileId = `${collection}:file:${actualMd5}`;
+        const fileData = { md5: actualMd5, fileId: fileId, name: actualMd5 };
+        // ponytail: enable direct file context menu from any rendered md5
         return `
-            <span class="entity-md5 mono" style="color:var(--accent);" title="${actualMd5}"># ${displayMd5}</span>
+            <span class="entity-md5 mono" style="color:var(--accent); cursor:pointer;" title="${actualMd5}"
+                  data-entity-data='${JSON.stringify(fileData).replace(/'/g, "&apos;")}'
+                  oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'># ${displayMd5}</span>
         `;
     },
 
@@ -201,5 +207,25 @@ window.EntityRenderer = {
             return renderClusterCards(clusters, isBinary);
         }
         return '';
+    },
+
+    /**
+     * Renders a file name with interactions (click to view details, right click for context menu).
+     */
+    renderFileName: function(filename, md5, collection = '', options = {}) {
+        if (!filename && !md5) return '<span class="dim">Unknown</span>';
+        const display = filename || md5 || 'Unknown';
+        const actualMd5 = md5 ? (md5.includes(':') ? md5.split(':').pop() : md5) : '';
+        const col = collection || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
+        const fileId = `${col}:file:${actualMd5}`;
+        const fileData = { md5: actualMd5, fileId: fileId, name: display, file_name: display };
+        const safeName = display.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+        // ponytail: generic component for filename with both click and contextmenu support
+        return `
+            <b class="entity-filename" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;"
+               data-entity-data='${JSON.stringify(fileData).replace(/'/g, "&apos;")}'
+               onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${col}', '${actualMd5}', '${safeName}', event)"
+               oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'>${display}</b>
+        `;
     }
 };

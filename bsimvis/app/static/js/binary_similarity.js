@@ -1585,10 +1585,10 @@ function renderBinSimPairs(items) {
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collA}', '${item.md5_a}', '${safeNameA}', event)">${item.file_name_a || 'Unknown'}</b>
+                            ${EntityRenderer.renderFileName(item.file_name_a, item.md5_a, collA)}
                         </div>
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collB}', '${item.md5_b}', '${safeNameB}', event)">${item.file_name_b || 'Unknown'}</b>
+                            ${EntityRenderer.renderFileName(item.file_name_b, item.md5_b, collB)}
                         </div>
                     </div>
                 </td>

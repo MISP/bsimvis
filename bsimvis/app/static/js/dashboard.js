@@ -484,6 +484,7 @@ function showDashboardActions() {
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
     const { viewKey, collection, pool, params } = getRoutingState();
 
@@ -2248,8 +2249,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m1}', '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta1?.file_name || ''}</b></div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m2}', '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta2?.file_name || ''}</b></div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2976,16 +2977,29 @@ window.addEventListener('load', () => {
                     const progressText = matchingJob.status === 'running' ? ` (${matchingJob.progress}%)` : '';
                     statusBadge.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${formatJobType(matchingJob.type)}${progressText}`;
                     statusBadge.title = `Job ID: ${matchingJob.id} is ${matchingJob.status}`;
+                    statusBadge.style.cursor = 'pointer';
+                    statusBadge.onclick = () => {
+                        if (window.showJobDetails) window.showJobDetails(matchingJob.id);
+                    };
                 } else {
                     statusBadge.style.display = 'none';
                 }
+            }
+
+            // Adjust polling rate dynamically
+            const nextPollRate = isActive ? 3000 : 10000;
+            if (nextPollRate !== window.currentJobPollRate) {
+                window.currentJobPollRate = nextPollRate;
+                if (window.jobPollInterval) clearInterval(window.jobPollInterval);
+                window.jobPollInterval = setInterval(window.updateJobStatusIcon, window.currentJobPollRate);
             }
         } catch (e) {
             // Silently fail for navbar polling
         }
     };
+    window.currentJobPollRate = 10000;
     window.updateJobStatusIcon();
-    setInterval(window.updateJobStatusIcon, 10000); // Check every 10s
+    window.jobPollInterval = setInterval(window.updateJobStatusIcon, window.currentJobPollRate);
 });
 
 function updateNavVisibility(collection) {

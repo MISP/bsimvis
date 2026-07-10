@@ -18,7 +18,11 @@ File metadata is denormalized directly into the bin_sim index at build time.
 INDEX_CONFIG = {
     "file": {
         "file_name": ["file", "func", "sim"],  # propagated to sim for fast lookup
+        "parent_file_name": ["file", "func", "sim"],
+        "related_file_name": ["file", "func", "sim"],
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
+        "parent_md5": ["file", "func", "sim"],
+        "related_md5": ["file", "func", "sim"],
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
         "user_tags": ["file", "func", "sim"],  # not propagated
         "language_id": ["file", "func", "sim"],
@@ -83,9 +87,17 @@ INDEX_CONFIG = {
     "bin_sim": {
         "md5_a": ["bin_sim"],
         "md5_b": ["bin_sim"],
+        "file_parent_md5_a": ["bin_sim"],
+        "file_parent_md5_b": ["bin_sim"],
+        "file_related_md5_a": ["bin_sim"],
+        "file_related_md5_b": ["bin_sim"],
         "algo": ["bin_sim"],
         "file_name_a": ["bin_sim"],  # denormalized from file meta at build time
         "file_name_b": ["bin_sim"],
+        "file_parent_file_name_a": ["bin_sim"],
+        "file_parent_file_name_b": ["bin_sim"],
+        "file_related_file_name_a": ["bin_sim"],
+        "file_related_file_name_b": ["bin_sim"],
         "file_tags_a": ["bin_sim"],  # denormalized tags for binary A
         "file_tags_b": ["bin_sim"],
         "file_user_tags_a": ["bin_sim"],

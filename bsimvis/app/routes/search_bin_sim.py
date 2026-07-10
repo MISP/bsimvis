@@ -88,36 +88,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Set-bucket (substring) filters, a/b unioned ---
     if f["file_name"]:
-        restrict(_bucket_union(r, collection, ["file_name_a", "file_name_b"], f["file_name"]))
+        restrict(_bucket_union(r, collection, ["file_name_a", "file_name_b", "file_parent_file_name_a", "file_parent_file_name_b", "file_related_file_name_a", "file_related_file_name_b"], f["file_name"]))
     if f["arch"]:
         restrict(_bucket_union(r, collection, ["architecture_a", "architecture_b"], f["arch"]))
     if f["md5"]:
-        # md5 lives in the involves:* keyspace (partial match via SCAN).
-        # Pool involves keys embed the source collection: involves:{coll}:{md5}.
-        md5_match = (
-            f"{collection}:bin_sim:involves:*:{f['md5']}*"
-            if is_pool
-            else f"{collection}:bin_sim:involves:*{f['md5']}*"
-        )
-        sids = set()
-        cursor = 0
-        matching = []
-        while True:
-            cursor, keys = r.scan(
-                cursor=cursor,
-                match=md5_match,
-                count=1000,
-            )
-            matching.extend(keys)
-            if cursor == 0:
-                break
-        if matching:
-            pipe = r.pipeline(transaction=False)
-            for k in matching:
-                pipe.smembers(k)
-            for res in pipe.execute():
-                sids.update(_dec(x) for x in res)
-        restrict(sids)
+        restrict(_bucket_union(r, collection, ["md5_a", "md5_b", "file_parent_md5_a", "file_parent_md5_b", "file_related_md5_a", "file_related_md5_b"], f["md5"]))
     tag_fields = ["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"]
     for tf in f["file_tag"]:
         restrict(_bucket_union(r, collection, tag_fields, tf))
@@ -592,6 +567,14 @@ def search_bin_sims():
 
             doc["file_name_a"] = meta_a.get("file_name", m_a)
             doc["file_name_b"] = meta_b.get("file_name", m_b)
+            doc["file_parent_file_name_a"] = meta_a.get("parent_file_name")
+            doc["file_parent_file_name_b"] = meta_b.get("parent_file_name")
+            doc["file_related_file_name_a"] = meta_a.get("related_file_name")
+            doc["file_related_file_name_b"] = meta_b.get("related_file_name")
+            doc["file_parent_md5_a"] = meta_a.get("parent_md5")
+            doc["file_parent_md5_b"] = meta_b.get("parent_md5")
+            doc["file_related_md5_a"] = meta_a.get("related_md5")
+            doc["file_related_md5_b"] = meta_b.get("related_md5")
             doc["file_tags_a"] = meta_a.get("tags", [])
             doc["file_tags_b"] = meta_b.get("tags", [])
             doc["file_user_tags_a"] = meta_a.get("user_tags", [])

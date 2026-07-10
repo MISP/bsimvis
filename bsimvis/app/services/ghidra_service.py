@@ -29,6 +29,11 @@ class GhidraService:
             if config_path.exists():
                 with open(config_path, "rb") as f:
                     return tomllib.load(f)
+            else:
+                example_path = Path("bsimvis_config.toml.example")
+                if example_path.exists():
+                    with open(example_path, "rb") as f:
+                        return tomllib.load(f)
         except Exception as e:
             logging.warning(f"Failed to load default config: {e}")
         return {}
@@ -408,6 +413,7 @@ class GhidraService:
         batch_uuid = options.get("batch_uuid")
         batch_name = options.get("batch_name", "Ghidra Batch")
         tags = options.get("tags", [])
+        related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)
         batch_order = options.get("batch_order", 0)
 
@@ -416,6 +422,17 @@ class GhidraService:
         lang_id = str(program.getLanguageID())
         language = program.getLanguage()
         file_id = f"{file_md5}:#{file_md5}"
+
+        # Extract PE/ELF/Mach-O metadata from Ghidra
+        file_format = {}
+        try:
+            file_format["Executable Format"] = str(program.getExecutableFormat())
+            if hasattr(program, "getMetadata"):
+                meta_map = program.getMetadata()
+                for key in meta_map.keySet():
+                    file_format[str(key)] = str(meta_map.get(key))
+        except Exception:
+            pass
 
         file_metadata = {
             "entry_date": now_unix,
@@ -426,8 +443,10 @@ class GhidraService:
             "batch_name": batch_name,
             "batch_order": batch_order,
             "tags": tags,
+            "related_md5": related_md5,
             "language_id": lang_id,
             "file_id": file_id,
+            "file_format": file_format,
         }
 
         # Yield file_metadata first as the initial item

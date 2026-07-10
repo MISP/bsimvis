@@ -53,9 +53,6 @@ def search_files():
 
         for arg, field in [
             ("q", "q"),
-            ("file_name", "file_name"),
-            ("file_md5", "file_md5"),
-            ("md5", "file_md5"),
             ("language_id", "language_id"),
             ("language", "language_id"),
             ("batch_uuid", "batch_uuid"),
@@ -80,6 +77,14 @@ def search_files():
             val = request.args.get(arg)
             if val:
                 filters["fields"][field] = val.strip()
+                
+        md5_val = request.args.get("md5") or request.args.get("file_md5")
+        if md5_val:
+            filters["fields"]["_any_md5"] = md5_val.strip()
+
+        file_name_val = request.args.get("file_name")
+        if file_name_val:
+            filters["fields"]["_any_file_name"] = file_name_val.strip()
 
         # Range fields
         for arg, field in [
@@ -381,9 +386,19 @@ def query_files_advanced(r, collection, filters):
                 if "file" in targets:
                     q_matches.update(get_field_matches(f_name, val))
             candidates &= q_matches
+        elif field == "_any_md5":
+            candidates &= (
+                get_field_matches("file_md5", val)
+                | get_field_matches("parent_md5", val)
+                | get_field_matches("related_md5", val)
+            )
+        elif field == "_any_file_name":
+            candidates &= (
+                get_field_matches("file_name", val)
+                | get_field_matches("parent_file_name", val)
+                | get_field_matches("related_file_name", val)
+            )
         elif field in [
-            "file_name",
-            "file_md5",
             "language_id",
             "batch_uuid",
             "bin_cluster_name",

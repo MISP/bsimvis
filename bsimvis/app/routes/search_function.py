@@ -216,10 +216,12 @@ def search_functions():
                     # We handle both the target name (e.g. file_tags) and common aliases (md5 -> file_md5)
                     val = request.args.get(target_field)
 
+                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                        continue
+
                     # Alias handling (for backward compat or convenience)
                     if not val:
                         aliases = {
-                            "file_md5": ["md5"],
                             "entrypoint_address": ["address"],
                             "function_name": ["name"],
                             "language_id": ["language"],
@@ -240,7 +242,19 @@ def search_functions():
         # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
         # The existing code had some manual additions for unions, keeping them for now if not redundant.
         # Actually, the logic below handles tag lists which are distinct from single request.args.get()
-        tag_filter_configs = [
+        md5_val = request.args.get("md5") or request.args.get("file_md5")
+        md5_configs = []
+        if md5_val:
+            md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+            md5_configs = [([md5_val], "any_md5", md5_paths)]
+            
+        file_name_val = request.args.get("file_name")
+        file_name_configs = []
+        if file_name_val:
+            file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+            file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+
+        tag_filter_configs = md5_configs + file_name_configs + [
             (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
             (static_tag_filters, "static_tag", _paths("tags")),
             (user_tag_filters, "user_tag", _paths("user_tags")),

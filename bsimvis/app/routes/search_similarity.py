@@ -630,10 +630,12 @@ def similarity_search():
                     # We handle both the target name (e.g. func_tags) and common aliases
                     val = request.args.get(target_field)
 
+                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                        continue
+
                     # Alias handling
                     if not val:
                         aliases = {
-                            "file_md5": ["md5"],
                             "entrypoint_address": ["address"],
                             "function_name": ["name"],
                             "language_id": ["language"],
@@ -651,7 +653,19 @@ def similarity_search():
                             filter_configs.append((val, target_field, paths))
 
             # 2. Tag-specific logic (for unions)
-            tag_filter_configs = [
+            md5_val = request.args.get("md5") or request.args.get("file_md5")
+            md5_configs = []
+            if md5_val:
+                md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+                md5_configs = [([md5_val], "any_md5", md5_paths)]
+
+            file_name_val = request.args.get("file_name")
+            file_name_configs = []
+            if file_name_val:
+                file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+                file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+
+            tag_filter_configs = md5_configs + file_name_configs + [
                 (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
                 (static_tag_filters, "static_tag", _paths("tags")),
                 (user_tag_filters, "user_tag", _paths("user_tags")),
@@ -1233,7 +1247,11 @@ def similarity_search():
                     "entry_date": parse_timestamp(s_data["sim_doc"].get("entry_date")),
                     "meta1": {
                         "file_md5": m1.get("file_md5"),
+                        "parent_md5": m1.get("parent_md5"),
+                        "related_md5": m1.get("related_md5"),
                         "file_name": m1.get("file_name"),
+                        "parent_file_name": m1.get("parent_file_name"),
+                        "related_file_name": m1.get("related_file_name"),
                         "entrypoint_address": m1.get("entrypoint_address"),
                         "tags": m1.get("tags"),
                         "user_tags": m1.get("user_tags"),
@@ -1252,7 +1270,11 @@ def similarity_search():
                     },
                     "meta2": {
                         "file_md5": m2.get("file_md5"),
+                        "parent_md5": m2.get("parent_md5"),
+                        "related_md5": m2.get("related_md5"),
                         "file_name": m2.get("file_name"),
+                        "parent_file_name": m2.get("parent_file_name"),
+                        "related_file_name": m2.get("related_file_name"),
                         "entrypoint_address": m2.get("entrypoint_address"),
                         "tags": m2.get("tags"),
                         "user_tags": m2.get("user_tags"),

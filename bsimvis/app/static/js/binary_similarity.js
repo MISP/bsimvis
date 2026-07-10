@@ -1699,10 +1699,10 @@ function renderBinSimPairs(items) {
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collA}', '${item.md5_a}', '${safeNameA}', event)">${item.file_name_a || 'Unknown'}</b>
+                            ${EntityRenderer.renderFileName(item.file_name_a, item.md5_a, collA)}
                         </div>
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collB}', '${item.md5_b}', '${safeNameB}', event)">${item.file_name_b || 'Unknown'}</b>
+                            ${EntityRenderer.renderFileName(item.file_name_b, item.md5_b, collB)}
                         </div>
                     </div>
                 </td>
@@ -1951,7 +1951,9 @@ function buildMetaCompareTable(da, db, colA, colB) {
         'CC IP': 'fa-solid fa-network-wired',
         'Functions': 'fa-solid fa-list-ol',
         'BSim Features': 'fa-solid fa-dna',
-        'First Seen': 'fa-solid fa-clock'
+        'BSim Features': 'fa-solid fa-dna',
+        'First Seen': 'fa-solid fa-clock',
+        'Related MD5s': 'fa-solid fa-link'
     };
 
     const categories = [
@@ -1959,6 +1961,7 @@ function buildMetaCompareTable(da, db, colA, colB) {
             ['File Name', fa.file_name, fb.file_name],
             ['Other Names', fa.file_names, fb.file_names],
             ['MD5', fa.file_md5, fb.file_md5],
+            ['Related MD5s', fa.related_md5, fb.related_md5],
             ['Batch UUID', fa.batch_uuid, fb.batch_uuid],
             ['First Seen', fa.first_seen ? fmtDate(fa.first_seen) : '', fb.first_seen ? fmtDate(fb.first_seen) : ''],
         ]],
@@ -1974,6 +1977,12 @@ function buildMetaCompareTable(da, db, colA, colB) {
             ['BSim Features', fa.bsim_features_count, fb.bsim_features_count],
         ]]
     ];
+
+    if ((fa.file_format && Object.keys(fa.file_format).length > 0) || (fb.file_format && Object.keys(fb.file_format).length > 0)) {
+        const allKeys = new Set([...Object.keys(fa.file_format || {}), ...Object.keys(fb.file_format || {})]);
+        const formatFields = Array.from(allKeys).map(k => [k, (fa.file_format || {})[k], (fb.file_format || {})[k]]);
+        categories.push(['File Format', formatFields]);
+    }
 
     const norm = (v) => Array.isArray(v) ? v.slice().sort().join('|') : (v === undefined || v === null ? '' : String(v));
 

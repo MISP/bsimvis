@@ -225,7 +225,8 @@ window.FileView = {
                 'CC IP': 'fa-solid fa-network-wired',
                 'Functions': 'fa-solid fa-list-ol',
                 'BSim Features': 'fa-solid fa-dna',
-                'First Seen': 'fa-solid fa-clock'
+                'First Seen': 'fa-solid fa-clock',
+                'Related MD5s': 'fa-solid fa-link'
             };
 
             const categories = [
@@ -233,6 +234,7 @@ window.FileView = {
                     ['File Name', file.file_name],
                     ['Other Names', file.file_names],
                     ['MD5', file.file_md5],
+                    ['Related MD5s', file.related_md5],
                     ['Batch UUID', file.batch_uuid],
                     ['First Seen', file.first_seen ? fmtDate(file.first_seen) : ''],
                 ]],
@@ -248,6 +250,11 @@ window.FileView = {
                     ['BSim Features', file.bsim_features_count],
                 ]]
             ];
+
+            if (file.file_format && Object.keys(file.file_format).length > 0) {
+                const formatFields = Object.entries(file.file_format).map(([k, v]) => [k, v]);
+                categories.push(['File Format', formatFields]);
+            }
 
             let rows = '';
             let metaCount = 0;

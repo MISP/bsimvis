@@ -1,12 +1,98 @@
 import logging
+import math
 from flask import request
 from flask_restx import abort
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags
+from bsimvis.app.services.cluster_utils import (
+    pick_best_shared_cluster,
+    pick_best_cluster,
+)
 import json
 
 job_service = JobService()
+
+
+def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
+    """Derive best-shared cluster + rarity per diff row live from current cluster data.
+
+    Slim docs (Change 1) persist no cluster columns; this reattaches them at read so a
+    cluster rebuild can't leave them stale. Legacy fat docs already carry the columns and
+    are left untouched. Matched rows key off the highest-cohesion cluster the two funcs
+    SHARE (empty when none) — same rule as the similarity view. [[Change 1]]
+    """
+    matched = diff.get("matched", [])
+    ua = diff.get("unique_to_a", [])
+    ub = diff.get("unique_to_b", [])
+
+    sample = next((row for row in (matched or ua or ub)), None)
+    if sample is None or "cluster_id" in sample:
+        return  # empty, or fat legacy doc — nothing to derive
+
+    is_pool = bool(pool_id)
+    cluster_coll = f"global:pool:{pool_id}" if is_pool else collection
+
+    fids = set()
+    for m in matched:
+        fids.update(x for x in (m.get("func_a"), m.get("func_b")) if x)
+    for u in ua + ub:
+        if u.get("func_id"):
+            fids.add(u["func_id"])
+    if not fids:
+        return
+
+    fids = list(fids)
+    pipe = r.pipeline(transaction=False)
+    for fid in fids:
+        pipe.smembers(f"{cluster_coll}:{fid}:clusters" if is_pool else f"{fid}:clusters")
+    fid_labels, all_labels = {}, set()
+    for fid, res in zip(fids, pipe.execute()):
+        labels = {c.decode() if isinstance(c, bytes) else str(c) for c in (res or set())}
+        fid_labels[fid] = labels
+        all_labels |= labels
+
+    cluster_meta = {}
+    if all_labels:
+        labels_list = list(all_labels)
+        pipe = r.pipeline(transaction=False)
+        for lbl in labels_list:
+            pipe.get(f"{cluster_coll}:cluster:{algo}:{lbl}:meta")
+        for lbl, res in zip(labels_list, pipe.execute()):
+            if not res:
+                continue
+            m = json.loads(res) if not isinstance(res, dict) else res
+            if isinstance(m, str):
+                m = json.loads(m)
+            if isinstance(m, dict):
+                cluster_meta[lbl] = m
+
+    def rarity(meta):
+        if not meta:
+            return 1.0
+        cnt = meta.get("unique_files_count", 0) or 0
+        return min(1.0, 1.0 / math.log(1 + cnt + 1))
+
+    def apply(row, best):
+        row["cluster_id"] = best.get("cluster_id", "") if best else ""
+        row["cluster_uuid"] = best.get("cluster_uuid", "") if best else ""
+        row["cluster_name"] = best.get("cluster_name", "") if best else ""
+        row["cohesion"] = float(best.get("cohesion_score", 0.0)) if best else 0.0
+        row["is_clustered"] = best is not None
+        row["sim_rarity"] = rarity(best)
+        row["collection_rarity"] = row["sim_rarity"]
+
+    for m in matched:
+        apply(
+            m,
+            pick_best_shared_cluster(
+                fid_labels.get(m.get("func_a"), set()),
+                fid_labels.get(m.get("func_b"), set()),
+                cluster_meta,
+            ),
+        )
+    for u in ua + ub:
+        apply(u, pick_best_cluster(fid_labels.get(u.get("func_id"), set()), cluster_meta))
 
 
 def build_bin_sim():
@@ -266,6 +352,8 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
         diff_data["functions_metadata"] = funcs_metadata
     else:
         diff_data["functions_metadata"] = {}
+
+    _enrich_diff_clusters(r, diff, coll_a, pool_id, algo)
 
     return diff_data
 

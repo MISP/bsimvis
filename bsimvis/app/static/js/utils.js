@@ -376,13 +376,16 @@ window.getRoutingState = getRoutingState;
 function getCollectionFromHash() {
     const pathParams = parseRestfulPath();
     if (pathParams.collection) return pathParams.collection;
+    if (pathParams.pool) return 'pool:' + pathParams.pool;
 
     const searchParams = new URLSearchParams(window.location.search);
     if (searchParams.has('collection')) return searchParams.get('collection');
+    if (searchParams.has('pool')) return 'pool:' + searchParams.get('pool');
 
     const [hashPath, queryString] = (window.location.hash || '').split('?');
     const params = new URLSearchParams(queryString);
     if (params.has('collection')) return params.get('collection');
+    if (params.has('pool')) return 'pool:' + params.get('pool');
     
     if (window.opener) {
         try {

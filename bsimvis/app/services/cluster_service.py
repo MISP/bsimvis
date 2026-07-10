@@ -5,6 +5,7 @@ import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
 
 try:
     import hdbscan
@@ -942,7 +943,15 @@ class ClusterService:
         On build: fetches function cluster metadata and re-indexes each similarity if propagation is enabled.
         """
         r = self.r
-        sim_score_key = f"{collection}:sim:score:{algo}"
+        # Pool sim keys are namespaced under global:pool:{id} WITHOUT the algo segment,
+        # and pool member fids are full source-collection fids ({srccoll}:func:{md5}:{addr}),
+        # not algo-relative clean ids. Non-pool keys carry :{algo}: and strip to clean ids.
+        is_pool = collection.startswith("global:pool:")
+        sim_score_key = (
+            f"{collection}:sim:score"
+            if is_pool
+            else f"{collection}:sim:score:{algo}"
+        )
 
         from bsimvis.app.services.index_service import (
             _index_tag,
@@ -967,13 +976,10 @@ class ClusterService:
                 if "sim" in INDEX_CONFIG.get("func", {}).get(f, []):
                     cluster_prop_num.append(f)
 
-        if not cluster_prop and not cluster_prop_num:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    "No cluster fields are configured to propagate to similarities. Skipping scan.",
-                )
-            return True
+        # NOTE: don't early-return when no cluster_* fields are configured to propagate.
+        # The best-shared-cluster index ({col}:sim:best_cluster:{algo}) is always built
+        # from cluster membership, independent of the legacy per-field propagation config.
+        # Skipping the scan here left best_cluster empty → shared_clusters: [] in search.
 
         if is_clear:
             if job_service and job_id:
@@ -985,6 +991,7 @@ class ClusterService:
             for f in cluster_prop_num:
                 # Numeric indexes don't have registry, but we can wipe the ZSET
                 r.delete(f"{collection}:idx:sim:{f}")
+            r.delete(f"{collection}:sim:best_cluster:{algo}")
             return True
 
         # BUILD PATH
@@ -993,6 +1000,7 @@ class ClusterService:
             self._clear_indexes_via_registry(collection, "sim", target)
         for f in cluster_prop_num:
             r.delete(f"{collection}:idx:sim:{f}")
+        r.delete(f"{collection}:sim:best_cluster:{algo}")
 
         # 1. Pre-fetch all cluster metadata records matching {collection}:cluster:{algo}:*:meta
         if job_service and job_id:
@@ -1129,7 +1137,8 @@ class ClusterService:
         func_prefix = f"{collection}:func:"
         for fid, m in func_meta.items():
             if any(v is not None for v in m.values()):
-                clustered_clean_ids.add(fid[len(func_prefix) :])
+                # Pool fids are already the involves-index key form; non-pool strip the prefix.
+                clustered_clean_ids.add(fid if is_pool else fid[len(func_prefix) :])
 
         if job_service and job_id:
             job_service.add_log(
@@ -1137,7 +1146,7 @@ class ClusterService:
                 f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions...",
             )
 
-        prefix = f"{collection}:sim:{algo}:"
+        prefix = f"{collection}:sim:" if is_pool else f"{collection}:sim:{algo}:"
         candidate_sids = set()
         clean_ids_list = list(clustered_clean_ids)
         involves_pipe = r.pipeline(transaction=False)
@@ -1180,6 +1189,9 @@ class ClusterService:
         tag_buckets = {}  # bucket_key -> set of sids
         reg_buckets = {}  # reg_key -> set of bucket_keys
         num_zsets = {}  # zset_key -> dict of sid: val
+        # Forward map sid -> best shared cluster id, for display (search / bin_sim reads).
+        best_cluster_key = f"{collection}:sim:best_cluster:{algo}"
+        best_cluster_map = {}  # sid -> cluster_id
 
         def flush_batch():
             for b_key, sids in tag_buckets.items():
@@ -1191,10 +1203,13 @@ class ClusterService:
             for z_key, mapping in num_zsets.items():
                 if mapping:
                     update_pipe.zadd(z_key, mapping)
+            if best_cluster_map:
+                update_pipe.hset(best_cluster_key, mapping=best_cluster_map)
             update_pipe.execute()
             tag_buckets.clear()
             reg_buckets.clear()
             num_zsets.clear()
+            best_cluster_map.clear()
 
         for idx, sid in enumerate(candidate_list):
             id_part = sid[len(prefix) :]
@@ -1206,45 +1221,43 @@ class ClusterService:
             if c1 not in clustered_clean_ids or c2 not in clustered_clean_ids:
                 continue
 
-            fid1 = f"{collection}:func:{c1}"
-            fid2 = f"{collection}:func:{c2}"
+            # Pool c1/c2 are already full source fids (func_meta keys); non-pool wrap them.
+            fid1 = c1 if is_pool else f"{collection}:func:{c1}"
+            fid2 = c2 if is_pool else f"{collection}:func:{c2}"
             m1 = func_meta.get(fid1, {})
             m2 = func_meta.get(fid2, {})
 
-            # Check if functions share at least one cluster ID
-            cids1 = set(m1.get("cluster_id") or [])
-            cids2 = set(m2.get("cluster_id") or [])
-            shared_cids = cids1 & cids2
-            if not shared_cids:
+            # Pick the single best-matched shared cluster (highest cohesion). Indexing and
+            # display both key off this one cluster, so an edge is only associated with the
+            # cluster that actually best explains the match — not every cluster it touches.
+            cids1 = [str(c) for c in (m1.get("cluster_id") or [])]
+            cids2 = [str(c) for c in (m2.get("cluster_id") or [])]
+            best = pick_best_shared_cluster(cids1, cids2, cluster_meta_map)
+            if best is None:
                 continue
+            best_cid = str(best.get("cluster_id"))
 
-            # Index TAG fields (only for shared clusters)
+            # Index TAG fields for the best cluster only.
             for orig, target in cluster_prop:
-                v1 = m1.get(orig)
-                v2 = m2.get(orig)
-                if v1 is not None and v2 is not None:
-                    s1 = set(v1) if isinstance(v1, list) else {v1}
-                    s2 = set(v2) if isinstance(v2, list) else {v2}
-                    shared_vals = list(s1 & s2)
-                    for v in shared_vals:
-                        if v is None or v == "":
-                            continue
-                        b_key = f"{collection}:idx:sim:{target}:{str(v).lower()}"
-                        r_key = f"{collection}:reg:sim:{target}"
-                        tag_buckets.setdefault(b_key, set()).add(sid)
-                        reg_buckets.setdefault(r_key, set()).add(b_key)
+                v = best.get(orig)
+                if v is None or v == "":
+                    continue
+                b_key = f"{collection}:idx:sim:{target}:{str(v).lower()}"
+                r_key = f"{collection}:reg:sim:{target}"
+                tag_buckets.setdefault(b_key, set()).add(sid)
+                reg_buckets.setdefault(r_key, set()).add(b_key)
 
-            # Index NUM fields (for shared clusters)
+            # Index NUM fields for the best cluster only.
             for f in cluster_prop_num:
-                v1 = m1.get(f)
-                v2 = m2.get(f)
-                if v1 is not None and v2 is not None:
+                v = best.get(f)
+                if v is not None:
                     try:
                         z_key = f"{collection}:idx:sim:{f}"
-                        num_zsets.setdefault(z_key, {})[sid] = max(float(v1), float(v2))
+                        num_zsets.setdefault(z_key, {})[sid] = float(v)
                     except (ValueError, TypeError):
                         pass
 
+            best_cluster_map[sid] = best_cid
             indexed += 1
             processed += 1
 

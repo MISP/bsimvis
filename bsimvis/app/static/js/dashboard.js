@@ -2181,8 +2181,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             collection: col
         };
 
-        const clusters1 = (p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
-        const clusters2 = (p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+        // Single best-shared cluster for the pair (empty when the two share none).
+        const sharedClusters = (p.shared_clusters || []).map(cid => clustersMap[cid]).filter(Boolean);
 
         return `
         <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
@@ -2222,10 +2222,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
                 </div>
             </td>
             <td>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters1).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters1)}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters2).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters2)}</div>
-                </div>
+                <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                 <div style="display:flex; flex-direction:column; gap:8px;">

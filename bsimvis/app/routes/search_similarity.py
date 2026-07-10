@@ -1134,6 +1134,24 @@ def similarity_search():
                     if (cm.get("cohesion_score") or 0) >= min_cohesion:
                         cluster_meta_map[cid] = cm
 
+            # Phase 4b: best-shared cluster per pair, read from the prebuilt index
+            # ({col}:sim:best_cluster:{algo}, written during cluster propagation). No
+            # runtime per-function resolution — one best-matched cluster per edge.
+            best_cluster_by_sid = {}
+            bc_algo = (
+                algo
+                if algo in ["unweighted_cosine", "weighted_cosine"]
+                else "unweighted_cosine"
+            )
+            page_sids = list(sim_data_map.keys())
+            if page_sids:
+                raw = r.hmget(f"{col}:sim:best_cluster:{bc_algo}", page_sids)
+                for sid, cid in zip(page_sids, raw):
+                    if cid is not None:
+                        best_cluster_by_sid[sid] = (
+                            cid.decode() if isinstance(cid, bytes) else str(cid)
+                        )
+
             # Phase 5: Reconstruct Enriched Pairs
             for sid, sort_sc in page_results:
                 s_data = sim_data_map.get(sid)
@@ -1178,9 +1196,12 @@ def similarity_search():
                     else float(s_data["other_metric"] or 0)
                 )
 
-                # Cluster references — plain list of UUIDs (metadata is in top-level map)
-                clusters1 = [cid for cid in s1 if cid in cluster_meta_map]
-                clusters2 = [cid for cid in s2 if cid in cluster_meta_map]
+                # Single best-shared cluster for the pair (metadata in top-level map).
+                # None when the two functions share no cluster passing min_cohesion.
+                shared_cid = best_cluster_by_sid.get(sid)
+                if shared_cid is not None and shared_cid not in cluster_meta_map:
+                    shared_cid = None  # dropped by min_cohesion filter
+                shared_clusters = [shared_cid] if shared_cid else []
 
                 # Cleanup function meta before embedding
                 for field in [
@@ -1222,7 +1243,7 @@ def similarity_search():
                         "namespace": m1.get("namespace", ""),
                         "parameters": m1.get("parameters", []),
                         "bsim_features_count": m1.get("bsim_features_count"),
-                        "clusters": clusters1,
+                        "clusters": [],
                         "file_tags": m1.get("file_tags"),
                         "file_user_tags": m1.get("file_user_tags"),
                         "entry_date": parse_timestamp(
@@ -1241,13 +1262,14 @@ def similarity_search():
                         "namespace": m2.get("namespace", ""),
                         "parameters": m2.get("parameters", []),
                         "bsim_features_count": m2.get("bsim_features_count"),
-                        "clusters": clusters2,
+                        "clusters": [],
                         "file_tags": m2.get("file_tags"),
                         "file_user_tags": m2.get("file_user_tags"),
                         "entry_date": parse_timestamp(
                             m2.get("entry_date") or m2.get("file_date")
                         ),
                     },
+                    "shared_clusters": shared_clusters,
                     "tags": s_data["sim_doc"].get("tags", []),
                     "user_tags": s_data["sim_doc"].get("user_tags", []),
                     "algo": algo,

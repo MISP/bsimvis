@@ -369,7 +369,75 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     if table in ("matched", "unique_to_a", "unique_to_b"):
         return _page_diff(diff_data, table)
 
+    # Change 4: compact projection for the simplified Sankey — cluster fields + the few
+    # numerics its binning needs, feature counts inlined, NO names/tags/notes. Lets the
+    # graph render for thousands of funcs without shipping fat rows. [[Change 4]]
+    if request.args.get("view") == "sankey":
+        return _sankey_summary(diff_data)
+
     return diff_data
+
+
+def _sankey_summary(diff_data):
+    diff = diff_data.get("diff", {})
+    fmeta = diff_data.get("functions_metadata", {})
+
+    def feat(fid):
+        try:
+            return max(1, int(fmeta.get(fid, {}).get("bsim_features_count") or 1))
+        except (ValueError, TypeError):
+            return 1
+
+    matched = [
+        {
+            "cluster_uuid": m.get("cluster_uuid", ""),
+            "cluster_name": m.get("cluster_name", ""),
+            "cohesion": m.get("cohesion", 0.0),
+            "similarity": m.get("similarity", 0.0),
+            "avg_features": m.get("avg_features", 0.0),
+            "sim_rarity": m.get("sim_rarity", 0.0),
+            "is_clustered": m.get("is_clustered", False),
+            "feat_a": feat(m.get("func_a")),
+            "feat_b": feat(m.get("func_b")),
+        }
+        for m in diff.get("matched", [])
+    ]
+
+    def uniq(rows):
+        return [
+            {
+                "cluster_uuid": u.get("cluster_uuid", ""),
+                "cluster_name": u.get("cluster_name", ""),
+                "cohesion": u.get("cohesion", 0.0),
+                "avg_features": u.get("avg_features", 0.0),
+                "sim_rarity": u.get("sim_rarity", 0.0),
+                "is_clustered": u.get("is_clustered", False),
+                "feat": feat(u.get("func_id")),
+            }
+            for u in rows
+        ]
+
+    out = {
+        k: diff_data.get(k)
+        for k in (
+            "score",
+            "score_sim_weighted",
+            "score_collection_weighted",
+            "file_metadata_a",
+            "file_metadata_b",
+        )
+    }
+    out["counts"] = {
+        "matched": len(matched),
+        "unique_to_a": len(diff.get("unique_to_a", [])),
+        "unique_to_b": len(diff.get("unique_to_b", [])),
+    }
+    out["sankey"] = {
+        "matched": matched,
+        "unique_to_a": uniq(diff.get("unique_to_a", [])),
+        "unique_to_b": uniq(diff.get("unique_to_b", [])),
+    }
+    return out
 
 
 def _fnum(name):

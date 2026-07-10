@@ -355,7 +355,119 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
 
     _enrich_diff_clusters(r, diff, coll_a, pool_id, algo)
 
+    # Change 4: when a table is requested, filter/sort/paginate server-side and return
+    # only the page (+ its function metadata). Absent `table` → full doc (back-compat).
+    table = request.args.get("table")
+    if table in ("matched", "unique_to_a", "unique_to_b"):
+        return _page_diff(diff_data, table)
+
     return diff_data
+
+
+def _fnum(name):
+    v = request.args.get(name)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _page_diff(diff_data, table):
+    """Filter + sort + slice one diff table, returning only the requested page.
+    Ports the former client-side applyFilters/sortItems (binary_similarity.js). [[Change 4]]
+    """
+    rows = diff_data.get("diff", {}).get(table, [])
+    fmeta = diff_data.get("functions_metadata", {})
+
+    q = (request.args.get("q") or "").strip().lower()
+    note_a = (request.args.get("note_a") or "").strip().lower()
+    note_b = (request.args.get("note_b") or "").strip().lower()
+    note = (request.args.get("note") or "").strip().lower()
+    sim_min, sim_max = _fnum("sim_min"), _fnum("sim_max")
+    feat_min, feat_max = _fnum("feat_min"), _fnum("feat_max")
+    rar_min, rar_max = _fnum("rar_min"), _fnum("rar_max")
+
+    def haystack(fid):
+        m = fmeta.get(fid, {})
+        addr = m.get("entrypoint_address") or (fid.split(":")[-1] if fid else "")
+        parts = [m.get("name"), m.get("namespace"), addr]
+        parts += m.get("tags", []) + m.get("user_tags", [])
+        return " ".join(str(p) for p in parts if p).lower()
+
+    def owners_match(fid, needle):
+        owners = fmeta.get(fid, {}).get("note_owners", []) if fid else []
+        return any(needle in str(o).lower() for o in owners)
+
+    def keep(item):
+        fids = [x for x in (item.get("func_a"), item.get("func_b")) if x] or (
+            [item["func_id"]] if item.get("func_id") else []
+        )
+        if q and not any(q in haystack(f) for f in fids):
+            return False
+        if note_a and not owners_match(item.get("func_a"), note_a):
+            return False
+        if note_b and not owners_match(item.get("func_b"), note_b):
+            return False
+        if note and not owners_match(item.get("func_id"), note):
+            return False
+        sim = item.get("similarity") or 0
+        if sim_min is not None and sim < sim_min:
+            return False
+        if sim_max is not None and sim > sim_max:
+            return False
+        feat = item.get("avg_features") or 0
+        if feat_min is not None and feat < feat_min:
+            return False
+        if feat_max is not None and feat > feat_max:
+            return False
+        rar = item.get("sim_rarity")
+        if rar is not None:
+            if rar_min is not None and rar < rar_min:
+                return False
+            if rar_max is not None and rar > rar_max:
+                return False
+        return True
+
+    filtered = [it for it in rows if keep(it)]
+
+    sort_col = request.args.get("sort_col")
+    if sort_col:
+        rev = request.args.get("sort_dir", "desc") != "asc"
+
+        def key(it):
+            # Group by type so str never compares to num; missing -> -inf (numeric group).
+            v = it.get(sort_col)
+            if isinstance(v, str):
+                return (1, v)
+            return (0, v if v is not None else float("-inf"))
+
+        filtered.sort(key=key, reverse=rev)
+
+    total = len(filtered)
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = int(request.args.get("limit", 100))
+    except (TypeError, ValueError):
+        limit = 100
+    page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
+
+    page_fids = set()
+    for it in page:
+        page_fids.update(x for x in (it.get("func_a"), it.get("func_b"), it.get("func_id")) if x)
+
+    return {
+        "items": page,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "table": table,
+        "functions_metadata": {f: fmeta[f] for f in page_fids if f in fmeta},
+        "file_metadata_a": diff_data.get("file_metadata_a"),
+        "file_metadata_b": diff_data.get("file_metadata_b"),
+    }
 
 
 def list_bin_sims():

@@ -484,6 +484,7 @@ function showDashboardActions() {
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
     const { viewKey, collection, pool, params } = getRoutingState();
 
@@ -2979,16 +2980,29 @@ window.addEventListener('load', () => {
                     const progressText = matchingJob.status === 'running' ? ` (${matchingJob.progress}%)` : '';
                     statusBadge.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${formatJobType(matchingJob.type)}${progressText}`;
                     statusBadge.title = `Job ID: ${matchingJob.id} is ${matchingJob.status}`;
+                    statusBadge.style.cursor = 'pointer';
+                    statusBadge.onclick = () => {
+                        if (window.showJobDetails) window.showJobDetails(matchingJob.id);
+                    };
                 } else {
                     statusBadge.style.display = 'none';
                 }
+            }
+
+            // Adjust polling rate dynamically
+            const nextPollRate = isActive ? 3000 : 10000;
+            if (nextPollRate !== window.currentJobPollRate) {
+                window.currentJobPollRate = nextPollRate;
+                if (window.jobPollInterval) clearInterval(window.jobPollInterval);
+                window.jobPollInterval = setInterval(window.updateJobStatusIcon, window.currentJobPollRate);
             }
         } catch (e) {
             // Silently fail for navbar polling
         }
     };
+    window.currentJobPollRate = 10000;
     window.updateJobStatusIcon();
-    setInterval(window.updateJobStatusIcon, 10000); // Check every 10s
+    window.jobPollInterval = setInterval(window.updateJobStatusIcon, window.currentJobPollRate);
 });
 
 function updateNavVisibility(collection) {

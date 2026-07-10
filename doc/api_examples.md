@@ -81,3 +81,9 @@ Get cluster tree (D3 format).
 ```bash
 curl -s "http://localhost:5000/api/cluster/dendrogram?collection=test_api"
 ```
+Rebuild clusters and binary similarities (keeps function similarities).
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection": "test_api", "algo": "unweighted_cosine"}' \
+  http://localhost:5000/api/cluster/rebuild_all
+```

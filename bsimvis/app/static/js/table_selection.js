@@ -90,7 +90,7 @@ class TableSelection {
 
         // Clear selection if clicking outside the table container
         const container = this.table.closest('.table-container') || this.table.parentElement;
-        if (!container.contains(e.target)) {
+        if (!container.contains(e.target) && !e.target.closest('.context-menu') && !e.target.closest('#graph-context-menu') && !this.isInteractive(e.target)) {
             this.clearSelection();
         }
 
@@ -219,6 +219,10 @@ class TableSelection {
                 this.copySelection();
                 return;
             }
+        }
+
+        if ((e.ctrlKey || e.metaKey || e.altKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            return;
         }
 
         if (!this.focusCell) return;

@@ -294,6 +294,18 @@
             copySubmenuHtml += renderCopyItem('Cluster ID', norm.id, 'fa-id-badge');
         }
 
+        let hasTableSelection = false;
+        if (window.tableSelections) {
+            hasTableSelection = window.tableSelections.some(ts => ts.selectedCells && ts.selectedCells.size > 0);
+        }
+        if (hasTableSelection) {
+            copySubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); if (window.tableSelections) { const ts = window.tableSelections.find(t => t.selectedCells && t.selectedCells.size > 0); if (ts) ts.copySelection(); }">
+                <i class="fa-solid fa-copy" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Copy Selection</span>
+            </div>`;
+        }
+
         if (copySubmenuHtml) {
             html += `
             <div class="context-menu-item submenu-trigger" style="position: relative;">

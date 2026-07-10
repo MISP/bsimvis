@@ -2067,6 +2067,19 @@ function renderPagination(path) {
 
 function copyToClipboard(text, btn) {
     let success = false;
+    let tableSel = null;
+    if (window.tableSelections) {
+        tableSel = window.tableSelections.find(ts => ts.selectedCells && ts.selectedCells.size > 0);
+    }
+    if (tableSel) {
+        tableSel.copySelection();
+        if (btn) {
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+            setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+        }
+        return;
+    }
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         navigator.clipboard.writeText(text).then(() => {
             if (btn) {

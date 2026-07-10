@@ -26,9 +26,10 @@ def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
     ua = diff.get("unique_to_a", [])
     ub = diff.get("unique_to_b", [])
 
-    sample = next((row for row in (matched or ua or ub)), None)
-    if sample is None or "cluster_id" in sample:
-        return  # empty, or fat legacy doc — nothing to derive
+    if not (matched or ua or ub):
+        return
+    # Always derive (even for legacy fat docs) so the cluster tag/rarity/tooltip stats
+    # reflect the CURRENT clustering — change the algo and these update on next read.
 
     is_pool = bool(pool_id)
     cluster_coll = f"global:pool:{pool_id}" if is_pool else collection
@@ -79,6 +80,10 @@ def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
         row["cluster_name"] = best.get("cluster_name", "") if best else ""
         row["cohesion"] = float(best.get("cohesion_score", 0.0)) if best else 0.0
         row["is_clustered"] = best is not None
+        # Cluster stats for the tooltip (distinct from the row's own avg_features).
+        row["cluster_member_count"] = int(best.get("member_count", 0)) if best else 0
+        row["cluster_stability"] = float(best.get("cluster_stability", 0.0)) if best else 0.0
+        row["cluster_avg_features"] = float(best.get("avg_features", 0.0)) if best else 0.0
         row["sim_rarity"] = rarity(best)
         row["collection_rarity"] = row["sim_rarity"]
 

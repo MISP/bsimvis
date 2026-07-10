@@ -1275,13 +1275,15 @@ function renderBinSimTables(isFilterChange = false) {
                     similarityHtml = `<span class="mono" style="color:var(--accent); font-weight:bold;">${(m.similarity * 100).toFixed(1)}%</span>`;
                 }
 
-                const clusterData = [{
+                const clusterData = (m.cluster_id || m.cluster_uuid) ? [{
                     cluster_id: m.cluster_id,
                     cluster_uuid: m.cluster_uuid,
                     cluster_name: m.cluster_name,
                     cohesion_score: m.cohesion || 0.0,
-                    member_count: 1
-                }];
+                    member_count: m.cluster_member_count || 0,
+                    cluster_stability: m.cluster_stability || 0.0,
+                    avg_features: m.cluster_avg_features || 0.0
+                }] : [];
 
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
@@ -1398,7 +1400,9 @@ function renderBinSimTables(isFilterChange = false) {
                 cluster_uuid: u.cluster_uuid,
                 cluster_name: u.cluster_name,
                 cohesion_score: u.cohesion || 1.0,
-                member_count: 1
+                member_count: u.cluster_member_count || 0,
+                cluster_stability: u.cluster_stability || 0.0,
+                avg_features: u.cluster_avg_features || 0.0
             }] : [];
             return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"

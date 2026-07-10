@@ -84,6 +84,9 @@ def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
         row["cluster_member_count"] = int(best.get("member_count", 0)) if best else 0
         row["cluster_stability"] = float(best.get("cluster_stability", 0.0)) if best else 0.0
         row["cluster_avg_features"] = float(best.get("avg_features", 0.0)) if best else 0.0
+        # Sample member functions for the tooltip (already in cluster meta). Cross-collection
+        # / pool bin-sim can't fetch them by collection at hover, so ship them with the row.
+        row["cluster_sample_functions"] = best.get("sample_functions", []) if best else []
         row["sim_rarity"] = rarity(best)
         row["collection_rarity"] = row["sim_rarity"]
 

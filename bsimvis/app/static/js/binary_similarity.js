@@ -1082,6 +1082,20 @@ const sortItems = (items, state) => {
     });
 };
 
+// Pre-seed the shared cluster tooltip cache with sample members shipped on the row, so the
+// tooltip renders them directly instead of fetching by collection (which fails for
+// cross-collection / pool bin-sim). No-op when the cluster has no samples. [[dynamic]]
+function seedBinSimClusterSamples(cd) {
+    if (!cd || !cd.cluster_uuid || !cd.sample_functions || !cd.sample_functions.length) return;
+    if (!window.clusterTooltipMockCache) return;
+    window.clusterTooltipMockCache.set(cd.cluster_uuid, { data: {
+        uuid: cd.cluster_uuid, name: cd.cluster_name,
+        size: Number(cd.member_count || 0), stability: Number(cd.cluster_stability || 0),
+        cohesion: Number(cd.cohesion_score || 0), avg_features: Number(cd.avg_features || 0),
+        runtime_members: cd.sample_functions, scrollOffset: 0
+    }});
+}
+
 function renderBinSimTables(isFilterChange = false) {
     if (!binSimDataCache || !binSimDataCache.diff) return;
     const data = binSimDataCache;
@@ -1282,8 +1296,10 @@ function renderBinSimTables(isFilterChange = false) {
                     cohesion_score: m.cohesion || 0.0,
                     member_count: m.cluster_member_count || 0,
                     cluster_stability: m.cluster_stability || 0.0,
-                    avg_features: m.cluster_avg_features || 0.0
+                    avg_features: m.cluster_avg_features || 0.0,
+                    sample_functions: m.cluster_sample_functions || []
                 }] : [];
+                seedBinSimClusterSamples(clusterData[0]);
 
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
@@ -1402,8 +1418,10 @@ function renderBinSimTables(isFilterChange = false) {
                 cohesion_score: u.cohesion || 1.0,
                 member_count: u.cluster_member_count || 0,
                 cluster_stability: u.cluster_stability || 0.0,
-                avg_features: u.cluster_avg_features || 0.0
+                avg_features: u.cluster_avg_features || 0.0,
+                sample_functions: u.cluster_sample_functions || []
             }] : [];
+            seedBinSimClusterSamples(clusterData[0]);
             return `
             <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
                 data-entity-data='${JSON.stringify({

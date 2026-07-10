@@ -2416,6 +2416,7 @@ class ClusterPacking {
 }
 
 const clusterTooltipMockCache = new Map();
+window.clusterTooltipMockCache = clusterTooltipMockCache;
 
 function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null, clusterType = 'function') {
     const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);

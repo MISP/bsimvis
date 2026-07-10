@@ -502,3 +502,44 @@ function showNullContextWarning(collection, pool, viewKey) {
     setTimeout(() => banner.remove(), 10000); // dismiss after 10s
 }
 window.showNullContextWarning = showNullContextWarning;
+
+function showToast(message, type = 'info') {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        container.style.position = 'fixed';
+        container.style.bottom = '20px';
+        container.style.right = '20px';
+        container.style.zIndex = '9999';
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.gap = '10px';
+        document.body.appendChild(container);
+    }
+    
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    
+    let iconClass = 'fa-info-circle';
+    if (type === 'success') iconClass = 'fa-check-circle';
+    else if (type === 'error') iconClass = 'fa-times-circle';
+    else if (type === 'warning') iconClass = 'fa-exclamation-triangle';
+    
+    toast.innerHTML = `
+        <div class="toast-message">
+            <i class="fa-solid ${iconClass}"></i>
+            <span>${escapeHtml(message)}</span>
+        </div>
+    `;
+    
+    container.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(20px)';
+        toast.style.transition = 'all 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+window.showToast = showToast;

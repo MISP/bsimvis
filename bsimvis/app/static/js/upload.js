@@ -225,10 +225,10 @@ async function startBatchUpload() {
     let collection = document.getElementById('upload-collection').value || '';
     if (collection === '__NEW__') {
         collection = document.getElementById('upload-new-collection').value.trim();
-        if (!collection) {
-            if (typeof showToast === 'function') showToast('Please enter a new collection name', 'warning');
-            return;
-        }
+    }
+    if (!collection) {
+        if (typeof showToast === 'function') showToast('Please select or enter a collection name', 'warning');
+        return;
     }
     const batchName = document.getElementById('upload-batch-name').value || 'Manual Upload';
     const profile = document.getElementById('upload-profile').value;
@@ -413,7 +413,7 @@ async function populateUploadCollectionDropdown(currentCollection) {
         const newOpt = document.createElement('option');
         newOpt.value = '__NEW__';
         newOpt.textContent = '+ Create New Collection...';
-        select.appendChild(newOpt);
+        select.insertBefore(newOpt, select.firstChild);
     } catch (e) {
         console.error("Failed to populate upload collection dropdown", e);
     }

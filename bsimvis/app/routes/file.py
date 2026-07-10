@@ -417,6 +417,7 @@ def upload_raw_binary():
             "batch_uuid": batch_uuid,
             "batch_name": batch_name,
             "tags": request.args.getlist("tags"),
+            "related_md5": request.args.getlist("related_md5"),
             "profile": request.args.get("profile", "fast"),
             "min_func_len": int(request.args.get("min_func_len", 10)),
         }

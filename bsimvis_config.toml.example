@@ -54,5 +54,5 @@
     prompt =  "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]"
 
 [ghidra]
-    max_ram_percent = 40.0
+    max_ram_percent = 15.0
     jvm_args = []

@@ -59,6 +59,10 @@ function renderUploadView(params) {
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
                             <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
+                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                        </div>
 
                         <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
                             <button id="start-upload-btn" onclick="startBatchUpload()" class="btn-primary" style="width: 100%; height: 40px; justify-content: center; display: flex; align-items: center; gap: 10px;">
@@ -234,6 +238,7 @@ async function startBatchUpload() {
     const profile = document.getElementById('upload-profile').value;
     const minFuncLen = document.getElementById('upload-min-func-len').value;
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
+    const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     
     let currentBatchUuid = null;
 
@@ -279,6 +284,7 @@ async function startBatchUpload() {
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
             tags.forEach(t => url.searchParams.append('tags', t));
+            relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
 
             const response = await fetch(url, {
                 method: 'POST',

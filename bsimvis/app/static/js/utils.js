@@ -54,16 +54,16 @@ function formatDuration(createdAt, updatedAt, status) {
     if (diffMs < 0) return '0s';
     const totalSecs = Math.floor(diffMs / 1000);
     if (totalSecs < 1) return '< 1s';
-    
+
     const hours = Math.floor(totalSecs / 3600);
     const minutes = Math.floor((totalSecs % 3600) / 60);
     const seconds = totalSecs % 60;
-    
+
     let parts = [];
     if (hours > 0) parts.push(`${hours}h`);
     if (minutes > 0) parts.push(`${minutes}m`);
     if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
-    
+
     return parts.join(' ');
 }
 window.formatDuration = formatDuration;
@@ -266,12 +266,12 @@ function parseRestfulPath() {
 }
 window.parseRestfulPath = parseRestfulPath;
 
-window.getCollectionFromId = function(id) {
+window.getCollectionFromId = function (id) {
     if (!id || typeof id !== 'string') return '';
     if (id.includes(':func:')) return stripPoolPrefix(id.split(':func:')[0]) || '';
     if (id.includes(':function:')) return stripPoolPrefix(id.split(':function:')[0]) || '';
     if (id.includes(':file:')) return stripPoolPrefix(id.split(':file:')[0]) || '';
-    
+
     const parts = id.split(':');
     if (parts.length >= 4 && (parts[parts.length - 1].startsWith('00') || parts[parts.length - 1].length < 10)) {
         return stripPoolPrefix(parts.slice(0, parts.length - 2).join(':')) || '';
@@ -282,7 +282,7 @@ window.getCollectionFromId = function(id) {
     return '';
 };
 
-window.parseFuncId = function(id) {
+window.parseFuncId = function (id) {
     if (!id || typeof id !== 'string') return { collection: '', md5: '', address: '' };
     const delimiter = id.includes(':func:') ? ':func:' : (id.includes(':function:') ? ':function:' : null);
     if (delimiter) {
@@ -306,7 +306,7 @@ window.parseFuncId = function(id) {
     return { collection: '', md5: parts[2] || '', address: parts[3] || parts[parts.length - 1] || '' };
 };
 
-window.parseFileId = function(id) {
+window.parseFileId = function (id) {
     if (!id || typeof id !== 'string') return { collection: '', md5: '' };
     if (id.includes(':file:')) {
         const parts = id.split(':file:');
@@ -324,7 +324,7 @@ window.parseFileId = function(id) {
     return { collection: '', md5: id };
 };
 
-window.getApiParams = function(collection) {
+window.getApiParams = function (collection) {
     if (!collection) {
         throw new Error("getApiParams: collection is required and cannot be null/empty.");
     }
@@ -344,7 +344,7 @@ function getRoutingState() {
     const restful = parseRestfulPath();
     const params = new URLSearchParams(window.location.search);
     const viewKey = restful.view || params.get('view') || (window.location.hash ? window.location.hash.substring(1).split('?')[0] : 'dashboard');
-    
+
     let collection = restful.collection || params.get('collection') || null;
     if (collection === 'null' || collection === 'undefined') {
         collection = null;
@@ -386,7 +386,7 @@ function getCollectionFromHash() {
     const params = new URLSearchParams(queryString);
     if (params.has('collection')) return params.get('collection');
     if (params.has('pool')) return 'pool:' + params.get('pool');
-    
+
     if (window.opener) {
         try {
             if (window.opener.getCollectionFromHash) {
@@ -397,7 +397,7 @@ function getCollectionFromHash() {
             // CORS might block access if same-origin is not met
         }
     }
-    
+
     throw new Error("Navigation error: collection context could not be resolved.");
 }
 window.getCollectionFromHash = getCollectionFromHash;
@@ -413,11 +413,11 @@ function formatSigComponent(namespace, returnType, name, parameters = []) {
         if (typeof p === 'object') return p.type || p.name || '...';
         return p;
     });
-    
+
     const nsPrefix = ns ? `${ns}::` : '';
     const paramsStr = params.join(', ');
     const fullSig = `${ret} ${nsPrefix}${name}(${paramsStr})`;
-    
+
     return { ns, ret, params, fullSig };
 }
 window.formatSigComponent = formatSigComponent;
@@ -433,7 +433,7 @@ function parseEntityId(id) {
     }
     const funcIdx = id.indexOf(':func:');
     const fileIdx = id.indexOf(':file:');
-    
+
     if (funcIdx !== -1) {
         const collection = id.substring(0, funcIdx);
         const rest = id.substring(funcIdx + 6);
@@ -517,24 +517,24 @@ function showToast(message, type = 'info') {
         container.style.gap = '10px';
         document.body.appendChild(container);
     }
-    
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    
+
     let iconClass = 'fa-info-circle';
     if (type === 'success') iconClass = 'fa-check-circle';
     else if (type === 'error') iconClass = 'fa-times-circle';
     else if (type === 'warning') iconClass = 'fa-exclamation-triangle';
-    
+
     toast.innerHTML = `
         <div class="toast-message">
             <i class="fa-solid ${iconClass}"></i>
             <span>${escapeHtml(message)}</span>
         </div>
     `;
-    
+
     container.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.style.opacity = '0';
         toast.style.transform = 'translateY(20px)';

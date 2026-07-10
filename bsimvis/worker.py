@@ -47,7 +47,7 @@ class Worker:
         lua_manager.init_app()
 
         # Ensure Ghidra is ready
-        max_ram = config_service.get("ghidra.max_ram_percent", 40.0)
+        max_ram = config_service.get("ghidra.max_ram_percent", 15.0)
         jvm_args = config_service.get("ghidra.jvm_args", [])
         ghidra_service.ensure_launcher(max_ram_percent=max_ram, jvm_args=jvm_args)
 

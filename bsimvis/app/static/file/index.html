@@ -525,6 +525,7 @@
                     'File Name': 'fa-solid fa-file',
                     'Other Names': 'fa-solid fa-tags',
                     'MD5': 'fa-solid fa-fingerprint',
+                    'Related MD5s': 'fa-solid fa-link',
                     'Batch UUID': 'fa-solid fa-box',
                     'Language': 'fa-solid fa-microchip',
                     'AV Type': 'fa-solid fa-shield',
@@ -541,6 +542,7 @@
                         ['File Name', file.file_name],
                         ['Other Names', file.file_names],
                         ['MD5', file.file_md5],
+                        ['Related MD5s', file.related_md5],
                         ['Batch UUID', file.batch_uuid],
                         ['First Seen', file.first_seen ? fmtDate(file.first_seen) : ''],
                     ]],
@@ -556,6 +558,11 @@
                         ['BSim Features', file.bsim_features_count],
                     ]]
                 ];
+
+                if (file.file_format && Object.keys(file.file_format).length > 0) {
+                    const formatFields = Object.entries(file.file_format).map(([k, v]) => [k, v]);
+                    categories.push(['File Format', formatFields]);
+                }
 
                 let rows = '';
                 let metaCount = 0;

@@ -1837,7 +1837,9 @@ function buildMetaCompareTable(da, db, colA, colB) {
         'CC IP': 'fa-solid fa-network-wired',
         'Functions': 'fa-solid fa-list-ol',
         'BSim Features': 'fa-solid fa-dna',
-        'First Seen': 'fa-solid fa-clock'
+        'BSim Features': 'fa-solid fa-dna',
+        'First Seen': 'fa-solid fa-clock',
+        'Related MD5s': 'fa-solid fa-link'
     };
 
     const categories = [
@@ -1845,6 +1847,7 @@ function buildMetaCompareTable(da, db, colA, colB) {
             ['File Name', fa.file_name, fb.file_name],
             ['Other Names', fa.file_names, fb.file_names],
             ['MD5', fa.file_md5, fb.file_md5],
+            ['Related MD5s', fa.related_md5, fb.related_md5],
             ['Batch UUID', fa.batch_uuid, fb.batch_uuid],
             ['First Seen', fa.first_seen ? fmtDate(fa.first_seen) : '', fb.first_seen ? fmtDate(fb.first_seen) : ''],
         ]],
@@ -1860,6 +1863,12 @@ function buildMetaCompareTable(da, db, colA, colB) {
             ['BSim Features', fa.bsim_features_count, fb.bsim_features_count],
         ]]
     ];
+
+    if ((fa.file_format && Object.keys(fa.file_format).length > 0) || (fb.file_format && Object.keys(fb.file_format).length > 0)) {
+        const allKeys = new Set([...Object.keys(fa.file_format || {}), ...Object.keys(fb.file_format || {})]);
+        const formatFields = Array.from(allKeys).map(k => [k, (fa.file_format || {})[k], (fb.file_format || {})[k]]);
+        categories.push(['File Format', formatFields]);
+    }
 
     const norm = (v) => Array.isArray(v) ? v.slice().sort().join('|') : (v === undefined || v === null ? '' : String(v));
 

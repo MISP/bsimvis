@@ -192,3 +192,54 @@ Change-2 cluster helper, and `_pool_page` filter/sort shape as template.
    cluster card = the best-shared cluster; pairs whose functions share no cluster show
    **empty** (not two per-function lists). Confirm a known shared pair shows the
    highest-cohesion common cluster.
+
+---
+
+# Progress & finalized design (updated)
+
+## Shipped (committed on worktree-binsim-best-shared-cluster)
+- `3668b1c` sim-search best-shared cluster fix (root: `_update_similarity_indexing`
+  early-returned when no legacy `cluster_*` propagation fields configured, and was not
+  pool-aware — sim_score_key/clean-id strip/candidate prefix/fid construction all assumed
+  non-pool layout).
+- `f036f9c` **Change 1** — slim diff doc; derive cluster+rarity live at read
+  (`_enrich_diff_clusters` in bin_sim.py). Matched keys off highest-cohesion SHARED
+  cluster (empty when none), same rule as sim view.
+- `1edc584` **Change 4 backend** — `get_bin_sim?table=…` server filter/sort/paginate
+  (`_page_diff`): q, note_a/note_b/note, sim/feat/rar min-max, sort_col/sort_dir,
+  offset/limit → returns page + page-only functions_metadata. Absent `table` = full doc.
+- `dfdd10f` dynamic cluster enrichment: always re-derive (incl. legacy fat docs) so algo
+  changes reflect; attach member_count/cluster_stability/cluster avg_features for tooltip.
+- `141fb6d` bin-sim cluster tooltip sample functions (ship `sample_functions` from meta,
+  pre-seed `window.clusterTooltipMockCache`, bypass the collection-scoped fetch that fails
+  for pool/cross-collection).
+- `5eb1e53` **Change 4 backend** — `get_bin_sim?view=sankey` (`_sankey_summary`): compact
+  numeric projection (cluster fields + similarity/avg_features/sim_rarity/cohesion, per-func
+  feature counts inlined as feat_a/feat_b/feat), NO names/tags/notes. For thousands-of-funcs
+  binaries without shipping fat rows.
+
+## Design decision (scale: files with thousands of functions → do NOT full-fetch)
+- **Simplified Sankey**: server-aggregated inputs via `view=sankey` (compact). Binning stays
+  client-side (parameterized by live UI: sankeyScale/sankeySplit/sort col), fed compact rows.
+- **Detailed (per-function) Sankey**: lazy full-fetch on demand when the user switches to
+  detailed mode. (Future: page as the graph scrolls.)
+- **Tables**: server-paged via `?table=…` + infinite scroll; all filtering/sorting server-side.
+
+## Remaining — Stage B frontend (binary_similarity.js) — NEEDS LIVE CLICK-TESTING
+1. `fetchAndRenderBinaryDiff` initial load → fetch `?view=sankey` (compact). Populate
+   scores (data.score), counts (data.counts), file meta, and stash `data.sankey` for the
+   graph. Do NOT expect `data.diff` here anymore.
+2. Sankey (`renderBinaryDiffSankey`): read from `data.sankey.{matched,unique_to_a,unique_to_b}`.
+   In simplified mode replace `getFuncValue(m.func_a/b)` with inlined `m.feat_a/m.feat_b`
+   (unique: `u.feat`). Detailed mode: if `binSimFullDiff` not loaded, fetch full
+   `/api/diff` (no table/view) once, cache, build per-func nodes from it.
+3. Tables: new `loadBinSimTablePage(table, {reset|append})` → fetch `?table=…&sort_col&sort_dir
+   &q&note_*&sim/feat/rar_min/max&offset&limit`. Render page rows (reuse buildFuncObj/
+   renderFuncBadge/cluster card). Track offset/total per table; IntersectionObserver sentinel
+   at tbody bottom → append next page. Merge page.functions_metadata into a running map.
+4. `setBinSimSort(table,col)` → update sort state, reset offset, `loadBinSimTablePage(table,{reset})`.
+   `binSimFilterChange` → debounce (~250ms), reset offset, reload active table.
+5. Delete client `applyFilters`/`sortItems` (or keep ONLY for the detailed-Sankey full diff).
+6. Verify: simplified+detailed Sankey, all three tables, each filter (text/note/sim/feat/rar),
+   each sort col asc/desc, infinite scroll (no dupes at page boundary, correct total), tab
+   counts, on a binary with thousands of functions.

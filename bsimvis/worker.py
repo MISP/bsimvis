@@ -212,6 +212,19 @@ class Worker:
             job_id=job_id,
         )
         file_meta = next(generator)
+
+        # Merge CLI-provided metadata (upload --metadata) into the file metadata so
+        # it gets stored just like the `metadata propagate` path. The raw-upload
+        # route forwards it as file_metadata_extra; without this the streaming
+        # analysis path silently drops it.
+        extra_meta = payload.get("file_metadata_extra")
+        if extra_meta:
+            if isinstance(extra_meta, str):
+                extra_meta = json.loads(extra_meta)
+            file_meta.update(extra_meta)
+            if "file_name" in extra_meta:
+                file_meta["file_name"] = extra_meta["file_name"]
+
         file_md5 = file_meta.get("file_md5")
 
         # Look-ahead: send each chunk immediately without buffering all of them.

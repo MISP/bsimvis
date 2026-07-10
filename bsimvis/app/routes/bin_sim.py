@@ -456,6 +456,7 @@ def _page_diff(diff_data, table):
     fmeta = diff_data.get("functions_metadata", {})
 
     q = (request.args.get("q") or "").strip().lower()
+    cl_q = (request.args.get("cl_q") or "").strip().lower()
     note_a = (request.args.get("note_a") or "").strip().lower()
     note_b = (request.args.get("note_b") or "").strip().lower()
     note = (request.args.get("note") or "").strip().lower()
@@ -479,6 +480,8 @@ def _page_diff(diff_data, table):
             [item["func_id"]] if item.get("func_id") else []
         )
         if q and not any(q in haystack(f) for f in fids):
+            return False
+        if cl_q and cl_q not in (item.get("cluster_name") or "unclustered").lower():
             return False
         if note_a and not owners_match(item.get("func_a"), note_a):
             return False
@@ -510,9 +513,16 @@ def _page_diff(diff_data, table):
     if sort_col:
         rev = request.args.get("sort_dir", "desc") != "asc"
 
+        def sort_val(it):
+            if sort_col == "func_name":
+                # Unique rows have no name on the row; resolve from metadata.
+                fid = it.get("func_id") or it.get("func_a")
+                return (fmeta.get(fid, {}).get("name") or "").lower()
+            return it.get(sort_col)
+
         def key(it):
             # Group by type so str never compares to num; missing -> -inf (numeric group).
-            v = it.get(sort_col)
+            v = sort_val(it)
             if isinstance(v, str):
                 return (1, v)
             return (0, v if v is not None else float("-inf"))

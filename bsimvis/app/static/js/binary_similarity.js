@@ -12,6 +12,18 @@ let binSimSortState = {
     uniqueA: { col: 'cohesion', dir: -1 },
     uniqueB: { col: 'cohesion', dir: -1 }
 };
+
+// Change 4 (frontend): server-paged tables. Sankey uses the compact view; tables load
+// pages on demand. binSimFullDiff is lazily fetched only for the detailed Sankey.
+const BINSIM_LIMIT = 100;
+let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
+let binSimFullDiff = null;   // full diff, fetched only when detailed Sankey is opened
+let binSimPage = {
+    // keyed by sort-state key; maps to backend table + tbody id + filter prefix
+    matched: { table: 'matched', tbody: 'bin-sim-table-matched', prefix: 'matched', items: [], offset: 0, total: 0, loading: false },
+    uniqueA: { table: 'unique_to_a', tbody: 'bin-sim-table-unique-a', prefix: 'ua', items: [], offset: 0, total: 0, loading: false },
+    uniqueB: { table: 'unique_to_b', tbody: 'bin-sim-table-unique-b', prefix: 'ub', items: [], offset: 0, total: 0, loading: false },
+};
 function openClusterView(uuid, name, event) {
     const { collection: col } = getRoutingState();
     const url = Nav.buildUIUrl(col, ['search', 'functions']) + `?cluster_uuid=${encodeURIComponent(uuid)}`;
@@ -267,7 +279,8 @@ function initResizableCards() {
     const resultsEl = document.getElementById('bin-sim-results');
     
     try {
-        let url = `/api/diff?collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
+        // Compact summary: scores, counts, file meta, and the Sankey projection — no rows.
+        let url = `/api/diff?view=sankey&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
         if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
         if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
         const res = await fetch(url);
@@ -311,20 +324,36 @@ function initResizableCards() {
             collection, md5a, md5b, collB: collB || collection, poolId, loaded: false,
         };
 
-        // Save comparison data to cache
-        binSimDataCache = data;
+        // Cache: compact summary + Sankey; tables load their rows via paging. diff{} is
+        // filled incrementally per table page; functions_metadata merged across pages.
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId };
+        binSimFullDiff = null;
+        const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
+        binSimDataCache = {
+            score: data.score,
+            score_sim_weighted: data.score_sim_weighted,
+            file_metadata_a: data.file_metadata_a,
+            file_metadata_b: data.file_metadata_b,
+            sankey: data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] },
+            counts,
+            functions_metadata: {},
+            diff: { matched: [], unique_to_a: [], unique_to_b: [] },
+        };
+        ['matched', 'uniqueA', 'uniqueB'].forEach(k => {
+            binSimPage[k].items = []; binSimPage[k].offset = 0; binSimPage[k].total = 0; binSimPage[k].loading = false;
+        });
 
-        // Update tab buttons with counts
-        const matchedCount = (data.diff && data.diff.matched) ? data.diff.matched.length : 0;
-        const unmatchedACount = (data.diff && data.diff.unique_to_a) ? data.diff.unique_to_a.length : 0;
-        const unmatchedBCount = (data.diff && data.diff.unique_to_b) ? data.diff.unique_to_b.length : 0;
         const btnMatched = document.getElementById('bin-sim-tab-btn-matched');
         const btnUnmatched = document.getElementById('bin-sim-tab-btn-unmatched');
-        if (btnMatched) btnMatched.textContent = `Matched functions (${matchedCount})`;
-        if (btnUnmatched) btnUnmatched.textContent = `Unmatched functions (${unmatchedACount} / ${unmatchedBCount})`;
+        if (btnMatched) btnMatched.textContent = `Matched functions (${counts.matched})`;
+        if (btnUnmatched) btnUnmatched.textContent = `Unmatched functions (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
-        // Render Tables
+        // Render headers, the Sankey (from compact data), then load first page of each table.
         renderBinSimTables();
+        renderBinaryDiffSankey(binSimDataCache);
+        loadBinSimTablePage('matched', { reset: true });
+        loadBinSimTablePage('uniqueA', { reset: true });
+        loadBinSimTablePage('uniqueB', { reset: true });
 
         // Restore the tab from the URL hash (e.g. after a Back navigation).
         applyBinSimTabFromHash();
@@ -345,15 +374,29 @@ function initResizableCards() {
 }
 
 
-function renderBinaryDiffSankey(data) {
+async function renderBinaryDiffSankey(data) {
     const container = document.getElementById('bin-sim-sankey');
     if (!container) return;
+
+    // Detailed mode needs per-function ids/names → lazy-fetch the full diff once.
+    if (sankeyMode !== 'simplified' && !binSimFullDiff && binSimCtx) {
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">Loading detailed graph…</div>';
+        try {
+            let u = `/api/diff?collection_a=${encodeURIComponent(binSimCtx.collection)}&md5_a=${encodeURIComponent(binSimCtx.md5a)}&md5_b=${encodeURIComponent(binSimCtx.md5b)}`;
+            if (binSimCtx.collB) u += `&collection_b=${encodeURIComponent(binSimCtx.collB)}`;
+            if (binSimCtx.poolId) u += `&pool=${encodeURIComponent(binSimCtx.poolId)}`;
+            const r = await fetch(u);
+            binSimFullDiff = await r.json();
+        } catch (e) { console.error('detailed sankey fetch failed', e); }
+    }
     container.innerHTML = '';
 
-    if (!data.diff) {
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No diff data available</div>';
-        return;
-    }
+    // Data source: compact projection for simplified, full diff for detailed.
+    const isDetailed = sankeyMode !== 'simplified';
+    const src = isDetailed
+        ? (binSimFullDiff && binSimFullDiff.diff ? binSimFullDiff.diff : { matched: [], unique_to_a: [], unique_to_b: [] })
+        : (data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] });
+    const funcsMeta = isDetailed ? (binSimFullDiff && binSimFullDiff.functions_metadata) : null;
 
     const detailedBtn = document.getElementById('bsim-sankey-btn-detailed');
     if (detailedBtn) {
@@ -369,9 +412,9 @@ function renderBinaryDiffSankey(data) {
     
     const width = container.clientWidth;
     
-    const rawMatched = data.diff.matched || [];
-    const rawUniqueA = data.diff.unique_to_a || [];
-    const rawUniqueB = data.diff.unique_to_b || [];
+    const rawMatched = src.matched || [];
+    const rawUniqueA = src.unique_to_a || [];
+    const rawUniqueB = src.unique_to_b || [];
     
     let maxNodesInColumn = 10;
     if (sankeyMode !== 'simplified') {
@@ -407,7 +450,7 @@ function renderBinaryDiffSankey(data) {
     
     const getFuncValue = (fid) => {
         if (sankeyScale === 'features') {
-            const meta = (data && data.functions_metadata) ? data.functions_metadata[fid] : null;
+            const meta = funcsMeta ? funcsMeta[fid] : null;
             return Math.max(1, (meta && meta.bsim_features_count) ? parseInt(meta.bsim_features_count) : 1);
         }
         return 1;
@@ -416,9 +459,9 @@ function renderBinaryDiffSankey(data) {
     const sumFuncsValue = (funcs) => {
         return (funcs || []).reduce((sum, fid) => sum + getFuncValue(fid), 0);
     };
-    
+
     const getFuncDisplayName = (fid) => {
-        const meta = (data && data.functions_metadata) ? data.functions_metadata[fid] : null;
+        const meta = funcsMeta ? funcsMeta[fid] : null;
         if (meta && meta.name) {
             return meta.name;
         }
@@ -426,13 +469,10 @@ function renderBinaryDiffSankey(data) {
         return '@' + parts.pop();
     };
 
-    const filteredMatched = typeof applyFilters === 'function' ? applyFilters(data.diff.matched || [], 'matched') : (data.diff.matched || []);
-    const filteredUniqueA = typeof applyFilters === 'function' ? applyFilters(data.diff.unique_to_a || [], 'ua') : (data.diff.unique_to_a || []);
-    const filteredUniqueB = typeof applyFilters === 'function' ? applyFilters(data.diff.unique_to_b || [], 'ub') : (data.diff.unique_to_b || []);
-
-    const sortedMatched = typeof sortItems === 'function' ? sortItems([...filteredMatched], binSimSortState.matched) : filteredMatched;
-    const sortedUniqueA = typeof sortItems === 'function' ? sortItems([...filteredUniqueA], binSimSortState.uniqueA) : filteredUniqueA;
-    const sortedUniqueB = typeof sortItems === 'function' ? sortItems([...filteredUniqueB], binSimSortState.uniqueB) : filteredUniqueB;
+    // Sankey shows the full aggregate (server-computed); table filters apply to tables only.
+    const sortedMatched = rawMatched;
+    const sortedUniqueA = rawUniqueA;
+    const sortedUniqueB = rawUniqueB;
 
     const matchedRank = new Map(sortedMatched.map((m, idx) => [m.cluster_uuid, idx]));
     const uniqueARank = new Map(sortedUniqueA.map((u, idx) => [u.cluster_uuid, idx]));
@@ -473,8 +513,10 @@ function renderBinaryDiffSankey(data) {
             let binIdx = Math.floor(fraction * numBins);
             if (binIdx >= numBins) binIdx = numBins - 1;
             
-            const wA = getFuncValue(m.func_a);
-            const wB = getFuncValue(m.func_b);
+            // Compact rows carry inlined feature counts (feat_a/feat_b); no func ids here.
+            const wVal = (f) => sankeyScale === 'features' ? Math.max(1, f || 1) : 1;
+            const wA = wVal(m.feat_a);
+            const wB = wVal(m.feat_b);
             const similarity = m.similarity || 0;
 
             bins[binIdx].clusters.push(m);
@@ -491,15 +533,12 @@ function renderBinaryDiffSankey(data) {
             totalMatchedB += b.totalB;
         });
 
+        const uVal = (u) => sankeyScale === 'features' ? Math.max(1, u.feat || 1) : 1;
         let totalUniqueA = 0;
-        sortedUniqueA.forEach(u => {
-            totalUniqueA += getFuncValue(u.func_id);
-        });
+        sortedUniqueA.forEach(u => { totalUniqueA += uVal(u); });
 
         let totalUniqueB = 0;
-        sortedUniqueB.forEach(u => {
-            totalUniqueB += getFuncValue(u.func_id);
-        });
+        sortedUniqueB.forEach(u => { totalUniqueB += uVal(u); });
 
         const metricSuffix = sankeyScale === 'features' ? 'feats' : 'funcs';
 
@@ -985,7 +1024,9 @@ function setBinSimSort(table, col) {
         binSimSortState[table].col = col;
         binSimSortState[table].dir = -1;
     }
+    // Re-render headers (sort arrows) then reload that table's first page from the server.
     renderBinSimTables();
+    loadBinSimTablePage(table, { reset: true });
 }
 
 function binSimFilterChange(shouldApply = false) {
@@ -1007,9 +1048,11 @@ function binSimFilterChange(shouldApply = false) {
         });
     });
 
-    if (shouldApply) {
-        renderBinSimTables(true);
-    }
+    // Debounced server reload of all three tables (filtering is server-side now).
+    if (window._binSimFilterTimer) clearTimeout(window._binSimFilterTimer);
+    window._binSimFilterTimer = setTimeout(() => {
+        ['matched', 'uniqueA', 'uniqueB'].forEach(k => loadBinSimTablePage(k, { reset: true }));
+    }, shouldApply ? 0 : 300);
 }
 
 const funcSearchHaystack = (fid) => {
@@ -1097,21 +1140,8 @@ function seedBinSimClusterSamples(cd) {
 }
 
 function renderBinSimTables(isFilterChange = false) {
-    if (!binSimDataCache || !binSimDataCache.diff) return;
+    if (!binSimDataCache) return;
     const data = binSimDataCache;
-
-    if (data.diff.unique_to_a) {
-        data.diff.unique_to_a.forEach(u => {
-            const meta = data.functions_metadata ? data.functions_metadata[u.func_id] : null;
-            u.func_name = meta && meta.name ? meta.name : ('sub_' + u.func_id.split(':').pop());
-        });
-    }
-    if (data.diff.unique_to_b) {
-        data.diff.unique_to_b.forEach(u => {
-            const meta = data.functions_metadata ? data.functions_metadata[u.func_id] : null;
-            u.func_name = meta && meta.name ? meta.name : ('sub_' + u.func_id.split(':').pop());
-        });
-    }
 
     // Build a full function object from the enriched functions_metadata so the diff
     // tables can reuse the same rich renderers (colored signature, tags, notes, diff
@@ -1236,10 +1266,10 @@ function renderBinSimTables(isFilterChange = false) {
         }
     }
 
-    if (data.diff.matched && tbodyMatched) {
-        let matched = applyFilters(data.diff.matched, 'matched');
-        matched = sortItems(matched, binSimSortState.matched);
-        
+    if (tbodyMatched) {
+        // Server already filtered + sorted; render the accumulated pages as-is.
+        const matched = binSimPage.matched.items;
+
         if (matched.length > 0) {
             tbodyMatched.innerHTML = matched.map(m => {
                 const cleanName = m.cluster_name.replace(/'/g, "\\'");
@@ -1373,32 +1403,8 @@ function renderBinSimTables(isFilterChange = false) {
             restoreFilters(prefix, ['feat', 'rar'], ['note']);
         }
 
-        // Apply secondary text search filter for cluster name if present
-        let items = (itemsRaw || []).filter(u => {
-            const clFltVal = window[`bsim-flt-${prefix}-cl-q-val`] || document.getElementById(`bsim-flt-${prefix}-cl-q`)?.value || '';
-            if (clFltVal) {
-                const term = clFltVal.toLowerCase();
-                const clName = (u.cluster_name || 'unclustered').toLowerCase();
-                if (!clName.includes(term)) return false;
-            }
-            return true;
-        });
-
-        // Map function metadata bsim_features_count to u.avg_features for filtering/sorting compatibility
-        items.forEach(u => {
-            if (u.avg_features === undefined) {
-                const fids = u.funcs || (u.func_id ? [u.func_id] : []);
-                if (fids.length > 0) {
-                    const fObj = buildFuncObj(fids[0]);
-                    u.avg_features = fObj.bsim_features_count || 0;
-                } else {
-                    u.avg_features = 0;
-                }
-            }
-        });
-
-        items = applyFilters(items, prefix);
-        items = sortItems(items, state);
+        // Server already filtered + sorted (incl. cluster-name via cl_q); render as-is.
+        const items = itemsRaw || [];
 
         if (items.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
@@ -1452,16 +1458,94 @@ function renderBinSimTables(isFilterChange = false) {
         }).join('');
     };
 
-    renderUnique(data.diff.unique_to_a, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');
-    renderUnique(data.diff.unique_to_b, document.getElementById('bin-sim-table-unique-b'), binSimSortState.uniqueB, 'ub');
+    renderUnique(binSimPage.uniqueA.items, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');
+    renderUnique(binSimPage.uniqueB.items, document.getElementById('bin-sim-table-unique-b'), binSimSortState.uniqueB, 'ub');
 
-    if (typeof TableSelection !== 'undefined') {
+    if (!isFilterChange && typeof TableSelection !== 'undefined') {
         new TableSelection('bin-sim-table-matched-table');
         new TableSelection('bin-sim-table-unique-a-table');
         new TableSelection('bin-sim-table-unique-b-table');
     }
 
-    renderBinaryDiffSankey(data);
+    ['matched', 'uniqueA', 'uniqueB'].forEach(setupBinSimInfiniteScroll);
+}
+
+// ---- Change 4 (frontend): server paging + infinite scroll for the diff tables ----
+
+function binSimFilterParams(prefix) {
+    const val = (id) => (document.getElementById(id)?.value || '').trim();
+    const p = {};
+    const q = val(`bsim-flt-${prefix}-q`);
+    if (q) p.q = q;
+    if (prefix === 'matched') {
+        const na = val('bsim-flt-matched-note-a'); if (na) p.note_a = na;
+        const nb = val('bsim-flt-matched-note-b'); if (nb) p.note_b = nb;
+        const smin = val('bsim-flt-matched-coh-min'); if (smin) p.sim_min = smin;
+        const smax = val('bsim-flt-matched-coh-max'); if (smax) p.sim_max = smax;
+    } else {
+        const n = val(`bsim-flt-${prefix}-note`); if (n) p.note = n;
+        const clq = val(`bsim-flt-${prefix}-cl-q`); if (clq) p.cl_q = clq;
+    }
+    const fmin = val(`bsim-flt-${prefix}-feat-min`); if (fmin) p.feat_min = fmin;
+    const fmax = val(`bsim-flt-${prefix}-feat-max`); if (fmax) p.feat_max = fmax;
+    const rmin = val(`bsim-flt-${prefix}-rar-min`); if (rmin) p.rar_min = rmin;
+    const rmax = val(`bsim-flt-${prefix}-rar-max`); if (rmax) p.rar_max = rmax;
+    return p;
+}
+
+async function loadBinSimTablePage(key, { reset = false } = {}) {
+    if (!binSimCtx) return;
+    const st = binSimPage[key];
+    if (st.loading) return;
+    if (!reset && st.items.length >= st.total && st.total > 0) return; // fully loaded
+    st.loading = true;
+    if (reset) { st.offset = 0; st.items = []; }
+
+    const sort = binSimSortState[key];
+    const params = new URLSearchParams({
+        view: 'table',  // ignored by backend; documents intent
+        table: st.table,
+        collection_a: binSimCtx.collection,
+        md5_a: binSimCtx.md5a,
+        md5_b: binSimCtx.md5b,
+        offset: st.offset,
+        limit: BINSIM_LIMIT,
+        sort_col: sort.col,
+        sort_dir: sort.dir === -1 ? 'desc' : 'asc',
+        ...binSimFilterParams(st.prefix),
+    });
+    if (binSimCtx.collB) params.set('collection_b', binSimCtx.collB);
+    if (binSimCtx.poolId) params.set('pool', binSimCtx.poolId);
+
+    try {
+        const res = await fetch(`/api/diff?${params.toString()}`);
+        const data = await res.json();
+        Object.assign(binSimDataCache.functions_metadata, data.functions_metadata || {});
+        st.items = st.items.concat(data.items || []);
+        st.offset = st.items.length;
+        st.total = data.total || 0;
+        binSimDataCache.diff[st.table] = st.items;
+    } catch (e) {
+        console.error('bin-sim page load failed', e);
+    } finally {
+        st.loading = false;
+    }
+    renderBinSimTables(true);
+}
+
+function setupBinSimInfiniteScroll(key) {
+    const st = binSimPage[key];
+    const tbody = document.getElementById(st.tbody);
+    if (!tbody) return;
+    const scroller = tbody.closest('.bin-sim-table-scroll') || tbody.closest('[style*="overflow"]') || tbody.parentElement;
+    if (!scroller || scroller._binSimScrollBound === key) return;
+    scroller._binSimScrollBound = key;
+    scroller.addEventListener('scroll', () => {
+        if (st.loading || st.items.length >= st.total) return;
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+            loadBinSimTablePage(key);
+        }
+    });
 }
 
 window.setSankeyMode = function(mode) {

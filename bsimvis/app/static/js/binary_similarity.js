@@ -1048,10 +1048,18 @@ function binSimFilterChange(shouldApply = false) {
         });
     });
 
-    // Debounced server reload of all three tables (filtering is server-side now).
+    // Reload only the table whose filter input changed (derived from the focused input),
+    // so a search in one table doesn't reset the others. Fallback: reload all.
+    const el = document.activeElement;
+    let targets = ['matched', 'uniqueA', 'uniqueB'];
+    if (el && el.id) {
+        if (el.id.startsWith('bsim-flt-matched-')) targets = ['matched'];
+        else if (el.id.startsWith('bsim-flt-ua-')) targets = ['uniqueA'];
+        else if (el.id.startsWith('bsim-flt-ub-')) targets = ['uniqueB'];
+    }
     if (window._binSimFilterTimer) clearTimeout(window._binSimFilterTimer);
     window._binSimFilterTimer = setTimeout(() => {
-        ['matched', 'uniqueA', 'uniqueB'].forEach(k => loadBinSimTablePage(k, { reset: true }));
+        targets.forEach(k => loadBinSimTablePage(k, { reset: true }));
     }, shouldApply ? 0 : 300);
 }
 

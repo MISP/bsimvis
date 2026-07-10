@@ -442,18 +442,19 @@ function hideDiffPreview(e, skipContextMenu = false) {
         window.parent.hideDiffPreview(getParentEvent(e), skipContextMenu);
         return;
     }
+
+    const tooltip = document.getElementById('diff-preview-tooltip');
+    if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
+
+    if (diffPreviewTimer) clearTimeout(diffPreviewTimer);
+    activeDiffKey = null;
+
     if (window.hideAllTooltips) {
-        // We only want to hide if we aren't moving into the tooltip itself
-        const tooltip = document.getElementById('diff-preview-tooltip');
-        if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
         window.hideAllTooltips(skipContextMenu);
     } else {
-        const tooltip = document.getElementById('diff-preview-tooltip');
-        if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
         if (tooltip) {
             tooltip.style.display = 'none';
             tooltip.classList.remove('showing');
-            activeDiffKey = null;
         }
     }
 }

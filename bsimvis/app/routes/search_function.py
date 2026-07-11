@@ -14,6 +14,26 @@ DEFAULT_POOL_LIMIT = 1000000
 MAX_POOL_LIMIT = 1000000
 
 
+def _sscan_page(r, key, offset, limit):
+    cursor = 0
+    seen = 0
+    doc_ids = []
+    scan_count = max(100, min(1000, offset + limit))
+
+    while True:
+        cursor, batch = r.sscan(key, cursor=cursor, count=scan_count)
+        for doc_id in batch:
+            if seen >= offset and len(doc_ids) < limit:
+                doc_ids.append(doc_id)
+            seen += 1
+            if len(doc_ids) >= limit:
+                break
+        if cursor == 0 or len(doc_ids) >= limit:
+            break
+
+    return doc_ids
+
+
 def search_functions():
     try:
         t_req_start = time.perf_counter()
@@ -403,31 +423,51 @@ def search_functions():
                 }
             )
 
-        # Lua Exec
-        search_script = lua_manager.get_script("search_function")
-        if not search_script:
-            # Fallback to manual reload if script not found (first time)
-            lua_manager.register_all()
+        if not groups_raw:
+            all_key = f"{col}:all_functions"
+            total = r.scard(all_key)
+            pool_truncated = False
+
+            if sort_by != "id":
+                sort_key = f"{col}:idx:func:{sort_by}"
+                sorted_total = r.zcard(sort_key)
+                if sorted_total:
+                    total = sorted_total
+                    doc_ids = (
+                        r.zrevrange(sort_key, offset, offset + limit - 1)
+                        if sort_order == "desc"
+                        else r.zrange(sort_key, offset, offset + limit - 1)
+                    )
+                else:
+                    doc_ids = _sscan_page(r, all_key, offset, limit)
+            else:
+                doc_ids = _sscan_page(r, all_key, offset, limit)
+        else:
+            # Lua Exec
             search_script = lua_manager.get_script("search_function")
+            if not search_script:
+                # Fallback to manual reload if script not found (first time)
+                lua_manager.register_all()
+                search_script = lua_manager.get_script("search_function")
 
-        lua_config = {
-            "collection": col,
-            "pool_limit": pool_limit,
-            "groups": sorted(groups_raw, key=lambda x: x["weight"]),
-            "offset": offset,
-            "limit": limit,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        }
+            lua_config = {
+                "collection": col,
+                "pool_limit": pool_limit,
+                "groups": sorted(groups_raw, key=lambda x: x["weight"]),
+                "offset": offset,
+                "limit": limit,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+            }
 
-        try:
-            res = search_script(keys=[], args=[json.dumps(lua_config)])
-            total = res[0]
-            pool_truncated = bool(res[1])
-            doc_ids = res[2]
-        except Exception as e:
-            logging.error(f"FUNC LUA SEARCH CRASH: {e}")
-            return {"error": str(e)}, 500
+            try:
+                res = search_script(keys=[], args=[json.dumps(lua_config)])
+                total = res[0]
+                pool_truncated = bool(res[1])
+                doc_ids = res[2]
+            except Exception as e:
+                logging.error(f"FUNC LUA SEARCH CRASH: {e}")
+                return {"error": str(e)}, 500
 
         # --- ENRICHMENT (Optimized & Deduplicated) ---
         t_enrich_start = time.perf_counter()

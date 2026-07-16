@@ -58,7 +58,7 @@ APP_PORT=${APP_PORT:-5100}
 if tmux has-session -t "$PROJECT_NAME" 2>/dev/null; then
   echo "Session $PROJECT_NAME already exists. Cleaning up..."
   redis-cli -p "$REDIS_PORT"   shutdown nosave 2>/dev/null || true
-  redis-cli -p "$KVROCKS_PORT" shutdown nosave 2>/dev/null || true
+  redis-cli -p "$KVROCKS_PORT" shutdown 2>/dev/null || true  # kvrocks SHUTDOWN takes no args
   tmux kill-session -t "$PROJECT_NAME" 2>/dev/null || true
   sleep 1
 fi
@@ -93,7 +93,7 @@ echo "=== test_pools.py ===";         uv run python test_pools.py          || rc
 # --- 5. teardown this worktree's session (leaves main stack untouched) ------
 echo "=== teardown $PROJECT_NAME ==="
 redis-cli -p "$REDIS_PORT"   shutdown nosave 2>/dev/null || true
-redis-cli -p "$KVROCKS_PORT" shutdown nosave 2>/dev/null || true
+redis-cli -p "$KVROCKS_PORT" shutdown 2>/dev/null || true  # kvrocks SHUTDOWN takes no args
 tmux kill-session -t "$PROJECT_NAME" 2>/dev/null || true
 
 [ $rc -eq 0 ] && echo "RESULT: PASS" || echo "RESULT: FAIL"

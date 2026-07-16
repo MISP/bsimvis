@@ -282,9 +282,26 @@ class JobService:
         return group_id
 
     def enqueue_job(self, job_id, is_continuation=False):
-        """Pushes a job ID onto the appropriate priority queue."""
+        """Pushes a job ID onto the appropriate priority queue.
+
+        Idempotent: a job can be enqueued from several paths (create_job, an
+        explicit enqueue, and start_job re-visiting a group member). Without a
+        guard the same pending job lands on the queue twice and two workers run
+        it concurrently -- one indexes while the other sees the chunk data
+        already consumed and returns early, releasing the pipeline barrier
+        before indexing finished. The `queued` latch (cleared by the worker when
+        it pops the job) ensures each pending job is enqueued at most once.
+        """
         job = self.r.hgetall(f"job:{job_id}")
         jtype = job.get("type") if job else None
+
+        # Atomic latch: hset returns 1 only when it creates the field. If it was
+        # already set, skip when the job is still pending or running (already
+        # queued / executing); only fall through for a terminal job being retried.
+        if self.r.hset(f"job:{job_id}", "queued", "1") == 0:
+            status = job.get("status")
+            if status in (JobStatus.PENDING.value, JobStatus.RUNNING.value):
+                return
 
         high_priority_types = [
             JobType.CLEAR_SIM.value,

@@ -408,17 +408,13 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, "Extracting hierarchical clusters from tree...")
 
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+        # Map leaves to the clusters they actually survive into (shed noise
+        # points excluded). See cluster_common.hierarchical_membership.
+        from bsimvis.app.services.cluster_common import hierarchical_membership
 
-        leaf_to_clusters = {}
-        for leaf in range(num_nodes):
-            clusters = set()
-            curr = leaf
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                clusters.add(int(p))
-                curr = p
-            leaf_to_clusters[leaf] = list(clusters)
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
 
         cluster_members = {}
         for leaf, clusters in leaf_to_clusters.items():
@@ -463,17 +459,12 @@ class BinClusterService:
                 pipe.execute()
         pipe.execute()
 
-        # Extract and save direct members (where child_size == 1)
+        # Direct members = leaves whose deepest surviving cluster is this node
+        # (shed noise points excluded, matching the membership rule above).
         direct_members = {}
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) == 1:
-                p = int(row["parent"])
-                leaf = int(row["child"])
-                if leaf in idx_to_id:
-                    fid = idx_to_id[leaf]
-                    if p not in direct_members:
-                        direct_members[p] = []
-                    direct_members[p].append(fid)
+        for leaf, p in leaf_home.items():
+            if leaf in idx_to_id:
+                direct_members.setdefault(p, []).append(idx_to_id[leaf])
 
         for c, d_members in direct_members.items():
             pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:direct_members", *d_members)

@@ -36,9 +36,16 @@ class ClusterService:
         min_features=None,
         job_service=None,
         job_id=None,
+        algorithm=None,
+        resolution=None,
+        stop_cohesion=None,
     ):
         """
-        Runs HDBSCAN clustering on similarity pairs stored in Kvrocks.
+        Runs clustering on similarity pairs stored in Kvrocks.
+
+        algorithm: "hdbscan" (default) or "leiden" (recursive community detection
+        on the sparse similarity graph — keeps low-cohesion parents for the
+        dendrogram while surfacing tight high-cohesion sub-groups).
         """
         from bsimvis.app.services.config_service import config_service
 
@@ -54,7 +61,14 @@ class ClusterService:
             min_sim = config_service.get("clustering.min_sim", 0.0)
         if min_features is None:
             min_features = config_service.get("clustering.min_features", 0)
-        if hdbscan is None:
+        if algorithm is None:
+            algorithm = config_service.get("clustering.algorithm", "hdbscan")
+        if resolution is None:
+            resolution = config_service.get("clustering.resolution", 1.0)
+        if stop_cohesion is None:
+            stop_cohesion = config_service.get("clustering.stop_cohesion", 0.9)
+        algorithm = str(algorithm).lower()
+        if algorithm == "hdbscan" and hdbscan is None:
             logging.error(
                 "hdbscan library not installed. Please install it to use clustering."
             )
@@ -206,252 +220,52 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        # 3. Connected Components and Local HDBSCAN
-        import scipy.sparse as sp
-        from scipy.sparse.csgraph import connected_components
         import pandas as pd
 
-        msg = f"Shattering graph into connected components to avoid OOM..."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
+        # --- algorithm dispatch: build the hierarchy (tree_df) ---------------
+        if algorithm == "leiden":
+            from bsimvis.app.services.cluster_common import build_leiden_tree
 
-        rows = []
-        cols = []
-        data = []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
-        n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
-
-        comp_to_nodes = {}
-        for i, comp_id in enumerate(labels):
-            if comp_id not in comp_to_nodes:
-                comp_to_nodes[comp_id] = []
-            comp_to_nodes[comp_id].append(i)
-
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = labels[i]
-            if c == labels[j]:
-                if c not in comp_to_edges:
-                    comp_to_edges[c] = []
-                comp_to_edges[c].append((i, j, d))
-
-        msg = f"Found {n_components} connected components. Running local HDBSCAN..."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        global_tree_rows = []
-        global_root_id = num_nodes
-        next_cluster_id = num_nodes + 1
-        comp_roots = []
-
-        start_fit = time.time()
-
-        for comp_id, comp_nodes in comp_to_nodes.items():
-            size = len(comp_nodes)
-            if size < min_cluster_size:
-                for node in comp_nodes:
-                    comp_roots.append((node, 1))
-                continue
-
-            sub_id_to_global = {
-                i: global_idx for i, global_idx in enumerate(comp_nodes)
-            }
-            global_to_sub_id = {
-                global_idx: i for i, global_idx in enumerate(comp_nodes)
-            }
-
-            if size >= 5000:
-                from scipy.sparse.linalg import svds
-
-                rows_sp, cols_sp, data_sp = [], [], []
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sim = 1.0 - d
-                        rows_sp.extend([ui, vi])
-                        cols_sp.extend([vi, ui])
-                        data_sp.extend([sim, sim])
-
-                comp_matrix = sp.csr_matrix(
-                    (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
-                )
-                comp_matrix.setdiag(1.0)
-
-                k = min(50, size - 1)
-                u, s, vt = svds(comp_matrix, k=k)
-                embeddings = u @ np.diag(np.sqrt(s))
-                del comp_matrix, rows_sp, cols_sp, data_sp
-
-                clusterer = hdbscan.HDBSCAN(
-                    min_cluster_size=min(min_cluster_size, size),
-                    min_samples=min(min_samples, size),
-                    cluster_selection_epsilon=cluster_selection_epsilon,
-                    cluster_selection_method=selection_method,
-                    metric="euclidean",
-                    gen_min_span_tree=True,
-                )
-                clusterer.fit(embeddings)
-            else:
-                sub_dist = np.ones((size, size), dtype=np.float32)
-                np.fill_diagonal(sub_dist, 0)
-
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sub_dist[ui, vi] = d
-                        sub_dist[vi, ui] = d
-
-                clusterer = hdbscan.HDBSCAN(
-                    min_cluster_size=min(min_cluster_size, size),
-                    min_samples=min(min_samples, size),
-                    cluster_selection_epsilon=cluster_selection_epsilon,
-                    cluster_selection_method=selection_method,
-                    metric="precomputed",
-                    gen_min_span_tree=True,
-                )
-                clusterer.fit(sub_dist.astype(np.float64))
-
-            local_tree_df = clusterer.condensed_tree_.to_pandas()
-            if local_tree_df.empty:
-                for node in comp_nodes:
-                    comp_roots.append((node, 1))
-                continue
-
-            sub_internal_to_global = {}
-            # Ensure local root maps to a single global internal ID
-            local_root_sub = local_tree_df["parent"].min()
-
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
-
-                if parent not in sub_internal_to_global:
-                    sub_internal_to_global[parent] = next_cluster_id
-                    next_cluster_id += 1
-
-                if child < size:  # Leaf
-                    global_child = sub_id_to_global[child]
-                else:  # Internal
-                    if child not in sub_internal_to_global:
-                        sub_internal_to_global[child] = next_cluster_id
-                        next_cluster_id += 1
-                    global_child = sub_internal_to_global[child]
-
-                global_tree_rows.append(
-                    {
-                        "parent": sub_internal_to_global[parent],
-                        "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
-                    }
-                )
-
-            comp_roots.append((sub_internal_to_global[local_root_sub], size))
-
-        fit_time = time.time() - start_fit
-
-        msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
-        for comp_root, size in comp_roots:
-            global_tree_rows.append(
-                {
-                    "parent": global_root_id,
-                    "child": comp_root,
-                    "lambda_val": 1.0,
-                    "child_size": size,
-                }
+            tree_df, global_root_id = build_leiden_tree(
+                edges,
+                num_nodes,
+                resolution=resolution,
+                stop_cohesion=stop_cohesion,
+                min_size=min_cluster_size,
+                job_service=job_service,
+                job_id=job_id,
+            )
+        else:
+            tree_df, global_root_id = self._hdbscan_tree(
+                edges,
+                num_nodes,
+                min_cluster_size,
+                min_samples,
+                cluster_selection_epsilon,
+                selection_method,
+                job_service,
+                job_id,
             )
 
-        tree_df = pd.DataFrame(global_tree_rows)
+        if tree_df.empty:
+            logging.warning(f"No clusters produced for {collection}:{algo}.")
+            if job_service and job_id:
+                job_service.add_log(job_id, "No clusters produced.")
+            return True
 
-        msg = f"Global condensed tree has {len(tree_df)} rows."
-        logging.info(f"[*] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        # 1. Birth lambdas for all clusters
-        # Root birth is 0
+        # Birth/death lambdas from the FINAL tree (both algos), used below for
+        # per-function membership scores.
         root_id = tree_df["parent"].min()
         birth_lambdas = {root_id: 0.0}
         for _, row in tree_df.iterrows():
             if row["child_size"] > 1:
                 birth_lambdas[int(row["child"])] = float(row["lambda_val"])
-
-        # 2. Death lambdas for all clusters (max lambda of any child)
         death_lambdas = {}
         for _, row in tree_df.iterrows():
             p = int(row["parent"])
             l = float(row["lambda_val"])
             if p not in death_lambdas or l > death_lambdas[p]:
                 death_lambdas[p] = l
-
-        # Stability and per-point strengths will be calculated after extracting members
-        pass
-
-        # Pruning tree based on cluster_selection_epsilon (if > 0)
-        pruned_clusters = set()
-        if cluster_selection_epsilon and cluster_selection_epsilon > 0.0:
-            lambda_threshold = 1.0 / cluster_selection_epsilon
-            for c, b_lambda in birth_lambdas.items():
-                if b_lambda > lambda_threshold:
-                    pruned_clusters.add(c)
-
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
-
-        def get_nearest_non_pruned_ancestor(node):
-            curr = node
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                if p not in pruned_clusters:
-                    return p
-                curr = p
-            return None
-
-        # Build a pruned tree DataFrame
-        if pruned_clusters:
-            pruned_rows = []
-            for _, row in tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
-                child_size = int(row["child_size"])
-                lambda_val = float(row["lambda_val"])
-
-                if parent in pruned_clusters:
-                    ancestor = get_nearest_non_pruned_ancestor(parent)
-                    if ancestor is not None:
-                        parent = ancestor
-                    else:
-                        continue  # Skip if no ancestor
-
-                if child_size > 1:
-                    if child in pruned_clusters:
-                        continue
-
-                pruned_rows.append(
-                    {
-                        "parent": parent,
-                        "child": child,
-                        "lambda_val": lambda_val,
-                        "child_size": child_size,
-                    }
-                )
-            import pandas as pd
-
-            tree_df = pd.DataFrame(pruned_rows)
 
         # 4. Extract Condensed Tree for UI and Hierarchical Storage
         tree_json = tree_df.to_json(orient="records")
@@ -477,18 +291,13 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, "Extracting hierarchical clusters from tree...")
 
-        # Build tree traversal mapping
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+        # Map leaves to the clusters they actually survive into (shed noise
+        # points excluded). See cluster_common.hierarchical_membership.
+        from bsimvis.app.services.cluster_common import hierarchical_membership
 
-        leaf_to_clusters = {}
-        for leaf in range(num_nodes):
-            clusters = set()
-            curr = leaf
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                clusters.add(int(p))
-                curr = p
-            leaf_to_clusters[leaf] = list(clusters)
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
 
         # Reverse map to find cluster members
         cluster_members = {}
@@ -539,17 +348,12 @@ class ClusterService:
                 pipe.execute()
         pipe.execute()
 
-        # Extract and save direct members (where child_size == 1)
+        # Direct members = leaves whose deepest surviving cluster is this node
+        # (shed noise points are excluded, matching the membership rule above).
         direct_members = {}
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) == 1:
-                p = int(row["parent"])
-                leaf = int(row["child"])
-                if leaf in idx_to_id:
-                    fid = idx_to_id[leaf]
-                    if p not in direct_members:
-                        direct_members[p] = []
-                    direct_members[p].append(fid)
+        for leaf, p in leaf_home.items():
+            if leaf in idx_to_id:
+                direct_members.setdefault(p, []).append(idx_to_id[leaf])
 
         for c, d_members in direct_members.items():
             pipe.sadd(f"{collection}:cluster:{algo}:{c}:direct_members", *d_members)
@@ -824,6 +628,266 @@ class ClusterService:
 
         return True
 
+    def _hdbscan_tree(
+        self,
+        edges,
+        num_nodes,
+        min_cluster_size,
+        min_samples,
+        cluster_selection_epsilon,
+        selection_method,
+        job_service=None,
+        job_id=None,
+    ):
+        """Build the condensed-tree (tree_df, global_root_id) via per-component HDBSCAN."""
+        # 3. Connected Components and Local HDBSCAN
+        import scipy.sparse as sp
+        from scipy.sparse.csgraph import connected_components
+        import pandas as pd
+
+        msg = f"Shattering graph into connected components to avoid OOM..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        rows = []
+        cols = []
+        data = []
+        for i, j, d in edges:
+            if d < 1.0:  # Only real similarity edges
+                rows.extend([i, j])
+                cols.extend([j, i])
+                data.extend([1, 1])
+
+        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+
+        comp_to_nodes = {}
+        for i, comp_id in enumerate(labels):
+            if comp_id not in comp_to_nodes:
+                comp_to_nodes[comp_id] = []
+            comp_to_nodes[comp_id].append(i)
+
+        comp_to_edges = {}
+        for i, j, d in edges:
+            c = labels[i]
+            if c == labels[j]:
+                if c not in comp_to_edges:
+                    comp_to_edges[c] = []
+                comp_to_edges[c].append((i, j, d))
+
+        msg = f"Found {n_components} connected components. Running local HDBSCAN..."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        global_tree_rows = []
+        global_root_id = num_nodes
+        next_cluster_id = num_nodes + 1
+        comp_roots = []
+
+        start_fit = time.time()
+
+        for comp_id, comp_nodes in comp_to_nodes.items():
+            size = len(comp_nodes)
+            if size < min_cluster_size:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+
+            sub_id_to_global = {
+                i: global_idx for i, global_idx in enumerate(comp_nodes)
+            }
+            global_to_sub_id = {
+                global_idx: i for i, global_idx in enumerate(comp_nodes)
+            }
+
+            if size >= 5000:
+                from scipy.sparse.linalg import svds
+
+                rows_sp, cols_sp, data_sp = [], [], []
+                if comp_id in comp_to_edges:
+                    for u, v, d in comp_to_edges[comp_id]:
+                        ui = global_to_sub_id[u]
+                        vi = global_to_sub_id[v]
+                        sim = 1.0 - d
+                        rows_sp.extend([ui, vi])
+                        cols_sp.extend([vi, ui])
+                        data_sp.extend([sim, sim])
+
+                comp_matrix = sp.csr_matrix(
+                    (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
+                )
+                comp_matrix.setdiag(1.0)
+
+                k = min(50, size - 1)
+                u, s, vt = svds(comp_matrix, k=k)
+                embeddings = u @ np.diag(np.sqrt(s))
+                del comp_matrix, rows_sp, cols_sp, data_sp
+
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min(min_cluster_size, size),
+                    min_samples=min(min_samples, size),
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    cluster_selection_method=selection_method,
+                    metric="euclidean",
+                    gen_min_span_tree=True,
+                )
+                clusterer.fit(embeddings)
+            else:
+                sub_dist = np.ones((size, size), dtype=np.float32)
+                np.fill_diagonal(sub_dist, 0)
+
+                if comp_id in comp_to_edges:
+                    for u, v, d in comp_to_edges[comp_id]:
+                        ui = global_to_sub_id[u]
+                        vi = global_to_sub_id[v]
+                        sub_dist[ui, vi] = d
+                        sub_dist[vi, ui] = d
+
+                clusterer = hdbscan.HDBSCAN(
+                    min_cluster_size=min(min_cluster_size, size),
+                    min_samples=min(min_samples, size),
+                    cluster_selection_epsilon=cluster_selection_epsilon,
+                    cluster_selection_method=selection_method,
+                    metric="precomputed",
+                    gen_min_span_tree=True,
+                )
+                clusterer.fit(sub_dist.astype(np.float64))
+
+            local_tree_df = clusterer.condensed_tree_.to_pandas()
+            if local_tree_df.empty:
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
+
+            sub_internal_to_global = {}
+            # Ensure local root maps to a single global internal ID
+            local_root_sub = local_tree_df["parent"].min()
+
+            for _, row in local_tree_df.iterrows():
+                parent = int(row["parent"])
+                child = int(row["child"])
+
+                if parent not in sub_internal_to_global:
+                    sub_internal_to_global[parent] = next_cluster_id
+                    next_cluster_id += 1
+
+                if child < size:  # Leaf
+                    global_child = sub_id_to_global[child]
+                else:  # Internal
+                    if child not in sub_internal_to_global:
+                        sub_internal_to_global[child] = next_cluster_id
+                        next_cluster_id += 1
+                    global_child = sub_internal_to_global[child]
+
+                global_tree_rows.append(
+                    {
+                        "parent": sub_internal_to_global[parent],
+                        "child": global_child,
+                        "lambda_val": float(row["lambda_val"]),
+                        "child_size": int(row["child_size"]),
+                    }
+                )
+
+            comp_roots.append((sub_internal_to_global[local_root_sub], size))
+
+        fit_time = time.time() - start_fit
+
+        msg = f"HDBSCAN fit completed in {fit_time:.2f}s."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        # Stitch all roots to a synthetic global root at lambda 1.0 (distance 1.0)
+        for comp_root, size in comp_roots:
+            global_tree_rows.append(
+                {
+                    "parent": global_root_id,
+                    "child": comp_root,
+                    "lambda_val": 1.0,
+                    "child_size": size,
+                }
+            )
+
+        tree_df = pd.DataFrame(global_tree_rows)
+
+        msg = f"Global condensed tree has {len(tree_df)} rows."
+        logging.info(f"[*] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+
+        # 1. Birth lambdas for all clusters
+        # Root birth is 0
+        root_id = tree_df["parent"].min()
+        birth_lambdas = {root_id: 0.0}
+        for _, row in tree_df.iterrows():
+            if row["child_size"] > 1:
+                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+
+        # 2. Death lambdas for all clusters (max lambda of any child)
+        death_lambdas = {}
+        for _, row in tree_df.iterrows():
+            p = int(row["parent"])
+            l = float(row["lambda_val"])
+            if p not in death_lambdas or l > death_lambdas[p]:
+                death_lambdas[p] = l
+
+        # Stability and per-point strengths will be calculated after extracting members
+        pass
+
+        # Pruning tree based on cluster_selection_epsilon (if > 0)
+        pruned_clusters = set()
+        if cluster_selection_epsilon and cluster_selection_epsilon > 0.0:
+            lambda_threshold = 1.0 / cluster_selection_epsilon
+            for c, b_lambda in birth_lambdas.items():
+                if b_lambda > lambda_threshold:
+                    pruned_clusters.add(c)
+
+        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+
+        def get_nearest_non_pruned_ancestor(node):
+            curr = node
+            while curr in child_to_parent:
+                p = child_to_parent[curr]
+                if p not in pruned_clusters:
+                    return p
+                curr = p
+            return None
+
+        # Build a pruned tree DataFrame
+        if pruned_clusters:
+            pruned_rows = []
+            for _, row in tree_df.iterrows():
+                parent = int(row["parent"])
+                child = int(row["child"])
+                child_size = int(row["child_size"])
+                lambda_val = float(row["lambda_val"])
+
+                if parent in pruned_clusters:
+                    ancestor = get_nearest_non_pruned_ancestor(parent)
+                    if ancestor is not None:
+                        parent = ancestor
+                    else:
+                        continue  # Skip if no ancestor
+
+                if child_size > 1:
+                    if child in pruned_clusters:
+                        continue
+
+                pruned_rows.append(
+                    {
+                        "parent": parent,
+                        "child": child,
+                        "lambda_val": lambda_val,
+                        "child_size": child_size,
+                    }
+                )
+            import pandas as pd
+
+            tree_df = pd.DataFrame(pruned_rows)
+        return tree_df, global_root_id
+
     def clear_clustering(
         self, collection, algo="unweighted_cosine", job_service=None, job_id=None
     ):
@@ -948,9 +1012,7 @@ class ClusterService:
         # not algo-relative clean ids. Non-pool keys carry :{algo}: and strip to clean ids.
         is_pool = collection.startswith("global:pool:")
         sim_score_key = (
-            f"{collection}:sim:score"
-            if is_pool
-            else f"{collection}:sim:score:{algo}"
+            f"{collection}:sim:score" if is_pool else f"{collection}:sim:score:{algo}"
         )
 
         from bsimvis.app.services.index_service import (
@@ -1664,17 +1726,13 @@ class ClusterService:
             f"global:pool:{pool_id}:bin_cluster:tree_links:{algo}",
             json.dumps(tree_links),
         )
-        # Extract cluster members from tree
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
-        leaf_to_clusters = {}
-        for leaf in range(num_nodes):
-            clusters = set()
-            curr = leaf
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                clusters.add(int(p))
-                curr = p
-            leaf_to_clusters[leaf] = list(clusters)
+        # Extract cluster members (shed noise excluded, synthetic root and
+        # sub-min_cluster_size survivors dropped). See cluster_common.
+        from bsimvis.app.services.cluster_common import hierarchical_membership
+
+        leaf_to_clusters, _ = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
 
         cluster_members = {}
         for leaf, clusters in leaf_to_clusters.items():
@@ -1686,11 +1744,6 @@ class ClusterService:
                     cluster_members[c].append(fid)
 
         root_id = tree_df["parent"].min()
-        cluster_members = {
-            c: m
-            for c, m in cluster_members.items()
-            if c != root_id and len(m) >= min_cluster_size
-        }
 
         # Stability
         birth_lambdas = {root_id: 0.0}

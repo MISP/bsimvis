@@ -1654,17 +1654,13 @@ class ClusterService:
             f"global:pool:{pool_id}:bin_cluster:tree_links:{algo}",
             json.dumps(tree_links),
         )
-        # Extract cluster members from tree
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
-        leaf_to_clusters = {}
-        for leaf in range(num_nodes):
-            clusters = set()
-            curr = leaf
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                clusters.add(int(p))
-                curr = p
-            leaf_to_clusters[leaf] = list(clusters)
+        # Extract cluster members (shed noise excluded, synthetic root and
+        # sub-min_cluster_size survivors dropped). See cluster_common.
+        from bsimvis.app.services.cluster_common import hierarchical_membership
+
+        leaf_to_clusters, _ = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
 
         cluster_members = {}
         for leaf, clusters in leaf_to_clusters.items():
@@ -1676,11 +1672,6 @@ class ClusterService:
                     cluster_members[c].append(fid)
 
         root_id = tree_df["parent"].min()
-        cluster_members = {
-            c: m
-            for c, m in cluster_members.items()
-            if c != root_id and len(m) >= min_cluster_size
-        }
 
         # Stability
         birth_lambdas = {root_id: 0.0}

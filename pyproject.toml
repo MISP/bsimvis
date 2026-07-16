@@ -17,6 +17,8 @@ dependencies = [
     "pymilvus>=2.4.0",
     "hdbscan>=0.8.40",
     "scikit-learn>=1.6.0",
+    "python-igraph>=0.11",
+    "leidenalg>=0.10",
     "ollama>=0.6.2",
     "matplotlib>=3.11.0",
 ]

@@ -31,6 +31,13 @@
     description = "Decompile only"
     no_analysis = true
 [clustering]
+    # algorithm = "hdbscan" (default) or "leiden".
+    # leiden = recursive community detection on the sparse similarity graph:
+    # keeps low-cohesion parents for the dendrogram while surfacing tight
+    # high-cohesion sub-groups that HDBSCAN's single-linkage buries.
+    algorithm = "hdbscan"
+    resolution = 1.0        # leiden granularity: higher -> smaller, tighter clusters
+    stop_cohesion = 0.9     # leiden: stop recursing once a group is this cohesive
     epsilon = 0.001
     min_cluster_size = 2
     min_samples = 1

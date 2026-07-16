@@ -690,6 +690,15 @@ class Worker:
             min_features = payload.get(
                 "min_features", config_service.get("clustering.min_features", 0)
             )
+            algorithm = payload.get(
+                "algorithm", config_service.get("clustering.algorithm", "hdbscan")
+            )
+            resolution = payload.get(
+                "resolution", config_service.get("clustering.resolution", 1.0)
+            )
+            stop_cohesion = payload.get(
+                "stop_cohesion", config_service.get("clustering.stop_cohesion", 0.9)
+            )
 
             return cluster_service.run_clustering(
                 collection,
@@ -700,6 +709,9 @@ class Worker:
                 selection_method=selection_method,
                 min_sim=min_sim,
                 min_features=min_features,
+                algorithm=algorithm,
+                resolution=resolution,
+                stop_cohesion=stop_cohesion,
                 job_service=self.job_service,
                 job_id=job_id,
             )

@@ -413,6 +413,14 @@ class JobService:
                     any_failed = True
 
             if all_done:
+                # Atomic one-shot latch: multiple workers can finish the last
+                # group members concurrently and each observe all_done. HSET
+                # returns 1 only for the first caller that creates the field, so
+                # exactly one advances the parent. Without this the pipeline is
+                # advanced twice and downstream steps (e.g. CLUSTER_POOL then
+                # BUILD_POOL_BIN_SIM) run concurrently and race each other.
+                if self.r.hset(f"job:{parent_id}", "barrier_fired", "1") != 1:
+                    return
                 if any_failed:
                     self.add_log(
                         parent_id, "All tasks in group finished, but some failed."

@@ -157,7 +157,14 @@ class SimilarityService:
                 keys = r.scan_iter(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
         else:
-            # Build for ALL functions in the collection
+            # Build for ALL functions in the collection.
+            # Force a complete rebuild by clearing the per-function skip-set first:
+            # concurrent per-file ingestion can mark a binary's functions "built"
+            # against a partially-populated collection (before the other binaries'
+            # functions are visible), so their cross-binary similarities are never
+            # computed. An all-build must be authoritative, so recompute every
+            # function's candidates (idempotent for already-correct pairs).
+            r.delete(f"{collection}:built:functions:{algo}")
             function_ids = list(r.smembers(f"{collection}:indexed:functions"))
 
         total = len(function_ids)

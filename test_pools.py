@@ -471,17 +471,16 @@ def main():
                                 norm_item[fkey] = sorted(
                                     [canonical_func_id(f) for f in norm_item[fkey]]
                                 )
-                        if "func_id" in norm_item:
-                            norm_item["func_id"] = canonical_func_id(
-                                norm_item["func_id"]
-                            )
+                        # Matched items key off func_a/func_b (collection-qualified).
+                        # Strip the collection prefix so single-collection and pool
+                        # (which live in different collections) compare on md5:addr.
+                        for fkey in ("func_a", "func_b", "func_id"):
+                            if fkey in norm_item and norm_item[fkey]:
+                                norm_item[fkey] = canonical_func_id(norm_item[fkey])
                         items.append(norm_item)
                     if key == "matched":
                         items.sort(
-                            key=lambda x: (
-                                x.get("funcs_a", [""])[0] if x.get("funcs_a") else "",
-                                x.get("funcs_b", [""])[0] if x.get("funcs_b") else "",
-                            )
+                            key=lambda x: (x.get("func_a", ""), x.get("func_b", ""))
                         )
                     elif key in ("unique_to_a", "unique_to_b"):
                         items.sort(key=lambda x: x.get("func_id", ""))

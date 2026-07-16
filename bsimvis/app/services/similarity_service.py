@@ -2488,25 +2488,9 @@ class SimilarityService:
                 full_fid = (
                     fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
                 )
-                best_cluster = None
-                if full_fid in fid_to_cids:
-                    best = None
-                    best_coh = -1.0
-                    for cid in fid_to_cids[full_fid]:
-                        meta = cluster_meta.get(cid)
-                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
-                            best_coh = float(meta.get("cohesion_score", 0.0))
-                            best = meta
-                    best_cluster = best
+                # Slim doc (matches collection path); cluster tag derived at read.
                 unique_entry[key] = {
                     "func_id": fid,
-                    "is_clustered": best_cluster is not None,
-                    "cluster_id": best_cluster.get("cluster_id", "") if best_cluster else "",
-                    "cluster_uuid": best_cluster.get("cluster_uuid", "") if best_cluster else "",
-                    "cluster_name": best_cluster.get("cluster_name", "Unclustered") if best_cluster else "Unclustered",
-                    "cohesion": float(best_cluster.get("cohesion_score", 0.0)) if best_cluster else 0.0,
-                    "sim_rarity": 1.0,
-                    "collection_rarity": 1.0,
                     "avg_features": f_features,
                 }
                 unique_feat[key] = f_features
@@ -2558,44 +2542,14 @@ class SimilarityService:
                     )
                     f_features = max(f_features_a, f_features_b)
 
-                    # Tag the matched pair with its best-matching function cluster so the
-                    # API/UI cluster column resolves to a real cluster (matches collection path).
-                    full_a = (
-                        fid_a
-                        if fid_a.startswith(f"{coll_a}:func:")
-                        else f"{coll_a}:func:{fid_a}"
-                    )
-                    full_b = (
-                        fid_b
-                        if fid_b.startswith(f"{coll_b}:func:")
-                        else f"{coll_b}:func:{fid_b}"
-                    )
-                    best_cluster = pick_cluster(full_a, full_b)
+                    # Slim doc: persist only the stable triple (+ avg_features),
+                    # matching the collection bin_sim path. Cluster tag / cohesion /
+                    # rarity are derived live at read (get_bin_sim ->
+                    # _enrich_diff_clusters, which handles pools) so a cluster
+                    # rebuild can't leave them stale.
                     diff_matched.append(
                         {
-                            "cluster_id": (
-                                best_cluster.get("cluster_id", "")
-                                if best_cluster
-                                else ""
-                            ),
-                            "cluster_uuid": (
-                                best_cluster.get("cluster_uuid", "")
-                                if best_cluster
-                                else ""
-                            ),
-                            "cluster_name": (
-                                best_cluster.get("cluster_name", "Matched Functions")
-                                if best_cluster
-                                else "Matched Functions"
-                            ),
                             "similarity": score,
-                            "cohesion": (
-                                float(best_cluster.get("cohesion_score", 0.0))
-                                if best_cluster
-                                else 0.0
-                            ),
-                            "sim_rarity": 1.0,
-                            "collection_rarity": 1.0,
                             "avg_features": f_features,
                             "func_a": fid_a,
                             "func_b": fid_b,

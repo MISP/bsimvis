@@ -52,6 +52,63 @@ def _bucket_union(r, collection, fields, val):
     return out
 
 
+def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=False):
+    """SIDs whose A or B binary carries a file tag matching `val` (substring).
+
+    The bin_sim file_tags_* buckets are a build-time snapshot of the file doc, so
+    they go stale the moment a tag is added or removed. Tag filters therefore
+    resolve through the file-level tag index — which the tag service keeps current
+    in collections and mirrors into every pool — and map file -> pairs through
+    bin_sim:involves. The denormalized fields stay, but for display only.
+    """
+    val_l = val.lower()
+    buckets = []
+    for field in fields:
+        reg = f"{collection}:reg:file:{field}"
+        try:
+            for b in r.sscan_iter(reg, match=f"*{val_l}*", count=1000):
+                bs = _dec(b)
+                # bucket key is {ns}:idx:file:{field}:{tag} — match the tag only,
+                # so a value colliding with the prefix can't drag in every bucket.
+                if val_l in bs.rsplit(":", 1)[-1].lower():
+                    buckets.append(bs)
+        except Exception as e:
+            logging.warning(f"file tag registry SSCAN failed for {reg}: {e}")
+    if not buckets:
+        return set()
+
+    file_ids = set()
+    pipe = r.pipeline(transaction=False)
+    for b in buckets:
+        pipe.smembers(b)
+    for res in pipe.execute():
+        if res:
+            file_ids.update(_dec(x) for x in res)
+
+    pipe = r.pipeline(transaction=False)
+    queried = False
+    for fid in file_ids:
+        parts = fid.split(":")
+        if len(parts) < 3 or parts[1] != "file":
+            continue
+        f_coll, md5 = parts[0], parts[2]
+        # Pool involves keys are qualified by origin collection; the same md5 can
+        # appear in two member collections.
+        pipe.smembers(
+            f"{collection}:bin_sim:involves:{f_coll}:{md5}"
+            if is_pool
+            else f"{collection}:bin_sim:involves:{md5}"
+        )
+        queried = True
+    if not queried:
+        return set()
+    out = set()
+    for res in pipe.execute():
+        if res:
+            out.update(_dec(x) for x in res)
+    return out
+
+
 def _znum(r, collection, field, lo, hi):
     """SIDs in the numeric ZSET index for `field` within [lo, hi] (None = open)."""
     key = f"{collection}:idx:bin_sim:{field}"
@@ -93,18 +150,18 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         restrict(_bucket_union(r, collection, ["architecture_a", "architecture_b"], f["arch"]))
     if f["md5"]:
         restrict(_bucket_union(r, collection, ["md5_a", "md5_b", "file_parent_md5_a", "file_parent_md5_b", "file_related_md5_a", "file_related_md5_b"], f["md5"]))
-    tag_fields = ["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"]
     for tf in f["file_tag"]:
-        restrict(_bucket_union(r, collection, tag_fields, tf))
+        restrict(_file_tag_union(r, collection, tf, is_pool=is_pool))
     for word in f["q"].split():
         if word:
             restrict(
                 _bucket_union(
                     r,
                     collection,
-                    ["file_name_a", "file_name_b", "md5_a", "md5_b"] + tag_fields,
+                    ["file_name_a", "file_name_b", "md5_a", "md5_b"],
                     word,
                 )
+                | _file_tag_union(r, collection, word, is_pool=is_pool)
             )
 
     # --- Numeric range filters via ZSET indexes (a/b union semantics) ---
@@ -141,11 +198,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     # --- Exclusions (subtract) ---
     excl = []
     if f["exclude_file_tag"]:
-        excl.append((["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"], f["exclude_file_tag"]))
+        excl.append((("tags", "user_tags"), f["exclude_file_tag"]))
     if f["exclude_file_static_tag"]:
-        excl.append((["file_tags_a", "file_tags_b"], f["exclude_file_static_tag"]))
+        excl.append((("tags",), f["exclude_file_static_tag"]))
     if f["exclude_file_user_tag"]:
-        excl.append((["file_user_tags_a", "file_user_tags_b"], f["exclude_file_user_tag"]))
+        excl.append((("user_tags",), f["exclude_file_user_tag"]))
     if excl:
         if candidates is None:
             # exclusion-only query: base is the full built set (SIDs, not docs)
@@ -155,7 +212,9 @@ def _collection_page(r, collection, algo, f, is_pool=False):
             )
         for fields, vals in excl:
             for v in vals:
-                candidates -= _bucket_union(r, collection, fields, v)
+                candidates -= _file_tag_union(
+                    r, collection, v, fields=fields, is_pool=is_pool
+                )
 
     # --- Sort + paginate. The sort ZSET already holds SIDs in sorted order, so we
     # never fetch per-candidate scores or sort in Python. ---

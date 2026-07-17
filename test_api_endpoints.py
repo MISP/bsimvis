@@ -43,7 +43,12 @@ def _default_base_url():
 BASE_URL = os.getenv("API_URL", _default_base_url())
 COLLECTION = f"test_collection_{uuid.uuid4().hex[:8]}"
 POOL_ID = f"test_pool_{uuid.uuid4().hex[:8]}"
+FILTER_POOL_ID = f"test_pool_{uuid.uuid4().hex[:8]}"
 TEST_BINARY = "./data/test/crypto_test"
+# Binary similarity needs at least two binaries to produce a pair, so the filter
+# step uploads a second one. Same architecture as TEST_BINARY, or every pair
+# scores zero and the sort checks compare nothing.
+SECOND_BINARY = "./data/test/v01_linux_x64"
 POLL_INTERVAL = 3  # seconds between pipeline status polls
 POLL_TIMEOUT = 300  # max seconds to wait for pipeline
 
@@ -52,6 +57,7 @@ VERBOSE = "-v" in sys.argv or "--verbose" in sys.argv
 # Populated after upload
 pipeline_id = None
 file_md5 = None
+file_md5_2 = None  # second binary, uploaded for the bin_sim filter/sort step
 func_id1 = None  # first function found
 func_id2 = None  # second function found (for diff)
 cluster_id = None
@@ -231,20 +237,23 @@ def upload_and_start():
 # ---------------------------------------------------------------------------
 # Step 2 – Poll until the pipeline finishes
 # ---------------------------------------------------------------------------
-def wait_for_pipeline():
-    if not pipeline_id:
+def wait_for_pipeline(job_id=None, banner=" STEP 2 – Wait for pipeline to finish"):
+    """Polls a job to completion. Defaults to the upload pipeline; later steps
+    pass their own job_id (pool build, bin_sim build) to reuse the poll loop."""
+    job_id = job_id or pipeline_id
+    if not job_id:
         print(_color("\n[SKIP] No pipeline_id – skipping wait.", YELLOW))
         return False
 
     print(_color(f"\n{'='*60}", CYAN))
-    print(_color(" STEP 2 – Wait for pipeline to finish", BOLD))
+    print(_color(banner, BOLD))
     print(_color(f"{'='*60}", CYAN))
-    print(f"  Polling pipeline {_color(pipeline_id, BOLD)} (max {POLL_TIMEOUT}s) …")
+    print(f"  Polling pipeline {_color(job_id, BOLD)} (max {POLL_TIMEOUT}s) …")
 
     deadline = time.time() + POLL_TIMEOUT
     while time.time() < deadline:
         try:
-            resp = requests.get(f"{BASE_URL}/api/jobs/{pipeline_id}", timeout=10)
+            resp = requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=10)
             if resp.status_code == 200:
                 job = resp.json()
                 status = job.get("status", "unknown")
@@ -319,6 +328,56 @@ def test_duplicate_upload():
         headers={"Content-Type": "application/octet-stream"},
         expected_ok=False,
         label=f"POST /api/file/upload [Duplicate] (Expected 400)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Step 2c – Upload a second binary
+#
+# Binary similarity compares pairs, so a one-file collection produces no bin_sim
+# docs at all and every check in step 3c would vacuously pass.
+# ---------------------------------------------------------------------------
+def upload_second_binary():
+    global file_md5_2
+
+    if not file_md5 or not os.path.isfile(SECOND_BINARY):
+        print(
+            _color(
+                f"\n[SKIP] {SECOND_BINARY} not found – bin_sim needs a second binary.",
+                YELLOW,
+            )
+        )
+        return False
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 2c – Upload second binary (for bin_sim pairs)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    with open(SECOND_BINARY, "rb") as fh:
+        raw = fh.read()
+
+    body = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": COLLECTION,
+            "file_name": os.path.basename(SECOND_BINARY),
+            "batch_name": "API Test Batch 2",
+            "profile": "fast",
+            "min_func_len": 10,
+            "skip_sim": "false",
+        },
+        raw_body=raw,
+        headers={"Content-Type": "application/octet-stream"},
+        label=f"POST /api/file/upload  ({os.path.basename(SECOND_BINARY)})",
+    )
+    if not isinstance(body, dict) or not body.get("file_md5"):
+        return False
+
+    file_md5_2 = body["file_md5"]
+    vprint(f"     file_md5_2 = {file_md5_2}")
+    return wait_for_pipeline(
+        body.get("pipeline_id"), banner=" STEP 2c – Wait for second binary pipeline"
     )
 
 
@@ -1190,6 +1249,302 @@ def test_pool_annotation_propagation():
 
 
 # ---------------------------------------------------------------------------
+# Step 3c – Cross-level filtering and sorting, collection vs pool
+#
+# The levels do not share an index model, so a tag filter is a different query
+# at each one, and each has broken independently:
+#   - function level indexes the file's tags under file_user_tags;
+#   - similarity level is reached by propagation through sim:involves:*;
+#   - bin_sim keeps its own denormalized copy of the file's tags, written at
+#     build time only.
+# Every tag here is therefore added AFTER both builds: a snapshot-based filter
+# passes when the tag predates the build and fails afterwards, which is exactly
+# the failure the checks have to catch. Pools are checked on both of their
+# bin_sim search paths — the O(N) scan used before reindexing, and the
+# index-backed path used after.
+# ---------------------------------------------------------------------------
+FILE_TAG = "filt_file_tag"
+FUNC_TAG = "filt_func_tag"
+
+
+def _search_rows(path, params, key):
+    """Returns the row list from a search endpoint, or [] on any failure."""
+    try:
+        resp = requests.get(f"{BASE_URL}{path}", params=params, timeout=60)
+        if resp.status_code != 200:
+            vprint(f"     {path} -> HTTP {resp.status_code}")
+            return []
+        body = resp.json()
+        rows = body.get(key, []) if isinstance(body, dict) else body
+        return rows if isinstance(rows, list) else []
+    except Exception as exc:
+        vprint(f"     {path} error: {exc}")
+        return []
+
+
+def _is_sorted(values, order):
+    pairs = zip(values, values[1:])
+    return all(a >= b for a, b in pairs) if order == "desc" else all(
+        a <= b for a, b in pairs
+    )
+
+
+def _tags_of(row, *fields):
+    out = set()
+    for f in fields:
+        v = row.get(f) or []
+        out.update(t.lower() for t in v if isinstance(t, str))
+    return out
+
+
+def _check_sorting(label, path, params, key, field):
+    """Both orders must be monotonic and agree on the membership of the result."""
+    desc = _search_rows(path, dict(params, sort_by=field, sort_order="desc", limit=50), key)
+    asc = _search_rows(path, dict(params, sort_by=field, sort_order="asc", limit=50), key)
+    if not desc:
+        vprint(f"     [skip] {label}: no rows to sort")
+        return
+    d_vals = [row.get(field) or 0 for row in desc]
+    a_vals = [row.get(field) or 0 for row in asc]
+    check(f"{label}: sort_by={field} desc is monotonic", _is_sorted(d_vals, "desc"), str(d_vals[:6]))
+    check(f"{label}: sort_by={field} asc is monotonic", _is_sorted(a_vals, "asc"), str(a_vals[:6]))
+    # A sort must reorder the page, never change which rows are on it.
+    check(
+        f"{label}: sort_by={field} order does not change the result set",
+        sorted(d_vals) == sorted(a_vals),
+        f"desc={sorted(d_vals)[:6]} asc={sorted(a_vals)[:6]}",
+    )
+
+
+def _check_namespace_filters(label, ns, bin_sim_expected=True):
+    """Runs the filter/sort checks for one namespace ({"collection":..}/{"pool":..})."""
+    print(_color(f"\n  [{label}]", BOLD))
+
+    # ── Function level: file tag filters AND is enriched onto the row ──────
+    rows = _search_rows(
+        "/api/function/search", dict(ns, file_user_tag=FILE_TAG, limit=50), "functions"
+    )
+    check(f"{label}: function search filters by file_user_tag", bool(rows), f"{len(rows)} row(s)")
+    if rows:
+        # The bug this catches: the filter hits the func-level index while the
+        # row's file_tags are enriched from the file doc, so the two can
+        # disagree — searchable but invisible.
+        check(
+            f"{label}: filtered functions carry file_user_tags on the row",
+            all(FILE_TAG in _tags_of(row, "file_user_tags") for row in rows),
+            f"first row file_user_tags={rows[0].get('file_user_tags')}",
+        )
+
+    rows = _search_rows(
+        "/api/function/search", dict(ns, user_tag=FUNC_TAG, limit=50), "functions"
+    )
+    check(f"{label}: function search filters by func user_tag", bool(rows), f"{len(rows)} row(s)")
+    if rows:
+        check(
+            f"{label}: function tagged on a tagged file also shows its file tags",
+            all(FILE_TAG in _tags_of(row, "file_user_tags") for row in rows),
+            f"first row file_user_tags={rows[0].get('file_user_tags')}",
+        )
+
+    _check_sorting(
+        f"{label}: functions", "/api/function/search", ns, "functions", "instruction_count"
+    )
+
+    # ── Similarity level: reached only by propagation ──────────────────────
+    # min_score is pinned: the endpoint defaults it from config (0.9), so an
+    # unpinned filter query and the unfiltered baseline could disagree on the
+    # threshold and make a pass or fail meaningless. Note the response key here
+    # is "pairs", not "results" like bin_sim.
+    sim_params = dict(ns, min_score=0.0, limit=50)
+    all_pairs = _search_rows("/api/similarity/search", sim_params, "pairs")
+    if not all_pairs:
+        vprint(f"     [skip] {label}: no similarity pairs above min_score")
+    else:
+        rows = _search_rows(
+            "/api/similarity/search", dict(sim_params, func_user_tag=FUNC_TAG), "pairs"
+        )
+        check(
+            f"{label}: similarity search filters by func_user_tag",
+            bool(rows),
+            f"{len(rows)} of {len(all_pairs)} pair(s)",
+        )
+        rows = _search_rows(
+            "/api/similarity/search", dict(sim_params, file_user_tag=FILE_TAG), "pairs"
+        )
+        check(
+            f"{label}: similarity search filters by file_user_tag",
+            bool(rows),
+            f"{len(rows)} of {len(all_pairs)} pair(s)",
+        )
+        _check_sorting(
+            f"{label}: similarities", "/api/similarity/search", sim_params, "pairs", "score"
+        )
+
+    # ── bin_sim level: denormalized copy, tagged after the build ───────────
+    if not bin_sim_expected:
+        return
+    all_pairs = _search_rows("/api/bin_sim/search", dict(ns, limit=50), "results")
+    if not all_pairs:
+        vprint(f"     [skip] {label}: no bin_sim pairs built")
+        return
+
+    rows = _search_rows("/api/bin_sim/search", dict(ns, file_tag=FILE_TAG, limit=50), "results")
+    check(
+        f"{label}: bin_sim search filters by a file tag added after the build",
+        bool(rows),
+        f"{len(rows)} of {len(all_pairs)} pair(s)",
+    )
+    if rows:
+        check(
+            f"{label}: every filtered bin_sim pair really carries the tag",
+            all(
+                FILE_TAG in _tags_of(row, "file_user_tags_a", "file_user_tags_b")
+                for row in rows
+            ),
+            f"first pair a={rows[0].get('file_user_tags_a')} b={rows[0].get('file_user_tags_b')}",
+        )
+        excluded = _search_rows(
+            "/api/bin_sim/search", dict(ns, exclude_file_tag=FILE_TAG, limit=50), "results"
+        )
+        tagged = {row.get("_id") for row in rows}
+        check(
+            f"{label}: exclude_file_tag drops exactly the tagged pairs",
+            not (tagged & {row.get("_id") for row in excluded})
+            and len(excluded) == len(all_pairs) - len(rows),
+            f"all={len(all_pairs)} tagged={len(rows)} excluded={len(excluded)}",
+        )
+
+    _check_sorting(f"{label}: bin_sim", "/api/bin_sim/search", ns, "results", "score")
+
+
+def test_search_filters_and_sorting():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c – Filtering and sorting, collection vs pool", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not func_id1:
+        print(_color("\n[SKIP] No file/function resolved – filter checks skipped.", YELLOW))
+        return
+
+    file_entity_id = f"{COLLECTION}:file:{file_md5}"
+    pool_created = False
+
+    try:
+        # ── Build bin_sim for the collection, BEFORE any tag exists ────────
+        print(_color("\n  [Builds (no tags yet)]", BOLD))
+        if file_md5_2:
+            built = test_endpoint(
+                "POST",
+                "/api/bin_sim/build",
+                data={"collection": COLLECTION, "algo": "unweighted_cosine"},
+                label="POST /api/bin_sim/build (collection)",
+            )
+            if isinstance(built, dict) and built.get("job_id"):
+                wait_for_pipeline(
+                    built["job_id"], banner=" STEP 3c – Wait for collection bin_sim build"
+                )
+        else:
+            print(_color("     [SKIP] one binary only – bin_sim checks skipped.", YELLOW))
+
+        # The full pool pipeline (sim + clustering + bin_sim), unlike step 3b:
+        # here the pool's own bin_sim docs are the thing under test.
+        pool = test_endpoint(
+            "POST",
+            "/api/pool",
+            data={
+                "pool_id": FILTER_POOL_ID,
+                "name": "API Test Filter Pool",
+                "collections": [COLLECTION],
+                "config": {"only_cross_collection": False},
+            },
+            label="POST /api/pool (filter pool)",
+        )
+        if not isinstance(pool, dict) or not pool.get("pool_id"):
+            check("filter pool created", False, str(pool)[:120])
+            return
+        pool_created = True
+        wait_for_pipeline(pool.get("job_id"), banner=" STEP 3c – Wait for pool build")
+
+        # ── Tag AFTER both builds ─────────────────────────────────────────
+        print(_color("\n  [Tags added after the builds]", BOLD))
+        test_endpoint(
+            "POST",
+            "/api/tags/add",
+            data={
+                "collection": COLLECTION,
+                "entity_type": "file",
+                "entity_id": file_entity_id,
+                "tag": FILE_TAG,
+            },
+            label=f"POST /api/tags/add (file, '{FILE_TAG}')",
+        )
+        test_endpoint(
+            "POST",
+            "/api/tags/add",
+            data={
+                "collection": COLLECTION,
+                "entity_type": "function",
+                "entity_id": func_id1,
+                "tag": FUNC_TAG,
+            },
+            label=f"POST /api/tags/add (function, '{FUNC_TAG}')",
+        )
+
+        _check_namespace_filters(
+            "collection", {"collection": COLLECTION}, bin_sim_expected=bool(file_md5_2)
+        )
+        # Pools serve bin_sim from an O(N) scan until reindexed; both paths are
+        # separate implementations of the same filters, so both are checked.
+        _check_namespace_filters(
+            "pool (pre-reindex scan)",
+            {"pool": FILTER_POOL_ID},
+            bin_sim_expected=bool(file_md5_2),
+        )
+
+        if file_md5_2:
+            reindexed = test_endpoint(
+                "POST",
+                "/api/bin_sim/reindex",
+                data={"pool_id": FILTER_POOL_ID, "algo": "unweighted_cosine"},
+                label="POST /api/bin_sim/reindex (pool)",
+            )
+            if isinstance(reindexed, dict) and reindexed.get("job_id"):
+                wait_for_pipeline(
+                    reindexed["job_id"], banner=" STEP 3c – Wait for pool bin_sim reindex"
+                )
+            _check_namespace_filters(
+                "pool (index-backed)", {"pool": FILTER_POOL_ID}, bin_sim_expected=True
+            )
+
+    finally:
+        for entity_type, entity_id, tag in (
+            ("file", file_entity_id, FILE_TAG),
+            ("function", func_id1, FUNC_TAG),
+        ):
+            try:
+                requests.post(
+                    f"{BASE_URL}/api/tags/remove",
+                    json={
+                        "collection": COLLECTION,
+                        "entity_type": entity_type,
+                        "entity_id": entity_id,
+                        "tag": tag,
+                    },
+                    timeout=30,
+                )
+            except Exception:
+                pass
+        if pool_created:
+            try:
+                from bsimvis.app.services.pool_service import pool_service
+
+                pool_service.delete_pool(FILTER_POOL_ID)
+                print(_color(f"\n  Pool {FILTER_POOL_ID} deleted.", DIM))
+            except Exception as exc:
+                print(_color(f"\n  Filter pool cleanup failed: {exc}", YELLOW))
+
+
+# ---------------------------------------------------------------------------
 # Step 5 – Print summary
 # ---------------------------------------------------------------------------
 def print_summary():
@@ -1235,9 +1590,11 @@ if __name__ == "__main__":
     if uploaded:
         wait_for_pipeline()
         test_duplicate_upload()
+        upload_second_binary()
 
     resolve_ids()
     # Before run_all_tests(): that step deletes the collection on its way out.
     test_pool_annotation_propagation()
+    test_search_filters_and_sorting()
     run_all_tests()
     print_summary()

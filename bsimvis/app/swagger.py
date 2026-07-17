@@ -1498,6 +1498,17 @@ class ClusterBuild(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
+                "algorithm": fields.String(
+                    default="hdbscan",
+                    description="Clustering algorithm: 'hdbscan' or 'leiden'",
+                ),
+                "resolution": fields.Float(
+                    default=1.0, description="Leiden granularity (higher = tighter)"
+                ),
+                "stop_cohesion": fields.Float(
+                    default=0.9,
+                    description="Leiden: stop recursing once a group is this cohesive",
+                ),
                 "min_cluster_size": fields.Integer(default=2),
                 "min_samples": fields.Integer(default=1),
                 "epsilon": fields.Float(default=0.1),
@@ -2171,7 +2182,16 @@ pool_func_sim_params_model = api.model(
 pool_func_cluster_params_model = api.model(
     "PoolFuncClusterParams",
     {
-        "cluster_algo": fields.String(default="hdbscan"),
+        "cluster_algo": fields.String(
+            default="hdbscan", description="Clustering algorithm: 'hdbscan' or 'leiden'"
+        ),
+        "resolution": fields.Float(
+            default=1.0, description="Leiden granularity (higher = tighter)"
+        ),
+        "stop_cohesion": fields.Float(
+            default=0.9,
+            description="Leiden: stop recursing once a group is this cohesive",
+        ),
         "min_cluster_size": fields.Integer(default=2),
         "min_samples": fields.Integer(default=1),
         "epsilon": fields.Float(default=0.1),
@@ -2231,7 +2251,9 @@ class PoolList(Resource):
                 "example": "mirai",
             },
             "name": {"description": "Substring filter on pool name"},
-            "sync_status": {"description": "Exact sync status: current | outdated | created"},
+            "sync_status": {
+                "description": "Exact sync status: current | outdated | created"
+            },
             "sort_by": {
                 "description": "name | id | created_at | last_built_at | sync_status | count fields",
                 "example": "created_at",
@@ -2277,7 +2299,11 @@ class PoolDetail(Resource):
 
         return delete_pool(pool_id)
 
-    @ns_pool.expect(api.model("PoolUpdate", {"name": fields.String(required=True, example="New Name")}))
+    @ns_pool.expect(
+        api.model(
+            "PoolUpdate", {"name": fields.String(required=True, example="New Name")}
+        )
+    )
     def put(self, pool_id):
         """Updates the pool's name."""
         from bsimvis.app.routes.pools import edit_pool

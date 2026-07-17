@@ -34,6 +34,15 @@ def build_cluster():
         "min_features": data.get(
             "min_features", config_service.get("clustering.min_features", 0)
         ),
+        "algorithm": data.get(
+            "algorithm", config_service.get("clustering.algorithm", "hdbscan")
+        ),
+        "resolution": data.get(
+            "resolution", config_service.get("clustering.resolution", 1.0)
+        ),
+        "stop_cohesion": data.get(
+            "stop_cohesion", config_service.get("clustering.stop_cohesion", 0.9)
+        ),
     }
 
     job_id = job_service.create_job(JobType.CLUSTER_FUNCTIONS, payload)
@@ -79,6 +88,16 @@ def rebuild_cluster():
                 "min_features": data.get(
                     "min_features", config_service.get("clustering.min_features", 0)
                 ),
+                "algorithm": data.get(
+                    "algorithm", config_service.get("clustering.algorithm", "hdbscan")
+                ),
+                "resolution": data.get(
+                    "resolution", config_service.get("clustering.resolution", 1.0)
+                ),
+                "stop_cohesion": data.get(
+                    "stop_cohesion",
+                    config_service.get("clustering.stop_cohesion", 0.9),
+                ),
             },
         ),
     ]
@@ -121,6 +140,16 @@ def rebuild_all_pipeline():
                 ),
                 "min_features": data.get(
                     "min_features", config_service.get("clustering.min_features", 0)
+                ),
+                "algorithm": data.get(
+                    "algorithm", config_service.get("clustering.algorithm", "hdbscan")
+                ),
+                "resolution": data.get(
+                    "resolution", config_service.get("clustering.resolution", 1.0)
+                ),
+                "stop_cohesion": data.get(
+                    "stop_cohesion",
+                    config_service.get("clustering.stop_cohesion", 0.9),
                 ),
             },
         ),

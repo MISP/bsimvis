@@ -1359,9 +1359,14 @@ class ClusterService:
         min_features=None,
         job_service=None,
         job_id=None,
+        algorithm=None,
+        resolution=None,
+        stop_cohesion=None,
     ):
         """
-        Runs HDBSCAN clustering on pool-namespaced similarity pairs by delegating to run_clustering.
+        Runs clustering on pool-namespaced similarity pairs by delegating to
+        run_clustering. Algorithm ("hdbscan" | "leiden") and its knobs come from
+        the pool's func_cluster_params unless overridden.
         """
         from bsimvis.app.services.pool_service import pool_service
         from bsimvis.app.services.config_service import config_service
@@ -1425,6 +1430,24 @@ class ClusterService:
                 min_features = config_service.get("clustering.min_features", 0)
             min_features = int(min_features)
 
+        # Clustering algorithm + Leiden knobs (func_cluster_params.cluster_algo)
+        if algorithm is None:
+            algorithm = func_cluster_params.get("cluster_algo") or cluster_params.get(
+                "cluster_algo"
+            )
+            if algorithm is None:
+                algorithm = config_service.get("clustering.algorithm", "hdbscan")
+        if resolution is None:
+            resolution = func_cluster_params.get("resolution")
+            if resolution is None:
+                resolution = config_service.get("clustering.resolution", 1.0)
+            resolution = float(resolution)
+        if stop_cohesion is None:
+            stop_cohesion = func_cluster_params.get("stop_cohesion")
+            if stop_cohesion is None:
+                stop_cohesion = config_service.get("clustering.stop_cohesion", 0.9)
+            stop_cohesion = float(stop_cohesion)
+
         algo = pool.get("algo", "unweighted_cosine")
         pool_coll = f"global:pool:{pool_id}"
 
@@ -1438,6 +1461,9 @@ class ClusterService:
             selection_method=selection_method,
             min_sim=min_sim,
             min_features=min_features,
+            algorithm=algorithm,
+            resolution=resolution,
+            stop_cohesion=stop_cohesion,
             job_service=job_service,
             job_id=job_id,
         )

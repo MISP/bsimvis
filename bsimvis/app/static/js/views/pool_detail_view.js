@@ -301,10 +301,13 @@ window.PoolDetailView = {
                         ${this._configRow('Top K', fs.top_k)}
                         ${this._configRow('Min Score', fs.min_score)}
                         ${this._configRow('Min Features', fs.min_features)}
+                        ${this._configRow('Cluster Algorithm', fc.cluster_algo || 'hdbscan')}
+                        ${(fc.cluster_algo === 'leiden') ? this._configRow('Resolution', fc.resolution ?? 1.0) : ''}
+                        ${(fc.cluster_algo === 'leiden') ? this._configRow('Stop Cohesion', fc.stop_cohesion ?? 0.9) : ''}
                         ${this._configRow('Min Cluster Size', fc.min_cluster_size)}
-                        ${this._configRow('Min Samples', fc.min_samples)}
-                        ${this._configRow('Epsilon', fc.epsilon)}
-                        ${this._configRow('Method', fc.selection_method)}
+                        ${(fc.cluster_algo === 'leiden') ? '' : this._configRow('Min Samples', fc.min_samples)}
+                        ${(fc.cluster_algo === 'leiden') ? '' : this._configRow('Epsilon', fc.epsilon)}
+                        ${(fc.cluster_algo === 'leiden') ? '' : this._configRow('Method', fc.selection_method)}
                     </div>
 
                     <!-- File Sim -->
@@ -312,7 +315,6 @@ window.PoolDetailView = {
                         <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:${fileSimEnabled ? '#60a5fa' : 'var(--dim)'}; margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;">
                             <i class="fa-solid fa-file-code"></i> File Similarity ${fileSimEnabled ? '' : '<span style="font-size:0.65rem; margin-left:4px; color:var(--dim);">(disabled)</span>'}
                         </div>
-                        ${this._configRow('Algorithm', fis.algo)}
                         ${this._configRow('Top K', fis.top_k)}
                         ${this._configRow('Min Score', fis.min_score)}
                         ${this._configRow('Min Cluster Size', fic.min_cluster_size)}

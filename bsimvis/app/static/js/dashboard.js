@@ -4281,8 +4281,10 @@ async function renderPoolCreationForm() {
     const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
     const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
     const funcClusterMethod = clustering.selection_method || 'eom';
+    const funcClusterAlgo = clustering.algorithm || 'hdbscan';
+    const funcClusterResolution = clustering.resolution !== undefined ? clustering.resolution : 1.0;
+    const funcClusterStopCohesion = clustering.stop_cohesion !== undefined ? clustering.stop_cohesion : 0.9;
 
-    const fileAlgo = similarity.algo || 'unweighted_cosine';
     const fileTopK = 100; // default for file-level similarity
     const fileMinScore = 0.5; // default for file-level similarity
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
@@ -4384,6 +4386,23 @@ async function renderPoolCreationForm() {
                                             </div>
                                         </div>
                                     </div>
+                                    <div style="margin-bottom:10px;">
+                                        <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
+                                        <select id="pool-cluster-algo" onchange="togglePoolLeidenParams()" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <option value="hdbscan" ${funcClusterAlgo === 'hdbscan' ? 'selected' : ''}>HDBSCAN (hierarchical density)</option>
+                                            <option value="leiden" ${funcClusterAlgo === 'leiden' ? 'selected' : ''}>Leiden (recursive community)</option>
+                                        </select>
+                                    </div>
+                                    <div id="pool-leiden-params" style="display:${funcClusterAlgo === 'leiden' ? 'grid' : 'none'}; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;" title="Higher = smaller, tighter clusters">Resolution</label>
+                                            <input type="number" id="pool-cluster-resolution" step="0.1" value="${funcClusterResolution}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;" title="Stop splitting once a group is this cohesive">Stop Cohesion</label>
+                                            <input type="number" id="pool-cluster-stopcohesion" step="0.05" value="${funcClusterStopCohesion}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                    </div>
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
@@ -4422,13 +4441,9 @@ async function renderPoolCreationForm() {
                                 <div id="file-params-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; transition: opacity 0.2s;">
                                     <div>
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
-                                            <div>
-                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                    <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${fileAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
-                                                    <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                                </select>
+                                            <div style="font-size:0.65rem; color:var(--dim); line-height:1.4;">
+                                                <i class="fa-solid fa-circle-info"></i>
+                                                File similarity is derived from shared function clusters — it inherits the function algorithm above, there is no separate file-level algorithm.
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
@@ -4519,6 +4534,14 @@ function togglePoolCreationForm() {
 }
 window.togglePoolCreationForm = togglePoolCreationForm;
 
+function togglePoolLeidenParams() {
+    const sel = document.getElementById('pool-cluster-algo');
+    const params = document.getElementById('pool-leiden-params');
+    if (!sel || !params) return;
+    params.style.display = sel.value === 'leiden' ? 'grid' : 'none';
+}
+window.togglePoolLeidenParams = togglePoolLeidenParams;
+
 function filterPoolCollections(val) {
     const list = document.getElementById('pool-collections-list');
     if (!list) return;
@@ -4545,10 +4568,12 @@ async function submitCreatePool(btn) {
     const funcClusterMinSamples = parseInt(document.getElementById('pool-cluster-min-samples')?.value || '1');
     const funcClusterEpsilon = parseFloat(document.getElementById('pool-cluster-epsilon')?.value || '0.1');
     const funcClusterMethod = document.getElementById('pool-cluster-method')?.value ?? 'eom';
-    
+    const funcClusterAlgo = document.getElementById('pool-cluster-algo')?.value ?? 'hdbscan';
+    const funcClusterResolution = parseFloat(document.getElementById('pool-cluster-resolution')?.value || '1.0');
+    const funcClusterStopCohesion = parseFloat(document.getElementById('pool-cluster-stopcohesion')?.value || '0.9');
+
     // File settings
     const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
-    const fileAlgo = document.getElementById('pool-file-algo')?.value ?? 'unweighted_cosine';
     const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
     const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
     const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
@@ -4592,14 +4617,16 @@ async function submitCreatePool(btn) {
                         min_features: funcMinFeatures
                     },
                     func_cluster_params: {
+                        cluster_algo: funcClusterAlgo,
+                        resolution: funcClusterResolution,
+                        stop_cohesion: funcClusterStopCohesion,
                         min_cluster_size: funcClusterMinSize,
                         min_samples: funcClusterMinSamples,
                         epsilon: funcClusterEpsilon,
                         selection_method: funcClusterMethod
                     },
-                    file_sim_params: { 
+                    file_sim_params: {
                         enabled: enableFiles,
-                        algo: fileAlgo,
                         top_k: fileTopK,
                         min_score: fileMinScore
                     },

@@ -492,17 +492,19 @@ def search_functions():
 
             f_meta_list.append({"doc_id": doc_id, "meta": meta, "scores": scores})
             if meta.get("file_md5"):
-                unique_md5s.add(meta["file_md5"])
+                # File docs live in the origin collection; a pool owns none, so
+                # key the map by (collection, md5) taken from the function id.
+                unique_md5s.add((doc_id.split(":")[0], meta["file_md5"]))
 
         # Phase 2: Fetch File Metadata (DEDUPLICATED)
         file_meta_map = {}
         if unique_md5s:
             file_pipe = r.pipeline(transaction=False)
             md5_list = list(unique_md5s)
-            for md5 in md5_list:
-                file_pipe.get(f"{col}:file:{md5}:meta")
+            for f_coll, md5 in md5_list:
+                file_pipe.get(f"{f_coll}:file:{md5}:meta")
             file_results = file_pipe.execute()
-            for md5, res in zip(md5_list, file_results):
+            for (f_coll, md5), res in zip(md5_list, file_results):
                 fm = (
                     json.loads(res)
                     if res and not isinstance(res, dict)
@@ -510,7 +512,7 @@ def search_functions():
                 )
                 if isinstance(fm, str):
                     fm = json.loads(fm)
-                file_meta_map[md5] = fm
+                file_meta_map[f"{f_coll}:{md5}"] = fm
 
         # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
         cluster_meta_map = {}
@@ -545,7 +547,7 @@ def search_functions():
 
             # File tags enrichment
             md5 = meta.get("file_md5")
-            file_meta = file_meta_map.get(md5, {})
+            file_meta = file_meta_map.get(f"{doc_id.split(':')[0]}:{md5}", {})
             if pool_id:
                 enrich_pool_data(file_meta, pool_id)
             meta["file_tags"] = file_meta.get("tags", [])

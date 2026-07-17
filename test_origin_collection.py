@@ -5,7 +5,10 @@ resolve_origin_collection is the single point where that rule is enforced.
 Run: python3 test_origin_collection.py
 """
 
-from bsimvis.app.services.index_service import resolve_origin_collection
+from bsimvis.app.services.index_service import (
+    resolve_origin_collection,
+    to_pool_indexed_id,
+)
 
 
 class FakeRedis:
@@ -58,5 +61,25 @@ def demo():
     print("resolve_origin_collection: all checks passed")
 
 
+def demo_pool_ids():
+    # A collection sid must be rewritten into the pool's own sid, which keeps the
+    # collection prefix on both function ids and drops the algo segment.
+    assert (
+        to_pool_indexed_id("mirai:sim:sem:abc:0x1::abc:0x2", "sim", "7")
+        == "global:pool:7:sim:mirai:func:abc:0x1::mirai:func:abc:0x2"
+    )
+
+    # File and function docs are shared, so their ids pass through unchanged.
+    assert to_pool_indexed_id("mirai:func:abc:0x1", "func", "7") == "mirai:func:abc:0x1"
+    assert to_pool_indexed_id("mirai:file:deadbeef", "file", "7") == "mirai:file:deadbeef"
+
+    # Not a sid: no pool equivalent, caller must skip it rather than index it.
+    assert to_pool_indexed_id("mirai:func:abc:0x1", "sim", "7") is None
+    assert to_pool_indexed_id("mirai:sim:sem:abc:0x1", "sim", "7") is None
+
+    print("to_pool_indexed_id: all checks passed")
+
+
 if __name__ == "__main__":
     demo()
+    demo_pool_ids()

@@ -84,6 +84,34 @@ def resolve_origin_collection(collection, entity_id=None, r=None):
     return collection
 
 
+def to_pool_indexed_id(indexed_id, lvl, pool_id):
+    """
+    Rewrites a collection-scoped doc id into its pool-scoped equivalent.
+
+    File and function docs are shared, so a pool index stores the same id the
+    collection does. Similarity docs are not: a pool builds its own sim docs
+    under `global:pool:{id}:sim:{a}::{b}`, keyed by full function ids, while a
+    collection stores `{coll}:sim:{algo}:{a}::{b}` with the collection prefix
+    stripped from both sides. Mirroring a collection sid into a pool index
+    without this rewrite indexes an id the pool has no document for.
+
+    Returns None when the id is not a sid this mapping applies to, so callers
+    skip it rather than index a bad key.
+    """
+    if lvl != "sim":
+        return indexed_id
+    parts = indexed_id.split(":")
+    if len(parts) < 4 or parts[1] != "sim":
+        return None
+    coll_name = parts[0]
+    rest = ":".join(parts[3:])
+    pivot = rest.find("::")
+    if pivot == -1:
+        return None
+    id1, id2 = rest[:pivot], rest[pivot + 2 :]
+    return f"global:pool:{pool_id}:sim:{coll_name}:func:{id1}::{coll_name}:func:{id2}"
+
+
 def enrich_pool_data(data, pool_id):
     """
     Ensures tag/note keys are present on a metadata dict (file, function, or

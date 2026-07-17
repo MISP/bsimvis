@@ -358,6 +358,7 @@ class PoolService:
             FUNC_TAG_FIELDS,
             FILE_NUM_FIELDS,
             FUNC_NUM_FIELDS,
+            to_pool_indexed_id,
         )
         from bsimvis.app.services.index_config import (
             get_fields_targeting_level,
@@ -401,7 +402,8 @@ class PoolService:
                     for val in bucket_values:
                         pool_bucket_key = f"{pool_coll}:idx:{level}:{field}:{val}"
                         if level == "sim":
-                            # Fetch and translate SIDs
+                            # A pool owns its own sim docs, so member sids must be
+                            # rewritten into the pool namespace before indexing.
                             all_sids = set()
                             for coll in collections:
                                 sb = f"{coll}:idx:{level}:{field}:{val}"
@@ -411,17 +413,11 @@ class PoolService:
                                         if isinstance(sid, bytes)
                                         else str(sid)
                                     )
-                                    # Translate to pool SID format
-                                    parts = sid_str.split(":")
-                                    if len(parts) >= 4:
-                                        coll_name = parts[0]
-                                        rest = ":".join(parts[3:])
-                                        pivot = rest.find("::")
-                                        if pivot != -1:
-                                            clean_id1 = rest[:pivot]
-                                            clean_id2 = rest[pivot + 2 :]
-                                            pool_sid = f"global:pool:{pool_id}:sim:{coll_name}:func:{clean_id1}::{coll_name}:func:{clean_id2}"
-                                            all_sids.add(pool_sid)
+                                    pool_sid = to_pool_indexed_id(
+                                        sid_str, "sim", pool_id
+                                    )
+                                    if pool_sid:
+                                        all_sids.add(pool_sid)
                             if all_sids:
                                 pipe.delete(pool_bucket_key)
                                 pipe.sadd(pool_bucket_key, *all_sids)
@@ -713,6 +709,7 @@ class PoolService:
             return True
 
         from bsimvis.app.services.index_config import get_fields_targeting_level
+        from bsimvis.app.services.index_service import to_pool_indexed_id
 
         SIM_TAG_FIELDS = get_fields_targeting_level("sim", is_num=False)
         SIM_NUM_FIELDS = get_fields_targeting_level("sim", is_num=True)
@@ -781,16 +778,9 @@ class PoolService:
                             sid_str = (
                                 sid.decode() if isinstance(sid, bytes) else str(sid)
                             )
-                            parts = sid_str.split(":")
-                            if len(parts) >= 4:
-                                coll_name = parts[0]
-                                rest = ":".join(parts[3:])
-                                pivot = rest.find("::")
-                                if pivot != -1:
-                                    clean_id1 = rest[:pivot]
-                                    clean_id2 = rest[pivot + 2 :]
-                                    pool_sid = f"global:pool:{pool_id}:sim:{coll_name}:func:{clean_id1}::{coll_name}:func:{clean_id2}"
-                                    val_to_sids[val].add(pool_sid)
+                            pool_sid = to_pool_indexed_id(sid_str, "sim", pool_id)
+                            if pool_sid:
+                                val_to_sids[val].add(pool_sid)
 
                     # Phase 2: Pipeline write results back
                     if val_to_sids:

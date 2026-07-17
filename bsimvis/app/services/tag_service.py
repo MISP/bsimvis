@@ -2,11 +2,25 @@ import json
 import random
 import logging
 from .redis_client import get_redis
-from bsimvis.app.services.index_service import resolve_origin_collection
+from bsimvis.app.services.index_service import (
+    resolve_origin_collection,
+    to_pool_indexed_id,
+)
 
 
 def _normalize_collection(collection, entity_id=None):
     return resolve_origin_collection(collection, entity_id)
+
+
+def _to_pool_ids(ids, lvl, pool_id):
+    """Batch form of to_pool_indexed_id; drops ids with no pool equivalent."""
+    out = []
+    for i in ids:
+        i = i.decode() if isinstance(i, bytes) else i
+        mapped = to_pool_indexed_id(i, lvl, pool_id)
+        if mapped:
+            out.append(mapped)
+    return out
 
 
 class TagService:
@@ -125,9 +139,12 @@ class TagService:
                 associated_pools = r.smembers(f"{collection}:pools")
                 for p_id in associated_pools:
                     p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
+                    if not pool_id_val:
+                        continue
                     pool_coll = f"global:pool:{p_id}"
                     pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                    r.sadd(pool_index_key, indexed_id)
+                    r.sadd(pool_index_key, pool_id_val)
                     pool_registry_key = f"{pool_coll}:reg:{lvl}:user_tags"
                     r.sadd(pool_registry_key, pool_index_key)
 
@@ -183,9 +200,12 @@ class TagService:
                 associated_pools = r.smembers(f"{collection}:pools")
                 for p_id in associated_pools:
                     p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                    pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
+                    if not pool_id_val:
+                        continue
                     pool_coll = f"global:pool:{p_id}"
                     pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                    r.srem(pool_index_key, indexed_id)
+                    r.srem(pool_index_key, pool_id_val)
 
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="remove"
@@ -241,9 +261,12 @@ class TagService:
                     # Propagate to pools
                     for p_id in associated_pools:
                         p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                        pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
+                        if not pool_id_val:
+                            continue
                         pool_coll = f"global:pool:{p_id}"
                         pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                        r.sadd(pool_index_key, indexed_id)
+                        r.sadd(pool_index_key, pool_id_val)
                         pool_registry_key = f"{pool_coll}:reg:{lvl}:user_tags"
                         r.sadd(pool_registry_key, pool_index_key)
 
@@ -296,9 +319,12 @@ class TagService:
                     # Propagate removal to pools
                     for p_id in associated_pools:
                         p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                        pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
+                        if not pool_id_val:
+                            continue
                         pool_coll = f"global:pool:{p_id}"
                         pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                        r.srem(pool_index_key, indexed_id)
+                        r.srem(pool_index_key, pool_id_val)
 
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="remove"
@@ -468,18 +494,24 @@ class TagService:
                         r.sadd(registry_key, index_key)
                         for p_id in associated_pools:
                             p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                            pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
+                            if not pool_ids:
+                                continue
                             pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
                             pool_registry_key = (
                                 f"global:pool:{p_id}:reg:{target_lvl}:{target_field}"
                             )
-                            r.sadd(pool_index_key, *id_list)
+                            r.sadd(pool_index_key, *pool_ids)
                             r.sadd(pool_registry_key, pool_index_key)
                     else:
                         r.srem(index_key, *id_list)
                         for p_id in associated_pools:
                             p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                            pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
+                            if not pool_ids:
+                                continue
                             pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                            r.srem(pool_index_key, *id_list)
+                            r.srem(pool_index_key, *pool_ids)
 
         elif src_level == "func":
             parts = indexed_id.split(":")
@@ -509,9 +541,12 @@ class TagService:
                                         if isinstance(p_id, bytes)
                                         else p_id
                                     )
+                                    pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
+                                    if not pool_ids:
+                                        continue
                                     pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
                                     pool_registry_key = f"global:pool:{p_id}:reg:{target_lvl}:{target_field}"
-                                    r.sadd(pool_index_key, *id_list)
+                                    r.sadd(pool_index_key, *pool_ids)
                                     r.sadd(pool_registry_key, pool_index_key)
                             else:
                                 r.srem(index_key, *id_list)
@@ -521,8 +556,11 @@ class TagService:
                                         if isinstance(p_id, bytes)
                                         else p_id
                                     )
+                                    pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
+                                    if not pool_ids:
+                                        continue
                                     pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                                    r.srem(pool_index_key, *id_list)
+                                    r.srem(pool_index_key, *pool_ids)
 
 
 tag_service = TagService()

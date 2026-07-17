@@ -1,89 +1,161 @@
-# BsimVis API Examples
+# BSimVis API Examples
 
-This document provides example `curl` commands for the primary API endpoints, using the `test_api` collection.
+Example `curl` commands for the primary endpoints, using a `test_api` collection. Default port is `5000` (set by `APP_PORT` in `.env`). See [api_documentation.md](api_documentation.md) for the full parameter reference.
 
-## 1. Index Statistics
-Get database statistics for a collection.
+## Index & Jobs
 ```bash
+# Database statistics
 curl -s "http://localhost:5000/api/index/status?collection=test_api"
-```
 
-## 2. Jobs Management
-List background jobs.
-```bash
+# List background jobs
 curl -s "http://localhost:5000/api/jobs?limit=10"
-```
-Get job status.
-```bash
+
+# Job / pipeline status
 curl -s "http://localhost:5000/api/jobs/<job_id>"
 ```
 
-## 3. Collections and Batches
-Search collections.
+## Collections & Batches
 ```bash
 curl -s "http://localhost:5000/api/collection/search?q=test"
-```
-Search batches in a collection.
-```bash
 curl -s "http://localhost:5000/api/batch/search?collection=test_api"
 ```
 
-## 4. File Operations
-Search for files.
+## Files
 ```bash
+# Search files
 curl -s "http://localhost:5000/api/file/search?collection=test_api"
-```
-Get call graph for a file.
-```bash
+
+# File details (with clusters)
+curl -s "http://localhost:5000/api/file/details/59281a167473ca9b98515b11cb709f82?collection=test_api"
+
+# Call graph
 curl -s "http://localhost:5000/api/file/call_graph?collection=test_api&file_md5=59281a167473ca9b98515b11cb709f82"
 ```
 
-## 5. Function Analysis
-Search for functions.
+### Upload a raw binary
 ```bash
-curl -s "http://localhost:5000/api/function/search?collection=test_api&function_name=main"
-```
-Get decompiler code for a function.
-```bash
-curl -s "http://localhost:5000/api/function/code?id=test_api:func:59281a167473ca9b98515b11cb709f82:00101144"
-```
-Aligned diff between two functions.
-```bash
-curl -s "http://localhost:5000/api/function/diff?id1=<id1>&id2=<id2>"
+curl -X POST --data-binary "@/path/to/file" \
+  "http://localhost:5000/api/file/upload?collection=test_api&file_name=my_binary&profile=fast"
 ```
 
-## 6. Similarity Engine
-Main similarity search.
+## Functions
 ```bash
-curl -s "http://localhost:5000/api/similarity/search?collection=test_api&min_score=0.9"
+# Search functions
+curl -s "http://localhost:5000/api/function/search?collection=test_api&function_name=main"
+
+# Decompiled code + tokens
+curl -s "http://localhost:5000/api/function/code?id=test_api:func:59281a167473ca9b98515b11cb709f82:00101144"
+
+# Features for a function
+curl -s "http://localhost:5000/api/function/features?id=test_api:func:59281a167473ca9b98515b11cb709f82:00101144"
+
+# Aligned function diff
+curl -s "http://localhost:5000/api/diff?md5_a=<md5a>&addr_a=<addra>&md5_b=<md5b>&addr_b=<addrb>&collection_a=test_api"
 ```
-Build similarities for a file.
+
+## Features (Global)
 ```bash
+curl -s "http://localhost:5000/api/feature/search?collection=test_api&sort_by=tf_score"
+curl -s "http://localhost:5000/api/feature/details/<f_hash>?collection=test_api"
+```
+
+## Search Utilities
+```bash
+curl -s "http://localhost:5000/api/search/autocomplete?collection=test_api&level=func&field=function_name&q=aes"
+curl -s "http://localhost:5000/api/search/fields?collection=test_api&level=func&field=function_name"
+```
+
+## Similarity Engine
+```bash
+# Main similarity search
+curl -s "http://localhost:5000/api/similarity/search?collection=test_api&min_score=0.9&cross_binary=true"
+
+# List pre-calculated similarities for a file
+curl -s "http://localhost:5000/api/similarity/list?collection=test_api&md5=59281a167473ca9b98515b11cb709f82"
+
+# Build status for a target
+curl -s "http://localhost:5000/api/similarity/status?collection=test_api&md5=59281a167473ca9b98515b11cb709f82"
+
+# Build similarities for a file
 curl -X POST -H "Content-Type: application/json" \
   -d '{"collection": "test_api", "md5": "59281a167473ca9b98515b11cb709f82"}' \
   http://localhost:5000/api/similarity/build
+
+# Tag a similarity pair
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","id1":"test_api:func:<md5a>:<addra>","id2":"test_api:func:<md5b>:<addrb>","tag":"interesting"}' \
+  http://localhost:5000/api/similarity/tag
 ```
 
-## 7. Tagging
-Add a tag to a function.
+## Tagging
 ```bash
 curl -X POST -H "Content-Type: application/json" \
   -d '{"collection": "test_api", "entity_type": "function", "entity_id": "test_api:func:59281a167473ca9b98515b11cb709f82:00101144", "tag": "important"}' \
   http://localhost:5000/api/tags/add
 ```
 
-## 8. Clustering
-List discovered clusters.
+## Function Clustering
 ```bash
+# List clusters
 curl -s "http://localhost:5000/api/cluster/list?collection=test_api"
-```
-Get cluster tree (D3 format).
-```bash
-curl -s "http://localhost:5000/api/cluster/dendrogram?collection=test_api"
-```
-Rebuild clusters and binary similarities (keeps function similarities).
-```bash
+
+# Dendrogram tree (D3)
+curl -s "http://localhost:5000/api/cluster/tree?collection=test_api"
+
+# Full re-analysis (clusters + binary similarity)
 curl -X POST -H "Content-Type: application/json" \
   -d '{"collection": "test_api", "algo": "unweighted_cosine"}' \
   http://localhost:5000/api/cluster/rebuild_all
+```
+
+## Binary Similarity & Clustering
+```bash
+# Build binary similarities
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection": "test_api", "algo": "unweighted_cosine"}' \
+  http://localhost:5000/api/bin_sim/build
+
+# Search binary similarity pairs
+curl -s "http://localhost:5000/api/bin_sim/search?collection=test_api&min_score=0.5&sort_by=shared_clusters"
+
+# Similar binaries for one MD5
+curl -s "http://localhost:5000/api/bin_sim/list?collection=test_api&md5=59281a167473ca9b98515b11cb709f82"
+
+# List binary clusters
+curl -s "http://localhost:5000/api/bin_cluster/list?collection=test_api"
+```
+
+## Notes
+```bash
+# Add a function note
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"collection":"test_api","func_id":"test_api:func:<md5>:<addr>","text":"input validation","owner":"analyst"}' \
+  http://localhost:5000/api/notes/add
+
+# List file notes
+curl -s "http://localhost:5000/api/notes/file/list?collection=test_api&file_id=test_api:file:59281a167473ca9b98515b11cb709f82"
+```
+
+## LLM (Ollama)
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"func_id":"test_api:func:<md5>:<addr>"}' \
+  http://localhost:5000/api/llm/summarize
+```
+
+## Pools (Cross-Collection)
+```bash
+# Create a pool over two collections
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"name":"My Pool","collections":["test_api","bench"]}' \
+  http://localhost:5000/api/pool
+
+# List pools
+curl -s "http://localhost:5000/api/pool?refresh_sync=1"
+
+# Build + cluster a pool
+curl -X POST "http://localhost:5000/api/pool/<pool_id>/rebuild"
+
+# Search functions within a pool
+curl -s "http://localhost:5000/api/function/search?pool=<pool_id>&function_name=main"
 ```

@@ -25,6 +25,10 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Cluster search view with dendrogram and packing diagram
 - Stability and parent cluster filtering
 
+### Cross-Collection Pools
+- Combine multiple collections into a pool for similarity search and clustering across their union
+- Search endpoints accept a `pool` parameter; per-pool build/cluster jobs with sync-status tracking
+
 ### Search & Filtering
 - Full text search on files and features with sorting, filtering, and pagination
 - Search history and caching
@@ -113,6 +117,8 @@ uv run test_api_endpoints.py
 
 # API
 
+Full endpoint reference in [doc/api_documentation.md](doc/api_documentation.md); `curl` examples in [doc/api_examples.md](doc/api_examples.md). Interactive Swagger UI is at `/api/` when running.
+
 ## Binary upload
 
 ```
@@ -146,7 +152,7 @@ curl -X POST --data-binary @$gpr_name.gpr.zip \
 ## Follow pipeline progress
 
 ```
-curl -s "http://localhost:5001/api/jobs/pipe_f4f87081-ab7d-4077"
+curl -s "http://localhost:5000/api/jobs/pipe_f4f87081-ab7d-4077"
 
 # Wait for completed status 
 {

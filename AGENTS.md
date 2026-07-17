@@ -47,7 +47,7 @@ In a linked worktree, run `./scripts/wt-test.sh` before committing. It symlinks
 `bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an
 isolated `.env` (own `PROJECT_NAME` + offset ports + fresh local data dir, so it can
 run alongside the main stack without touching its confidential DB), launches the full
-stack via `launch_tmux.sh`, runs `test_api_endpoints.py` + `test_pools.py`, and tears
+stack via `launch_tmux.sh`, runs `test_api_endpoints.py`, and tears
 down. Do NOT commit if it prints `RESULT: FAIL` or the run was skipped. Show the output.
 
 ## Contributions

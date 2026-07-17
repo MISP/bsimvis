@@ -84,11 +84,11 @@ for i in $(seq 1 40); do
 done
 echo " up."
 
-# --- 4. run the existing test suites ---------------------------------------
+# --- 4. run the test suite -------------------------------------------------
+# test_pools.py was absorbed into test_api_endpoints.py (step 3d).
 export API_URL="http://localhost:$APP_PORT"   # test_api_endpoints reads this
 rc=0
 echo "=== test_api_endpoints.py ==="; uv run python test_api_endpoints.py "$@" || rc=1
-echo "=== test_pools.py ===";         uv run python test_pools.py          || rc=1
 
 # --- 5. teardown this worktree's session (leaves main stack untouched) ------
 echo "=== teardown $PROJECT_NAME ==="

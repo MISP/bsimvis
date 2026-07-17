@@ -1267,26 +1267,27 @@ FILE_TAG = "filt_file_tag"
 FUNC_TAG = "filt_func_tag"
 
 
-def _search_rows(path, params, key):
-    """Returns the row list from a search endpoint, or [] on any failure."""
+def _search(path, params, key):
+    """Returns (rows, total) from a search endpoint, or ([], 0) on any failure."""
     try:
         resp = requests.get(f"{BASE_URL}{path}", params=params, timeout=60)
         if resp.status_code != 200:
             vprint(f"     {path} -> HTTP {resp.status_code}")
-            return []
+            return [], 0
         body = resp.json()
-        rows = body.get(key, []) if isinstance(body, dict) else body
-        return rows if isinstance(rows, list) else []
+        if not isinstance(body, dict):
+            return (body, len(body)) if isinstance(body, list) else ([], 0)
+        rows = body.get(key, [])
+        if not isinstance(rows, list):
+            return [], 0
+        return rows, int(body.get("total", len(rows)) or len(rows))
     except Exception as exc:
         vprint(f"     {path} error: {exc}")
-        return []
+        return [], 0
 
 
-def _is_sorted(values, order):
-    pairs = zip(values, values[1:])
-    return all(a >= b for a, b in pairs) if order == "desc" else all(
-        a <= b for a, b in pairs
-    )
+def _search_rows(path, params, key):
+    return _search(path, params, key)[0]
 
 
 def _tags_of(row, *fields):
@@ -1297,23 +1298,349 @@ def _tags_of(row, *fields):
     return out
 
 
-def _check_sorting(label, path, params, key, field):
-    """Both orders must be monotonic and agree on the membership of the result."""
-    desc = _search_rows(path, dict(params, sort_by=field, sort_order="desc", limit=50), key)
-    asc = _search_rows(path, dict(params, sort_by=field, sort_order="asc", limit=50), key)
-    if not desc:
-        vprint(f"     [skip] {label}: no rows to sort")
+# ---------------------------------------------------------------------------
+# Generic filter/sort sweep
+#
+# One spec per searchable endpoint instead of a hand-written check each: the
+# routes accept ~130 params between them and the interesting failures are all
+# the same shapes — a sort that isn't ordered, a sort that changes which rows
+# come back, a filter that doesn't narrow, a filter whose rows don't satisfy it.
+#
+# "sorts" maps each sort_by value to the row field carrying it, which is not
+# always the same name: bin_sim sorts "coverage" via coverage_a, cluster sorts
+# "count" via member_count but exposes it as "count". Where a sort orders on
+# data the row never exposes, the field is None and only the set-equality half
+# runs — a check that cannot see the value must not pretend to verify it.
+# ---------------------------------------------------------------------------
+SEARCH_SPECS = [
+    {
+        "name": "files",
+        "path": "/api/file/search",
+        "key": "files",
+        "pool": True,
+        "sorts": {
+            # file_name is this endpoint's DEFAULT sort, so it is the one that
+            # must not silently return arbitrary order.
+            "file_name": "file_name",
+            "language_id": "language_id",
+            "function_count": "function_count",
+            "bsim_features_count": "bsim_features_count",
+            "cohesion_score": "cohesion_score",
+            "entry_date": "entry_date",
+        },
+        "ranges": [
+            ("min_function_count", "function_count", "min"),
+            ("max_function_count", "function_count", "max"),
+            ("min_bsim_features", "bsim_features_count", "min"),
+            ("max_bsim_features", "bsim_features_count", "max"),
+            ("min_entry_date", "entry_date", "min"),
+            ("max_entry_date", "entry_date", "max"),
+        ],
+        "substr": [("file_name", "file_name"), ("md5", "file_md5")],
+    },
+    {
+        "name": "functions",
+        "path": "/api/function/search",
+        "key": "functions",
+        "pool": True,
+        "sorts": {
+            "instruction_count": "instruction_count",
+            "bsim_features_count": "bsim_features_count",
+        },
+        "ranges": [("min_features", "bsim_features_count", "min")],
+        "substr": [
+            ("file_name", "file_name"),
+            ("md5", "file_md5"),
+            ("namespace", "namespace"),
+            ("ret_type", "return_type"),
+        ],
+    },
+    {
+        "name": "similarities",
+        "path": "/api/similarity/search",
+        "key": "pairs",
+        "pool": True,
+        "base": {"min_score": 0.0},
+        "sorts": {"score": "score", "feat_count": "feat_count", "min_features": None},
+        "ranges": [
+            ("min_score", "score", "min"),
+            ("max_score", "score", "max"),
+            ("min_features", "feat_count", "min"),
+        ],
+        "substr": [],
+    },
+    {
+        "name": "bin_sim",
+        "path": "/api/bin_sim/search",
+        "key": "results",
+        "pool": True,
+        "sorts": {
+            "score": "score",
+            "score_sim_weighted": "score_sim_weighted",
+            "score_collection_weighted": "score_collection_weighted",
+            "coverage": "coverage_a",
+            "shared_clusters": "shared_clusters",
+            "functions_count": "functions_count_a",
+            "computed_at": "computed_at",
+            "architecture": "architecture_a",
+        },
+        "ranges": [
+            ("min_score", "score_collection_weighted", "min"),
+            ("max_score", "score_collection_weighted", "max"),
+            ("min_shared", "shared_clusters", "min"),
+            ("max_shared", "shared_clusters", "max"),
+        ],
+        "substr": [("file_name", "file_name_a"), ("md5", "md5_a")],
+    },
+    {
+        "name": "features",
+        "path": "/api/feature/search",
+        "key": "features",
+        "pool": False,
+        "sorts": {"tf_score": "tf_score", "frequency": "frequency"},
+        "ranges": [
+            ("min_frequency", "frequency", "min"),
+            ("max_frequency", "frequency", "max"),
+            ("min_tf_score", "tf_score", "min"),
+            ("max_tf_score", "tf_score", "max"),
+        ],
+        "substr": [("type", "type"), ("op", "op")],
+    },
+    {
+        "name": "clusters",
+        "path": "/api/cluster/list",
+        "key": "results",
+        "pool": True,
+        "sorts": {
+            "count": "count",
+            "stability": "avg_stability",
+            "features": "avg_features",
+            "cohesion": "cohesion_score",
+        },
+        "ranges": [
+            ("min_count", "count", "min"),
+            ("max_count", "count", "max"),
+            ("min_stability", "avg_stability", "min"),
+            ("min_features", "avg_features", "min"),
+            ("min_cohesion", "cohesion_score", "min"),
+        ],
+        "substr": [("cluster_name", "cluster_name")],
+    },
+    {
+        "name": "bin_clusters",
+        "path": "/api/bin_cluster/list",
+        "key": "results",
+        "pool": True,
+        "sorts": {
+            "count": "count",
+            "stability": "avg_stability",
+            "cohesion": "cohesion_score",
+        },
+        "ranges": [
+            ("min_count", "count", "min"),
+            ("max_count", "count", "max"),
+            ("min_cohesion", "cohesion_score", "min"),
+        ],
+        "substr": [("cluster_name", "cluster_name")],
+    },
+]
+
+# Pools are global, not scoped to a collection or pool namespace.
+POOLS_SPEC = {
+    "name": "pools",
+    "path": "/api/pool",
+    "key": "pools",
+    "sorts": {
+        "name": "name",
+        "id": "id",
+        "sync_status": "sync_status",
+        "created_at": "created_at",
+        "last_built_at": "last_built_at",
+        "total_files": "total_files",
+        "total_functions": "total_functions",
+        "total_func_similarities": "total_func_similarities",
+        "total_func_clusters": "total_func_clusters",
+        "total_file_similarities": "total_file_similarities",
+        "total_file_clusters": "total_file_clusters",
+    },
+    "ranges": [
+        ("min_created_at", "created_at", "min"),
+        ("max_created_at", "created_at", "max"),
+        ("min_total_files", "total_files", "min"),
+    ],
+    "substr": [("name", "name"), ("id", "id")],
+}
+
+
+def _sort_key(v):
+    """Comparable key across the mixed types rows carry (None/str/number)."""
+    if v is None:
+        return (0, 0.0, "")
+    if isinstance(v, bool):
+        return (1, float(v), "")
+    if isinstance(v, (int, float)):
+        return (1, float(v), "")
+    return (2, 0.0, str(v).lower())
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sweep_sorts(spec, ns, label):
+    for field, row_field in spec["sorts"].items():
+        base = dict(spec.get("base", {}), **ns)
+        desc, total = _search(spec["path"], dict(base, sort_by=field, sort_order="desc", limit=50), spec["key"])
+        asc, _ = _search(spec["path"], dict(base, sort_by=field, sort_order="asc", limit=50), spec["key"])
+        if len(desc) < 2:
+            vprint(f"     [skip] {label} {spec['name']}: <2 rows to sort by {field}")
+            continue
+        # Set equality only holds on a complete result. Once the total spills past
+        # the page, desc and asc legitimately return opposite ends of the data.
+        if total <= len(desc):
+            ids_d = sorted(_json_ids(desc))
+            ids_a = sorted(_json_ids(asc))
+            check(
+                f"{label}: {spec['name']} sort_by={field} keeps the same result set",
+                ids_d == ids_a,
+                f"desc={len(ids_d)} asc={len(ids_a)} rows",
+            )
+        else:
+            vprint(f"     [skip] {label} {spec['name']}: {total} rows > page, set equality N/A")
+        if not row_field:
+            vprint(f"     [skip] {label} {spec['name']}: {field} not exposed on the row")
+            continue
+        if any(row_field not in row for row in desc):
+            vprint(f"     [skip] {label} {spec['name']}: rows lack '{row_field}'")
+            continue
+        d_keys = [_sort_key(row.get(row_field)) for row in desc]
+        a_keys = [_sort_key(row.get(row_field)) for row in asc]
+        check(
+            f"{label}: {spec['name']} sort_by={field} desc is ordered",
+            all(a >= b for a, b in zip(d_keys, d_keys[1:])),
+            f"{[row.get(row_field) for row in desc][:5]}",
+        )
+        check(
+            f"{label}: {spec['name']} sort_by={field} asc is ordered",
+            all(a <= b for a, b in zip(a_keys, a_keys[1:])),
+            f"{[row.get(row_field) for row in asc][:5]}",
+        )
+
+
+def _json_ids(rows):
+    """Stable per-row identity for set comparison across sort orders."""
+    out = []
+    for row in rows:
+        rid = (
+            row.get("_id")
+            or row.get("function_id")
+            or row.get("file_id")
+            or row.get("cluster_uuid")
+            or row.get("cluster_id")
+            or row.get("id")
+            or row.get("hash")
+        )
+        if rid is None:
+            rid = json.dumps(row, sort_keys=True)[:200]
+        out.append(str(rid))
+    return out
+
+
+def _sweep_ranges(spec, ns, label):
+    """Pick the threshold from live data (median), so the filter is exercised
+    rather than trivially matching everything or nothing."""
+    base = dict(spec.get("base", {}), **ns)
+    baseline, total = _search(spec["path"], dict(base, limit=100), spec["key"])
+    if len(baseline) < 2:
+        vprint(f"     [skip] {label} {spec['name']}: <2 rows for range filters")
         return
-    d_vals = [row.get(field) or 0 for row in desc]
-    a_vals = [row.get(field) or 0 for row in asc]
-    check(f"{label}: sort_by={field} desc is monotonic", _is_sorted(d_vals, "desc"), str(d_vals[:6]))
-    check(f"{label}: sort_by={field} asc is monotonic", _is_sorted(a_vals, "asc"), str(a_vals[:6]))
-    # A sort must reorder the page, never change which rows are on it.
-    check(
-        f"{label}: sort_by={field} order does not change the result set",
-        sorted(d_vals) == sorted(a_vals),
-        f"desc={sorted(d_vals)[:6]} asc={sorted(a_vals)[:6]}",
-    )
+    complete = total <= len(baseline)  # baseline saw everything -> exact counts hold
+    for param, row_field, kind in spec.get("ranges", []):
+        vals = sorted(v for v in (_num(row.get(row_field)) for row in baseline) if v is not None)
+        if len(vals) < 2 or vals[0] == vals[-1]:
+            vprint(f"     [skip] {label} {spec['name']}: {row_field} has no spread")
+            continue
+        threshold = vals[len(vals) // 2]
+        # Several routes parse these with int(), which raises on "20.0" and makes
+        # the filter silently default to off. Send integral values as integers.
+        sent = int(threshold) if float(threshold).is_integer() else threshold
+        rows, f_total = _search(spec["path"], dict(base, limit=100, **{param: sent}), spec["key"])
+        got = [v for v in (_num(row.get(row_field)) for row in rows) if v is not None]
+        if kind == "min":
+            bad = [v for v in got if v < threshold - 1e-6]
+            expected = sum(1 for v in vals if v >= threshold)
+        else:
+            bad = [v for v in got if v > threshold + 1e-6]
+            expected = sum(1 for v in vals if v <= threshold)
+        check(
+            f"{label}: {spec['name']} {param}={sent} returns only matching rows",
+            not bad,
+            f"{len(got)} row(s), out-of-range={bad[:3]}",
+        )
+        if complete:
+            check(
+                f"{label}: {spec['name']} {param}={sent} narrows the result set",
+                f_total == expected,
+                f"baseline={total} filtered={f_total} expected={expected}",
+            )
+        else:
+            check(
+                f"{label}: {spec['name']} {param}={sent} narrows the result set",
+                f_total <= total,
+                f"baseline={total} filtered={f_total} (partial page, exact count N/A)",
+            )
+
+
+def _sweep_substr(spec, ns, label):
+    """Substring filters: take a real value from the data, assert every row carries it."""
+    base = dict(spec.get("base", {}), **ns)
+    baseline = _search_rows(spec["path"], dict(base, limit=100), spec["key"])
+    if not baseline:
+        return
+    for param, row_field in spec.get("substr", []):
+        source = next(
+            (str(row[row_field]) for row in baseline if row.get(row_field)), None
+        )
+        if not source or len(source) < 3:
+            vprint(f"     [skip] {label} {spec['name']}: no usable {row_field} value")
+            continue
+        needle = source[: max(3, len(source) // 2)]
+        rows = _search_rows(spec["path"], dict(base, limit=100, **{param: needle}), spec["key"])
+        check(
+            f"{label}: {spec['name']} {param}~'{needle}' returns rows",
+            bool(rows),
+            f"{len(rows)} of {len(baseline)}",
+        )
+        if rows:
+            # The value can legitimately match a sibling field (md5 vs parent_md5,
+            # file_name vs related_file_name), so only require SOME field to carry it.
+            hits = sum(
+                1
+                for row in rows
+                if any(
+                    needle.lower() in str(v).lower()
+                    for v in row.values()
+                    if isinstance(v, (str, int, float))
+                )
+            )
+            check(
+                f"{label}: {spec['name']} {param}~'{needle}' rows all contain it",
+                hits == len(rows),
+                f"{hits}/{len(rows)} row(s) carry '{needle}'",
+            )
+
+
+def _sweep_namespace(label, ns):
+    print(_color(f"\n  [{label}: filter/sort sweep]", BOLD))
+    for spec in SEARCH_SPECS:
+        if ns and not spec.get("pool", True) and "pool" in ns:
+            continue
+        _sweep_sorts(spec, ns, label)
+        _sweep_ranges(spec, ns, label)
+        _sweep_substr(spec, ns, label)
 
 
 def _check_namespace_filters(label, ns, bin_sim_expected=True):
@@ -1346,10 +1673,6 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
             f"first row file_user_tags={rows[0].get('file_user_tags')}",
         )
 
-    _check_sorting(
-        f"{label}: functions", "/api/function/search", ns, "functions", "instruction_count"
-    )
-
     # ── Similarity level: reached only by propagation ──────────────────────
     # min_score is pinned: the endpoint defaults it from config (0.9), so an
     # unpinned filter query and the unfiltered baseline could disagree on the
@@ -1375,9 +1698,6 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
             f"{label}: similarity search filters by file_user_tag",
             bool(rows),
             f"{len(rows)} of {len(all_pairs)} pair(s)",
-        )
-        _check_sorting(
-            f"{label}: similarities", "/api/similarity/search", sim_params, "pairs", "score"
         )
 
     # ── bin_sim level: denormalized copy, tagged after the build ───────────
@@ -1414,7 +1734,6 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
             f"all={len(all_pairs)} tagged={len(rows)} excluded={len(excluded)}",
         )
 
-    _check_sorting(f"{label}: bin_sim", "/api/bin_sim/search", ns, "results", "score")
 
 
 def test_search_filters_and_sorting():
@@ -1501,6 +1820,15 @@ def test_search_filters_and_sorting():
             bin_sim_expected=bool(file_md5_2),
         )
 
+        # ── Broad filter/sort sweep across every searchable endpoint ───────
+        _sweep_namespace("collection", {"collection": COLLECTION})
+        _sweep_namespace("pool", {"pool": FILTER_POOL_ID})
+        # Pools are global — swept once, not per namespace.
+        print(_color("\n  [pools: filter/sort sweep]", BOLD))
+        _sweep_sorts(POOLS_SPEC, {}, "global")
+        _sweep_ranges(POOLS_SPEC, {}, "global")
+        _sweep_substr(POOLS_SPEC, {}, "global")
+
         if file_md5_2:
             reindexed = test_endpoint(
                 "POST",
@@ -1542,6 +1870,418 @@ def test_search_filters_and_sorting():
                 print(_color(f"\n  Pool {FILTER_POOL_ID} deleted.", DIM))
             except Exception as exc:
                 print(_color(f"\n  Filter pool cleanup failed: {exc}", YELLOW))
+
+
+# ---------------------------------------------------------------------------
+# Step 3d – Pool/collection equivalence (absorbed from test_pools.py)
+#
+# The invariant: how binaries are grouped must not change the analysis. Two
+# binaries in ONE collection, built the normal way, must produce exactly what
+# the SAME two binaries produce when split across two collections joined by a
+# pool. The pool path is a separate implementation end to end — its own sim
+# build, its own clustering, its own bin_sim — so this is what stops the two
+# from silently diverging.
+#
+# Compares four things: the bin_sim score, the bin_sim doc (matched/unique
+# cluster diff), function similarity (pairs, scores, docs) and function
+# clusters (membership + metadata).
+#
+# All tuning params are omitted everywhere on purpose: both sides then fall
+# back to the same config defaults and are compared on equal footing.
+# ---------------------------------------------------------------------------
+EQ_ARM = "./data/test/v01_arm_x64"
+EQ_LINUX = "./data/test/v01_linux_x64"
+EQ_ALGO = "unweighted_cosine"
+
+
+def _clean_fid(fid):
+    """{coll}:func:{md5}:{addr} -> {md5}:{addr}. The two sides live in different
+    collections, so ids only compare after the prefix is dropped."""
+    fid = fid.decode() if isinstance(fid, bytes) else str(fid)
+    i = fid.find(":func:")
+    return fid[i + 6 :] if i != -1 else fid
+
+
+def _build_canonical_map(single_pairs, md5_a):
+    """Maps interchangeable functions onto one representative.
+
+    Identical functions (same similarity profile) are tie-broken arbitrarily by
+    each build, so single and pool can pick different-but-equivalent partners.
+    Without this, those ties read as mismatches. Group A functions by their
+    profile of (partner, score), then group B functions by their profile of
+    (canonical A, score), and elect min() of each group.
+    """
+    from collections import defaultdict
+
+    profile_a = defaultdict(list)
+    for f1, f2, score in single_pairs:
+        f1_in_a, f2_in_a = md5_a in f1, md5_a in f2
+        if f1_in_a != f2_in_a:  # cross-binary only
+            fa, fb = (f1, f2) if f1_in_a else (f2, f1)
+            profile_a[fa].append((fb, round(score, 4)))
+
+    groups = defaultdict(list)
+    for fa, prof in profile_a.items():
+        groups[tuple(sorted(prof))].append(fa)
+    canonical = {}
+    for _, funcs in groups.items():
+        rep = min(funcs)
+        for f in funcs:
+            canonical[f] = rep
+
+    profile_b = defaultdict(list)
+    for f1, f2, score in single_pairs:
+        f1_in_a, f2_in_a = md5_a in f1, md5_a in f2
+        if f1_in_a != f2_in_a:
+            fa, fb = (f1, f2) if f1_in_a else (f2, f1)
+            profile_b[fb].append((canonical.get(fa, fa), round(score, 4)))
+
+    groups = defaultdict(list)
+    for fb, prof in profile_b.items():
+        groups[tuple(sorted(prof))].append(fb)
+    for _, funcs in groups.items():
+        rep = min(funcs)
+        for f in funcs:
+            canonical[f] = rep
+    return canonical
+
+
+def _upload_eq(path, collection):
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    resp = requests.post(
+        f"{BASE_URL}/api/file/upload",
+        params={
+            "collection": collection,
+            "file_name": os.path.basename(path),
+            "batch_name": "Equivalence Run",
+            "profile": "fast",
+            "min_func_len": 10,
+            "skip_sim": "false",
+        },
+        data=raw,
+        headers={"Content-Type": "application/octet-stream"},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _wait_all(job_ids, what):
+    """Polls several jobs to completion. Quiet: one line per batch, not per poll."""
+    pending = {j for j in job_ids if j}
+    if not pending:
+        return
+    print(f"     waiting for {what} ({len(pending)} job(s)) …", end="", flush=True)
+    deadline = time.time() + POLL_TIMEOUT
+    while pending and time.time() < deadline:
+        time.sleep(POLL_INTERVAL)
+        for j in list(pending):
+            try:
+                resp = requests.get(f"{BASE_URL}/api/jobs/{j}", timeout=10)
+                if resp.status_code == 200:
+                    if str(resp.json().get("status", "")).lower() in (
+                        "completed",
+                        "failed",
+                        "cancelled",
+                    ):
+                        pending.discard(j)
+            except Exception:
+                pass
+    print(" done." if not pending else _color(" TIMEOUT", RED))
+
+
+def test_pool_collection_equivalence():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3d – Pool vs collection equivalence", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    for p in (EQ_ARM, EQ_LINUX):
+        if not os.path.isfile(p):
+            print(_color(f"\n[SKIP] {p} missing – equivalence checks skipped.", YELLOW))
+            return
+
+    import json as _json
+    from bsimvis.app.services.pool_service import pool_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    run = uuid.uuid4().hex[:6]
+    single = f"eq_single_{run}"
+    sep_arm, sep_linux = f"eq_arm_{run}", f"eq_linux_{run}"
+    eq_pool = f"eq_pool_{run}"
+    r = get_redis()
+
+    try:
+        # ── Ingest: same two binaries, grouped two different ways ─────────
+        print(_color("\n  [Ingest]", BOLD))
+        jobs, md5_arm, md5_linux = [], None, None
+        for path, coll in (
+            (EQ_ARM, single),
+            (EQ_LINUX, single),
+            (EQ_ARM, sep_arm),
+            (EQ_LINUX, sep_linux),
+        ):
+            body = _upload_eq(path, coll)
+            jobs.append(body.get("pipeline_id"))
+            if path == EQ_ARM:
+                md5_arm = body.get("file_md5")
+            else:
+                md5_linux = body.get("file_md5")
+        _wait_all(jobs, "ingestion")
+        if not check("equivalence: both binaries ingested", bool(md5_arm and md5_linux)):
+            return
+
+        # ── Path A: one collection, the normal build ──────────────────────
+        print(_color("\n  [Collection build]", BOLD))
+        for path, payload in (
+            ("/api/similarity/build", {"collection": single, "all": True, "algo": EQ_ALGO, "top_k": 1000}),
+            ("/api/cluster/build", {"collection": single}),
+            ("/api/bin_sim/build", {"collection": single}),
+        ):
+            resp = requests.post(f"{BASE_URL}{path}", json=payload, timeout=10)
+            resp.raise_for_status()
+            _wait_all([resp.json().get("job_id")], path.rsplit("/", 2)[-2])
+
+        # ── Path B: two collections joined by a pool ──────────────────────
+        print(_color("\n  [Pool build]", BOLD))
+        ok, msg = pool_service.create_pool(
+            eq_pool,
+            "Equivalence Pool",
+            [sep_arm, sep_linux],
+            {
+                "only_cross_collection": False,
+                "func_sim_params": {},
+                "func_cluster_params": {},
+                "file_sim_params": {"enabled": True},
+                "file_cluster_params": {"enabled": True},
+            },
+        )
+        if not check("equivalence: pool created over the split collections", ok, msg):
+            return
+        for path in (f"/api/pool/{eq_pool}/build", f"/api/pool/{eq_pool}/cluster"):
+            resp = requests.post(f"{BASE_URL}{path}", timeout=10)
+            resp.raise_for_status()
+            _wait_all([resp.json().get("job_id")], path.rsplit("/", 1)[-1])
+
+        # ── Canonical map, from the single collection's cross-binary sims ──
+        single_scores = r.zrange(f"{single}:sim:score:{EQ_ALGO}", 0, -1, withscores=True)
+        pool_scores = r.zrange(f"global:pool:{eq_pool}:sim:score", 0, -1, withscores=True)
+
+        single_pairs = []
+        for sid_b, score in single_scores:
+            sid = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+            parts = sid.split(f":sim:{EQ_ALGO}:")
+            if len(parts) == 2:
+                ids = parts[1].split("::")
+                if len(ids) == 2:
+                    single_pairs.append((_clean_fid(ids[0]), _clean_fid(ids[1]), score))
+        canonical = _build_canonical_map(single_pairs, md5_arm)
+
+        def canon(fid):
+            c = _clean_fid(fid)
+            return canonical.get(c, c)
+
+        def parse_sid(sid_b, marker):
+            sid = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+            parts = sid.split(marker)
+            if len(parts) == 2:
+                ids = parts[1].split("::")
+                if len(ids) == 2:
+                    return tuple(sorted([canon(i) for i in ids]))
+            return None
+
+        print(_color("\n  [Equivalence]", BOLD))
+
+        # ── 1. bin_sim score ──────────────────────────────────────────────
+        m1, m2 = sorted([md5_arm, md5_linux])
+        single_bs_key = f"{single}:bin_sim:{EQ_ALGO}:{m1}::{m2}"
+        s_score = r.zscore(f"{single}:bin_sim:score:{EQ_ALGO}", single_bs_key)
+
+        b1, b2 = sorted([(sep_arm, md5_arm), (sep_linux, md5_linux)])
+        pool_bs_key = (
+            f"global:pool:{eq_pool}:bin_sim:{EQ_ALGO}:{b1[0]}:{b1[1]}::{b2[0]}:{b2[1]}"
+        )
+        p_score = r.zscore(f"global:pool:{eq_pool}:bin_sim:score:{EQ_ALGO}", pool_bs_key)
+
+        if s_score is None or p_score is None:
+            check(
+                "equivalence: bin_sim score exists on both sides",
+                False,
+                f"single={s_score} pool={p_score}",
+            )
+        else:
+            check(
+                "equivalence: bin_sim scores match",
+                abs(round(s_score, 3) - round(p_score, 3)) < 1e-5,
+                f"single={s_score:.6f} pool={p_score:.6f}",
+            )
+
+        # ── 2. bin_sim doc (the cluster diff) ─────────────────────────────
+        s_doc = _json.loads(r.get(single_bs_key) or "null")
+        p_doc = _json.loads(r.get(pool_bs_key) or "null")
+
+        def norm_diff(diff):
+            """Drop namespace-local ids/rarities, canonicalize func ids, sort."""
+            if not diff:
+                return diff
+            out = {}
+            for key in ("matched", "unique_to_a", "unique_to_b", "unclustered_a", "unclustered_b"):
+                if key not in diff:
+                    continue
+                items = []
+                for item in diff[key]:
+                    norm = {
+                        k: v
+                        for k, v in item.items()
+                        if k not in ("cluster_uuid", "cluster_id", "sim_rarity", "collection_rarity", "avg_features")
+                    }
+                    for fk in ("funcs_a", "funcs_b", "funcs"):
+                        if norm.get(fk):
+                            norm[fk] = sorted(canon(f) for f in norm[fk])
+                    for fk in ("func_a", "func_b", "func_id"):
+                        if norm.get(fk):
+                            norm[fk] = canon(norm[fk])
+                    items.append(norm)
+                if key == "matched":
+                    items.sort(key=lambda x: (x.get("func_a", ""), x.get("func_b", "")))
+                elif key in ("unique_to_a", "unique_to_b"):
+                    items.sort(key=lambda x: x.get("func_id", ""))
+                out[key] = items
+            return out
+
+        if not s_doc or not p_doc:
+            check("equivalence: bin_sim doc exists on both sides", False, f"single={bool(s_doc)} pool={bool(p_doc)}")
+        else:
+            keep = ("score", "md5_a", "md5_b", "diff")
+            n_s = {k: v for k, v in s_doc.items() if k in keep}
+            n_p = {k: v for k, v in p_doc.items() if k in keep}
+            # Pool docs name the endpoints md5_1/md5_2.
+            if "md5_1" in p_doc:
+                n_p["md5_a"] = p_doc["md5_1"]
+            if "md5_2" in p_doc:
+                n_p["md5_b"] = p_doc["md5_2"]
+            n_s["diff"] = norm_diff(s_doc.get("diff"))
+            n_p["diff"] = norm_diff(p_doc.get("diff"))
+            for d in (n_s, n_p):
+                if d.get("score") is not None:
+                    d["score"] = round(d["score"], 3)
+            check(
+                "equivalence: bin_sim docs match (matched/unique cluster diff)",
+                n_s == n_p,
+                "" if n_s == n_p else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}",
+            )
+
+        # ── 3. function similarity: pairs, scores, docs ───────────────────
+        single_map, single_sids = {}, {}
+        for sid_b, score in single_scores:
+            k = parse_sid(sid_b, f":sim:{EQ_ALGO}:")
+            if k:
+                single_map[k] = round(score, 4)
+                single_sids[k] = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+        pool_map, pool_sids = {}, {}
+        for sid_b, score in pool_scores:
+            k = parse_sid(sid_b, ":sim:")
+            if k:
+                pool_map[k] = round(score, 4)
+                pool_sids[k] = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+
+        s_keys, p_keys = set(single_map), set(pool_map)
+        check(
+            "equivalence: function similarity pairs match",
+            s_keys == p_keys,
+            f"{len(s_keys)} single / {len(p_keys)} pool; only-single={list(s_keys - p_keys)[:3]} only-pool={list(p_keys - s_keys)[:3]}",
+        )
+        mismatched = [k for k in s_keys & p_keys if abs(single_map[k] - pool_map[k]) > 1e-4]
+        check(
+            "equivalence: function similarity scores match",
+            not mismatched,
+            f"{len(mismatched)} mismatch(es), e.g. {mismatched[:2]}",
+        )
+
+        doc_mismatch = []
+        for k in s_keys & p_keys:
+            drop_s = ("collection", "entry_date", "id1", "id2")
+            drop_p = drop_s + ("coll_1", "coll_2")
+            d_s = _json.loads(r.get(single_sids[k]) or "{}")
+            d_p = _json.loads(r.get(pool_sids[k]) or "{}")
+            n_s = {a: b for a, b in d_s.items() if a not in drop_s}
+            n_p = {a: b for a, b in d_p.items() if a not in drop_p}
+            for d in (n_s, n_p):
+                if "score" in d:
+                    d["score"] = round(d["score"], 4)
+            if n_s != n_p:
+                doc_mismatch.append(k)
+        check(
+            "equivalence: detailed function similarity docs match",
+            not doc_mismatch,
+            f"{len(doc_mismatch)} mismatch(es), e.g. {doc_mismatch[:2]}",
+        )
+
+        # ── 4. function clusters: membership + metadata ───────────────────
+        def norm_meta(meta):
+            out = {
+                k: v
+                for k, v in meta.items()
+                if k not in ("collection", "id", "created_at", "cluster_uuid", "cluster_id")
+            }
+            if "sample_functions" in out:
+                samples = [
+                    {k: v for k, v in f.items() if k not in ("function_id", "collection")}
+                    for f in out["sample_functions"]
+                ]
+                samples.sort(key=lambda x: (x.get("entrypoint_address", ""), x.get("file_md5", "")))
+                out["sample_functions"] = samples
+            return out
+
+        def clusters_of(list_key, member_fmt, meta_fmt):
+            out = {}
+            for cid_b in r.smembers(list_key):
+                cid = cid_b.decode() if isinstance(cid_b, bytes) else str(cid_b)
+                members = tuple(sorted(canon(m) for m in r.smembers(member_fmt.format(cid=cid))))
+                out[members] = norm_meta(_json.loads(r.get(meta_fmt.format(cid=cid)) or "{}"))
+            return out
+
+        s_clusters = clusters_of(
+            f"{single}:cluster:list:{EQ_ALGO}",
+            f"{single}:cluster:{EQ_ALGO}:{{cid}}:members",
+            f"{single}:cluster:{EQ_ALGO}:{{cid}}:meta",
+        )
+        p_clusters = clusters_of(
+            f"global:pool:{eq_pool}:cluster:list",
+            f"global:pool:{eq_pool}:cluster:{EQ_ALGO}:{{cid}}:members",
+            f"global:pool:{eq_pool}:cluster:{EQ_ALGO}:{{cid}}:meta",
+        )
+        check(
+            "equivalence: function cluster membership matches",
+            set(s_clusters) == set(p_clusters),
+            f"{len(s_clusters)} single / {len(p_clusters)} pool cluster(s)",
+        )
+        meta_mismatch = [k for k in set(s_clusters) & set(p_clusters) if s_clusters[k] != p_clusters[k]]
+        check(
+            "equivalence: function cluster metadata matches",
+            not meta_mismatch,
+            f"{len(meta_mismatch)} mismatch(es)",
+        )
+
+    finally:
+        # test_pools.py left these behind (its cleanup was commented out), so
+        # every run leaked three collections and a pool.
+        print(_color("\n  [Cleanup]", DIM))
+        del_jobs = []
+        for coll in (single, sep_arm, sep_linux):
+            try:
+                resp = requests.post(
+                    f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=10
+                )
+                if resp.status_code == 200:
+                    del_jobs.append(resp.json().get("job_id"))
+            except Exception as exc:
+                vprint(f"     cleanup of {coll} failed: {exc}")
+        _wait_all(del_jobs, "collection cleanup")
+        try:
+            pool_service.delete_pool(eq_pool)
+        except Exception as exc:
+            vprint(f"     pool cleanup failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1596,5 +2336,6 @@ if __name__ == "__main__":
     # Before run_all_tests(): that step deletes the collection on its way out.
     test_pool_annotation_propagation()
     test_search_filters_and_sorting()
+    test_pool_collection_equivalence()
     run_all_tests()
     print_summary()

@@ -428,8 +428,11 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 
 window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const { collection } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: '' };
+    const { collection, pool } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: '', pool: null };
     const col = collection || '';
+    // Cluster uuids are scoped to the namespace that computed them, so a pool
+    // context must stay on the pool route rather than fall back to /collections.
+    const basePath = pool ? `/pools/${encodeURIComponent(pool)}` : `/collections/${encodeURIComponent(col)}`;
 
     if (isBinary) {
         const inputId = 'flt-file-cluster';
@@ -445,7 +448,7 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
             if (typeof targetWindow.navigate === 'function') {
                 targetWindow.navigate('files', params, col);
             } else {
-                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/files?${params.toString()}`;
+                targetWindow.location.href = `${basePath}/files?${params.toString()}`;
             }
         }
     } else {
@@ -467,8 +470,8 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
             if (typeof targetWindow.navigate === 'function') {
                 targetWindow.navigate(viewKey, params, col);
             } else {
-                const searchPath = isSim ? 'search/function-similarity' : 'functions';
-                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/${searchPath}?${params.toString()}`;
+                const searchPath = isSim ? 'functions/similarities' : 'functions';
+                targetWindow.location.href = `${basePath}/${searchPath}?${params.toString()}`;
             }
         }
     }

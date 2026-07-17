@@ -180,6 +180,29 @@ EXACT_FIELDS = {
     # "batch_uuid",
 }
 
+# Fields that are auto-analysis artifacts of clustering. Clustering runs per
+# namespace (a collection OR a pool), so these indexes belong to whichever
+# namespace produced them and must never be merged from member collections into
+# a pool — the labels would describe a different member set than the pool's own
+# similarity graph. Tags and notes are the opposite: they live on the origin
+# collection and ARE mirrored into every pool containing that collection.
+POOL_LOCAL_FIELDS = {
+    "bin_cluster_id",
+    "bin_cluster_uuid",
+    "bin_cluster_name",
+    "bin_cluster_stability",
+    "cluster_id",
+    "cluster_uuid",
+    "cluster_name",
+    "cluster_stability",
+    "inferred_yara",
+    "inferred_avtype",
+    "inferred_filetype",
+    "inferred_ccip",
+    "inferred_filename",
+    "inferred_md5",
+}
+
 
 def resolve_target_field(source_level: str, target_level: str, field: str) -> str:
     """

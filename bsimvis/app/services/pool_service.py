@@ -359,7 +359,10 @@ class PoolService:
             FILE_NUM_FIELDS,
             FUNC_NUM_FIELDS,
         )
-        from bsimvis.app.services.index_config import get_fields_targeting_level
+        from bsimvis.app.services.index_config import (
+            get_fields_targeting_level,
+            POOL_LOCAL_FIELDS,
+        )
 
         SIM_TAG_FIELDS = get_fields_targeting_level("sim", is_num=False)
         SIM_NUM_FIELDS = get_fields_targeting_level("sim", is_num=True)
@@ -373,13 +376,8 @@ class PoolService:
             ("sim", SIM_TAG_FIELDS),
         ]:
             for field in fields:
-                # Skip pool-specific user annotations and their propagations
-                if field in [
-                    "user_tags",
-                    "file_user_tags",
-                    "func_user_tags",
-                    "note_owners",
-                ]:
+                # Cluster artifacts belong to the namespace that computed them.
+                if field in POOL_LOCAL_FIELDS:
                     continue
 
                 # Get all buckets from member collections
@@ -449,6 +447,8 @@ class PoolService:
             ("sim", SIM_NUM_FIELDS),
         ]:
             for field in fields:
+                if field in POOL_LOCAL_FIELDS:
+                    continue
                 source_zsets = [f"{coll}:idx:{level}:{field}" for coll in collections]
                 existing_zsets = [sz for sz in source_zsets if r.exists(sz)]
                 if existing_zsets:
@@ -534,6 +534,7 @@ class PoolService:
             FILE_NUM_FIELDS,
             FUNC_NUM_FIELDS,
         )
+        from bsimvis.app.services.index_config import POOL_LOCAL_FIELDS
 
         pool_coll = f"global:pool:{pool_id}"
 
@@ -543,13 +544,8 @@ class PoolService:
             ("func", FUNC_TAG_FIELDS),
         ]:
             for field in fields:
-                # Skip pool-specific user annotations and their propagations
-                if field in [
-                    "user_tags",
-                    "file_user_tags",
-                    "func_user_tags",
-                    "note_owners",
-                ]:
+                # Cluster artifacts belong to the namespace that computed them.
+                if field in POOL_LOCAL_FIELDS:
                     continue
 
                 bucket_values = set()
@@ -603,6 +599,8 @@ class PoolService:
             ("func", FUNC_NUM_FIELDS),
         ]:
             for field in fields:
+                if field in POOL_LOCAL_FIELDS:
+                    continue
                 source_zsets = [f"{coll}:idx:{level}:{field}" for coll in collections]
                 # Check existences in a single pipeline
                 exists_pipe = r.pipeline(transaction=False)

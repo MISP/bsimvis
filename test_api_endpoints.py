@@ -42,6 +42,7 @@ def _default_base_url():
 
 BASE_URL = os.getenv("API_URL", _default_base_url())
 COLLECTION = f"test_collection_{uuid.uuid4().hex[:8]}"
+POOL_ID = f"test_pool_{uuid.uuid4().hex[:8]}"
 TEST_BINARY = "./data/test/crypto_test"
 POLL_INTERVAL = 3  # seconds between pipeline status polls
 POLL_TIMEOUT = 300  # max seconds to wait for pipeline
@@ -859,6 +860,336 @@ def run_all_tests():
 
 
 # ---------------------------------------------------------------------------
+# Step 3b – Pool <-> collection annotation propagation
+#
+# Runs BEFORE run_all_tests(): that step ends by calling /api/collection/clean
+# and /api/collection/delete, which removes the very docs these checks tag.
+#
+# Inspired by test_pools.py: builds a pool over the uploaded collection and
+# checks the ownership rule from both directions.
+#   - tags and notes are OWNED by the origin collection and MIRRORED into every
+#     pool containing it, no matter which side wrote them;
+#   - clusters are an auto-analysis artifact of whichever namespace computed
+#     them, so a pool must never inherit its collections' cluster labels.
+# ---------------------------------------------------------------------------
+def check(label, condition, detail=""):
+    """Record a content assertion in the same results table as test_endpoint()."""
+    success = bool(condition)
+    results.append(
+        {
+            "label": label,
+            "method": "CHECK",
+            "path": "",
+            "params": None,
+            "status": "OK" if success else "ASSERT",
+            "success": success,
+            "body_preview": detail,
+        }
+    )
+    icon = _color("✔", GREEN) if success else _color("✗", RED)
+    print(f"  {icon}  {BOLD}{label}{RESET}")
+    if detail and (VERBOSE or not success):
+        print(f"     {DIM}{detail}{RESET}")
+    return success
+
+
+def _search_file_md5s(params):
+    """Returns the set of md5s returned by /api/file/search for given params."""
+    try:
+        resp = requests.get(f"{BASE_URL}/api/file/search", params=params, timeout=30)
+        if resp.status_code != 200:
+            return set()
+        body = resp.json()
+        rows = body.get("files", []) if isinstance(body, dict) else body
+        if not isinstance(rows, list):
+            return set()
+        found = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            md5 = row.get("file_md5") or row.get("md5")
+            if not md5 and row.get("file_id"):
+                # file_id is "{collection}:file:{md5}"
+                parts = str(row["file_id"]).split(":")
+                md5 = parts[2] if len(parts) >= 3 else None
+            if md5:
+                found.add(md5)
+        return found
+    except Exception as exc:
+        vprint(f"     file search error: {exc}")
+        return set()
+
+
+def _note_texts(body):
+    """Extracts note texts from a /api/notes/list body: {"status":..,"notes":[..]}."""
+    notes = body.get("notes", []) if isinstance(body, dict) else body
+    if not isinstance(notes, list):
+        return []
+    return [n.get("text") for n in notes if isinstance(n, dict)]
+
+
+def test_pool_annotation_propagation():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3b – Pool <-> collection tag/note propagation", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5:
+        print(_color("\n[SKIP] No file_md5 – pool propagation test skipped.", YELLOW))
+        return
+
+    from bsimvis.app.services.pool_service import pool_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    r = get_redis()
+    file_entity_id = f"{COLLECTION}:file:{file_md5}"
+    added_note_ids = []
+
+    # ── Create a pool over the uploaded collection ─────────────────────────
+    # Created through the service, not POST /api/pool, on purpose: the API
+    # enqueues a full async pipeline (pool similarity + clustering) that would
+    # both race these assertions and compute real pool clusters, which would
+    # make the "clusters are not inherited" check below meaningless.
+    # build_pool_indexes() is the merge under test, and nothing else.
+    print(_color("\n  [Pool setup]", BOLD))
+    success, msg = pool_service.create_pool(
+        POOL_ID,
+        "API Test Propagation Pool",
+        [COLLECTION],
+        {"only_cross_collection": False},
+    )
+    if not check(f"pool {POOL_ID} created over {COLLECTION}", success, msg):
+        return
+    pool_service.build_pool_indexes(POOL_ID)
+
+    try:
+        check(
+            "pool is registered on the collection (reverse membership)",
+            POOL_ID
+            in {
+                p.decode() if isinstance(p, bytes) else p
+                for p in r.smembers(f"{COLLECTION}:pools")
+            },
+            f"{COLLECTION}:pools",
+        )
+
+        # ── Direction 1: tag written in COLLECTION context ─────────────────
+        print(_color("\n  [Direction 1: tag added on the collection]", BOLD))
+        coll_tag = "prop_from_coll"
+        test_endpoint(
+            "POST",
+            "/api/tags/add",
+            data={
+                "collection": COLLECTION,
+                "entity_type": "file",
+                "entity_id": file_entity_id,
+                "tag": coll_tag,
+            },
+            label="POST /api/tags/add (collection context)",
+        )
+        check(
+            "collection-added tag is indexed on the collection",
+            r.exists(f"{COLLECTION}:idx:file:user_tags:{coll_tag}"),
+            f"{COLLECTION}:idx:file:user_tags:{coll_tag}",
+        )
+        check(
+            "collection-added tag is mirrored into the pool index",
+            r.exists(f"global:pool:{POOL_ID}:idx:file:user_tags:{coll_tag}"),
+            f"global:pool:{POOL_ID}:idx:file:user_tags:{coll_tag}",
+        )
+        check(
+            "collection-added tag filters files inside the pool",
+            file_md5 in _search_file_md5s({"pool": POOL_ID, "user_tag": coll_tag}),
+            f"GET /api/file/search?pool={POOL_ID}&user_tag={coll_tag}",
+        )
+
+        # ── Direction 2: tag written in POOL context ───────────────────────
+        print(_color("\n  [Direction 2: tag added from the pool]", BOLD))
+        pool_tag = "prop_from_pool"
+        test_endpoint(
+            "POST",
+            "/api/tags/add",
+            data={
+                "pool": POOL_ID,
+                "entity_type": "file",
+                "entity_id": file_entity_id,
+                "tag": pool_tag,
+            },
+            label="POST /api/tags/add (pool context)",
+        )
+        # The rule: a tag written from a pool is still OWNED by the collection.
+        check(
+            "pool-added tag is indexed back onto the origin collection",
+            r.exists(f"{COLLECTION}:idx:file:user_tags:{pool_tag}"),
+            f"{COLLECTION}:idx:file:user_tags:{pool_tag}",
+        )
+        check(
+            "pool-added tag filters files in the collection",
+            file_md5
+            in _search_file_md5s({"collection": COLLECTION, "user_tag": pool_tag}),
+            f"GET /api/file/search?collection={COLLECTION}&user_tag={pool_tag}",
+        )
+        check(
+            "pool-added tag filters files in the pool",
+            file_md5 in _search_file_md5s({"pool": POOL_ID, "user_tag": pool_tag}),
+            f"GET /api/file/search?pool={POOL_ID}&user_tag={pool_tag}",
+        )
+
+        # ── Notes, both directions ─────────────────────────────────────────
+        print(_color("\n  [Notes: both directions]", BOLD))
+        if func_id1:
+            added = test_endpoint(
+                "POST",
+                "/api/notes/add",
+                data={
+                    "pool": POOL_ID,
+                    "collection": COLLECTION,
+                    "func_id": func_id1,
+                    "text": "note written from the pool",
+                    "owner": "pool_writer",
+                },
+                label="POST /api/notes/add (pool context)",
+            )
+            if isinstance(added, dict) and added.get("note"):
+                added_note_ids.append(added["note"].get("id"))
+            coll_notes = test_endpoint(
+                "GET",
+                "/api/notes/list",
+                params={"collection": COLLECTION, "func_id": func_id1},
+                label="GET /api/notes/list (collection context)",
+            )
+            texts = _note_texts(coll_notes)
+            check(
+                "pool-added note is readable from the collection",
+                "note written from the pool" in texts,
+                f"notes seen from collection: {texts}",
+            )
+            check(
+                "pool-added note owner is indexed onto the origin collection",
+                r.exists(f"{COLLECTION}:idx:func:note_owners:pool_writer"),
+                f"{COLLECTION}:idx:func:note_owners:pool_writer",
+            )
+            check(
+                "pool-added note owner is mirrored into the pool index",
+                r.exists(f"global:pool:{POOL_ID}:idx:func:note_owners:pool_writer"),
+                f"global:pool:{POOL_ID}:idx:func:note_owners:pool_writer",
+            )
+
+            added = test_endpoint(
+                "POST",
+                "/api/notes/add",
+                data={
+                    "collection": COLLECTION,
+                    "func_id": func_id1,
+                    "text": "note written on the collection",
+                    "owner": "coll_writer",
+                },
+                label="POST /api/notes/add (collection context)",
+            )
+            if isinstance(added, dict) and added.get("note"):
+                added_note_ids.append(added["note"].get("id"))
+            pool_notes = test_endpoint(
+                "GET",
+                "/api/notes/list",
+                params={"pool": POOL_ID, "func_id": func_id1},
+                label="GET /api/notes/list (pool context)",
+            )
+            pool_texts = _note_texts(pool_notes)
+            check(
+                "collection-added note is readable from the pool",
+                "note written on the collection" in pool_texts,
+                f"notes seen from pool: {pool_texts}",
+            )
+        else:
+            print(_color("     [SKIP] no func_id resolved – note checks skipped.", YELLOW))
+
+        # ── Rebuild: mirrors must survive an index rebuild ─────────────────
+        # init_pool_build() wipes the pool namespace before merging, so live
+        # propagation cannot be what restores these — the merge has to pull them
+        # back from the member collections. This is also the only path by which
+        # annotations made BEFORE the pool existed ever reach it.
+        print(_color("\n  [Pool index rebuild (wipe + merge)]", BOLD))
+        pool_service.init_pool_build(POOL_ID)
+        for tag in (coll_tag, pool_tag):
+            check(
+                f"tag '{tag}' survives a pool index rebuild",
+                r.exists(f"global:pool:{POOL_ID}:idx:file:user_tags:{tag}"),
+                f"global:pool:{POOL_ID}:idx:file:user_tags:{tag}",
+            )
+        if func_id1:
+            check(
+                "note owner survives a pool index rebuild",
+                r.exists(f"global:pool:{POOL_ID}:idx:func:note_owners:pool_writer"),
+                f"global:pool:{POOL_ID}:idx:func:note_owners:pool_writer",
+            )
+        check(
+            "rebuilt pool still filters files by user tag",
+            file_md5 in _search_file_md5s({"pool": POOL_ID, "user_tag": coll_tag}),
+            f"GET /api/file/search?pool={POOL_ID}&user_tag={coll_tag}",
+        )
+
+        # ── Clusters must NOT propagate ────────────────────────────────────
+        # This pool was built with build_pool_indexes() only, so pool clustering
+        # never ran: any cluster bucket in the pool namespace could only have
+        # been inherited from the collection, which is exactly what must not
+        # happen. The collection must have clusters for the check to mean
+        # anything, so that is asserted first.
+        print(_color("\n  [Clusters stay namespace-local]", BOLD))
+        for field in ("bin_cluster_id", "cluster_id", "cluster_uuid", "inferred_yara"):
+            level = "file" if field.startswith(("bin_cluster", "inferred")) else "func"
+            coll_buckets = list(
+                r.scan_iter(match=f"{COLLECTION}:idx:{level}:{field}:*", count=100)
+            )
+            pool_buckets = list(
+                r.scan_iter(
+                    match=f"global:pool:{POOL_ID}:idx:{level}:{field}:*", count=100
+                )
+            )
+            if not coll_buckets:
+                vprint(f"     [skip] collection has no '{field}' buckets to inherit")
+                continue
+            check(
+                f"pool did not inherit '{field}' from the collection",
+                not pool_buckets,
+                f"collection has {len(coll_buckets)} bucket(s), pool has {len(pool_buckets)}",
+            )
+
+    finally:
+        # ── Cleanup ────────────────────────────────────────────────────────
+        for tag in ("prop_from_coll", "prop_from_pool"):
+            try:
+                requests.post(
+                    f"{BASE_URL}/api/tags/remove",
+                    json={
+                        "collection": COLLECTION,
+                        "entity_type": "file",
+                        "entity_id": file_entity_id,
+                        "tag": tag,
+                    },
+                    timeout=30,
+                )
+            except Exception:
+                pass
+        for note_id in added_note_ids:
+            try:
+                requests.delete(
+                    f"{BASE_URL}/api/notes/remove",
+                    json={
+                        "collection": COLLECTION,
+                        "func_id": func_id1,
+                        "note_id": note_id,
+                    },
+                    timeout=30,
+                )
+            except Exception:
+                pass
+        try:
+            pool_service.delete_pool(POOL_ID)
+            print(_color(f"\n  Pool {POOL_ID} deleted.", DIM))
+        except Exception as exc:
+            print(_color(f"\n  Pool cleanup failed: {exc}", YELLOW))
+
+
+# ---------------------------------------------------------------------------
 # Step 5 – Print summary
 # ---------------------------------------------------------------------------
 def print_summary():
@@ -896,6 +1227,7 @@ if __name__ == "__main__":
     print(_color(f"  BSimVis API Test Suite", BOLD))
     print(_color(f"  Target: {BASE_URL}", DIM))
     print(_color(f"  Collection: {COLLECTION}", DIM))
+    print(_color(f"  Pool: {POOL_ID}", DIM))
     print(_color(f"  Verbose: {VERBOSE}", DIM))
     print(_color(f"{'='*60}", CYAN))
 
@@ -905,5 +1237,7 @@ if __name__ == "__main__":
         test_duplicate_upload()
 
     resolve_ids()
+    # Before run_all_tests(): that step deletes the collection on its way out.
+    test_pool_annotation_propagation()
     run_all_tests()
     print_summary()

@@ -3,43 +3,11 @@ import time
 import logging
 import json
 from .redis_client import get_redis
-from bsimvis.app.services.index_service import get_pool_id
+from bsimvis.app.services.index_service import resolve_origin_collection
 
 
 def _normalize_collection(collection, entity_id=None):
-    if not collection:
-        return collection
-    if ":col:" in collection:
-        return collection.split(":col:")[-1]
-    if collection.startswith("global:pool:") or collection.startswith("pool:"):
-        if entity_id:
-            if ":col:" in entity_id:
-                return entity_id.split(":col:")[-1].split(":")[0]
-            parts = entity_id.split(":")
-            clean_parts = [
-                p
-                for p in parts
-                if p
-                not in (
-                    "global",
-                    "pool",
-                    "col",
-                    "sim",
-                    "file",
-                    "func",
-                    "function",
-                    "similarity",
-                    "meta",
-                    "vec",
-                    "tf",
-                    "source",
-                )
-                and not p.startswith("pool")
-                and p != ""
-            ]
-            if clean_parts:
-                return clean_parts[0]
-    return collection
+    return resolve_origin_collection(collection, entity_id)
 
 
 class NoteService:

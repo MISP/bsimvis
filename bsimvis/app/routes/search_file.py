@@ -289,18 +289,74 @@ SORTABLE_ZSET_FIELDS = {
 }
 
 
-def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order):
-    """Order a candidate set by a numeric ZSET field, keeping only candidates.
+# Text file fields ordered via the `{col}:idx:file:{field}:{value}` tag buckets,
+# whose registry already holds every distinct value.
+SORTABLE_TAG_FIELDS = {
+    "file_name",
+    "parent_file_name",
+    "related_file_name",
+    "language_id",
+    "filetype",
+    "avtype",
+}
 
-    Non-numeric sorts (e.g. file_name) have no ZSET, so fall back to arbitrary
-    set order. ponytail: walks the full ZSET once (O(N)); fine at current sizes,
-    switch to per-id pipelined ZSCORE if the ZSET dwarfs the candidate set.
+
+def _sort_by_tag_index(r, collection, doc_ids, sort_by, desc):
+    """Order candidates by a text field, reading the value out of its bucket key.
+
+    The bucket name IS the (lowercased) value, so the registry gives every value
+    without touching a single file doc — sorting by name costs one SSCAN plus a
+    pipelined SMEMBERS, not an N-document metadata fetch.
     """
+    registry_key = f"{collection}:reg:file:{sort_by}"
+    prefix = f"{collection}:idx:file:{sort_by}:"
+    buckets = []
+    try:
+        for b in r.sscan_iter(registry_key, count=1000):
+            b = b.decode() if isinstance(b, bytes) else str(b)
+            if b.startswith(prefix):
+                buckets.append((b[len(prefix) :], b))
+    except Exception as e:
+        logging.warning(f"file sort registry SSCAN failed for {registry_key}: {e}")
+        return list(doc_ids)
+    if not buckets:
+        return list(doc_ids)
+
+    buckets.sort(key=lambda x: x[0], reverse=desc)
+    pipe = r.pipeline(transaction=False)
+    for _, key in buckets:
+        pipe.smembers(key)
+
+    candidates = set(doc_ids)
+    ordered, seen = [], set()
+    for members in pipe.execute():
+        for m in members or []:
+            m = m.decode() if isinstance(m, bytes) else str(m)
+            if m in candidates and m not in seen:
+                seen.add(m)
+                ordered.append(m)
+    # Candidates absent from the index (no value) go last, arbitrary order.
+    ordered.extend(candidates - seen)
+    return ordered
+
+
+def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order):
+    """Order a candidate set, keeping only candidates.
+
+    Numeric fields rank off their ZSET; text fields rank off their tag-bucket
+    registry. Anything else has no index to order by and falls back to arbitrary
+    set order. ponytail: walks the full ZSET/registry once (O(N)); fine at current
+    sizes, switch to per-id pipelined ZSCORE if the index dwarfs the candidate set.
+    """
+    desc = sort_order == "desc"
+
+    if sort_by in SORTABLE_TAG_FIELDS:
+        return _sort_by_tag_index(r, collection, doc_ids, sort_by, desc)
+
     if sort_by not in SORTABLE_ZSET_FIELDS:
         return list(doc_ids)
 
     zset_key = f"{collection}:idx:file:{sort_by}"
-    desc = sort_order == "desc"
     ranked = r.zrange(zset_key, 0, -1, desc=desc)
     ranked = [d.decode() if isinstance(d, bytes) else str(d) for d in ranked]
 

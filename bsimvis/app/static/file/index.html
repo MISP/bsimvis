@@ -406,24 +406,12 @@
                 const cls = (f.clusters || []).map(uuid => clusters[uuid]).filter(Boolean);
                 const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
 
-                // Details URL
-                let poolId = null;
-                if (window.getRoutingState && window.getRoutingState().pool) {
-                    poolId = window.getRoutingState().pool;
-                }
-                let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${file_md5}/functions/${entry}`;
-                if (poolId) {
-                    detailUrl = `/pools/${encodeURIComponent(poolId)}` + detailUrl;
-                }
-
                 return `
                     <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
                         data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
                         oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
-                        <td>
-                            <a href="${detailUrl}" onclick="event.preventDefault(); (window.Nav || window.parent.Nav).openPath('${detailUrl}', event);" style="color:var(--accent); font-weight:bold; text-decoration:none;">
-                                ${funcName}
-                            </a>
+                        <td style="min-width: 300px;">
+                            ${window.EntityRenderer ? window.EntityRenderer.renderFunction(f, { hideNote: true }) : funcName}
                         </td>
                         <td class="mono" style="color:var(--accent);">@ ${entry}</td>
                         <td>${tagsHtml}</td>

@@ -36,6 +36,13 @@ curl -s "http://localhost:5000/api/file/call_graph?collection=test_api&file_md5=
 ```bash
 curl -X POST --data-binary "@/path/to/file" \
   "http://localhost:5000/api/file/upload?collection=test_api&file_name=my_binary&profile=fast"
+
+# With provenance metadata: parent archive + siblings
+curl -X POST --data-binary "@/path/to/file" \
+  "http://localhost:5000/api/file/upload?collection=test_api&file_name=my_binary&tags=dropper&related_md5=<md5b>&file_metadata_extra=%7B%22parent_md5%22%3A%22<md5parent>%22%2C%22parent_file_name%22%3A%22sample.zip%22%7D"
+
+# Search by the parent hash: returns the children too
+curl -s "http://localhost:5000/api/file/search?collection=test_api&md5=<md5parent>"
 ```
 
 ## Functions
@@ -118,6 +125,12 @@ curl -X POST -H "Content-Type: application/json" \
 # Search binary similarity pairs
 curl -s "http://localhost:5000/api/bin_sim/search?collection=test_api&min_score=0.5&sort_by=shared_clusters"
 
+# One page of the matched table of a file diff, filtered and sorted server-side
+curl -s "http://localhost:5000/api/bin_sim/diff?collection_a=test_api&md5_a=<md5a>&md5_b=<md5b>&table=matched&cl_q=crypto&sim_min=0.9&sort_col=func_name&sort_dir=asc&limit=50"
+
+# Compact projection for the Sankey view
+curl -s "http://localhost:5000/api/bin_sim/diff?collection_a=test_api&md5_a=<md5a>&md5_b=<md5b>&view=sankey"
+
 # Similar binaries for one MD5
 curl -s "http://localhost:5000/api/bin_sim/list?collection=test_api&md5=59281a167473ca9b98515b11cb709f82"
 
@@ -145,17 +158,34 @@ curl -X POST -H "Content-Type: application/json" \
 
 ## Pools (Cross-Collection)
 ```bash
-# Create a pool over two collections
+# Create a pool over two collections (also enqueues the full build pipeline)
 curl -X POST -H "Content-Type: application/json" \
   -d '{"name":"My Pool","collections":["test_api","bench"]}' \
   http://localhost:5000/api/pool
 
+# Cross-collection only: keep pairs spanning two different collections, to label
+# an unknown corpus against a reference one
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"name":"Known vs Unknown","collections":["reference","unknown"],
+       "config":{"only_cross_collection":true,
+                 "func_sim_params":{"min_score":0.95,"top_k":50},
+                 "file_sim_params":{"min_cohesion":0.6}}}' \
+  http://localhost:5000/api/pool
+
 # List pools
-curl -s "http://localhost:5000/api/pool?refresh_sync=1"
+curl -s "http://localhost:5000/api/pool?refresh_sync=1&sort_by=last_built_at&sort_order=desc"
 
 # Build + cluster a pool
 curl -X POST "http://localhost:5000/api/pool/<pool_id>/rebuild"
 
 # Search functions within a pool
 curl -s "http://localhost:5000/api/function/search?pool=<pool_id>&function_name=main"
+
+# Restrict a pool query to one member collection
+curl -s "http://localhost:5000/api/function/search?pool=<pool_id>&collection=test_api"
+
+# Index a pool's binary similarities so bin_sim/search uses the fast path
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"pool_id":"<pool_id>"}' \
+  http://localhost:5000/api/bin_sim/reindex
 ```

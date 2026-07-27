@@ -8,4 +8,6 @@
 
 Interactive Swagger UI is served live at `/api/` when the app is running.
 
+`hackathon/` holds the project presentation slides.
+
 `internal/` holds development planning notes and is not part of the user-facing documentation.

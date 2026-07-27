@@ -26,8 +26,12 @@ Jobs are also stored in Redis queue as :
 
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
-| `global:job:{id}` | **Hash** | Status and metadata for a background job. |
-| `global:pipeline:{id}:jobs` | **List** | Ordered list of job IDs for a multi-step pipeline. |
+| `job:{id}` | **Hash** | Status and metadata for a background job. Pipelines and groups are jobs too: their children are stored as a JSON array in the `task_ids` field. |
+| `jobs:pending` | **List** | Queue of job IDs waiting for a worker. |
+| `jobs:pending:high` | **List** | High-priority queue, drained before `jobs:pending`. |
+| `jobs:processing` | **List** | In-flight job IDs, `LMOVE`d off a pending queue by the worker that claimed them. |
+| `jobs:global` | **List** | Recent job IDs for the global job view (capped at 1000). |
+| `jobs:collection:{collection}` | **List** | Recent job IDs scoped to one collection (capped at 1000). |
 
 ---
 

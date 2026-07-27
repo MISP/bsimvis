@@ -98,6 +98,9 @@ Use `--clear` to kill stale sessions before restarting:
 ./launch.sh --clear
 ```
 
+`launch_tmux.sh` is the tmux equivalent, and additionally caps the worker count by host
+RAM and runs each worker under a memory-limited systemd scope.
+
 Services are configured via `.env` (see `.env.example`). Key variables:
 
 | Variable | Default | Description |
@@ -108,11 +111,23 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 | `WORKERS_COUNT` | `5` | Number of background workers |
 | `DATA_BASE_DIR` | `./data` | Storage path for all service data |
 | `ENABLE_MILVUS` | `false` | Enable optional Milvus vector DB |
+| `WORKER_MEMORY_MAX` | `3G` | Per-worker memory cap (`launch_tmux.sh` only) |
 
 # Test script
 
 ```
 uv run test_api_endpoints.py
+```
+
+# Benchmark
+
+```bash
+# Ingest + similarity pipeline over the JSON fixtures in data/bench/
+uv run bsimvis-bench --clear
+
+# Benchmark the pool paths, save metrics, compare against a baseline
+uv run bsimvis-bench --bench-pools --save data/bench_results/run.json
+uv run bsimvis-bench --compare data/bench_results/run.json
 ```
 
 # API

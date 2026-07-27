@@ -47,9 +47,9 @@ class Worker:
         lua_manager.init_app()
 
         # Ensure Ghidra is ready
-        max_ram = config_service.get("ghidra.max_ram_percent", 15.0)
+        max_heap_mb = config_service.get("ghidra.max_heap_mb", 1536)
         jvm_args = config_service.get("ghidra.jvm_args", [])
-        ghidra_service.ensure_launcher(max_ram_percent=max_ram, jvm_args=jvm_args)
+        ghidra_service.ensure_launcher(max_heap_mb=max_heap_mb, jvm_args=jvm_args)
 
         self.similarity_service = SimilarityService(self.r_data)
         self.metadata_service = MetadataService(self.r_data)

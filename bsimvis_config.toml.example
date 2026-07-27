@@ -54,5 +54,17 @@
     prompt =  "Act as a senior reverse engineer. Provide a structured, keyword-focused summary of this function. **SUMMARY**: [One-line summary of functionality] **KEYWORDS**: [List 5-10 key technical terms, API calls, or algorithm names] **IMPACT**: [Side-effects, security implications, or critical dependencies] **LOGIC**: [Brief description of data transformation or logic path]"
 
 [ghidra]
+    # Absolute JVM heap cap per worker. Each worker runs its own JVM, so keep
+    # max_heap_mb * WORKERS_COUNT <= ~60% of host RAM (room for kvrocks + desktop).
+    max_heap_mb = 1536
+    # Only used by the bsimvis_upload CLI (single JVM, no fleet).
     max_ram_percent = 15.0
-    jvm_args = []
+    # G1 never uncommits an idle heap by default (periodic GC is off in Java 21),
+    # so each worker keeps its job high-water mark forever. These make it shrink
+    # back toward the live set within 30s of going idle.
+    jvm_args = [
+        "-XX:G1PeriodicGCInterval=30000",
+        "-XX:G1PeriodicGCSystemLoadThreshold=0",
+        "-XX:MinHeapFreeRatio=10",
+        "-XX:MaxHeapFreeRatio=30",
+    ]

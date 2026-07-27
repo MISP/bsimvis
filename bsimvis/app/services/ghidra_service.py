@@ -38,7 +38,9 @@ class GhidraService:
             logging.warning(f"Failed to load default config: {e}")
         return {}
 
-    def ensure_launcher(self, verbose=False, max_ram_percent=60.0, jvm_args=None):
+    def ensure_launcher(
+        self, verbose=False, max_ram_percent=60.0, max_heap_mb=None, jvm_args=None
+    ):
         if not self._launcher:
             try:
                 from pyghidra.launcher import get_launcher
@@ -51,7 +53,12 @@ class GhidraService:
 
             logging.info("[i] Starting Ghidra JVM")
             self._launcher = HeadlessPyGhidraLauncher(verbose=verbose)
-            self._launcher.add_vmargs(f"-XX:MaxRAMPercentage={max_ram_percent}")
+            # MaxRAMPercentage is a share of *host* RAM applied per JVM, so N
+            # workers authorize N x that share. Prefer an absolute cap.
+            if max_heap_mb:
+                self._launcher.add_vmargs(f"-Xmx{int(max_heap_mb)}m")
+            else:
+                self._launcher.add_vmargs(f"-XX:MaxRAMPercentage={max_ram_percent}")
             if jvm_args:
                 for arg in jvm_args:
                     self._launcher.add_vmargs(arg)

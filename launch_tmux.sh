@@ -91,7 +91,17 @@ fi
 # Defaults & Config
 REDIS_PORT=${REDIS_PORT:-6379}
 KVROCKS_PORT=${KVROCKS_PORT:-6666}
+# Each worker holds a Ghidra JVM (ghidra.max_heap_mb). Cap the fleet by RAM as
+# well as cores: ~3 GB of host RAM per worker.
+WORKERS_MAX_BY_RAM=$(awk '/MemTotal/ {print int($2/1024/1024/3)}' /proc/meminfo)
 WORKERS_COUNT=${WORKERS_COUNT:-5}
+if [ "$WORKERS_COUNT" -gt "$WORKERS_MAX_BY_RAM" ]; then
+    echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM)"
+    WORKERS_COUNT=$WORKERS_MAX_BY_RAM
+fi
+# Hard backstop: run each worker in its own systemd scope so a runaway worker is
+# OOM-killed instead of thrashing the host into a freeze. Empty = no backstop.
+WORKER_MEMORY_MAX=${WORKER_MEMORY_MAX:-3G}
 ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
@@ -201,8 +211,12 @@ start_tmux "app" "${PYTHON_CMD} app.py"
 
 # Start Workers
 echo "Starting ${WORKERS_COUNT} workers..."
+WORKER_WRAP=""
+if [ -n "$WORKER_MEMORY_MAX" ] && command -v systemd-run > /dev/null; then
+    WORKER_WRAP="systemd-run --user --scope -q -p MemoryMax=${WORKER_MEMORY_MAX} "
+fi
 for i in $(seq 1 $WORKERS_COUNT); do
-    start_tmux "worker-${i}" "${PYTHON_CMD} bsimvis/worker.py"
+    start_tmux "worker-${i}" "${WORKER_WRAP}${PYTHON_CMD} bsimvis/worker.py"
 done
 
 echo "--------------------------"

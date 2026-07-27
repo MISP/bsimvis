@@ -2866,7 +2866,12 @@ window.addEventListener('load', () => {
         }
     };
 
+    let jobStatusInFlight = false;
     window.updateJobStatusIcon = async () => {
+        // ponytail: one poll at a time. Without this, a slow /api/jobs/stats lets
+        // polls overlap and orphan intervals, which snowballs into more polls.
+        if (jobStatusInFlight) return;
+        jobStatusInFlight = true;
         try {
             const res = await fetch('/api/jobs/stats');
             if (!res.ok) return;
@@ -2986,20 +2991,22 @@ window.addEventListener('load', () => {
                 }
             }
 
-            // Adjust polling rate dynamically
-            const nextPollRate = isActive ? 3000 : 10000;
-            if (nextPollRate !== window.currentJobPollRate) {
-                window.currentJobPollRate = nextPollRate;
-                if (window.jobPollInterval) clearInterval(window.jobPollInterval);
-                window.jobPollInterval = setInterval(window.updateJobStatusIcon, window.currentJobPollRate);
-            }
+            window.jobsActive = isActive;
         } catch (e) {
             // Silently fail for navbar polling
+        } finally {
+            jobStatusInFlight = false;
         }
     };
-    window.currentJobPollRate = 10000;
+    // ponytail: one fixed interval, no self-rescheduling. Ticks at 3s but only
+    // hits the API when jobs are active or every 3rd tick otherwise.
+    let jobPollTick = 0;
     window.updateJobStatusIcon();
-    window.jobPollInterval = setInterval(window.updateJobStatusIcon, window.currentJobPollRate);
+    window.jobPollInterval = setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        jobPollTick++;
+        if (window.jobsActive || jobPollTick % 3 === 0) window.updateJobStatusIcon();
+    }, 3000);
 });
 
 function updateNavVisibility(collection) {

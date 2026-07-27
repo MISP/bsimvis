@@ -76,6 +76,13 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Installation
 
+Copy the example configuration files and customize them:
+
+```bash
+cp .env.example .env
+cp bsimvis_config.toml.example bsimvis_config.toml
+```
+
 Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 
 ```bash

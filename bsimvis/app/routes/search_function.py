@@ -19,24 +19,32 @@ DEFAULT_POOL_LIMIT = 1000000
 MAX_POOL_LIMIT = 1000000
 
 
+# ponytail: bounded scan instead of a maintained id-ordered index. Pages past
+# SORT_SCAN_CAP members come back truncated; add a {col}:idx:func:id zset in
+# index_service.save_function if collections outgrow it.
+SORT_SCAN_CAP = 50000
+
+
 def _sscan_page(r, key, offset, limit):
+    """Bounded id-sorted page from an unordered set.
+
+    SSCAN gives no stable ordering, so a raw scan makes pages overlap and skip.
+    Scan up to SORT_SCAN_CAP members, sort by id (matching the Lua tiebreak),
+    then slice. Unlike the Lua SMEMBERS path this is incremental and never
+    holds Kvrocks for the whole read.
+    """
     cursor = 0
-    seen = 0
     doc_ids = []
-    scan_count = max(100, min(1000, offset + limit))
 
     while True:
-        cursor, batch = r.sscan(key, cursor=cursor, count=scan_count)
-        for doc_id in batch:
-            if seen >= offset and len(doc_ids) < limit:
-                doc_ids.append(doc_id)
-            seen += 1
-            if len(doc_ids) >= limit:
-                break
-        if cursor == 0 or len(doc_ids) >= limit:
+        cursor, batch = r.sscan(key, cursor=cursor, count=1000)
+        doc_ids.extend(batch)
+        if cursor == 0 or len(doc_ids) >= SORT_SCAN_CAP:
             break
 
-    return doc_ids
+    truncated = len(doc_ids) >= SORT_SCAN_CAP
+    doc_ids.sort()
+    return doc_ids[offset : offset + limit], truncated
 
 
 def search_functions():
@@ -464,9 +472,9 @@ def search_functions():
                         else r.zrange(sort_key, offset, offset + limit - 1)
                     )
                 else:
-                    doc_ids = _sscan_page(r, all_key, offset, limit)
+                    doc_ids, pool_truncated = _sscan_page(r, all_key, offset, limit)
             else:
-                doc_ids = _sscan_page(r, all_key, offset, limit)
+                doc_ids, pool_truncated = _sscan_page(r, all_key, offset, limit)
         else:
             # Lua Exec
             search_script = lua_manager.get_script("search_function")

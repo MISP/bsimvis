@@ -19,24 +19,21 @@ DEFAULT_POOL_LIMIT = 1000000
 MAX_POOL_LIMIT = 1000000
 
 
-def _sscan_page(r, key, offset, limit):
-    cursor = 0
-    seen = 0
-    doc_ids = []
-    scan_count = max(100, min(1000, offset + limit))
+def _id_sorted_page(r, key, offset, limit):
+    """Id-sorted page of an unordered set, matching the Lua tiebreak.
 
-    while True:
-        cursor, batch = r.sscan(key, cursor=cursor, count=scan_count)
-        for doc_id in batch:
-            if seen >= offset and len(doc_ids) < limit:
-                doc_ids.append(doc_id)
-            seen += 1
-            if len(doc_ids) >= limit:
-                break
-        if cursor == 0 or len(doc_ids) >= limit:
-            break
+    Same shape as the unfiltered paths in search_file/search_feature: load the
+    set, sort in Python, slice. SSCAN can't replace this — it gives no stable
+    ordering, so paging off it makes pages overlap and skip.
 
-    return doc_ids
+    ponytail: O(N) full-set load only on the unfiltered path, as in the sibling
+    routes. all_functions is the biggest of the three sets, so if any of them
+    needs a maintained id index, this one goes first.
+    """
+    doc_ids = sorted(
+        d.decode() if isinstance(d, bytes) else str(d) for d in r.smembers(key)
+    )
+    return doc_ids[offset : offset + limit]
 
 
 def search_functions():
@@ -464,9 +461,9 @@ def search_functions():
                         else r.zrange(sort_key, offset, offset + limit - 1)
                     )
                 else:
-                    doc_ids = _sscan_page(r, all_key, offset, limit)
+                    doc_ids = _id_sorted_page(r, all_key, offset, limit)
             else:
-                doc_ids = _sscan_page(r, all_key, offset, limit)
+                doc_ids = _id_sorted_page(r, all_key, offset, limit)
         else:
             # Lua Exec
             search_script = lua_manager.get_script("search_function")

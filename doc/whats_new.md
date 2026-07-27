@@ -1,47 +1,38 @@
-# Release 0.4.0 - Pools
+BSimVis is a tool to analyze similarities across a collection of binaries, based on [Ghidra](https://github.com/nationalsecurityagency/ghidra) analyzers and the BSim (Behavioral Similarity) plugin. It provides an API and Web interface to upload large quantities of decompiled binaries and BSim feature vectors to a Kvrocks database for similarity analysis, function diffing, and binary family clustering.
+
+# New features
+
+This new version focuses on cross-collection analysis via pools, significant performance and concurrency scaling improvements for similarity builds, stability enhancements, and robust testing tools.
+
+# Screenshots
+
+![binary similarity diffing view](/img/binary_diff.png)
+*Interactive side-by-side binary diffing and function matching view.*
+
 
 ## Pools
-
-A pool correlates several collections at once, with two modes:
-
-* **Full cross-correlation** — matches what happens in collections.
-* **Cross-collection only** — set `only_cross_collection` in the pool config to
-  keep just the pairs that span two different collections. Use this to identify
-  known functions from a reference collection in another one, without paying for
-  the intra-collection comparisons you already have.
-
-Pool similarity, clustering, binary similarity and binary clustering all run as
-one job pipeline, and pool results carry their own namespace so tags, notes and
-clusters stay attached to the right level.
+* **Full cross-correlation** — matches what happens in collections, saving similarities across all collections and within them.
+* **Cross-collection only** — set `only_cross_collection` in the pool config to keep just the pairs that span two different collections. Use this to identify known functions from a reference collection in another one, without paying for the intra-collection comparisons you already have.
 
 ## Performance
 
-* Significant throughput improvements for concurrent similarity builds (`BUILD_SIM`). This was optimized by addressing two root causes: an unbounded metadata cache that starved the GC, and a per-candidate `ZSCORE` loop in Lua. Candidate discovery is now pure Python, so it no longer serializes on the kvrocks global `EVAL` lock.
-* **Concurrency scales now.** Multiple workers speed up the build rather than slowing it down, allowing builds to scale efficiently with the number of workers.
-* Diff tables filter, sort and paginate server-side instead of shipping the
-  whole table to the browser, plus a compact Sankey projection (`view=sankey`)
-  for large diffs.
-* File and function search order through the tag index; job statistics are
-  fetched in a single pipeline instead of one round trip per job.
-* Index jobs run as continuations so batches interleave rather than blocking
-  each other.
+![BUILD_SIM Optimization Performance](/img/benchmark/master_build_sim_perf.png)
+*Concurrent build throughput improvements across optimization stages (left) and build timeline comparing the baseline against the optimized run (right).*
+
+* **Faster Similarity Builds** — improved concurrent throughput by optimizing candidate discovery to avoid database serialization.
+* **Concurrency scaling** — multiple workers speed up builds rather than slowing them down, allowing builds to scale efficiently.
+* **Binary Similarity** — server-side pagination, sorting, and filtering for diff tables, along with a Sankey visualization mode.
+* **Search** — faster tag-indexed search sorting.
 
 ## Stability
-
-* Similarity scores are stable for a given set of parameters and no longer
-  drift with collection size.
-* Small functions fall back to Ghidra Function ID hash matching, where BSim
-  produces false positives.
+* Similarity scores are stable for a given set of parameters and no longer drift with collection size.
+* Small functions fall back to Ghidra Function ID hash matching, where BSim produced false positives.
 * Improvements to JVM memory management to prevent crashes.
 * Job system improvements and fixes.
 
 ## Tooling
+* `bsimvis-bench` CLI for reproducible similarity and build benchmarks, with test data under `data/bench` and results under `data/bench_results`.
+* An API test suite covering every endpoint, including cross-level filtering and sorting.
 
-* `bsimvis-bench` CLI for reproducible similarity and build benchmarks, with
-  test data under `data/bench` and results under `data/bench_results`.
-* An API test suite covering every endpoint, including cross-level filtering
-  and sorting.
-
-## Thanks
-
-New contributors this release: Alexandre Dulaunoy and SegmondFault.
+# New Contributor
+* @SegmondFault made their first contribution

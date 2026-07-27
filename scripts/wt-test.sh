@@ -51,6 +51,7 @@ EOF
 fi
 # shellcheck disable=SC1091
 set -a; . ./.env; set +a
+PROJECT_NAME="${PROJECT_NAME//./_}"
 APP_PORT=${APP_PORT:-5100}
 
 # --- 3. launch full stack (launch_tmux.sh reads the .env above) -------------

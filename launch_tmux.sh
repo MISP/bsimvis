@@ -105,6 +105,7 @@ WORKER_MEMORY_MAX=${WORKER_MEMORY_MAX:-3G}
 ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
+PROJECT_NAME="${PROJECT_NAME//./_}"
 
 # Optional tmux cleanup (default off, enable with --clear or CLEAN_TMUX=true)
 CLEAN_TMUX=${CLEAN_TMUX:-$CLEAR}

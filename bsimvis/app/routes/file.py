@@ -223,13 +223,18 @@ def upload_chunk():
                 "file_md5": file_md5,
                 "batch_uuid": batch_uuid,
             }
-            chunk_job_id = job_service.create_job(JobType.INDEX_FUNCTIONS, job_payload)
-
-            if parent_job_id:
-                job_service.r.hset(f"job:{chunk_job_id}", "parent_id", parent_job_id)
-                job_service.r.lrem("jobs:global", 0, chunk_job_id)
-
-            job_service.enqueue_job(chunk_job_id)
+            # is_subtask defers enqueueing so we can push as a continuation:
+            # chunk indexing lands on the tail of jobs:pending, which workers pop
+            # first. Without this the chunk jobs queue up behind every
+            # already-pending GHIDRA_ANALYZE, so a 30-file batch finishes all
+            # analysis before a single function is navigable.
+            chunk_job_id = job_service.create_job(
+                JobType.INDEX_FUNCTIONS,
+                job_payload,
+                parent_id=parent_job_id,
+                is_subtask=bool(parent_job_id),
+            )
+            job_service.enqueue_job(chunk_job_id, is_continuation=True)
 
             r_data.sadd(chunk_jobs_key, chunk_job_id)
 

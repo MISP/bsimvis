@@ -198,6 +198,29 @@ def rebuild_bin_sim():
     }
 
 
+def _swap_side_keys(d):
+    """Swap every `<x>_a`/`<x>_b` (and `_1`/`_2`) pair in a dict, in place."""
+    for key in list(d):
+        if key.endswith("_a") and key[:-1] + "b" in d:
+            twin = key[:-1] + "b"
+        elif key.endswith("_1") and key[:-1] + "2" in d:
+            twin = key[:-1] + "2"
+        else:
+            continue
+        d[key], d[twin] = d[twin], d[key]
+
+
+def _flip_diff_sides(diff_data):
+    """Mirror a stored bin_sim doc so side A becomes side B and vice versa."""
+    _swap_side_keys(diff_data)
+    diff = diff_data.get("diff")
+    if not isinstance(diff, dict):
+        return
+    _swap_side_keys(diff)
+    for row in diff.get("matched", []):
+        _swap_side_keys(row)
+
+
 def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=None):
     """Retrieve binary similarity diff for a pair."""
     if collection is None:
@@ -217,6 +240,9 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
 
     r = get_redis()
     coll_a = collection
+    # What the caller asked for. Lookup below may reorder these to reach the
+    # stored doc; the response must still come back in the caller's order.
+    req_coll_a, req_md5_a, req_coll_b, req_md5_b = coll_a, md5_a, coll_b, md5_b
 
     if pool_id:
         # For pool pairs, look up the SID via the 'involves' index to avoid
@@ -256,12 +282,14 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
 
     diff_data = json.loads(data_raw) if not isinstance(data_raw, dict) else data_raw
 
-    # Resolve actual coll_a/coll_b from the stored doc for metadata lookups
-    if pool_id:
-        coll_a = diff_data.get("coll_1") or coll_a
-        coll_b = diff_data.get("coll_2") or coll_b
-        md5_a = diff_data.get("md5_1") or md5_a
-        md5_b = diff_data.get("md5_2") or md5_b
+    # A pair is stored once, in whatever order it was built (canonical md5 sort for
+    # collection pairs, build order for pools). Re-orient the doc to the requested
+    # order so every "_a"/"_b" — file metadata, unique_to_b, func_b — describes the
+    # binary the caller called A/B.
+    stored_a = diff_data.get("md5_1") or diff_data.get("md5_a")
+    if stored_a and stored_a != req_md5_a:
+        _flip_diff_sides(diff_data)
+    coll_a, md5_a, coll_b, md5_b = req_coll_a, req_md5_a, req_coll_b, req_md5_b
 
     # Extract all unique function IDs
     fids = set()

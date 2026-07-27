@@ -187,7 +187,7 @@ function parseRestfulPath() {
                 params.view = 'file';
             } else if (parts[pIdx] === 'vs') {
                 params.view = 'bin_sim';
-                params.coll_b = parts[pIdx + 1];
+                params.coll_b = decodeURIComponent(parts[pIdx + 1] || '');
                 params.md5_b = parts[pIdx + 2];
             } else if (parts[pIdx] === 'functions' || parts[pIdx] === 'function') {
                 pIdx++;
@@ -202,7 +202,7 @@ function parseRestfulPath() {
                         params.view = 'function_features';
                     } else if (parts[pIdx] === 'vs') {
                         params.view = 'diff';
-                        params.coll_b = parts[pIdx + 1];
+                        params.coll_b = decodeURIComponent(parts[pIdx + 1] || '');
                         params.md5_b = parts[pIdx + 2];
                         params.addr_b = parts[pIdx + 3];
                         params.id1 = `${stripPoolPrefix(params.collection || '')}:func:${params.md5}:${params.address}`;
@@ -234,7 +234,7 @@ function parseRestfulPath() {
                 } else if (parts[pIdx] === 'vs') {
                     params.view = 'diff';
                     params.id1 = `${stripPoolPrefix(params.collection || '')}:func:${params.md5}:${params.address}`;
-                    params.coll_b = stripPoolPrefix(parts[pIdx + 1]) || '';
+                    params.coll_b = stripPoolPrefix(decodeURIComponent(parts[pIdx + 1] || '')) || '';
                     params.md5_b = parts[pIdx + 2];
                     params.addr_b = parts[pIdx + 3];
                     params.id2 = `${stripPoolPrefix(params.coll_b || '')}:func:${params.md5_b}:${params.addr_b}`;

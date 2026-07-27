@@ -335,11 +335,11 @@
                         codeHtml += rowHtml;
                     });
                 }
-                const currentCollection = params.get('collection') || id.split(':')[0];
+                const currentCollection = params.get('collection') || (window.parent && window.parent.getCollectionFromId ? window.parent.getCollectionFromId(id) : id.split(':')[0]);
                 tr.innerHTML = `
                     <td>
                         <div style="display:inline-flex; align-items:center; gap:5px;">
-                            <a href="/feature/index.html?collection=${encodeURIComponent(currentCollection)}&hash=${encodeURIComponent(f.hash)}" 
+                            <a href="#" onclick="event.preventDefault(); (window.Nav || window.parent.Nav).openPath((window.Nav || window.parent.Nav).buildUIUrl('${currentCollection.replace(/'/g, "\\'")}', ['feature', '${f.hash}']), event);" 
                             style="text-decoration: none;">
                                 <span class="hash-badge" style="cursor: pointer;">${f.hash}</span>
                             </a>

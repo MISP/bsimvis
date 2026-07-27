@@ -392,12 +392,13 @@ function toggleContentExpand(btn) {
 async function refreshNotes(funcId) {
     const listEl = document.getElementById('notes-list');
     if (!listEl) return;
-    const collection = funcId.split(':')[0];
+    const collection = window.getCollectionFromId(funcId);
     const isFile = entityMode === 'file';
     const idParam = isFile ? `file_id=${encodeURIComponent(funcId)}` : `func_id=${encodeURIComponent(funcId)}`;
     const endpoint = isFile ? '/api/notes/file/list' : '/api/notes/list';
     try {
-        const res = await fetch(`${endpoint}?collection=${encodeURIComponent(collection)}&${idParam}`);
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+        const res = await fetch(`${endpoint}?${apiParams}&${idParam}`);
         const data = await res.json();
         if (data.status === 'success') {
             lastRenderedNotesFuncId = funcId;
@@ -461,6 +462,15 @@ async function refreshNotes(funcId) {
     } catch (e) { console.error(e); }
 }
 
+function getActivePool() {
+    const getRS = window.getRoutingState || window.parent?.getRoutingState;
+    if (typeof getRS === 'function') {
+        const rs = getRS();
+        return rs.pool || null;
+    }
+    return null;
+}
+
 async function saveNote(funcId) {
     const textEl = document.getElementById('new-note-text');
     const ownerEl = document.getElementById('note-owner-select');
@@ -470,10 +480,13 @@ async function saveNote(funcId) {
     const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
     const idKey = isFile ? 'file_id' : 'func_id';
     try {
+        const pool = getActivePool();
+        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, text, owner: ownerEl.value };
+        if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: funcId.split(':')[0], [idKey]: funcId, text, owner: ownerEl.value })
+            body: JSON.stringify(payload)
         });
         if ((await res.json()).status === 'success') {
             textEl.value = '';
@@ -509,20 +522,25 @@ async function submitEditNote(funcId, noteId) {
     const endpoint = isFile ? '/api/notes/file/update' : '/api/notes/update';
     const idKey = isFile ? 'file_id' : 'func_id';
     try {
+        const pool = getActivePool();
+        const payload = {
+            collection: window.getCollectionFromId(funcId),
+            [idKey]: funcId,
+            note_id: noteId,
+            text: text
+        };
+        if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                collection: funcId.split(':')[0],
-                [idKey]: funcId,
-                note_id: noteId,
-                text: text
-            })
+            body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (data.status === 'success') {
             currentEditingNoteId = null;
             await refreshNotes(funcId);
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         } else {
             alert(data.error || 'Failed to update note');
         }
@@ -537,10 +555,13 @@ async function deleteNote(funcId, note_id) {
     const endpoint = isFile ? '/api/notes/file/remove' : '/api/notes/remove';
     const idKey = isFile ? 'file_id' : 'func_id';
     try {
+        const pool = getActivePool();
+        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, note_id };
+        if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: funcId.split(':')[0], [idKey]: funcId, note_id })
+            body: JSON.stringify(payload)
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);
@@ -691,15 +712,20 @@ async function saveMessageAsNote(funcId, index, btn) {
     const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
     const idKey = isFile ? 'file_id' : 'func_id';
     try {
+        const pool = getActivePool();
+        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, text: history[index].content, owner: "llm" };
+        if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ collection: funcId.split(":")[0], [idKey]: funcId, text: history[index].content, owner: "llm" })
+            body: JSON.stringify(payload)
         });
         if ((await res.json()).status === "success") {
             await refreshNotes(funcId);
             btn.innerHTML = '<i class="fa-solid fa-check"></i> Saved';
             btn.disabled = true;
+            if (!isFile && window.parent?.refreshFunctionRow) window.parent.refreshFunctionRow(funcId);
+            if (isFile && window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
         }
     } catch (e) { alert(e.message); }
 }
@@ -709,10 +735,13 @@ async function handleDroppedText(funcId, text) {
     const endpoint = isFile ? '/api/notes/file/add' : '/api/notes/add';
     const idKey = isFile ? 'file_id' : 'func_id';
     try {
+        const pool = getActivePool();
+        const payload = { collection: window.getCollectionFromId(funcId), [idKey]: funcId, text: text, owner: 'llm' };
+        if (pool) payload.pool = pool;
         const res = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: funcId.split(':')[0], [idKey]: funcId, text: text, owner: 'llm' })
+            body: JSON.stringify(payload)
         });
         if ((await res.json()).status === 'success') {
             await refreshNotes(funcId);

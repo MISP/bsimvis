@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -28,11 +29,18 @@ class GhidraService:
             if config_path.exists():
                 with open(config_path, "rb") as f:
                     return tomllib.load(f)
+            else:
+                example_path = Path("bsimvis_config.toml.example")
+                if example_path.exists():
+                    with open(example_path, "rb") as f:
+                        return tomllib.load(f)
         except Exception as e:
             logging.warning(f"Failed to load default config: {e}")
         return {}
 
-    def ensure_launcher(self, verbose=False, max_ram_percent=60.0, jvm_args=None):
+    def ensure_launcher(
+        self, verbose=False, max_ram_percent=60.0, max_heap_mb=None, jvm_args=None
+    ):
         if not self._launcher:
             try:
                 from pyghidra.launcher import get_launcher
@@ -45,12 +53,52 @@ class GhidraService:
 
             logging.info("[i] Starting Ghidra JVM")
             self._launcher = HeadlessPyGhidraLauncher(verbose=verbose)
-            self._launcher.add_vmargs(f"-XX:MaxRAMPercentage={max_ram_percent}")
+            # MaxRAMPercentage is a share of *host* RAM applied per JVM, so N
+            # workers authorize N x that share. Prefer an absolute cap.
+            if max_heap_mb:
+                self._launcher.add_vmargs(f"-Xmx{int(max_heap_mb)}m")
+            else:
+                self._launcher.add_vmargs(f"-XX:MaxRAMPercentage={max_ram_percent}")
             if jvm_args:
                 for arg in jvm_args:
                     self._launcher.add_vmargs(arg)
             self._launcher.start()
         return self._launcher
+
+    def _function_id_hash(self, func, program):
+        """Deterministic per-function hash for exact-matching small functions.
+
+        Primary: Ghidra FunctionID full-hash (masks relocatable operands, so it
+        is stable across binaries). Fallback: sha1 of the mnemonic+operand-type
+        sequence when FID declines — it refuses functions below its shingle
+        floor, which are exactly the tiniest ones we still want to match.
+        Returns None only if the function has no instructions.
+        """
+        try:
+            from ghidra.feature.fid.service import FidService
+
+            quad = FidService().hashFunction(func)
+            if quad is not None:
+                return format(quad.getFullHash() & 0xFFFFFFFFFFFFFFFF, "016x")
+        except Exception:
+            pass
+
+        # ponytail: fallback keys on mnemonic + operand *types* only, not operand
+        # values — loose for pathological tiny funcs. Tighten with operand-value
+        # masking if false 100% matches show up.
+        try:
+            listing = program.getListing()
+            parts = []
+            for instr in listing.getInstructions(func.getBody(), True):
+                ops = ",".join(
+                    str(instr.getOperandType(i)) for i in range(instr.getNumOperands())
+                )
+                parts.append(f"{instr.getMnemonicString()}|{ops}")
+            if not parts:
+                return None
+            return "f" + hashlib.sha1("\n".join(parts).encode()).hexdigest()[:15]
+        except Exception:
+            return None
 
     def get_token_type(self, clazz):
         if clazz == "ClangVariableToken":
@@ -352,6 +400,16 @@ class GhidraService:
         return bsim_meta, bsim_raw, bsim_tf, times
 
     def get_bsim_data(self, program, options=None):
+        generator = self.stream_bsim_data(program, options, chunk_size=999999)
+        file_metadata = next(generator)
+        functions = []
+        for chunk in generator:
+            functions.extend(chunk)
+        return {"file_metadata": file_metadata, "functions": functions}
+
+    def stream_bsim_data(
+        self, program, options=None, chunk_size=100, job_service=None, job_id=None
+    ):
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
         from ghidra.util.task import ConsoleTaskMonitor
 
@@ -362,6 +420,7 @@ class GhidraService:
         batch_uuid = options.get("batch_uuid")
         batch_name = options.get("batch_name", "Ghidra Batch")
         tags = options.get("tags", [])
+        related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)
         batch_order = options.get("batch_order", 0)
 
@@ -370,6 +429,17 @@ class GhidraService:
         lang_id = str(program.getLanguageID())
         language = program.getLanguage()
         file_id = f"{file_md5}:#{file_md5}"
+
+        # Extract PE/ELF/Mach-O metadata from Ghidra
+        file_format = {}
+        try:
+            file_format["Executable Format"] = str(program.getExecutableFormat())
+            if hasattr(program, "getMetadata"):
+                meta_map = program.getMetadata()
+                for key in meta_map.keySet():
+                    file_format[str(key)] = str(meta_map.get(key))
+        except Exception:
+            pass
 
         file_metadata = {
             "entry_date": now_unix,
@@ -380,9 +450,14 @@ class GhidraService:
             "batch_name": batch_name,
             "batch_order": batch_order,
             "tags": tags,
+            "related_md5": related_md5,
             "language_id": lang_id,
             "file_id": file_id,
+            "file_format": file_format,
         }
+
+        # Yield file_metadata first as the initial item
+        yield file_metadata
 
         symbol_table = program.getSymbolTable()
         decomp_opts = DecompileOptions()
@@ -392,17 +467,119 @@ class GhidraService:
 
         if not decomp_interface.openProgram(program):
             logging.error(f"[-] Decompiler failed to initialize for {file_name}")
-            return {}
+            return
 
         decompiler_id = f"{decomp_interface.getMajorVersion()}.{decomp_interface.getMinorVersion()}:{decomp_interface.getCompilerSpec().getLanguage()}:{hex(decomp_interface.getSignatureSettings())}"
-        functions = program.getFunctionManager().getFunctions(True)
-        all_function_data = []
 
-        for func in functions:
-            if func.isExternal() or func.isThunk():
+        # Count total eligible functions first
+        all_funcs = list(program.getFunctionManager().getFunctions(True))
+        eligible_funcs = [
+            f
+            for f in all_funcs
+            if not (f.isExternal() or f.isThunk())
+            and f.getBody().getNumAddresses() >= min_func_len
+        ]
+        total_funcs = len(eligible_funcs)
+
+        if job_service and job_id:
+            job_service.add_log(
+                job_id, f"Found {total_funcs} functions to decompile and analyze."
+            )
+
+        # Build full call graph in one reference-manager pass (avoids N×getCalledFunctions calls)
+        func_manager = program.getFunctionManager()
+        ref_manager = program.getReferenceManager()
+        eligible_entries = {
+            str(f.getEntryPoint()).split(":")[-1] for f in eligible_funcs
+        }
+        callees_graph = {
+            e: [] for e in eligible_entries
+        }  # entry_str -> [callee_info, ...]
+        callers_graph = {
+            e: [] for e in eligible_entries
+        }  # entry_str -> [caller_info, ...]
+
+        ref_iter = ref_manager.getReferenceIterator(program.getMinAddress())
+        while ref_iter.hasNext():
+            ref = ref_iter.next()
+            if not ref.getReferenceType().isCall():
                 continue
-            if func.getBody().getNumAddresses() < min_func_len:
+
+            caller_func = func_manager.getFunctionContaining(ref.getFromAddress())
+            if caller_func is None:
                 continue
+            caller_entry = str(caller_func.getEntryPoint()).split(":")[-1]
+
+            callee_func = func_manager.getFunctionAt(ref.getToAddress())
+            if callee_func is not None:
+                callee_entry = str(callee_func.getEntryPoint()).split(":")[-1]
+                callee_info = {
+                    "name": callee_func.getName(),
+                    "entrypoint": callee_entry,
+                    "is_external": callee_func.isExternal() or callee_func.isThunk(),
+                }
+                caller_info = {
+                    "name": caller_func.getName(),
+                    "entrypoint": caller_entry,
+                    "is_external": caller_func.isExternal() or caller_func.isThunk(),
+                }
+                # Dedup using sets per entry
+                if caller_entry in callees_graph:
+                    callees_graph[caller_entry].append(callee_info)
+                if callee_entry in callers_graph:
+                    callers_graph[callee_entry].append(caller_info)
+            else:
+                # Unresolved destination — mark as external
+                sym = program.getSymbolTable().getPrimarySymbol(ref.getToAddress())
+                callee_name = sym.getName() if sym else str(ref.getToAddress())
+                callee_info = {
+                    "name": callee_name,
+                    "entrypoint": None,
+                    "is_external": True,
+                }
+                if caller_entry in callees_graph:
+                    callees_graph[caller_entry].append(callee_info)
+
+        # Dedup each list (multiple CALL sites to the same target within one function)
+        def _dedup(lst, key_fn):
+            seen = set()
+            result = []
+            for item in lst:
+                k = key_fn(item)
+                if k not in seen:
+                    seen.add(k)
+                    result.append(item)
+            return result
+
+        for entry in callees_graph:
+            callees_graph[entry] = _dedup(
+                callees_graph[entry],
+                lambda x: (x["entrypoint"], x["name"], x["is_external"]),
+            )
+        for entry in callers_graph:
+            callers_graph[entry] = _dedup(
+                callers_graph[entry],
+                lambda x: (x["entrypoint"], x["name"], x["is_external"]),
+            )
+
+        chunk = []
+        decompiled_count = 0
+
+        for func in eligible_funcs:
+            decompiled_count += 1
+            if (
+                job_service
+                and job_id
+                and (decompiled_count % 10 == 0 or decompiled_count == total_funcs)
+            ):
+                pct = int(
+                    (decompiled_count / max(1, total_funcs)) * 80
+                )  # Reserve 80-100% for chunk streaming/indexing
+                job_service.update_progress(
+                    job_id,
+                    pct,
+                    f"Decompiling and analyzing functions: {decompiled_count}/{total_funcs}",
+                )
 
             func_name = func.getName()
             entry_point = func.getEntryPoint()
@@ -458,43 +635,10 @@ class GhidraService:
                     seq_to_token_idx,
                 )
 
-            callees_list = []
-            try:
-                for callee in func.getCalledFunctions(monitor):
-                    if callee:
-                        callee_entry = callee.getEntryPoint()
-                        callee_entry_str = (
-                            str(callee_entry).split(":")[-1] if callee_entry else None
-                        )
-                        callees_list.append(
-                            {
-                                "name": callee.getName(),
-                                "entrypoint": callee_entry_str,
-                                "is_external": callee.isExternal() or callee.isThunk(),
-                            }
-                        )
-            except Exception:
-                pass
+            callees_list = callees_graph.get(entry_str, [])
+            callers_list = callers_graph.get(entry_str, [])
 
-            callers_list = []
-            try:
-                for caller in func.getCallingFunctions(monitor):
-                    if caller:
-                        caller_entry = caller.getEntryPoint()
-                        caller_entry_str = (
-                            str(caller_entry).split(":")[-1] if caller_entry else None
-                        )
-                        callers_list.append(
-                            {
-                                "name": caller.getName(),
-                                "entrypoint": caller_entry_str,
-                                "is_external": caller.isExternal() or caller.isThunk(),
-                            }
-                        )
-            except Exception:
-                pass
-
-            all_function_data.append(
+            chunk.append(
                 {
                     "function_metadata": {
                         "type": "function",
@@ -517,6 +661,7 @@ class GhidraService:
                         "namespace": namespace,
                         "parameters": parameters,
                         "entrypoint_address": entry_str,
+                        "function_id_hash": self._function_id_hash(func, program),
                         "bsim_features_count": len(bsim_raw),
                         "bsim_unique_features_count": len(bsim_tf),
                         "callees": callees_list,
@@ -541,8 +686,14 @@ class GhidraService:
                 }
             )
 
+            if len(chunk) >= chunk_size:
+                yield chunk
+                chunk = []
+
+        if chunk:
+            yield chunk
+
         decomp_interface.dispose()
-        return {"file_metadata": file_metadata, "functions": all_function_data}
 
     def run_profile_analysis(self, program, profile_name, force_reanalysis=False):
         from ghidra.app.plugin.core.analysis import AutoAnalysisManager

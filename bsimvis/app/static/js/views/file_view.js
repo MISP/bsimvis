@@ -6,12 +6,22 @@
 window.FileView = {
     container: null,
     params: null,
+    functions: [],
+    clusters: {},
+    functionsLoaded: false,
+    sortState: { col: 'function_name', dir: 1 },
+    filterState: { q: '', featMin: '', featMax: '' },
 
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
+        this.functions = [];
+        this.clusters = {};
+        this.functionsLoaded = false;
+        this.sortState = { col: 'function_name', dir: 1 };
+        this.filterState = { q: '', featMin: '', featMax: '' };
         
-        const collection = params.collection || 'main';
+        const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
         if (!file_md5) {
@@ -21,28 +31,59 @@ window.FileView = {
 
         // Build HTML structure
         this.container.innerHTML = `
+            <style>
+                .bsim-tabbar { display:flex; gap:4px; margin:0 0 16px 0; border-bottom:2px solid var(--border); }
+                .bsim-tab {
+                    background:none; border:none; border-bottom:3px solid transparent;
+                    margin-bottom:-2px; padding:10px 20px; cursor:pointer;
+                    color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
+                    transition:color 0.15s, border-color 0.15s, background 0.15s;
+                }
+                .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+                .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+                
+                .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+                .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
+                .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+                .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+                
+                .file-func-table th.sortable { cursor: pointer; user-select: none; }
+                .file-func-table th.sortable:hover { color: var(--text); }
+                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.1); }
+                .file-func-table tr.filter-row input { background: #000; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
+
+                .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+                .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
+                .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+                .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
+                .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
+                
+                .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
+            </style>
             <div id="file-view-loader" style="text-align:center; padding:50px; color:var(--dim); font-size:1.2rem;">
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...
             </div>
             <div id="file-view-content" style="display: none; flex:1; overflow-y:auto; padding: 0 0 20px 0;">
-                <div class="hero-section" style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
-                    <div class="hero-details">
-                        <h1 id="file-name" style="margin: 0 0 5px 0; font-size: 1.5rem; color: #fff; word-break: break-all;">unknown</h1>
-                        <div class="md5" id="file-md5" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.9rem;">MD5: ---</div>
-                        <div class="quick-actions" id="file-quick-actions" style="display: flex; gap: 10px; margin-top: 15px;"></div>
-                    </div>
+                <div id="file-title-strip" class="bin-sim-strip" style="margin-bottom: 20px; cursor: context-menu;"
+                    oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
+                    <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
+                    <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 10px;">(MD5: ---)</span>
+                    <span id="file-tags-container" style="display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1;"></span>
+                    <span id="file-note-btn-container" style="margin-left:auto; display: inline-flex; align-items: center;"></span>
                 </div>
 
-                <div class="dashboard-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                <div class="bsim-tabbar" id="file-view-tabs">
+                    <button class="bsim-tab active" id="file-tab-btn-metadata" onclick="FileView.switchTab('metadata')">Metadata (<span id="metadata-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
+                </div>
+
+                <!-- Metadata Tab Panel (Default Active) -->
+                <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                     <div style="display: flex; flex-direction: column; gap: 20px;">
                         <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
-                                <i class="fa-solid fa-info-circle"></i> File Metadata
-                            </div>
-                            <div class="meta-grid" id="file-meta" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;"></div>
-                            <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
-                                <div style="font-size: 0.75rem; color: var(--dim); text-transform: uppercase; margin-bottom: 8px;">Tags</div>
-                                <div id="file-tags-container"></div>
+                            <div id="file-meta-container">
+                                <!-- Reused comparison table layout here -->
                             </div>
                         </div>
 
@@ -53,11 +94,48 @@ window.FileView = {
                             <div class="meta-grid" id="inferred-meta" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;"></div>
                         </div>
                     </div>
+                </div>
 
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-                        <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
-                            <i class="fa-solid fa-bullseye"></i> Binary Clusters (<span id="cluster-count">0</span>)
+                <!-- Functions Tab Panel -->
+                <div id="file-panel-functions" class="file-view-panel" style="display: none;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
+                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                            <table class="file-func-table">
+                                <thead>
+                                    <tr>
+                                        <th class="sortable" onclick="FileView.toggleSort('function_name')">Function <span id="sort-icon-function_name">↕</span></th>
+                                        <th class="sortable" onclick="FileView.toggleSort('entrypoint_address')">Entrypoint <span id="sort-icon-entrypoint_address">↕</span></th>
+                                        <th>Tags</th>
+                                        <th>Clusters</th>
+                                        <th class="sortable" onclick="FileView.toggleSort('bsim_features_count')">Features <span id="sort-icon-bsim_features_count">↕</span></th>
+                                        <th>Notes</th>
+                                    </tr>
+                                    <tr class="filter-row">
+                                        <th><input type="text" id="flt-q" placeholder="Search name/tag/addr..." style="width:100%;" oninput="FileView.handleFilterChange()" /></th>
+                                        <th></th>
+                                        <th></th>
+                                        <th></th>
+                                        <th>
+                                            <div style="display:flex; align-items:center; gap:2px;">
+                                                <input type="number" id="flt-feat-min" placeholder="Min" style="width:45%;" oninput="FileView.handleFilterChange()" />
+                                                <span class="dim" style="font-size:0.6rem">-</span>
+                                                <input type="number" id="flt-feat-max" placeholder="Max" style="width:45%;" oninput="FileView.handleFilterChange()" />
+                                            </div>
+                                        </th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="file-functions-tbody">
+                                    <tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading functions...</td></tr>
+                                </tbody>
+                            </table>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Clusters Tab Panel -->
+                <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
                         <div class="cluster-list" id="cluster-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                     </div>
                 </div>
@@ -67,7 +145,8 @@ window.FileView = {
         try {
             if (window.fetchTagMetadata) await window.fetchTagMetadata(collection);
 
-            const res = await fetch(`/api/file/details/${file_md5}?collection=${encodeURIComponent(collection)}`);
+            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+            const res = await fetch(`/api/file/details/${file_md5}?${apiParams}`);
             if (!res.ok) throw new Error("File not found");
             const data = await res.json();
 
@@ -77,60 +156,132 @@ window.FileView = {
             document.getElementById('file-view-content').style.display = 'block';
 
             const file = data.file;
-            const clusters = data.bin_cluster_map || {};
+            this.clusters = data.bin_cluster_map || {};
             const inferredMeta = data.inferred_meta || {};
 
-            // Render Hero
+            // Render Hero Header
             const fileName = file.file_name || file.file_names?.[0] || 'Unknown Binary';
             window.filenameCache = window.filenameCache || {};
             window.filenameCache[file.file_md5] = fileName;
-            document.getElementById('file-name').innerText = fileName;
-            document.getElementById('file-md5').innerText = `MD5: ${file.file_md5}`;
+            document.getElementById('file-title-text').innerText = fileName;
+            document.getElementById('file-md5-text').innerText = `(MD5: ${file.file_md5})`;
 
-            // Update breadcrumb to show actual filename in the global breadcrumbs container
-            const bcCurrent = document.querySelector('#breadcrumbs-container .breadcrumb-item.current');
-            if (bcCurrent) bcCurrent.innerHTML = `<i class="fa-solid fa-file-code"></i><span>${fileName}</span>`;
+            // Pre-populate functions count
+            document.getElementById('functions-count').innerText = file.function_count || 0;
 
-            document.getElementById('file-quick-actions').innerHTML = `
-                <a href="#" class="quick-action-btn" onclick="FileView.openFunctions(event)"><i class="fa-solid fa-code"></i> View Functions</a>
-                <a href="#" class="quick-action-btn" onclick="FileView.openCallGraph(event)"><i class="fa-solid fa-sitemap"></i> Call Graph</a>
-                <a href="#" class="quick-action-btn" onclick="FileView.showNotes(event)"><i class="fa-solid fa-note-sticky"></i> Notes</a>
-            `;
-
-            // Render Meta Row
-            const renderRow = (icon, label, value, color) => {
-                if (!value) return '';
-                const valStr = Array.isArray(value) ? value.join(', ') : String(value);
-                return `
-                    <div class="meta-label" style="color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; align-items: center; gap: 6px;">
-                        <i class="${icon}" style="width:14px; text-align:center;"></i> ${label}
-                    </div>
-                    <div class="meta-value" style="color: ${color || '#eee'}; font-family: 'JetBrains Mono', 'Consolas', monospace; word-break: break-all;">${valStr}</div>
-                `;
-            };
-
-            let metaHtml = '';
-            metaHtml += renderRow('fa-solid fa-microchip', 'Architecture', file.language_id || file.language, '#ae81ff');
-            metaHtml += renderRow('fa-solid fa-list-ol', 'Functions', file.function_count, '#a6e22e');
-            metaHtml += renderRow('fa-solid fa-shield', 'AV Type', file.avtype);
-            metaHtml += renderRow('fa-solid fa-file-code', 'File Type', file.filetype);
-            metaHtml += renderRow('fa-solid fa-biohazard', 'Yara', file.yara, 'var(--accent)');
-            metaHtml += renderRow('fa-solid fa-network-wired', 'CC IP', file.cc_ip, 'var(--info, #60a5fa)');
-            metaHtml += renderRow('fa-solid fa-box', 'Batch UUID', file.batch_uuid, 'var(--dim)');
-            if (file.first_seen) {
-                metaHtml += renderRow('fa-solid fa-clock', 'First Seen', new Date(file.first_seen * 1000).toLocaleString(), '#ccc');
+            if (typeof Breadcrumbs !== 'undefined') {
+                Breadcrumbs.setFilename(file.file_md5, fileName);
+                Breadcrumbs.refresh();
             }
-            
-            document.getElementById('file-meta').innerHTML = metaHtml || '<div class="dim">No metadata found.</div>';
 
-            // Render Tags
+            // Bind data-entity-data on the strip for context menu functionality
+            const fileId = `${collection}:file:${file_md5}`;
+            const strip = document.getElementById('file-title-strip');
+            if (strip) {
+                const entityData = {
+                    id: file.file_id || fileId,
+                    name: fileName,
+                    md5: file.file_md5,
+                    note_owners: file.note_owners || [],
+                    user_tags: file.user_tags || [],
+                    tags: file.tags || []
+                };
+                strip.setAttribute('data-entity-data', JSON.stringify(entityData).replace(/'/g, "&apos;"));
+            }
+
+            // Render Tags and Notes in Header (Inspired by File Strip in Sim view)
             if (window.renderTagEditor) {
                 document.getElementById('file-tags-container').innerHTML = window.renderTagEditor(
-                    'file', file.file_id || `${collection}:file:${file_md5}`, file.tags || [], file.user_tags || []
+                    'file', file.file_id || fileId, file.tags || [], file.user_tags || []
+                );
+            }
+            if (window.EntityRenderer) {
+                document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(
+                    file.file_id || fileId, file.note_owners || [], { raw_data: file }
                 );
             }
 
+            // Render Metadata Table (Reusing comparison table layout and styles)
+            const fmt = (v) => {
+                if (v === undefined || v === null || v === '') return '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                if (Array.isArray(v)) return v.length ? v.join(', ') : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                return String(v);
+            };
+            const fmtDate = (timestamp) => {
+                if (!timestamp) return '';
+                const d = new Date(Number(timestamp) * 1000);
+                return d.toLocaleString();
+            };
+
+            const iconMap = {
+                'File Name': 'fa-solid fa-file',
+                'Other Names': 'fa-solid fa-tags',
+                'MD5': 'fa-solid fa-fingerprint',
+                'Batch UUID': 'fa-solid fa-box',
+                'Language': 'fa-solid fa-microchip',
+                'AV Type': 'fa-solid fa-shield',
+                'File Type': 'fa-solid fa-file-code',
+                'Yara': 'fa-solid fa-biohazard',
+                'CC IP': 'fa-solid fa-network-wired',
+                'Functions': 'fa-solid fa-list-ol',
+                'BSim Features': 'fa-solid fa-dna',
+                'First Seen': 'fa-solid fa-clock',
+                'Related MD5s': 'fa-solid fa-link'
+            };
+
+            const categories = [
+                ['Identity', [
+                    ['File Name', file.file_name],
+                    ['Other Names', file.file_names],
+                    ['MD5', file.file_md5],
+                    ['Related MD5s', file.related_md5],
+                    ['Batch UUID', file.batch_uuid],
+                    ['First Seen', file.first_seen ? fmtDate(file.first_seen) : ''],
+                ]],
+                ['Classification', [
+                    ['Language', file.language_id || file.language],
+                    ['AV Type', file.avtype],
+                    ['File Type', file.filetype],
+                    ['Yara', file.yara],
+                    ['CC IP', file.cc_ip],
+                ]],
+                ['Statistics', [
+                    ['Functions', file.function_count],
+                    ['BSim Features', file.bsim_features_count],
+                ]]
+            ];
+
+            if (file.file_format && Object.keys(file.file_format).length > 0) {
+                const formatFields = Object.entries(file.file_format).map(([k, v]) => [k, v]);
+                categories.push(['File Format', formatFields]);
+            }
+
+            let rows = '';
+            let metaCount = 0;
+            for (const [cat, fields] of categories) {
+                rows += `<tr><td class="bin-sim-mc-cat" colspan="2">${cat}</td></tr>`;
+                for (const [label, val] of fields) {
+                    const icon = iconMap[label] || 'fa-solid fa-circle-info';
+                    rows += `<tr>
+                        <td class="bin-sim-mc-label" style="display: flex; align-items: center; gap: 8px;"><i class="${icon}" style="width: 14px; text-align: center; color: var(--dim); opacity: 0.8;"></i>${label}</td>
+                        <td>${fmt(val)}</td>
+                    </tr>`;
+                    if (val !== undefined && val !== null && val !== '') {
+                        metaCount++;
+                    }
+                }
+            }
+            document.getElementById('metadata-count').innerText = metaCount;
+
+            document.getElementById('file-meta-container').innerHTML = `
+                <table class="bin-sim-mc-table">
+                    <thead><tr><th>Field</th><th>Value</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+
             // Render Distributions for Clusters
+            const self = this;
             function renderDist(title, icon, dist) {
                 if (!dist || dist.length === 0) return '';
                 
@@ -190,7 +341,7 @@ window.FileView = {
                         <div style="display: flex; gap: 15px; align-items: center;">
                             <div style="flex-shrink: 0;">${svgHtml}</div>
                             <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
-                                ${legendHtml}
+                                  ${legendHtml}
                             </div>
                         </div>
                     </div>
@@ -206,13 +357,13 @@ window.FileView = {
                 clustersHtml = '<div class="dim" style="text-align:center; padding: 20px;">Binary does not belong to any clusters.</div>';
             } else {
                 clusterIds.sort((a, b) => {
-                    const cmA = clusters[a] || {};
-                    const cmB = clusters[b] || {};
+                    const cmA = this.clusters[a] || {};
+                    const cmB = this.clusters[b] || {};
                     return (cmB.cohesion_score || 0) - (cmA.cohesion_score || 0);
                 });
 
                 clusterIds.forEach(cid => {
-                    const cm = clusters[cid];
+                    const cm = this.clusters[cid];
                     if (!cm) return;
                     
                     const name = cm.cluster_name || `Cluster ${cid}`;
@@ -230,14 +381,14 @@ window.FileView = {
                     distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
 
                     clustersHtml += `
-                        <div class="cluster-item">
-                            <div class="cluster-item-header" style="margin-bottom: 8px;">
+                        <div class="cluster-item" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                            <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:#fff;">
                                 <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
                                 <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="FileView.openClusterFiles(event, '${cm.cluster_uuid}')">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
                             </div>
-                            <div class="cluster-stat-badges" style="margin-bottom: 5px;">
-                                <div class="stat-badge"><i class="fa-solid fa-users"></i><span>Members: <span class="val">${size}</span></span></div>
-                                <div class="stat-badge"><i class="fa-solid fa-bullseye"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor};">${cohesion}</span></span></div>
+                            <div class="cluster-stat-badges" style="margin-bottom: 5px; display:flex; gap:10px; flex-wrap:wrap;">
+                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
+                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
                             </div>
                             ${distBadges}
                         </div>
@@ -254,7 +405,7 @@ window.FileView = {
                     const confObj = mapObj[k];
                     const confScore = confObj.percent;
                     const confColor = d3.interpolateRdYlGn(confScore / 100);
-                    const clusterLink = `/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
+                    const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
                     return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');
                 return `
@@ -276,8 +427,20 @@ window.FileView = {
                 document.getElementById('inferred-meta-card').style.display = 'block';
             }
 
-            // Initialize Notes and AI insights handles silently (hidden but constructed)
-            const fileId = `${collection}:file:${file_md5}`;
+            // Silently fetch functions so they're ready when switching tabs
+            this.loadFunctionsTable();
+
+            // Apply tab from URL hash
+            this.applyTabFromHash();
+
+            // Register hashchange listener
+            if (!this._hashBound) {
+                this._onHashChange = () => this.applyTabFromHash();
+                window.addEventListener('hashchange', this._onHashChange);
+                this._hashBound = true;
+            }
+
+            // Initialize Notes panel silently
             if (typeof window.showFileNotes === 'function') {
                 window.showFileNotes(fileId, false);
             }
@@ -285,6 +448,187 @@ window.FileView = {
         } catch (err) {
             console.error(err);
             document.getElementById('file-view-loader').innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;
+        }
+    },
+
+    switchTab(tabId, push = true) {
+        document.querySelectorAll('#file-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.file-view-panel').forEach(panel => panel.style.display = 'none');
+
+        const btn = document.getElementById(`file-tab-btn-${tabId}`);
+        if (btn) btn.classList.add('active');
+
+        const panel = document.getElementById(`file-panel-${tabId}`);
+        if (panel) panel.style.display = 'block';
+
+        if (tabId === 'functions') {
+            this.loadFunctionsTable();
+        }
+
+        if (push && location.hash.slice(1) !== tabId) {
+            history.pushState(null, '', location.pathname + location.search + '#' + tabId);
+        }
+    },
+
+    applyTabFromHash() {
+        const allowedTabs = ['metadata', 'functions', 'clusters'];
+        const tab = location.hash.slice(1);
+        this.switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
+    },
+
+    async loadFunctionsTable() {
+        if (this.functionsLoaded) return;
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+        const tbody = document.getElementById('file-functions-tbody');
+        
+        try {
+            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+            const res = await fetch(`/api/function/search?file_md5=${file_md5}&limit=1000&${apiParams}`);
+            if (!res.ok) throw new Error("Functions load failed");
+            const data = await res.json();
+            
+            this.functions = data.functions || [];
+            document.getElementById('functions-count').innerText = this.functions.length;
+            this.renderFunctionsTable();
+            this.functionsLoaded = true;
+        } catch (e) {
+            console.error(e);
+            if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading functions: ${e.message}</td></tr>`;
+        }
+    },
+
+    toggleSort(col) {
+        if (this.sortState.col === col) {
+            this.sortState.dir = -this.sortState.dir;
+        } else {
+            this.sortState.col = col;
+            this.sortState.dir = 1;
+        }
+        
+        ['function_name', 'entrypoint_address', 'bsim_features_count'].forEach(c => {
+            const el = document.getElementById(`sort-icon-${c}`);
+            if (el) {
+                el.innerText = this.sortState.col === c ? (this.sortState.dir === 1 ? '▲' : '▼') : '↕';
+            }
+        });
+        
+        this.renderFunctionsTable();
+    },
+
+    handleFilterChange() {
+        this.filterState.q = document.getElementById('flt-q').value;
+        this.filterState.featMin = document.getElementById('flt-feat-min').value;
+        this.filterState.featMax = document.getElementById('flt-feat-max').value;
+        this.renderFunctionsTable();
+    },
+
+    renderFunctionsTable() {
+        const tbody = document.getElementById('file-functions-tbody');
+        if (!tbody) return;
+
+        // Apply filters
+        let filtered = this.functions.slice();
+        
+        const q = this.filterState.q.toLowerCase().trim();
+        if (q) {
+            filtered = filtered.filter(f => {
+                const name = (f.function_name || '').toLowerCase();
+                const addr = (f.entrypoint_address || '').toLowerCase();
+                const tags = (f.tags || []).join(' ').toLowerCase() + ' ' + (f.user_tags || []).join(' ').toLowerCase();
+                return name.includes(q) || addr.includes(q) || tags.includes(q);
+            });
+        }
+        
+        const minFeat = parseInt(this.filterState.featMin);
+        const maxFeat = parseInt(this.filterState.featMax);
+        if (!isNaN(minFeat)) {
+            filtered = filtered.filter(f => (f.bsim_features_count || 0) >= minFeat);
+        }
+        if (!isNaN(maxFeat)) {
+            filtered = filtered.filter(f => (f.bsim_features_count || 0) <= maxFeat);
+        }
+
+        // Apply sort
+        const col = this.sortState.col;
+        const dir = this.sortState.dir;
+        filtered.sort((a, b) => {
+            let valA = a[col];
+            let valB = b[col];
+            
+            if (col === 'bsim_features_count') {
+                valA = Number(valA || 0);
+                valB = Number(valB || 0);
+            } else {
+                valA = String(valA || '').toLowerCase();
+                valB = String(valB || '').toLowerCase();
+            }
+            
+            if (valA < valB) return -dir;
+            if (valA > valB) return dir;
+            return 0;
+        });
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No functions found.</td></tr>';
+            return;
+        }
+
+        const collection = this.params.collection || '';
+        const file_md5 = this.params.md5 || this.params.file_md5;
+
+        tbody.innerHTML = filtered.map(f => {
+            const entry = f.entrypoint_address || '';
+            const funcName = f.function_name || 'unknown';
+            const featCount = f.bsim_features_count || 0;
+            const fColl = f.collection || collection;
+            const funcId = f.function_id || `${fColl}:func:${file_md5}:${entry}`;
+            
+            // Notes
+            const noteBtn = window.EntityRenderer ? window.EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f }) : '';
+            
+            // Tags
+            const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', funcId, f.tags || [], f.user_tags || []) : '';
+            
+            // Clusters
+            const cls = (f.clusters || []).map(uuid => this.clusters[uuid]).filter(Boolean);
+            const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
+
+            // Clickable details URL
+            let poolId = null;
+            if (window.getRoutingState && window.getRoutingState().pool) {
+                poolId = window.getRoutingState().pool;
+            }
+            let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${file_md5}/functions/${entry}`;
+            if (poolId) {
+                detailUrl = `/pools/${encodeURIComponent(poolId)}` + detailUrl;
+            }
+
+            return `
+                <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
+                    data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
+                    oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
+                    <td>
+                        <a href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath('${detailUrl}', event);" style="color:var(--accent); font-weight:bold; text-decoration:none;">
+                            ${funcName}
+                        </a>
+                    </td>
+                    <td class="mono" style="color:var(--accent);">@ ${entry}</td>
+                    <td>${tagsHtml}</td>
+                    <td>${clusterCardHtml}</td>
+                    <td>
+                        <div style="display:inline-flex; align-items:center; gap:6px;">
+                            <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
+                            <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
+                        </div>
+                    </td>
+                    <td style="text-align:center;">${noteBtn}</td>
+                </tr>
+            `;
+        }).join('');
+
+        if (window.TableSelection) {
+            new window.TableSelection(tbody.closest('table'));
         }
     },
 
@@ -312,7 +656,14 @@ window.FileView = {
     },
 
     destroy() {
+        if (this._hashBound) {
+            window.removeEventListener('hashchange', this._onHashChange);
+            this._hashBound = false;
+        }
         this.container = null;
         this.params = null;
+        this.functions = [];
+        this.clusters = {};
+        this.functionsLoaded = false;
     }
 };

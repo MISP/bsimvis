@@ -48,7 +48,7 @@
 
         if (!isRefresh) {
             // Trigger a background refresh of tag metadata if it's a new menu opening
-            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : '';
             if (typeof fetchTagMetadata === 'function') {
                 fetchTagMetadata(col).then(() => {
                     if (window.graphContextMenuOpen) {
@@ -113,8 +113,13 @@
                     resolvedType = 'function';
                     norm.id = data.id || data.function_id;
                     norm.name = data.name || data.function_name;
-                    norm.addr = data.entrypoint || data.entrypoint_address || data.addr || (norm.id ? norm.id.split(':').pop() : '');
-                    norm.md5 = data.md5 || data.file_md5 || (norm.id ? norm.id.split(':')[2] : '');
+                    norm.addr = data.entrypoint || data.entrypoint_address || data.addr;
+                    norm.md5 = data.md5 || data.file_md5;
+                    if (norm.id && (!norm.addr || !norm.md5)) {
+                        const parsed = window.parseFuncId(norm.id);
+                        norm.addr = norm.addr || parsed.address;
+                        norm.md5 = norm.md5 || parsed.md5;
+                    }
                 } else {
                     resolvedType = 'file';
                     norm.md5 = data.id || data.md5;
@@ -131,8 +136,20 @@
             resolvedType = 'function';
             norm.id = data.id || data.function_id;
             norm.name = data.name || data.function_name;
-            norm.addr = data.entrypoint || data.entrypoint_address || data.addr || (norm.id ? norm.id.split(':').pop() : '');
-            norm.md5 = data.md5 || data.file_md5 || (norm.id ? norm.id.split(':')[2] : '');
+            norm.addr = data.entrypoint || data.entrypoint_address || data.addr;
+            norm.md5 = data.md5 || data.file_md5;
+            let parsedCol = '';
+            if (norm.id) {
+                const parsed = window.parseFuncId(norm.id);
+                norm.addr = norm.addr || parsed.address;
+                norm.md5 = norm.md5 || parsed.md5;
+                parsedCol = parsed.collection;
+            }
+            // Ensure norm.id has a parseable collection:func:md5:addr format
+            const col = parsedCol || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
+            if (col && norm.md5 && norm.addr) {
+                norm.id = col + ':func:' + norm.md5 + ':' + norm.addr;
+            }
         } else if (type === 'file') {
             resolvedType = 'file';
             norm.md5 = data.md5 || data.id;
@@ -277,6 +294,18 @@
             copySubmenuHtml += renderCopyItem('Cluster ID', norm.id, 'fa-id-badge');
         }
 
+        let hasTableSelection = false;
+        if (window.tableSelections) {
+            hasTableSelection = window.tableSelections.some(ts => ts.selectedCells && ts.selectedCells.size > 0);
+        }
+        if (hasTableSelection) {
+            copySubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); if (window.tableSelections) { const ts = window.tableSelections.find(t => t.selectedCells && t.selectedCells.size > 0); if (ts) ts.copySelection(); }">
+                <i class="fa-solid fa-copy" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Copy Selection</span>
+            </div>`;
+        }
+
         if (copySubmenuHtml) {
             html += `
             <div class="context-menu-item submenu-trigger" style="position: relative;">
@@ -312,12 +341,24 @@
                 <span>Show Code</span>
             </div>`;
         } else if (resolvedType === 'file') {
+            const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
+            const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
+            const simUrl = Nav.buildUIUrl(col, ['functions', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5);
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/call_graph/${norm.md5}', event, { title: 'Call Graph: ${norm.md5}', type: 'call_graph' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcsUrl}', event, { title: 'Functions', type: 'functions' })">
+                <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>View Functions</span>
+            </div>`;
+            actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToFileDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', event)">
+                <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Add to File Diff</span>
+            </div>
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${cgUrl}', event, { title: 'Call Graph: ${norm.md5}', type: 'call_graph' })">
                 <i class="fa-solid fa-sitemap" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Call Graph</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/functions/similarities?md5=${norm.md5}', event, { title: 'Function Similarities', type: 'function-similarity' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${simUrl}', event, { title: 'Function Similarities', type: 'function-similarity' })">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
             </div>`;
@@ -328,7 +369,7 @@
                 <span>Show Diff</span>
             </div>`;
         } else if (resolvedType === 'bin_similarity') {
-            const diffUrl = `/collection/${col}/file/${norm.md5_a}/vs/${col}/${norm.md5_b}`;
+            const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(col, norm.md5_a, col, norm.md5_b);
             const safeNameA = String(norm.name_a || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
             const safeNameB = String(norm.name_b || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
             actionsSubmenuHtml += `
@@ -337,22 +378,24 @@
                 <span>Show Binary Diff</span>
             </div>`;
         } else if (resolvedType === 'cluster') {
+            const funcClusterUrl = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/functions?cluster_uuid=${norm.uuid}', event, { title: 'Cluster Functions', type: 'functions' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcClusterUrl}', event, { title: 'Cluster Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
         } else if (resolvedType === 'bin_cluster') {
+            const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('/collection/${col}/files?bin_cluster_uuid=${norm.uuid}', event, { title: 'Cluster Files', type: 'files' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${fileClusterUrl}', event, { title: 'Cluster Files', type: 'files' })">
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;

@@ -1,18 +1,85 @@
 // bsimvis/app/static/js/breadcrumbs.js
 
 window.Breadcrumbs = {
-    generate: function(routingState, route) {
+    lastRoutingState: null,
+    lastRoute: null,
+
+    poolNameCache: { __loading: {} },
+    funcNameCache: {},
+
+    setPoolName: function(id, name) {
+        this.poolNameCache[id] = name;
+    },
+    setFilename: function(md5, name) {
+        window.filenameCache = window.filenameCache || {};
+        window.filenameCache[md5] = name;
+    },
+    setFuncName: function(coll, md5, addr, name) {
+        this.funcNameCache[`${coll}:${md5}:${addr}`] = name;
+    },
+    getPoolLabel: function(id) {
+        return this.poolNameCache[id] || 'Pool';
+    },
+    getFileLabel: function(md5) {
+        return window.filenameCache?.[md5] || 'File';
+    },
+    getFuncLabel: function(coll, md5, addr) {
+        return this.funcNameCache[`${coll}:${md5}:${addr}`] || 'Function';
+    },
+    ensurePoolName: async function(id) {
+        if (this.poolNameCache[id]) return;
+        if (this.poolNameCache.__loading[id]) return;
+        try {
+            const r = await fetch(`/api/pool/${encodeURIComponent(id)}`);
+            if (!r.ok) return;
+            const d = await r.json();
+            this.setPoolName(id, d.name || id);
+        } catch(e) {}
+        delete this.poolNameCache.__loading[id];
+    },
+
+    generate: function (routingState, route) {
+        this.lastRoutingState = routingState;
+        this.lastRoute = route;
         const { viewKey, collection, params } = routingState;
         const restful = window.parseRestfulPath ? window.parseRestfulPath() : {};
         let segments = [];
 
-        // Always start with the collection segment, if it's not the default view
-        if (viewKey !== 'collections' && collection) {
-            segments.push({
-                label: collection,
-                url: '/collections',
-                icon: 'fa-solid fa-database'
-            });
+        if (viewKey !== 'collections' && viewKey !== 'pools' && viewKey !== 'pool-detail' && viewKey !== 'collection-detail' && (collection || routingState.pool)) {
+            const pool = routingState.pool;
+            const rawCollection = stripPoolPrefix(collection);
+            const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
+            if (pool) {
+                segments.push({
+                    label: 'Pools',
+                    url: '/pools',
+                    icon: 'fa-solid fa-diagram-project'
+                });
+                this.ensurePoolName(pool);
+                segments.push({
+                    label: this.getPoolLabel(pool),
+                    url: `/${prefix}/${encodeURIComponent(pool)}`,
+                    icon: 'fa-solid fa-diagram-project'
+                });
+                if (rawCollection) {
+                    segments.push({
+                        label: rawCollection,
+                        url: `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(rawCollection)}`,
+                        icon: 'fa-solid fa-layer-group'
+                    });
+                }
+            } else if (rawCollection) {
+                segments.push({
+                    label: 'Collections',
+                    url: '/collections',
+                    icon: 'fa-solid fa-layer-group'
+                });
+                segments.push({
+                    label: rawCollection,
+                    url: `/collections/${encodeURIComponent(rawCollection)}`,
+                    icon: 'fa-solid fa-layer-group'
+                });
+            }
         }
 
         switch (viewKey) {
@@ -54,7 +121,7 @@ window.Breadcrumbs = {
             case 'function-similarity':
                 segments.push({
                     label: 'Functions',
-                    url: `/collections/${encodeURIComponent(collection)}/functions`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['functions']),
                     icon: 'fa-solid fa-code'
                 });
                 segments.push({
@@ -66,7 +133,7 @@ window.Breadcrumbs = {
             case 'binary-similarity':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 segments.push({
@@ -78,7 +145,7 @@ window.Breadcrumbs = {
             case 'clusters':
                 segments.push({
                     label: 'Functions',
-                    url: `/collections/${encodeURIComponent(collection)}/functions`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['functions']),
                     icon: 'fa-solid fa-code'
                 });
                 segments.push({
@@ -90,7 +157,7 @@ window.Breadcrumbs = {
             case 'bin-clusters':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 segments.push({
@@ -98,6 +165,42 @@ window.Breadcrumbs = {
                     url: window.location.pathname + window.location.search,
                     icon: 'fa-solid fa-bullseye'
                 });
+                break;
+            case 'pools':
+                segments.push({
+                    label: 'Pools',
+                    url: '/pools',
+                    icon: 'fa-solid fa-diagram-project'
+                });
+                break;
+            case 'pool-detail':
+                segments.push({
+                    label: 'Pools',
+                    url: '/pools',
+                    icon: 'fa-solid fa-diagram-project'
+                });
+                if (routingState.pool) {
+                    this.ensurePoolName(routingState.pool);
+                    segments.push({
+                        label: this.getPoolLabel(routingState.pool),
+                        url: `/pools/${encodeURIComponent(routingState.pool)}`,
+                        icon: 'fa-solid fa-diagram-project'
+                    });
+                }
+                break;
+            case 'collection-detail':
+                segments.push({
+                    label: 'Collections',
+                    url: '/collections',
+                    icon: 'fa-solid fa-layer-group'
+                });
+                if (collection) {
+                    segments.push({
+                        label: stripPoolPrefix(collection),
+                        url: `/collections/${encodeURIComponent(collection)}`,
+                        icon: 'fa-solid fa-layer-group'
+                    });
+                }
                 break;
             case 'jobs':
                 segments.push({
@@ -118,13 +221,12 @@ window.Breadcrumbs = {
             case 'file':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 const fmd5Val = params.get('md5') || restful.md5;
-                const cachedFileName = window.filenameCache && window.filenameCache[fmd5Val] ? window.filenameCache[fmd5Val] : null;
                 segments.push({
-                    label: cachedFileName || (fmd5Val ? (fmd5Val.substring(0, 12) + '…') : 'Details'),
+                    label: this.getFileLabel(fmd5Val),
                     url: window.location.pathname,
                     icon: 'fa-solid fa-file-code'
                 });
@@ -132,20 +234,25 @@ window.Breadcrumbs = {
             case 'function':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 const funcMd5 = params.get('md5') || restful.md5;
                 if (funcMd5) {
-                    const cachedFuncFileName = window.filenameCache && window.filenameCache[funcMd5] ? window.filenameCache[funcMd5] : null;
                     segments.push({
-                        label: cachedFuncFileName || (funcMd5.substring(0, 12) + '…'),
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(funcMd5)}`,
+                        label: this.getFileLabel(funcMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', funcMd5]),
                         icon: 'fa-solid fa-file-code'
                     });
                 }
                 segments.push({
-                    label: params.get('address') ? `Func @${params.get('address')}` : 'Details',
+                    label: 'Functions',
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', funcMd5, 'functions']),
+                    icon: 'fa-solid fa-code'
+                });
+                const funcAddr = params.get('address');
+                segments.push({
+                    label: funcAddr ? this.getFuncLabel(collection, funcMd5, funcAddr) : 'Details',
                     url: window.location.pathname,
                     icon: 'fa-solid fa-code'
                 });
@@ -153,22 +260,26 @@ window.Breadcrumbs = {
             case 'function_features':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 const featMd5 = params.get('md5') || restful.md5;
                 if (featMd5) {
-                    const cachedFeatFileName = window.filenameCache && window.filenameCache[featMd5] ? window.filenameCache[featMd5] : null;
                     segments.push({
-                        label: cachedFeatFileName || (featMd5.substring(0, 12) + '…'),
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(featMd5)}`,
+                        label: this.getFileLabel(featMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', featMd5]),
                         icon: 'fa-solid fa-file-code'
                     });
                 }
+                segments.push({
+                    label: 'Functions',
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', featMd5, 'functions']),
+                    icon: 'fa-solid fa-code'
+                });
                 if (params.get('md5') && params.get('address')) {
                     segments.push({
-                        label: `Func @${params.get('address')}`,
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(params.get('md5'))}/functions/${encodeURIComponent(params.get('address'))}`,
+                        label: this.getFuncLabel(collection, featMd5, params.get('address')),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['function', params.get('md5'), params.get('address')]),
                         icon: 'fa-solid fa-code'
                     });
                 }
@@ -181,61 +292,86 @@ window.Breadcrumbs = {
             case 'diff':
                 const sourceMd5 = restful.md5 || params.get('md5') || params.get('file_md5');
                 const sourceAddr = restful.address || params.get('address');
-                if (sourceMd5) {
-                    const cachedSourceFileName = window.filenameCache && window.filenameCache[sourceMd5] ? window.filenameCache[sourceMd5] : null;
+                if (sourceMd5 && sourceAddr) {
                     segments.push({
-                        label: cachedSourceFileName || (sourceMd5.substring(0, 12) + '…'),
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(sourceMd5)}`,
+                        label: 'Files',
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                         icon: 'fa-solid fa-file-code'
                     });
-                }
-                if (sourceMd5 && sourceAddr) {
-                    const funcLabel = window.currentFuncName && window.currentFuncId && window.currentFuncId.includes(sourceAddr) ? window.currentFuncName : `Func @${sourceAddr}`;
                     segments.push({
-                        label: funcLabel,
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(sourceMd5)}/functions/${encodeURIComponent(sourceAddr)}`,
+                        label: this.getFileLabel(sourceMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', sourceMd5]),
+                        icon: 'fa-solid fa-file-code'
+                    });
+                    segments.push({
+                        label: 'Functions',
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', sourceMd5, 'functions']),
                         icon: 'fa-solid fa-code'
                     });
+                    segments.push({
+                        label: this.getFuncLabel(collection, sourceMd5, sourceAddr),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['function', sourceMd5, sourceAddr]),
+                        icon: 'fa-solid fa-code'
+                    });
+                    const targetColl = restful.coll_b || collection;
+                    const targetMd5 = restful.md5_b;
+                    const targetAddr = restful.addr_b;
+                    let targetLabel = 'VS';
+                    if (targetMd5 && targetAddr) {
+                        targetLabel = `VS ${this.getFuncLabel(targetColl, targetMd5, targetAddr)}`;
+                    }
+                    segments.push({
+                        label: targetLabel,
+                        url: window.location.pathname,
+                        icon: 'fa-solid fa-right-left'
+                    });
+                } else if (sourceMd5) {
+                    segments.push({
+                        label: 'Files',
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
+                        icon: 'fa-solid fa-file-code'
+                    });
+                    segments.push({
+                        label: this.getFileLabel(sourceMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', sourceMd5]),
+                        icon: 'fa-solid fa-file-code'
+                    });
+                    const targetMd5 = restful.md5_b;
+                    let targetLabel = 'VS';
+                    if (targetMd5) {
+                        targetLabel = `VS ${this.getFileLabel(targetMd5)}`;
+                    }
+                    segments.push({
+                        label: targetLabel,
+                        url: window.location.pathname,
+                        icon: 'fa-solid fa-right-left'
+                    });
                 }
-                const targetColl = restful.coll_b || collection;
-                const targetMd5 = restful.md5_b;
-                const targetAddr = restful.addr_b;
-                let targetLabel = 'VS';
-                if (targetMd5 && targetAddr) {
-                    const cachedTargetFileName = window.filenameCache && window.filenameCache[targetMd5] ? window.filenameCache[targetMd5] : null;
-                    targetLabel = cachedTargetFileName ? `VS ${cachedTargetFileName} @${targetAddr}` : `VS ${targetMd5.substring(0, 8)}@${targetAddr}`;
-                }
-                segments.push({
-                    label: targetLabel,
-                    url: window.location.pathname,
-                    icon: 'fa-solid fa-right-left'
-                });
                 break;
             case 'call_graph':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 const cgMd5 = params.get('md5') || restful.md5;
                 if (cgMd5) {
-                    const cachedCgFileName = window.filenameCache && window.filenameCache[cgMd5] ? window.filenameCache[cgMd5] : null;
                     segments.push({
-                        label: cachedCgFileName || (cgMd5.substring(0, 12) + '…'),
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(cgMd5)}`,
+                        label: this.getFileLabel(cgMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', cgMd5]),
                         icon: 'fa-solid fa-file-code'
                     });
+                    segments.push({
+                        label: 'Functions',
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', cgMd5, 'functions']),
+                        icon: 'fa-solid fa-code'
+                    });
                 }
-                segments.push({
-                    label: 'Call Graph',
-                    url: window.location.pathname,
-                    icon: 'fa-solid fa-network-wired'
-                });
                 break;
             case 'feature':
                 segments.push({
                     label: 'Global Features',
-                    url: `/collections/${encodeURIComponent(collection)}/features`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['features']),
                     icon: 'fa-solid fa-fingerprint'
                 });
                 segments.push({
@@ -247,23 +383,21 @@ window.Breadcrumbs = {
             case 'bin_sim':
                 segments.push({
                     label: 'Files',
-                    url: `/collections/${encodeURIComponent(collection)}/files`,
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
                     icon: 'fa-solid fa-file-code'
                 });
                 const fmd5 = restful.md5 || params.get('md5');
                 if (fmd5) {
-                    const cachedBinSimA = window.filenameCache && window.filenameCache[fmd5] ? window.filenameCache[fmd5] : null;
                     segments.push({
-                        label: cachedBinSimA || (fmd5.substring(0, 12) + '…'),
-                        url: `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(fmd5)}`,
+                        label: this.getFileLabel(fmd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', fmd5]),
                         icon: 'fa-solid fa-file-code'
                     });
                 }
                 const bMd5 = restful.md5_b;
                 let bLabel = 'VS';
                 if (bMd5) {
-                    const cachedBinSimB = window.filenameCache && window.filenameCache[bMd5] ? window.filenameCache[bMd5] : null;
-                    bLabel = cachedBinSimB ? `VS ${cachedBinSimB}` : `VS ${bMd5.substring(0, 12)}…`;
+                    bLabel = this.getFileLabel(bMd5) !== 'File' ? `VS ${this.getFileLabel(bMd5)}` : 'VS File';
                 }
                 segments.push({
                     label: bLabel,
@@ -275,11 +409,11 @@ window.Breadcrumbs = {
         return segments;
     },
 
-    render: function(segments) {
+    render: function (segments) {
         const container = document.getElementById('breadcrumbs-list');
         if (!container) return;
 
-        if (segments.length <= 1) {
+        if (segments.length === 0) {
             container.innerHTML = '';
             return;
         }
@@ -298,5 +432,12 @@ window.Breadcrumbs = {
         });
         html += '</nav>';
         container.innerHTML = html;
+    },
+
+    refresh: function () {
+        if (this.lastRoutingState) {
+            const segments = this.generate(this.lastRoutingState, this.lastRoute);
+            this.render(segments);
+        }
     }
 };

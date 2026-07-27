@@ -1,6 +1,6 @@
 # Kvrocks Database Structure Documentation
 
-BSimVis uses Kvrocks (Redis-compatible) for storing funcitons, vectors, and similarity results. Collections are isolated from each other.
+BSimVis uses Kvrocks (Redis-compatible) for storing functions, vectors, and similarity results. Collections are isolated from each other. Cross-collection **pools** mirror the same layout under a `global:pool:{pool_id}` prefix (see section 5).
 
 ## Key Naming Conventions
 
@@ -26,8 +26,12 @@ Jobs are also stored in Redis queue as :
 
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
-| `global:job:{id}` | **Hash** | Status and metadata for a background job. |
-| `global:pipeline:{id}:jobs` | **List** | Ordered list of job IDs for a multi-step pipeline. |
+| `job:{id}` | **Hash** | Status and metadata for a background job. Pipelines and groups are jobs too: their children are stored as a JSON array in the `task_ids` field. |
+| `jobs:pending` | **List** | Queue of job IDs waiting for a worker. |
+| `jobs:pending:high` | **List** | High-priority queue, drained before `jobs:pending`. |
+| `jobs:processing` | **List** | In-flight job IDs, `LMOVE`d off a pending queue by the worker that claimed them. |
+| `jobs:global` | **List** | Recent job IDs for the global job view (capped at 1000). |
+| `jobs:collection:{collection}` | **List** | Recent job IDs scoped to one collection (capped at 1000). |
 
 ---
 
@@ -38,11 +42,13 @@ These keys store the actual analysis results and decompiler output.
 ### Files & Functions
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
-| `{coll}:file:{md5}` | **JSON** | Full binary file metadata. |
+| `{coll}:file:{md5}` | **JSON** | Full binary file metadata. Analyst **file notes** live inline in this document (`notes` field + `note_owners`). |
 | `{coll}:file:{md5}:meta` | **JSON** | Redundant metadata for fast enrichment. |
-| `{coll}:func:{md5}:{addr}` | **JSON** | Comprehensive function data (name, convention, etc). |
+| `{coll}:func:{md5}:{addr}` | **JSON** | Comprehensive function data (name, convention, etc). Analyst **function notes** live inline here (`notes` field + `note_owners`). |
 | `{coll}:func:{md5}:{addr}:source` | **JSON** | Decompiled C code and semantic tokens. |
 | `{coll}:func:{md5}:{addr}:vec:tf` | **ZSet** | BSim feature counts (Member: `hash`, Score: `TF`). |
+| `{coll}:batch:{uuid}` | **Hash** | Ingestion batch metadata. |
+| `{coll}:batch:{uuid}:functions` | **Set** | Function doc keys belonging to a batch (used to list a batch's functions). |
 
 ### Similarities
 | Key Pattern | Type | Description |
@@ -67,6 +73,25 @@ These keys store the actual analysis results and decompiler output.
 | `{coll}:cluster:tree:{algo}` | **String** | Serialized dendrogram tree. |
 | `{coll}:cluster:tree_links:{algo}` | **String** | Raw parent-child links for dynamic tree building. |
 
+### Binary Similarities
+File-level (binary-to-binary) similarity, derived from shared function clusters.
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{coll}:bin_sim:{algo}:{md5_a}::{md5_b}` | **JSON** | Binary similarity pair (score, coverage, shared clusters). |
+| `{coll}:bin_sim:score:{algo}` | **ZSet** | Binary-pair scoreboard (Member: `md5_a::md5_b`, Score: similarity). |
+| `{coll}:bin_sim:built:{algo}` | **Set** | Binaries already processed for binary similarity. |
+| `{coll}:bin_sim:involves:{md5}` | **ZSet** | Binary-sim pairs involving a specific file. |
+
+### Binary Clusters
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{coll}:bin_cluster:list:{algo}` | **Set** | All binary cluster IDs for the algorithm. |
+| `{coll}:bin_cluster:{algo}:{cid}:meta` | **JSON** | Metadata for a binary cluster. |
+| `{coll}:bin_cluster:{algo}:{cid}:members` | **Set** | Member file IDs (full subtree). |
+| `{coll}:bin_cluster:{algo}:{cid}:direct_members` | **Set** | Direct member file IDs. |
+| `{coll}:bin_cluster:tree:{algo}` | **String** | Serialized binary dendrogram tree. |
+| `{coll}:bin_cluster:tree_links:{algo}` | **String** | Raw parent-child links. |
+
 ---
 
 Where id1 and id2 are {md5:addr}.
@@ -79,7 +104,9 @@ Indices are optimized for search and do not use the `idx:` prefix at the root le
 **Pattern:** `{coll}:idx:{level}:{field}:{value}` (**Set**)
 Stores a set of document IDs (e.g. `{coll}:func:...`).
 - `level`: `file`, `func`, `sim`, or `feature`.
-- `field`: `batch_uuid`, `language_id`, `function_name`, `tags`, `cluster_uuid`, etc.
+- `field`: `batch_uuid`, `language_id`, `function_name`, `tags`, `cluster_uuid`, `bin_cluster_uuid`, `note_owners`, etc.
+
+`note_owners` buckets index files/functions by note author, e.g. `{coll}:idx:func:note_owners:{owner}` with its registry `{coll}:reg:func:note_owners`.
 
 ### Numeric & Sorting Indexes
 **Pattern:** `{coll}:idx:{level}:{field}` (**ZSet**)
@@ -109,4 +136,30 @@ The similarity search engine in `search_similarity.lua` leverages these indices:
 1. Filters are resolved by intersecting bucket Sets from `{coll}:idx:...`.
 2. Ranges are resolved using ZSets from `{coll}:idx:...`.
 3. The resulting candidate Set is used to rank similarities from `{coll}:sim:score:{algo}`.
+
+---
+
+## 5. Pools (Cross-Collection)
+
+A pool combines the functions/binaries of several collections into one searchable space. Pool data is stored under a `global:pool:{pool_id}` prefix that mirrors the per-collection layout, so search, similarity, and clustering reuse the same engine.
+
+### Registry & Definition
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `global:pools` | **Set** | All pool IDs. |
+| `global:pool:{pool_id}:meta` | **JSON** | Pool definition (name, config, timestamps, sync status). |
+| `global:pool:{pool_id}:collections` | **Set** | Member collection names. |
+| `{coll}:pools` | **Set** | Reverse index: pools a collection belongs to. |
+
+### Pool Data (mirrors collection layout)
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `global:pool:{pool_id}:all_functions` | **Set** | All function IDs in the pool. |
+| `global:pool:{pool_id}:all_files` | **Set** | All file IDs in the pool. |
+| `global:pool:{pool_id}:sim:score` | **ZSet** | Function-pair scoreboard for the pool. |
+| `global:pool:{pool_id}:sim:{coll}:func:{id1}::{coll}:func:{id2}` | **JSON** | Pool function similarity pair (IDs are collection-qualified). |
+| `global:pool:{pool_id}:bin_sim:score:{algo}` | **ZSet** | Binary-pair scoreboard for the pool. |
+| `global:pool:{pool_id}:cluster:list` | **Set** | Pool function cluster IDs. |
+| `global:pool:{pool_id}:bin_cluster:list` | **Set** | Pool binary cluster IDs. |
+| `global:pool:{pool_id}:idx:...` / `:reg:...` | **Set** | Same secondary index/registry layout as a collection. |
 

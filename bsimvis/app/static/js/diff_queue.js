@@ -5,6 +5,65 @@ let diffPreviewTimer = null;
 let activeDiffKey = null;
 const diffPreviewCache = new Map();
 
+function encodeDiffParams(p) {
+    const qs = `?collection_a=${encodeURIComponent(p.collection_a)}&md5_a=${encodeURIComponent(p.md5_a)}&addr_a=${encodeURIComponent(p.addr_a)}` +
+        `&collection_b=${encodeURIComponent(p.collection_b)}&md5_b=${encodeURIComponent(p.md5_b)}&addr_b=${encodeURIComponent(p.addr_b)}`;
+    return p.pool ? qs + `&pool=${encodeURIComponent(p.pool)}` : qs;
+}
+
+function stripPoolPrefix(col) {
+    if (!col) return col;
+    const m = col.match(/^(?:global:)?pool:[^:]+:col:(.+)$/);
+    return m ? m[1] : col;
+}
+
+window.stripPoolPrefix = stripPoolPrefix;
+
+function parseFuncIdFromStr(id) {
+    const def = { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '', pool: null };
+    if (!id) return def;
+
+    // Strip leading 'idx:' if present for simplicity
+    let cleanId = id;
+    if (cleanId.startsWith('idx:')) {
+        cleanId = cleanId.substring(4);
+    }
+
+    if (cleanId.includes(':func:')) {
+        const parts = cleanId.split(':func:');
+        const col = stripPoolPrefix(parts[0]);
+        const rest = parts[1] ? parts[1].split(':') : [];
+        return { ...def, collection_a: col || '', md5_a: rest[0] || '', addr_a: rest[1] || '', collection_b: col || '', md5_b: rest[0] || '', addr_b: rest[1] || '' };
+    }
+    if (cleanId.includes(':function:')) {
+        const parts = cleanId.split(':function:');
+        const col = parts[0];
+        const rest = parts[1] ? parts[1].split(':') : [];
+        const cleanedCol = stripPoolPrefix(col);
+        return { ...def, collection_a: cleanedCol || '', md5_a: rest[0] || '', addr_a: rest[1] || '', collection_b: cleanedCol || '', md5_b: rest[0] || '', addr_b: rest[1] || '' };
+    }
+    const parts = cleanId.split(':');
+    if (parts.length >= 4) {
+        if (parts[0] === 'idx') {
+            const cleanedCol = stripPoolPrefix(parts[1]);
+            return { ...def, collection_a: cleanedCol || '', md5_a: parts[3] || '', addr_a: parts[4] || '', collection_b: cleanedCol || '', md5_b: parts[3] || '', addr_b: parts[4] || '' };
+        }
+        const cleanedCol = stripPoolPrefix(parts[0]);
+        return { ...def, collection_a: cleanedCol || '', md5_a: parts[2] || '', addr_a: parts[3] || '', collection_b: cleanedCol || '', md5_b: parts[2] || '', addr_b: parts[3] || '' };
+    }
+    return def;
+}
+
+window.encodeDiffParams = encodeDiffParams;
+window.parseFuncIdFromStr = parseFuncIdFromStr;
+
+function stripFuncId(id) {
+    if (!id) return null;
+    return window.parseFuncIdFromStr(id);
+}
+
+window.stripFuncId = stripFuncId;
+
 function normalizeFuncId(id) {
     if (!id || typeof id !== 'string') return id;
     if (id.includes(':function:') || id.includes(':func:')) return id;
@@ -25,22 +84,27 @@ function normalizeFuncId(id) {
 }
 
 function buildDiffUrl(id1, id2) {
-    const n1 = normalizeFuncId(id1);
-    const n2 = normalizeFuncId(id2);
-    if (!n1 || !n2) return '/collections/main/files/x/functions/x/vs/main/x/x';
-    const p1 = n1.split(':');
-    const p2 = n2.split(':');
-    if (p1.length < 4 || p2.length < 4) return '/collections/main/files/x/functions/x/vs/main/x/x';
-    const collA = p1[0] || 'main';
-    const md5A = p1[2];
-    const addrA = p1[3];
-    const collB = p2[0] || 'main';
-    const md5B = p2[2];
-    const addrB = p2[3];
-    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/functions/${encodeURIComponent(addrA)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}/${encodeURIComponent(addrB)}`;
+    const f1 = stripFuncId(id1) || { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '' };
+    const f2 = stripFuncId(id2) || { collection_a: '', collection_b: '', md5_a: '', addr_a: '', md5_b: '', addr_b: '' };
+
+    let collA = f1.collection_a ? stripPoolPrefix(f1.collection_a) : 'main';
+    let collB = f2.collection_a ? stripPoolPrefix(f2.collection_a) : 'main';
+
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (pool) {
+        const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
+        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}`;
+    }
+
+    return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(f1.md5_a)}/functions/${encodeURIComponent(f1.addr_a)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(f2.md5_b || f2.md5_a)}/${encodeURIComponent(f2.addr_b || f2.addr_a)}`;
 }
 
 function buildFileDiffUrl(collA, md5A, collB, md5B) {
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (pool) {
+        const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
+        return `/${prefix}/${encodeURIComponent(pool)}/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
+    }
     return `/collections/${encodeURIComponent(collA)}/files/${encodeURIComponent(md5A)}/vs/${encodeURIComponent(collB)}/${encodeURIComponent(md5B)}`;
 }
 
@@ -88,11 +152,25 @@ function addToDiff(a1, a2) {
     const id = normalizeFuncId(a1);
     const name = a2 || id.split(':').pop();
 
+    // Parse flat params from the ID
+    const p = parseFuncIdFromStr(id);
+    const obj = {
+        id: id,
+        name: name,
+        collection_a: p.collection_a || 'main',
+        md5_a: p.md5_a || '',
+        addr_a: p.addr_a || '',
+        collection_b: p.collection_b || p.collection_a || 'main',
+        md5_b: p.md5_b || p.md5_a || '',
+        addr_b: p.addr_b || p.addr_a || '',
+        pool: window.getRoutingState?.()?.pool || null
+    };
+
     const existing = diffSelection.findIndex(item => normalizeFuncId(item.id) === id);
     if (existing !== -1) {
         diffSelection.splice(existing, 1);
     } else {
-        diffSelection.push({ id, name });
+        diffSelection.push(obj);
     }
 
     if (diffSelection.length > 2) {
@@ -142,13 +220,13 @@ function addToFileDiff(id, name, event) {
     updateFileDiffQueueUI();
 
     if (fileDiffSelection.length === 2) {
-        const collection = (typeof getRoutingState === 'function' ? getRoutingState().collection : null) || 'main';
+        const collection = (typeof getRoutingState === 'function' ? getRoutingState().collection : null) || '';
         const itemA = fileDiffSelection[0];
         const itemB = fileDiffSelection[1];
         const md5a = itemA.id.split(':').pop();
         const md5b = itemB.id.split(':').pop();
-        const collA = itemA.id.split(':')[0] || 'main';
-        const collB = itemB.id.split(':')[0] || 'main';
+        const collA = itemA.id.split(':')[0] || '';
+        const collB = itemB.id.split(':')[0] || '';
         
         fileDiffSelection = [];
         saveFileDiffQueue();
@@ -302,9 +380,24 @@ function openStandaloneDiff(e) {
     try {
         const queue = JSON.parse(localStorage.getItem('bsim_diff_queue') || '[]');
         if (queue.length < 2) return;
-        const url = buildDiffUrl(queue[0].id, queue[1].id);
-        const title = `Diff: ${queue[0].name} vs ${queue[1].name}`;
-        
+        const p1 = queue[0], p2 = queue[1];
+
+        const pool = p1.pool;
+        const colA = encodeURIComponent(p1.collection_a || '');
+        const colB = encodeURIComponent(p2.collection_b || p1.collection_a || '');
+        const md5A = encodeURIComponent(p1.md5_a);
+        const md5B = encodeURIComponent(p2.md5_b);
+        const addrA = encodeURIComponent(p1.addr_a);
+        const addrB = encodeURIComponent(p2.addr_b);
+
+        let url;
+        if (pool) {
+            url = `/pools/${encodeURIComponent(pool)}/collections/${colA}/files/${md5A}/functions/${addrA}/vs/${colB}/${md5B}/${addrB}`;
+        } else {
+            url = `/collections/${colA}/files/${md5A}/functions/${addrA}/vs/${colB}/${md5B}/${addrB}`;
+        }
+        const title = `Diff: ${p1.name} vs ${p2.name}`;
+
         Nav.openPath(url, e, { title: title, type: 'diff' });
         clearDiffSelection();
     } catch(e) {}
@@ -349,18 +442,19 @@ function hideDiffPreview(e, skipContextMenu = false) {
         window.parent.hideDiffPreview(getParentEvent(e), skipContextMenu);
         return;
     }
+
+    const tooltip = document.getElementById('diff-preview-tooltip');
+    if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
+
+    if (diffPreviewTimer) clearTimeout(diffPreviewTimer);
+    activeDiffKey = null;
+
     if (window.hideAllTooltips) {
-        // We only want to hide if we aren't moving into the tooltip itself
-        const tooltip = document.getElementById('diff-preview-tooltip');
-        if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
         window.hideAllTooltips(skipContextMenu);
     } else {
-        const tooltip = document.getElementById('diff-preview-tooltip');
-        if (e && e.relatedTarget && tooltip && (tooltip.contains(e.relatedTarget) || e.relatedTarget === tooltip)) return;
         if (tooltip) {
             tooltip.style.display = 'none';
             tooltip.classList.remove('showing');
-            activeDiffKey = null;
         }
     }
 }
@@ -419,7 +513,10 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
         let finalScore = score;
         if (finalScore < 0) {
             try {
-                const simRes = await fetch(`/api/similarity?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+                const p1 = parseFuncIdFromStr(id1);
+                const p2 = parseFuncIdFromStr(id2);
+                const simUrl = `/api/similarity?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b || p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}`;
+                const simRes = await fetch(simUrl);
                 if (simRes.ok) {
                     const simData = await simRes.json();
                     finalScore = simData.scores && simData.scores['unweighted_cosine'] !== undefined ? simData.scores['unweighted_cosine'] : 0;
@@ -428,7 +525,10 @@ async function showDiffPreview(id1, name1, id2, name2, score, e, extra = 0) {
         }
 
         try {
-            const res = await fetch(`/api/diff?id1=${encodeURIComponent(id1)}&id2=${encodeURIComponent(id2)}`);
+            const p1 = parseFuncIdFromStr(id1);
+            const p2 = parseFuncIdFromStr(id2);
+            const diffUrl = `/api/diff?collection_a=${encodeURIComponent(p1.collection_a)}&md5_a=${encodeURIComponent(p1.md5_a)}&addr_a=${encodeURIComponent(p1.addr_a)}&collection_b=${encodeURIComponent(p2.collection_b || p1.collection_a)}&md5_b=${encodeURIComponent(p2.md5_b)}&addr_b=${encodeURIComponent(p2.addr_b)}`;
+            const res = await fetch(diffUrl);
             if (!res.ok) throw new Error("Diff failed");
             const data = await res.json();
             diffPreviewCache.set(cacheKey, data);

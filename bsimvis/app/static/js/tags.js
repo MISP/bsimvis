@@ -3,7 +3,7 @@ if (typeof window.getCurrentCollection !== 'function') {
         if (typeof getCollectionFromHash === 'function') {
             return getCollectionFromHash();
         }
-        return 'main';
+        return '';
     };
 }
 
@@ -51,7 +51,8 @@ async function fetchTagMetadata(collection) {
     isFetchingTagMetadata = true;
     tagFetchPromise = (async () => {
         try {
-            const res = await fetch(`/api/tags/metadata?collection=${collection}`);
+            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+            const res = await fetch(`/api/tags/metadata?${apiParams}`);
             if (res.ok) {
                 tagMetadata = await res.json();
                 window.tagMetadata = tagMetadata;
@@ -196,7 +197,8 @@ window.showTooltip = (e, tag, coll) => {
     el.innerHTML = `<div style="color:var(--dim)">Loading stats for <b>${escapeHtml(tag)}</b>...</div>`;
     el.style.display = 'block';
 
-    fetch(`/api/tags/stats?collection=${coll}&tag=${encodeURIComponent(tag)}`)
+    const apiParams = (window.getApiParams || window.parent.getApiParams)(coll);
+    fetch(`/api/tags/stats?${apiParams}&tag=${encodeURIComponent(tag)}`)
         .then(res => res.json())
         .then(stats => {
             const meta = getTagMetadata(tag);
@@ -250,7 +252,7 @@ window.hideTooltip = () => {
 
 window.handleTagContextMenu = (e, tag) => {
     e.preventDefault();
-    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
+    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
     const currentMeta = { ...(tagMetadata[tag] || { color: "#66d9ef", priority: 0 }) };
     currentMeta.color = safeCssColor(currentMeta.color);
 
@@ -393,7 +395,7 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
         const meta = tagMetadata[t] || { color: '#66d9ef' };
         const color = safeCssColor(meta.color);
         const removeClick = `removeTag(event, ${jsString(etype)}, ${jsString(eid)}, ${jsString(t)})`;
-        const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
+        const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
 
         return `
         <span class="sim-tag-card"
@@ -426,8 +428,11 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
 
 window.applyClusterFilter = (uuid, isBinary = false) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const { collection } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: 'main' };
-    const col = collection || 'main';
+    const { collection, pool } = targetWindow.getRoutingState ? targetWindow.getRoutingState() : { collection: '', pool: null };
+    const col = collection || '';
+    // Cluster uuids are scoped to the namespace that computed them, so a pool
+    // context must stay on the pool route rather than fall back to /collections.
+    const basePath = pool ? `/pools/${encodeURIComponent(pool)}` : `/collections/${encodeURIComponent(col)}`;
 
     if (isBinary) {
         const inputId = 'flt-file-cluster';
@@ -443,7 +448,7 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
             if (typeof targetWindow.navigate === 'function') {
                 targetWindow.navigate('files', params, col);
             } else {
-                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/files?${params.toString()}`;
+                targetWindow.location.href = `${basePath}/files?${params.toString()}`;
             }
         }
     } else {
@@ -465,8 +470,8 @@ window.applyClusterFilter = (uuid, isBinary = false) => {
             if (typeof targetWindow.navigate === 'function') {
                 targetWindow.navigate(viewKey, params, col);
             } else {
-                const searchPath = isSim ? 'search/function-similarity' : 'functions';
-                targetWindow.location.href = `/collections/${encodeURIComponent(col)}/${searchPath}?${params.toString()}`;
+                const searchPath = isSim ? 'functions/similarities' : 'functions';
+                targetWindow.location.href = `${basePath}/${searchPath}?${params.toString()}`;
             }
         }
     }
@@ -498,15 +503,21 @@ window.showClusterCardTooltip = function(event, uuid, name, size, stability, coh
 
 window.hideClusterCardTooltip = function(event) {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
+    const el = targetWindow.document.getElementById('hierarchy-tooltip');
+    const binEl = targetWindow.document.getElementById('bin-hierarchy-tooltip');
+    
+    if (event && event.relatedTarget) {
+        if (el && (el === event.relatedTarget || el.contains(event.relatedTarget))) return;
+        if (binEl && (binEl === event.relatedTarget || binEl.contains(event.relatedTarget))) return;
+    }
+
     if (typeof targetWindow.hideClusterTableTooltip === 'function') {
         targetWindow.hideClusterTableTooltip(event);
     }
     if (typeof targetWindow.hideBinClusterTableTooltip === 'function') {
         targetWindow.hideBinClusterTableTooltip(event);
     }
-    const el = targetWindow.document.getElementById('hierarchy-tooltip');
     if (el) el.style.display = 'none';
-    const binEl = targetWindow.document.getElementById('bin-hierarchy-tooltip');
     if (binEl) binEl.style.display = 'none';
 };
 
@@ -553,6 +564,9 @@ window.moveClusterCardTooltip = function(e) {
         if (y + tooltipRect.height > window.innerHeight) {
             y = Math.max(10, window.innerHeight - tooltipRect.height - 15);
         }
+        
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         
         activeTooltip.style.left = x + 'px';
         activeTooltip.style.top = y + 'px';
@@ -808,10 +822,15 @@ function attachAutocomplete(input, level, field, onSelect) {
 
 
     const showSuggestions = async (filter = '') => {
-        const col = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
+        const col = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
+        const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+        let url = `/api/search/autocomplete?level=${level}&field=${field}&q=${encodeURIComponent(filter)}&limit=50&collection=${encodeURIComponent(col || '')}`;
+        if (pool) {
+            url += `&pool=${encodeURIComponent(pool)}`;
+        }
 
         try {
-            const res = await fetch(`/api/search/autocomplete?collection=${col}&level=${level}&field=${field}&q=${encodeURIComponent(filter)}&limit=50`);
+            const res = await fetch(url);
             if (res.ok) {
                 const data = await res.json();
                 const items = data.results || [];
@@ -996,9 +1015,7 @@ async function startAddTag(event, etype, eid) {
 async function confirmAddTag(etype, eid, tag, container) {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
     const colStr = params.get('collection');
-    // If not in query, try parsing from eid (e.g. main:function:md5:addr -> main)
-    const colParts = eid ? eid.split(':') : [];
-    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : (colParts.length > 2 ? colParts[0] : 'main'));
+    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : window.getCollectionFromId(eid));
 
     let targets = [{ etype, eid, container }];
     const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
@@ -1085,7 +1102,7 @@ function updateUIForTagAdd(editors, tag) {
     const color = safeCssColor(meta.color);
     const isBookmark = (tag === 'bookmark');
     const isIgnore = (tag === 'ignore');
-    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : 'main';
+    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
 
     editors.forEach(editor => {
         if (!editor) return;
@@ -1124,9 +1141,7 @@ async function removeTag(event, etype, eid, tag) {
     if (event) event.stopPropagation();
     const params = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
     const colStr = params.get('collection');
-    // If not in query, try parsing from eid (e.g. main:function:md5:addr -> main)
-    const colParts = eid ? eid.split(':') : [];
-    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : (colParts.length > 2 ? colParts[0] : 'main'));
+    const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : window.getCollectionFromId(eid));
 
     let targets = [{ etype, eid }];
     const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
@@ -1215,7 +1230,8 @@ async function loadFieldCardinalities(col, level, fieldMap) {
     const fields = Object.keys(fieldMap);
     const query = fields.map(f => `field=${f}`).join('&');
     try {
-        const res = await fetch(`/api/search/fields?collection=${col}&level=${level}&${query}`);
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(col);
+        const res = await fetch(`/api/search/fields?${apiParams}&level=${level}&${query}`);
         if (res.ok) {
             const stats = await res.json();
             for (const [field, count] of Object.entries(stats)) {
@@ -1256,7 +1272,7 @@ window.addEventListener('message', (event) => {
     // If we encounter a new tag, refresh metadata to get its color/priority
     if (action === 'add' && !tagMetadata[tag]) {
         if (typeof fetchTagMetadata === 'function') {
-            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main';
+            const col = typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : '';
             fetchTagMetadata(col);
         }
     }

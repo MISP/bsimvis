@@ -42,12 +42,83 @@ function createNav(view, collection, params = {}) {
 }
 
 window.TableRenderers = {
+    renderPools: function(data) {
+        if (!data || !data.length) return '<tr><td colspan="6" style="text-align:center">No pools found.</td></tr>';
+
+        return data.map(pool => {
+            Breadcrumbs.setPoolName(pool.id, pool.name || 'Unnamed Pool');
+            const collectionsList = (pool.collections || []).map(c => `
+                <a href="/collections/${encodeURIComponent(c)}" onclick="Nav.openPath(this.href, event)" style="font-size:0.75rem; background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.3); color:#60a5fa; padding:2px 8px; border-radius:4px; margin-right:4px; text-decoration:none; cursor:pointer;" class="clickable-count">${c}</a>
+            `).join('');
+
+            const crossCollectionOnlyIndicator = pool.only_cross_collection ? `
+                <span style="font-size:0.75rem; background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.3); color:#f59e0b; padding:2px 8px; border-radius:4px; margin-right:4px; display:inline-flex; align-items:center; gap:4px;" title="Cross-Collection Only">
+                    <i class="fa-solid fa-arrow-right-arrow-left"></i> Cross-Only
+                </span>
+            ` : '';
+
+            let syncStatusBadge = '';
+            if (pool.sync_status === 'current') {
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(16, 185, 129, 0.15); border:1px solid rgba(16, 185, 129, 0.3); color:#10b981; padding:2px 8px; border-radius:4px; font-weight:bold;">Up to date</span>`;
+            } else if (pool.sync_status === 'outdated') {
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(245, 158, 11, 0.15); border:1px solid rgba(245, 158, 11, 0.3); color:#f59e0b; padding:2px 8px; border-radius:4px; font-weight:bold;">Outdated</span>`;
+            } else {
+                syncStatusBadge = `<span style="font-size:0.75rem; background:rgba(156, 163, 175, 0.15); border:1px solid rgba(156, 163, 175, 0.3); color:#9ca3af; padding:2px 8px; border-radius:4px; font-weight:bold;">${pool.sync_status || 'created'}</span>`;
+            }
+
+            const buildBtn = pool.sync_status === 'outdated' ? `
+                <button onclick="buildPool('${pool.id}', this)" class="btn-action" title="Build/Sync Pool" style="background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.3); border-radius:4px; color:#60a5fa; cursor:pointer; padding:3px 8px !important; font-size:0.75rem; display:inline-flex; align-items:center; gap:4px; margin-left:6px; font-weight:bold; height:24px; box-sizing:border-box; white-space:nowrap; width:auto !important; min-width:max-content !important;">
+                    <i class="fa-solid fa-play" style="font-size:0.7rem;"></i> Build
+                </button>
+            ` : '';
+
+            const rebuildBtn = `
+                <button onclick="rebuildPool('${pool.id}', this)" class="btn-action" title="Wipe & Rebuild Pool" style="background:rgba(168,85,247,0.15); border:1px solid rgba(168,85,247,0.3); border-radius:4px; color:#c084fc; cursor:pointer; padding:3px 8px !important; font-size:0.75rem; display:inline-flex; align-items:center; gap:4px; font-weight:bold; height:24px; box-sizing:border-box; white-space:nowrap; width:auto !important; min-width:max-content !important;">
+                    <i class="fa-solid fa-rotate" style="font-size:0.7rem;"></i> Rebuild
+                </button>
+            `;
+
+            const poolUrl = '/pools/' + encodeURIComponent(pool.id);
+            return `
+            <tr data-id="${pool.id}">
+                <td><a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${pool.id}</a></td>
+                <td>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <a href="${poolUrl}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;" id="pool-name-${pool.id}">${pool.name || 'Unnamed'}</a>
+                        <button class="btn-action" title="Rename" onclick="event.stopPropagation(); renamePool('${pool.id}')"><i class="fa-solid fa-pen"></i></button>
+                    </div>
+                </td>
+                <td><div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">${collectionsList}${crossCollectionOnlyIndicator}</div></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/files" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:#60a5fa; font-weight:700; text-decoration:none;">${pool.total_files || 0}</a></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/functions" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:#a78bfa; font-weight:700; text-decoration:none;">${pool.total_functions || 0}</a></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/functions/similarities" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:var(--info); font-weight:700; text-decoration:none;">${pool.total_func_similarities || 0}</a></td>
+                <td><a href="/pools/${encodeURIComponent(pool.id)}/functions/clusters" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:#f59e0b; font-weight:700; text-decoration:none;">${pool.total_func_clusters || 0}</a></td>
+                <td>
+                    <div style="display:inline-flex; align-items:center;">
+                        ${syncStatusBadge}
+                        ${buildBtn}
+                    </div>
+                </td>
+                <td class="dim">${formatDate(pool.created_at)}</td>
+                <td>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                        ${rebuildBtn}
+                        <button onclick="deletePool('${pool.id}', this)" class="btn-action" title="Delete Pool" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:4px; color:#f87171; cursor:pointer; padding:3px 8px !important; font-size:0.75rem; display:inline-flex; align-items:center; gap:4px; font-weight:bold; height:24px; box-sizing:border-box; white-space:nowrap; width:auto !important; min-width:max-content !important;">
+                            <i class="fa-solid fa-trash-can" style="font-size:0.7rem;"></i> Delete
+                        </button>
+                    </div>
+                </td>
+            </tr>
+            `;
+        }).join('');
+    },
+
     renderCollections: function(data) {
         if (!data.length) return '<tr><td colspan="6" style="text-align:center">No collections found.</td></tr>';
 
         return data.map(col => `
             <tr data-id="${col.name}">
-                <td><a ${createNav('files', col.name)} class="clickable-count" style="font-weight:bold;">${col.name}</a></td>
+                <td><a href="/collections/${encodeURIComponent(col.name)}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="font-weight:bold;">${col.name}</a></td>
                 <td>
                     <div style="display:inline-flex; align-items:center; gap:8px;">
                         <a ${createNav('batches', col.name)} class="clickable-count" style="font-weight: bold; min-width: 20px; text-align: right;">${col['total_batches'] || 0}</a>
@@ -117,9 +188,10 @@ window.TableRenderers = {
 
     renderFiles: function(data, clustersMap = {}) {
         const { collection } = getRoutingState();
-        const col = collection;
         return data.map(f => {
+            const col = f.collection || collection; // Base collection to use if not specified
             const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
+            let targetCol = col;
             const tags = f['tags'] || [];
             const user_tags = f['user_tags'] || [];
             const rowStyle = getRowTagColor(tags, user_tags);
@@ -139,7 +211,7 @@ window.TableRenderers = {
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; gap:8px;">
-                        <b style="color:var(--accent); cursor:pointer;" onclick="showFileDetailsPanel('${col}', '${f['file_md5']}', '${(f['file_name'] || '').replace(/'/g, "\\'")}', event)">${f['file_name']}</b>
+                        <b style="color:var(--accent); cursor:pointer;" onclick="showFileDetailsPanel('${targetCol}', '${f['file_md5']}', '${(f['file_name'] || '').replace(/'/g, "\\'")}', event)">${f['file_name']}</b>
                     </div>
                 </td>
                 <td class="sim-cell">
@@ -192,16 +264,7 @@ window.TableRenderers = {
                 </td>
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
-                        <a ${createNav('functions', col, { file_md5: f['file_md5'] })} class="clickable-count" style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</a>
-                        <button class="btn-file-diff-action ${fileDiffSelection.some(item => item.id === fileId) ? 'active' : ''}"
-                                data-file-id="${fileId}"
-                                onclick="addToFileDiff('${fileId}', '${f['file_name'].replace(/'/g, "'")}', event)"
-                                title="Add to File Diff">
-                            <span>±</span>
-                        </button>
-                        <a class="btn-action" onclick="Nav.openPath('${Nav.buildUIUrl(col, ['call_graph', f['file_md5']])}', event, { title: 'Call Graph: ${f['file_md5']}', type: 'call_graph' })" title="Call Graph" style="color: var(--accent); cursor: pointer;">
-                            <i class="fa-solid fa-network-wired"></i>
-                        </a>
+                        <span style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</span>
                     </div>
                 </td>
                 <td class="sim-cell file-note-cell" style="text-align:center;">
@@ -220,6 +283,7 @@ window.TableRenderers = {
     },
 
     renderFunctions: function(data, clustersMap = {}) {
+        const { collection } = getRoutingState();
         return data.map(f => {
             const entry = f['entrypoint_address'] || '';
             const tags = f['tags'] || [];
@@ -228,7 +292,9 @@ window.TableRenderers = {
             const file_md5 = f['file_md5'] || '';
             const language = f['language_id'] || '---';
             const featCount = f['bsim_features_count'] || 0;
-            const funcId = f['function_id'] || `${f.collection}:func:${file_md5}:${entry}`;
+            const fColl = f.collection || collection;
+            const funcId = f['function_id'] || `${fColl}:func:${file_md5}:${entry}`;
+            let targetCol = fColl;
             const rowStyle = getRowTagColor(tags, user_tags);
             const clusters = (f['clusters'] || []).map(uuid => clustersMap[uuid]).filter(Boolean);
 
@@ -252,10 +318,10 @@ window.TableRenderers = {
                     ${EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f })}
                 </td>
 
-                <td class="sim-cell"><div style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${f.collection || 'main'}', '${file_md5}', '${fileName.replace(/'/g, "\\'")}', event); }">${fileName}</b></div></td>
+                <td class="sim-cell"><div style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8;" title="${fileName}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${targetCol}', '${file_md5}', '${fileName.replace(/'/g, "\\'")}', event); }">${fileName}</b></div></td>
 
                 <td class="sim-cell">${EntityRenderer.renderMd5(file_md5)}</td>
-                <td>${EntityRenderer.renderTag('file', `${f.collection || 'main'}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
+                <td>${EntityRenderer.renderTag('file', `${fColl}:file:${file_md5}`, f.file_tags || [], f.file_user_tags || [])}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent)">${language}</span></td>
                 <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
                 <td class="sim-cell"></td>
@@ -351,6 +417,7 @@ window.TableRenderers = {
 // Map original function names to the new TableRenderers object for backward compatibility
 // or just export them to window directly if desired.
 window.renderCollections = TableRenderers.renderCollections;
+window.renderPools = TableRenderers.renderPools;
 window.renderBatches = TableRenderers.renderBatches;
 window.renderFiles = TableRenderers.renderFiles;
 window.renderFunctions = TableRenderers.renderFunctions;

@@ -7,9 +7,11 @@ function getCurrentCollection() {
     } else if (window.parseRestfulPath) {
         restful = parseRestfulPath();
     }
-    if (restful && restful.collection) {
-        return restful.collection;
+    if (restful) {
+        if (restful.collection) return restful.collection;
+        if (restful.pool) return 'pool:' + restful.pool;
     }
+
 
     // Fallback for old system
     const params = new URLSearchParams(window.location.search);
@@ -22,14 +24,14 @@ function getCurrentCollection() {
     const id = params.get('id') || params.get('id1') || params.get('id2') || window.currentFuncId;
     if (id && id.includes(':')) return id.split(':')[0];
 
-    return 'main';
+    return '';
 }
 function getHierarchyTooltip() {
     let el = document.getElementById('hierarchy-tooltip');
     if (!el) {
         el = document.createElement('div');
         el.id = 'hierarchy-tooltip';
-        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;";
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
         
         el.addEventListener('click', (event) => {
@@ -50,10 +52,10 @@ function getHierarchyTooltip() {
                             showFunctionCodeById(func.function_id, name, '', event);
                         } else {
                             const parts = func.function_id.split(':');
-                            const col = parts[0] || 'main';
+                            const col = parts[0] || '';
                             const md5 = parts[2];
                             const addr = parts[3];
-                            const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}`;
+                            const url = Nav.buildUIUrl(col, ['function', md5, addr]);
                             Nav.openPath(url, event, { title: `Code: ${name}`, type: 'code' });
                         }
                     }
@@ -617,14 +619,14 @@ class ClusterHierarchy extends D3BaseLayout {
                     } else if (typeof showFunctionCodeById === 'function') {
                         showFunctionCodeById(d.data.id, d.data.name, '', event);
                     } else {
-                        const url = `/collection/${col}/functions?q=${encodeURIComponent(d.data.name)}`;
+                        const url = Nav.buildUIUrl(col, ['functions']) + '?q=' + encodeURIComponent(d.data.name);
                         Nav.openPath(url, event);
                     }
                     return;
                 }
                 const uuid = d.data.uuid;
                 if (uuid && uuid !== 'root') {
-                    const url = `/collection/${col}/functions?cluster_uuid=${uuid}`;
+                    const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
                     Nav.openPath(url, event);
                 }
             })
@@ -997,7 +999,7 @@ class ClusterHierarchy extends D3BaseLayout {
                 binNodesMerge
                     .on("click", (event, d) => {
                         const col = getCollectionFromHash();
-                        const url = `/collection/${encodeURIComponent(col)}/files?q=${encodeURIComponent(d.name)}`;
+                        const url = Nav.buildUIUrl(col, ['files']) + '?q=' + encodeURIComponent(d.name);
                         Nav.openPath(url, event, { title: 'Files: ' + d.name, type: 'files' });
                     })
                     .on("mouseover", function(event, d) {
@@ -1108,7 +1110,7 @@ class ClusterHierarchy extends D3BaseLayout {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = `/collection/${encodeURIComponent(col)}/functions?cluster_uuid=${uuid}`;
+            const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
             Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
         };
     }
@@ -1131,6 +1133,8 @@ class ClusterHierarchy extends D3BaseLayout {
         const rect = tooltip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
         if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         tooltip.style.left = x + 'px';
         tooltip.style.top = y + 'px';
 
@@ -1210,7 +1214,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                         if (this.clusterType === 'file') {
                                             return `
                                                 <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
-                                                    <b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(getCurrentCollection(), '${m.file_md5}', '${(m.file_name || '').replace(/'/g, "\\'")}', event); }">${m.file_name || 'Unknown'}</b> ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                    ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
                                         }
@@ -2125,7 +2129,7 @@ class ClusterPacking {
         btn.onclick = (event) => {
             const col = getCurrentCollection();
             const uuid = d.data.uuid;
-            const url = `/collection/${encodeURIComponent(col)}/functions?cluster_uuid=${uuid}`;
+            const url = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(uuid);
             Nav.openPath(url, event, { title: 'Cluster Functions', type: 'functions' });
         };
     }
@@ -2172,6 +2176,8 @@ class ClusterPacking {
             const rect = tooltip.getBoundingClientRect();
             if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
             if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+            x = Math.max(5, x);
+            y = Math.max(5, y);
             tooltip.style.left = x + 'px';
             tooltip.style.top = y + 'px';
 
@@ -2242,7 +2248,7 @@ class ClusterPacking {
                                         if (this.clusterType === 'file') {
                                             return `
                                                 <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
-                                                    <b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(getCurrentCollection(), '${m.file_md5}', '${(m.file_name || '').replace(/'/g, "\\'")}', event); }">${m.file_name || 'Unknown'}</b> ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                    ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
                                         }
@@ -2410,6 +2416,7 @@ class ClusterPacking {
 }
 
 const clusterTooltipMockCache = new Map();
+window.clusterTooltipMockCache = clusterTooltipMockCache;
 
 function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null, clusterType = 'function') {
     const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
@@ -2446,6 +2453,8 @@ function moveClusterTableTooltip(e) {
         const rect = tooltip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - 20;
         if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - 20;
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         tooltip.style.left = x + 'px';
         tooltip.style.top = y + 'px';
     }

@@ -5,6 +5,10 @@ class TableSelection {
     constructor(tableId) {
         this.table = document.getElementById(tableId);
         if (!this.table) return;
+        if (this.table.tableSelectionInstance) {
+            return this.table.tableSelectionInstance;
+        }
+        this.table.tableSelectionInstance = this;
 
         this.tbody = this.table.querySelector('tbody');
         this.selectedCells = new Set(); // Stores "row:col"
@@ -86,7 +90,7 @@ class TableSelection {
 
         // Clear selection if clicking outside the table container
         const container = this.table.closest('.table-container') || this.table.parentElement;
-        if (!container.contains(e.target)) {
+        if (!container.contains(e.target) && !e.target.closest('.context-menu') && !e.target.closest('#graph-context-menu') && !this.isInteractive(e.target)) {
             this.clearSelection();
         }
 
@@ -215,6 +219,10 @@ class TableSelection {
                 this.copySelection();
                 return;
             }
+        }
+
+        if ((e.ctrlKey || e.metaKey || e.altKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            return;
         }
 
         if (!this.focusCell) return;
@@ -572,14 +580,15 @@ class TableSelection {
         let headerLine = null;
         if (includeHeaders && Object.keys(rowColsMap).length > 0) {
             headerLine = [];
-            const thead = document.getElementById('table-head');
+            const thead = this.table.querySelector('thead');
             const headerRow = thead ? thead.querySelector('tr') : null;
             const firstRowIndex = Object.keys(rowColsMap).map(Number).sort((a, b) => a - b)[0];
             const cols = rowColsMap[firstRowIndex] || [];
 
             cols.forEach(c => {
                 const thEl = headerRow ? headerRow.children[c] : null;
-                const label = thEl ? (thEl.getAttribute('data-label') || thEl.textContent.trim()) : `Col ${c}`;
+                let label = thEl ? (thEl.getAttribute('data-label') || thEl.textContent.trim()) : `Col ${c}`;
+                label = label.replace(/[▼▲↕]/g, '').trim();
 
                 if (isSimilarityTable) {
                     if (c === 0) {

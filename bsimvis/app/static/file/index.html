@@ -20,6 +20,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="/js/notes.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="/js/table_selection.js"></script>
     <style>
         #loader {
             text-align: center;
@@ -37,18 +38,8 @@
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .hero-icon {
-            font-size: 2.5rem;
-            color: var(--accent);
-            background: rgba(102, 217, 239, 0.1);
-            padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            border: 1px solid rgba(102, 217, 239, 0.2);
-        }
-
         .hero-details h1 {
-            margin: 0 0 5px 0;
+            margin: 0;
             font-size: 1.5rem;
             color: #fff;
             word-break: break-all;
@@ -58,13 +49,6 @@
             font-family: 'JetBrains Mono', 'Consolas', monospace;
             color: var(--dim);
             font-size: 0.9rem;
-        }
-
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
         }
 
         .card {
@@ -78,13 +62,10 @@
         .card-title {
             font-size: 1rem;
             font-weight: bold;
-            margin-bottom: 15px;
             color: var(--accent);
             display: flex;
             align-items: center;
             gap: 8px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            padding-bottom: 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -138,35 +119,38 @@
             color: var(--accent);
         }
 
+        .bsim-tabbar { display:flex; gap:4px; margin:0 0 16px 0; border-bottom:2px solid var(--border); }
+        .bsim-tab {
+            background:none; border:none; border-bottom:3px solid transparent;
+            margin-bottom:-2px; padding:10px 20px; cursor:pointer;
+            color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
+            transition:color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+        .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+
+        .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+        .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
+        .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+        .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+
+        .file-func-table th.sortable { cursor: pointer; user-select: none; }
+        .file-func-table th.sortable:hover { color: var(--text); }
+        .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.1); }
+        .file-func-table tr.filter-row input { background: #000; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
+
+        .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+        .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
+        .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+        .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
+        .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
+
+        .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
+
         .cluster-list {
             display: flex;
             flex-direction: column;
             gap: 10px;
-        }
-
-        .cluster-item {
-            background: rgba(0, 0, 0, 0.2);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 6px;
-            padding: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .cluster-item-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-weight: bold;
-            font-size: 0.95rem;
-            color: #fff;
-        }
-
-        .cluster-stat-badges {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
         }
 
         .stat-badge {
@@ -179,15 +163,6 @@
             align-items: center;
             gap: 6px;
         }
-
-        .stat-badge i {
-            color: var(--dim);
-        }
-
-        .stat-badge .val {
-            color: var(--accent);
-            font-family: 'JetBrains Mono', 'Consolas', monospace;
-        }
     </style>
 </head>
 
@@ -197,39 +172,80 @@
         <div id="loader"><i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...</div>
 
         <div id="content" style="display: none;">
-            <div class="hero-section">
-                <div class="hero-details">
-                    <h1 id="file-name">unknown</h1>
-                    <div class="md5" id="file-md5">MD5: ---</div>
-                    <div class="quick-actions" id="quick-actions">
-                        <!-- Actions injected here -->
-                    </div>
-                </div>
+            <div id="file-title-strip" class="bin-sim-strip" style="margin-bottom: 20px; cursor: context-menu;"
+                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
+                <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
+                <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 10px;">(MD5: ---)</span>
+                <span id="file-tags-container" style="display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1;"></span>
+                <span id="file-note-btn-container" style="margin-left:auto; display: inline-flex; align-items: center;"></span>
             </div>
 
-            <div class="dashboard-grid">
+            <div class="bsim-tabbar" id="file-view-tabs">
+                <button class="bsim-tab active" id="file-tab-btn-metadata" onclick="switchTab('metadata')">Metadata (<span id="metadata-count">0</span>)</button>
+                <button class="bsim-tab" id="file-tab-btn-functions" onclick="switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
+                <button class="bsim-tab" id="file-tab-btn-clusters" onclick="switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
+            </div>
+
+            <!-- Metadata Tab Panel (Default Active) -->
+            <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                 <div style="display: flex; flex-direction: column; gap: 20px;">
                     <div class="card">
-                        <div class="card-title"><i class="fa-solid fa-info-circle"></i> File Metadata</div>
-                        <div class="meta-grid" id="file-meta">
-                            <!-- File metadata injected here -->
-                        </div>
-                        <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
-                            <div style="font-size: 0.75rem; color: var(--dim); text-transform: uppercase; margin-bottom: 8px;">Tags</div>
-                            <div id="file-tags-container"></div>
+                        <div id="file-meta-container">
+                            <!-- Reused comparison table layout here -->
                         </div>
                     </div>
 
                     <div class="card" id="inferred-meta-card" style="display: none;">
-                        <div class="card-title"><i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata</div>
+                        <div class="card-title" style="margin-bottom: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px;">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
+                        </div>
                         <div class="meta-grid" id="inferred-meta">
                             <!-- Inferred metadata injected here -->
                         </div>
                     </div>
                 </div>
+            </div>
 
+            <!-- Functions Tab Panel -->
+            <div id="file-panel-functions" class="file-view-panel" style="display: none;">
+                <div class="card" style="display: flex; flex-direction: column; gap: 15px;">
+                    <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                        <table class="file-func-table">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" onclick="toggleSort('function_name')">Function <span id="sort-icon-function_name">↕</span></th>
+                                    <th class="sortable" onclick="toggleSort('entrypoint_address')">Entrypoint <span id="sort-icon-entrypoint_address">↕</span></th>
+                                    <th>Tags</th>
+                                    <th>Clusters</th>
+                                    <th class="sortable" onclick="toggleSort('bsim_features_count')">Features <span id="sort-icon-bsim_features_count">↕</span></th>
+                                    <th>Notes</th>
+                                </tr>
+                                <tr class="filter-row">
+                                    <th><input type="text" id="flt-q" placeholder="Search name/tag/addr..." style="width:100%;" oninput="handleFilterChange()" /></th>
+                                    <th></th>
+                                    <th></th>
+                                    <th></th>
+                                    <th>
+                                        <div style="display:flex; align-items:center; gap:2px;">
+                                            <input type="number" id="flt-feat-min" placeholder="Min" style="width:45%;" oninput="handleFilterChange()" />
+                                            <span class="dim" style="font-size:0.6rem">-</span>
+                                            <input type="number" id="flt-feat-max" placeholder="Max" style="width:45%;" oninput="handleFilterChange()" />
+                                        </div>
+                                    </th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="file-functions-tbody">
+                                <tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;"><i class="fa-solid fa-spinner fa-spin"></i> Loading functions...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Clusters Tab Panel -->
+            <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
                 <div class="card">
-                    <div class="card-title"><i class="fa-solid fa-bullseye"></i> Binary Clusters (<span id="cluster-count">0</span>)</div>
                     <div class="cluster-list" id="cluster-list">
                         <!-- Cluster cards injected here -->
                     </div>
@@ -241,14 +257,191 @@
     <script>
         let collection = '';
         let file_md5 = '';
+        let functions = [];
+        let clusters = {};
+        let functionsLoaded = false;
+        let sortState = { col: 'function_name', dir: 1 };
+        let filterState = { q: '', featMin: '', featMax: '' };
 
-        function renderMetaRow(icon, label, value, color) {
-            if (!value) return '';
-            const valStr = Array.isArray(value) ? value.join(', ') : String(value);
-            return `
-                <div class="meta-label"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
-                <div class="meta-value" style="color: ${color || '#eee'}">${valStr}</div>
-            `;
+        function switchTab(tabId, push = true) {
+            document.querySelectorAll('#file-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.file-view-panel').forEach(panel => panel.style.display = 'none');
+
+            const btn = document.getElementById(`file-tab-btn-${tabId}`);
+            if (btn) btn.classList.add('active');
+
+            const panel = document.getElementById(`file-panel-${tabId}`);
+            if (panel) panel.style.display = 'block';
+
+            if (tabId === 'functions') {
+                loadFunctionsTable();
+            }
+
+            if (push && location.hash.slice(1) !== tabId) {
+                history.pushState(null, '', location.pathname + location.search + '#' + tabId);
+            }
+        }
+
+        function applyTabFromHash() {
+            const allowedTabs = ['metadata', 'functions', 'clusters'];
+            const tab = location.hash.slice(1);
+            switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
+        }
+
+        if (!window.__fileHashBound) {
+            window.addEventListener('hashchange', applyTabFromHash);
+            window.__fileHashBound = true;
+        }
+
+        async function loadFunctionsTable() {
+            if (functionsLoaded) return;
+            const tbody = document.getElementById('file-functions-tbody');
+            
+            try {
+                const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+                const res = await fetch(`/api/function/search?file_md5=${file_md5}&limit=1000&${apiParams}`);
+                if (!res.ok) throw new Error("Functions load failed");
+                const data = await res.json();
+                
+                functions = data.functions || [];
+                document.getElementById('functions-count').innerText = functions.length;
+                renderFunctionsTable();
+                functionsLoaded = true;
+            } catch (e) {
+                console.error(e);
+                if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading functions: ${e.message}</td></tr>`;
+            }
+        }
+
+        function toggleSort(col) {
+            if (sortState.col === col) {
+                sortState.dir = -sortState.dir;
+            } else {
+                sortState.col = col;
+                sortState.dir = 1;
+            }
+            
+            ['function_name', 'entrypoint_address', 'bsim_features_count'].forEach(c => {
+                const el = document.getElementById(`sort-icon-${c}`);
+                if (el) {
+                    el.innerText = sortState.col === c ? (sortState.dir === 1 ? '▲' : '▼') : '↕';
+                }
+            });
+            
+            renderFunctionsTable();
+        }
+
+        function handleFilterChange() {
+            filterState.q = document.getElementById('flt-q').value;
+            filterState.featMin = document.getElementById('flt-feat-min').value;
+            filterState.featMax = document.getElementById('flt-feat-max').value;
+            renderFunctionsTable();
+        }
+
+        function renderFunctionsTable() {
+            const tbody = document.getElementById('file-functions-tbody');
+            if (!tbody) return;
+
+            // Apply filters
+            let filtered = functions.slice();
+            
+            const q = filterState.q.toLowerCase().trim();
+            if (q) {
+                filtered = filtered.filter(f => {
+                    const name = (f.function_name || '').toLowerCase();
+                    const addr = (f.entrypoint_address || '').toLowerCase();
+                    const tags = (f.tags || []).join(' ').toLowerCase() + ' ' + (f.user_tags || []).join(' ').toLowerCase();
+                    return name.includes(q) || addr.includes(q) || tags.includes(q);
+                });
+            }
+            
+            const minFeat = parseInt(filterState.featMin);
+            const maxFeat = parseInt(filterState.featMax);
+            if (!isNaN(minFeat)) {
+                filtered = filtered.filter(f => (f.bsim_features_count || 0) >= minFeat);
+            }
+            if (!isNaN(maxFeat)) {
+                filtered = filtered.filter(f => (f.bsim_features_count || 0) <= maxFeat);
+            }
+
+            // Apply sort
+            const col = sortState.col;
+            const dir = sortState.dir;
+            filtered.sort((a, b) => {
+                let valA = a[col];
+                let valB = b[col];
+                
+                if (col === 'bsim_features_count') {
+                    valA = Number(valA || 0);
+                    valB = Number(valB || 0);
+                } else {
+                    valA = String(valA || '').toLowerCase();
+                    valB = String(valB || '').toLowerCase();
+                }
+                
+                if (valA < valB) return -dir;
+                if (valA > valB) return dir;
+                return 0;
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No functions found.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(f => {
+                const entry = f.entrypoint_address || '';
+                const funcName = f.function_name || 'unknown';
+                const featCount = f.bsim_features_count || 0;
+                const fColl = f.collection || collection;
+                const funcId = f.function_id || `${fColl}:func:${file_md5}:${entry}`;
+                
+                // Notes
+                const noteBtn = window.EntityRenderer ? window.EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f }) : '';
+                
+                // Tags
+                const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', funcId, f.tags || [], f.user_tags || []) : '';
+                
+                // Clusters
+                const cls = (f.clusters || []).map(uuid => clusters[uuid]).filter(Boolean);
+                const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
+
+                // Details URL
+                let poolId = null;
+                if (window.getRoutingState && window.getRoutingState().pool) {
+                    poolId = window.getRoutingState().pool;
+                }
+                let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${file_md5}/functions/${entry}`;
+                if (poolId) {
+                    detailUrl = `/pools/${encodeURIComponent(poolId)}` + detailUrl;
+                }
+
+                return `
+                    <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
+                        data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
+                        oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
+                        <td>
+                            <a href="${detailUrl}" onclick="event.preventDefault(); (window.Nav || window.parent.Nav).openPath('${detailUrl}', event);" style="color:var(--accent); font-weight:bold; text-decoration:none;">
+                                ${funcName}
+                            </a>
+                        </td>
+                        <td class="mono" style="color:var(--accent);">@ ${entry}</td>
+                        <td>${tagsHtml}</td>
+                        <td>${clusterCardHtml}</td>
+                        <td>
+                            <div style="display:inline-flex; align-items:center; gap:6px;">
+                                <span class="mono" style="color:var(--accent); font-weight:bold;">${featCount}</span>
+                                <button class="btn-icon" onclick="showFeaturePanel('${funcId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0; font-size: 0.8rem; opacity: 0.7;">🔍</button>
+                            </div>
+                        </td>
+                        <td style="text-align:center;">${noteBtn}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            if (window.TableSelection) {
+                new window.TableSelection(tbody.closest('table'));
+            }
         }
 
         async function init() {
@@ -271,51 +464,129 @@
                 // Fetch tag metadata first to render tags correctly
                 await fetchTagMetadata(collection);
 
-                const res = await fetch(`/api/file/details/${file_md5}?collection=${encodeURIComponent(collection)}`);
+                const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+                const res = await fetch(`/api/file/details/${file_md5}?${apiParams}`);
                 if (!res.ok) throw new Error("File not found or backend error");
                 const data = await res.json();
 
                 if (data.error) throw new Error(data.error);
 
                 const file = data.file;
-                const clusters = data.bin_cluster_map || {};
+                clusters = data.bin_cluster_map || {};
                 const inferredMeta = data.inferred_meta || {};
 
                 // 1. Hero Section
-                document.getElementById('file-name').innerText = file.file_name || file.file_names?.[0] || 'Unknown Binary';
-                document.getElementById('file-md5').innerText = file.file_md5;
+                document.getElementById('file-title-text').innerText = file.file_name || file.file_names?.[0] || 'Unknown Binary';
+                document.getElementById('file-md5-text').innerText = `(MD5: ${file.file_md5})`;
 
-                // Quick actions
-                const actionsHtml = `
-                    <a href="#" class="quick-action-btn" onclick="openFunctions(event)"><i class="fa-solid fa-code"></i> View Functions</a>
-                    <a href="#" class="quick-action-btn" onclick="openCallGraph(event)"><i class="fa-solid fa-sitemap"></i> Call Graph</a>
-                    <a href="#" class="quick-action-btn" id="file-notes-btn" onclick="showFileNotesPanel(event)"><i class="fa-solid fa-note-sticky"></i> Notes</a>
-                `;
-                document.getElementById('quick-actions').innerHTML = actionsHtml;
+                // Pre-populate functions count from file.function_count
+                document.getElementById('functions-count').innerText = file.function_count || 0;
 
-                // 2. File Metadata
-                let metaHtml = '';
-                metaHtml += renderMetaRow('fa-solid fa-microchip', 'Architecture', file.language_id || file.language, '#ae81ff');
-                metaHtml += renderMetaRow('fa-solid fa-list-ol', 'Functions', file.function_count, '#a6e22e');
-                metaHtml += renderMetaRow('fa-solid fa-shield', 'AV Type', file.avtype, '#eee');
-                metaHtml += renderMetaRow('fa-solid fa-file-code', 'File Type', file.filetype, '#eee');
-                metaHtml += renderMetaRow('fa-solid fa-biohazard', 'Yara', file.yara, 'var(--accent)');
-                metaHtml += renderMetaRow('fa-solid fa-network-wired', 'CC IP', file.cc_ip, 'var(--info, #60a5fa)');
-                metaHtml += renderMetaRow('fa-solid fa-box', 'Batch UUID', file.batch_uuid, 'var(--dim)');
-                
-                if (file.first_seen) metaHtml += renderMetaRow('fa-solid fa-clock', 'First Seen', new Date(file.first_seen * 1000).toLocaleString(), '#ccc');
-                
-                document.getElementById('file-meta').innerHTML = metaHtml || '<div class="dim">No additional metadata found.</div>';
+                // Bind data-entity-data on the strip for context menu functionality
+                const fileId = `${collection}:file:${file_md5}`;
+                const strip = document.getElementById('file-title-strip');
+                if (strip) {
+                    const entityData = {
+                        id: file.file_id || fileId,
+                        name: file.file_name || file.file_names?.[0] || 'Unknown Binary',
+                        md5: file.file_md5,
+                        note_owners: file.note_owners || [],
+                        user_tags: file.user_tags || [],
+                        tags: file.tags || []
+                    };
+                    strip.setAttribute('data-entity-data', JSON.stringify(entityData).replace(/'/g, "&apos;"));
+                }
 
-                // Render Tags
+                // Render Tags and Notes in Header (Inspired by File Strip in Sim view)
                 if (typeof renderTagEditor === 'function') {
                     document.getElementById('file-tags-container').innerHTML = renderTagEditor(
-                        'file',
-                        file.file_id || `${collection}:file:${file_md5}`,
-                        file.tags || [],
-                        file.user_tags || []
+                        'file', file.file_id || fileId, file.tags || [], file.user_tags || []
                     );
                 }
+                if (window.EntityRenderer) {
+                    document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(
+                        file.file_id || fileId, file.note_owners || [], { raw_data: file }
+                    );
+                }
+
+                // Render Metadata Table (Reusing comparison table layout and styles)
+                const fmt = (v) => {
+                    if (v === undefined || v === null || v === '') return '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                    if (Array.isArray(v)) return v.length ? v.join(', ') : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                    return String(v);
+                };
+                const fmtDate = (timestamp) => {
+                    if (!timestamp) return '';
+                    const d = new Date(Number(timestamp) * 1000);
+                    return d.toLocaleString();
+                };
+
+                const iconMap = {
+                    'File Name': 'fa-solid fa-file',
+                    'Other Names': 'fa-solid fa-tags',
+                    'MD5': 'fa-solid fa-fingerprint',
+                    'Related MD5s': 'fa-solid fa-link',
+                    'Batch UUID': 'fa-solid fa-box',
+                    'Language': 'fa-solid fa-microchip',
+                    'AV Type': 'fa-solid fa-shield',
+                    'File Type': 'fa-solid fa-file-code',
+                    'Yara': 'fa-solid fa-biohazard',
+                    'CC IP': 'fa-solid fa-network-wired',
+                    'Functions': 'fa-solid fa-list-ol',
+                    'BSim Features': 'fa-solid fa-dna',
+                    'First Seen': 'fa-solid fa-clock'
+                };
+
+                const categories = [
+                    ['Identity', [
+                        ['File Name', file.file_name],
+                        ['Other Names', file.file_names],
+                        ['MD5', file.file_md5],
+                        ['Related MD5s', file.related_md5],
+                        ['Batch UUID', file.batch_uuid],
+                        ['First Seen', file.first_seen ? fmtDate(file.first_seen) : ''],
+                    ]],
+                    ['Classification', [
+                        ['Language', file.language_id || file.language],
+                        ['AV Type', file.avtype],
+                        ['File Type', file.filetype],
+                        ['Yara', file.yara],
+                        ['CC IP', file.cc_ip],
+                    ]],
+                    ['Statistics', [
+                        ['Functions', file.function_count],
+                        ['BSim Features', file.bsim_features_count],
+                    ]]
+                ];
+
+                if (file.file_format && Object.keys(file.file_format).length > 0) {
+                    const formatFields = Object.entries(file.file_format).map(([k, v]) => [k, v]);
+                    categories.push(['File Format', formatFields]);
+                }
+
+                let rows = '';
+                let metaCount = 0;
+                for (const [cat, fields] of categories) {
+                    rows += `<tr><td class="bin-sim-mc-cat" colspan="2">${cat}</td></tr>`;
+                    for (const [label, val] of fields) {
+                        const icon = iconMap[label] || 'fa-solid fa-circle-info';
+                        rows += `<tr>
+                            <td class="bin-sim-mc-label" style="display: flex; align-items: center; gap: 8px;"><i class="${icon}" style="width: 14px; text-align: center; color: var(--dim); opacity: 0.8;"></i>${label}</td>
+                            <td>${fmt(val)}</td>
+                        </tr>`;
+                        if (val !== undefined && val !== null && val !== '') {
+                            metaCount++;
+                        }
+                    }
+                }
+                document.getElementById('metadata-count').innerText = metaCount;
+
+                document.getElementById('file-meta-container').innerHTML = `
+                    <table class="bin-sim-mc-table">
+                        <thead><tr><th>Field</th><th>Value</th></tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
 
                 // 3. Binary Clusters
                 const clusterIds = file.bin_clusters || [];
@@ -340,7 +611,6 @@
                         const size = cm.size || cm.member_count || cm.members || cm.count || 0;
                         const cohesionScore = cm.cohesion_score || 0;
                         const cohesion = cohesionScore.toFixed(2);
-                        const cohesionPercent = Math.round(cohesionScore * 100);
                         const cohesionColor = d3.interpolateRdYlGn(cohesionScore);
                         
                         let distBadges = '';
@@ -419,8 +689,8 @@
                         distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
 
                         clustersHtml += `
-                            <div class="cluster-item">
-                                <div class="cluster-item-header">
+                            <div class="cluster-item" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                                <div class="cluster-item-header" style="display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:#fff;">
                                     <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
                                     <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="openClusterFiles(event, '${cm.cluster_uuid}')">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
                                 </div>
@@ -443,8 +713,8 @@
                         const confObj = mapObj[k];
                         const confScore = confObj.percent;
                         const confColor = d3.interpolateRdYlGn(confScore / 100);
-                        const clusterLink = `/#files?collection=${encodeURIComponent(collection)}&bin_cluster_uuid=${confObj.cluster_uuid}`;
-                        return `<a href="${clusterLink}" target="_parent" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+                        const path = (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(confObj.cluster_uuid);
+                        return `<a href="#" onclick="event.preventDefault(); (window.Nav || window.parent.Nav).openPath('${path.replace(/'/g, "\\'")}', event);" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                     }).join('');
                     return `
                         <div class="meta-label" style="align-items: flex-start; margin-top: 4px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -453,23 +723,28 @@
                 };
 
                 let inferredHtml = '';
-                inferredHtml += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename);
-                inferredHtml += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5);
-                inferredHtml += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype);
-                inferredHtml += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype);
-                inferredHtml += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara);
-                inferredHtml += renderInferredRow('fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip);
+                inferredHtml += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename || {});
+                inferredHtml += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5 || {});
+                inferredHtml += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype || {});
+                inferredHtml += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype || {});
+                inferredHtml += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara || {});
+                inferredHtml += renderInferredRow('fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip || {});
 
                 if (inferredHtml) {
                     document.getElementById('inferred-meta').innerHTML = inferredHtml;
                     document.getElementById('inferred-meta-card').style.display = 'block';
                 }
 
+                // Silently fetch functions
+                loadFunctionsTable();
+
                 document.getElementById('loader').style.display = 'none';
                 document.getElementById('content').style.display = 'block';
 
+                // Apply initial tab from URL hash
+                applyTabFromHash();
+
                 // Initialize file notes panel (hidden, not expanded)
-                const fileId = `${collection}:file:${file_md5}`;
                 if (typeof showFileNotes === 'function') {
                     showFileNotes(fileId, false);
                 }
@@ -483,20 +758,20 @@
         // Navigation helpers for window manager
         function openFunctions(e) {
             e.preventDefault();
-            const url = Nav.buildUIUrl(collection, ['search', 'functions']) + `?file_md5=${encodeURIComponent(file_md5)}`;
-            Nav.openPath(url, e);
+            const url = (window.Nav || window.parent.Nav).buildUIUrl(collection, ['search', 'functions']) + `?file_md5=${encodeURIComponent(file_md5)}`;
+            (window.Nav || window.parent.Nav).openPath(url, e);
         }
 
         function openCallGraph(e) {
             e.preventDefault();
-            const url = Nav.buildUIUrl(collection, ['call_graph', file_md5]);
-            Nav.openPath(url, e, { title: `Call Graph: ${file_md5}`, type: 'call_graph' });
+            const url = (window.Nav || window.parent.Nav).buildUIUrl(collection, ['call_graph', file_md5]);
+            (window.Nav || window.parent.Nav).openPath(url, e, { title: `Call Graph: ${file_md5}`, type: 'call_graph' });
         }
 
         function openClusterFiles(e, clusterUuid) {
             e.preventDefault();
-            const url = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(clusterUuid)}`;
-            Nav.openPath(url, e);
+            const url = (window.Nav || window.parent.Nav).buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(clusterUuid)}`;
+            (window.Nav || window.parent.Nav).openPath(url, e);
         }
 
         function showFileNotesPanel(e) {

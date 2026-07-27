@@ -21,9 +21,13 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Call graph navigation (callers and callees)
 
 ### Clustering
-- HDBSCAN-based binary family clustering
+- HDBSCAN-based binary family clustering and interactive file dendrogram visualization
 - Cluster search view with dendrogram and packing diagram
 - Stability and parent cluster filtering
+
+### Cross-Collection Pools
+- Combine multiple collections into a pool for similarity search and clustering across their union
+- Search endpoints accept a `pool` parameter; per-pool build/cluster jobs with sync-status tracking
 
 ### Search & Filtering
 - Full text search on files and features with sorting, filtering, and pagination
@@ -35,6 +39,10 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Tag management for files, functions, and similarities
 - Quick preview tooltips for clusters and diffs
 - Table selection and copy across all views
+
+### Analyst Notes & AI Insights
+- Analyst notes system for files and functions
+- Local LLM assistant for file and function summaries
 
 ### API
 - REST API with Swagger documentation
@@ -90,6 +98,9 @@ Use `--clear` to kill stale sessions before restarting:
 ./launch.sh --clear
 ```
 
+`launch_tmux.sh` is the tmux equivalent, and additionally caps the worker count by host
+RAM and runs each worker under a memory-limited systemd scope.
+
 Services are configured via `.env` (see `.env.example`). Key variables:
 
 | Variable | Default | Description |
@@ -100,6 +111,7 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 | `WORKERS_COUNT` | `5` | Number of background workers |
 | `DATA_BASE_DIR` | `./data` | Storage path for all service data |
 | `ENABLE_MILVUS` | `false` | Enable optional Milvus vector DB |
+| `WORKER_MEMORY_MAX` | `3G` | Per-worker memory cap (`launch_tmux.sh` only) |
 
 # Test script
 
@@ -107,7 +119,20 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 uv run test_api_endpoints.py
 ```
 
+# Benchmark
+
+```bash
+# Ingest + similarity pipeline over the JSON fixtures in data/bench/
+uv run bsimvis-bench --clear
+
+# Benchmark the pool paths, save metrics, compare against a baseline
+uv run bsimvis-bench --bench-pools --save data/bench_results/run.json
+uv run bsimvis-bench --compare data/bench_results/run.json
+```
+
 # API
+
+Full endpoint reference in [doc/api_documentation.md](doc/api_documentation.md); `curl` examples in [doc/api_examples.md](doc/api_examples.md). Interactive Swagger UI is at `/api/` when running.
 
 ## Binary upload
 
@@ -142,7 +167,7 @@ curl -X POST --data-binary @$gpr_name.gpr.zip \
 ## Follow pipeline progress
 
 ```
-curl -s "http://localhost:5001/api/jobs/pipe_f4f87081-ab7d-4077"
+curl -s "http://localhost:5000/api/jobs/pipe_f4f87081-ab7d-4077"
 
 # Wait for completed status 
 {
@@ -205,23 +230,51 @@ For now clustering is a manual job to run after ingesting all binaries.
 uv run bsimvis cluster build -c <collection_name>
 ```
 
+## Binary similarity management
+
+```bash
+# Build binary similarities
+uv run bsimvis binsim build -c <collection_name>
+```
+
+## Collection management
+
+```bash
+# Wipe and delete a collection completely
+uv run bsimvis collection delete -c <collection_name>
+
+# Clean up temporary raw/JSON upload keys in a collection
+uv run bsimvis collection clean -c <collection_name>
+```
+
+## Metadata propagation
+
+```bash
+# Propagate metadata from a pipe-delimited CSV file
+uv run bsimvis metadata propagate -m <metadata_csv_path> -c <collection_name>
+```
+
 ## Full CLI reference
 
 ```
-usage: bsimvis [-h] [-H HOST] {features,index,sim,job,worker,upload} ...
+usage: bsimvis [-h] [-H HOST] {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata} ...
 
 Unified BSimVis CLI
 
 positional arguments:
-  {features,index,sim,job,worker,upload}
+  {features,index,sim,cluster,binsim,job,worker,upload,collection,metadata}
     features            BSim Feature management (Indexing)
     index               Index health and statistics
     sim                 Similarity management
+    cluster             Unsupervised clustering management
+    binsim              Binary-level similarity management
     job                 Job & Pipeline management
     worker              Worker management
     upload              Upload binaries to redis/kvrocks
+    collection          Collection management
+    metadata            Metadata management and propagation
 
 options:
   -h, --help            show this help message and exit
-  -H, --host HOST       API host:port (default: localhost:5000)
+  -H, --host HOST       API host:port (default: localhost:5000, or from .env, or from bsimvis_config.toml)
 ```

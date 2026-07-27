@@ -21,6 +21,7 @@
     <script src="/js/metadata.js"></script>
     <script src="/js/tags.js"></script>
     <script src="/js/context_menu.js"></script>
+    <script src="/js/diff_queue.js"></script>
     <script src="/js/binary_similarity.js"></script>
     <style>
         #binary-similarity-container {
@@ -56,7 +57,13 @@
             const restful = parseRestfulPath();
             const urlParams = new URLSearchParams(window.location.search);
             if (restful.collection) urlParams.set('collection', restful.collection);
-            if (restful.md5) urlParams.set('md5', restful.md5);
+            if (restful.md5) {
+                urlParams.set('md5', restful.md5);
+                urlParams.set('md5_a', restful.md5);
+            }
+            if (restful.md5_b) urlParams.set('md5_b', restful.md5_b);
+            if (restful.coll_b) urlParams.set('coll_b', restful.coll_b);
+            if (restful.pool) urlParams.set('pool_id', restful.pool);
 
             // Re-use the existing logic from binary_similarity.js
             if (typeof renderBinarySimilarityView === 'function') {

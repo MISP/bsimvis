@@ -17,9 +17,24 @@ local max_score = tonumber(config.max_score or 1.0)
 local algo_zset = KEYS[1]
 local feat_zset = KEYS[2]
 
--- Helper: Reconstruct FIDs from Lean SID (idx:coll:sim:algo:id1:id2)
+-- Helper: Reconstruct FIDs from Lean SID
 local function extract_ids(sid)
-    -- sid is {coll}:sim:{algo}:{clean_id1}::{clean_id2}
+    -- Pool Case: global:pool:{pool_id}:sim:{fid1}::{fid2}
+    if sid:sub(1, 12) == "global:pool:" then
+        local pivot = sid:find("::", 1, true)
+        if not pivot then return nil, nil end
+        
+        -- The first ID starts after the third colon in "global:pool:{pool_id}:sim:"
+        -- Actually it's easier to find the "sim:" part
+        local sim_pivot = sid:find(":sim:", 1, true)
+        if not sim_pivot then return nil, nil end
+        
+        local id1 = sid:sub(sim_pivot + 5, pivot - 1)
+        local id2 = sid:sub(pivot + 2)
+        return id1, id2
+    end
+
+    -- Collection Case: {coll}:sim:{algo}:{clean_id1}::{clean_id2}
     local sim_prefix = collection .. ':sim:' .. algo .. ':'
     if sid:sub(1, #sim_prefix) ~= sim_prefix then return nil, nil end
     

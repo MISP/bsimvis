@@ -5,6 +5,7 @@ import signal
 import sys
 import os
 import tempfile
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -46,7 +47,9 @@ class Worker:
         lua_manager.init_app()
 
         # Ensure Ghidra is ready
-        ghidra_service.ensure_launcher()
+        max_heap_mb = config_service.get("ghidra.max_heap_mb", 1536)
+        jvm_args = config_service.get("ghidra.jvm_args", [])
+        ghidra_service.ensure_launcher(max_heap_mb=max_heap_mb, jvm_args=jvm_args)
 
         self.similarity_service = SimilarityService(self.r_data)
         self.metadata_service = MetadataService(self.r_data)
@@ -112,7 +115,13 @@ class Worker:
         self.job_service.add_log(
             job_id, f"Worker {self.name} started processing {jtype}."
         )
-        self.r_queue.hset(f"job:{job_id}", "status", JobStatus.RUNNING.value)
+        self.r_queue.hset(
+            f"job:{job_id}",
+            mapping={
+                "status": JobStatus.RUNNING.value,
+                "started_at": str(int(time.time() * 1000)),
+            },
+        )
 
         # Execute Job within a timer context
         with job_timer(job_id) as timer:
@@ -144,11 +153,129 @@ class Worker:
                 self.job_service.add_log(job_id, perf_summary)
                 logging.info(f"[#] Job {job_id} {perf_summary}")
 
+    def _collect_project_files(self, folder):
+        """Recursively collect all DomainFiles from a Ghidra project folder."""
+        files = list(folder.getFiles())
+        for sub in folder.getFolders():
+            files.extend(self._collect_project_files(sub))
+        return files
+
+    def _post_chunk(
+        self,
+        chunk,
+        idx,
+        is_final,
+        collection,
+        file_md5,
+        file_meta,
+        skip_sim,
+        payload,
+        hosts,
+        job_id,
+        splice_into_parent=True,
+    ):
+        import requests
+
+        chunk_payload = {
+            "collection": collection,
+            "file_md5": file_md5,
+            "chunk_index": idx,
+            "is_final": is_final,
+            "skip_sim": skip_sim,
+            "file_metadata": file_meta if idx == 0 else None,
+            "functions": chunk,
+        }
+        if splice_into_parent:
+            chunk_payload["parent_job_id"] = job_id
+
+        for opt in ["top_k", "min_score", "min_features", "algo"]:
+            if opt in payload:
+                chunk_payload[opt] = payload[opt]
+        for api_host in hosts:
+            url = f"http://{api_host}/api/file/upload_chunk"
+            resp = requests.post(url, json=chunk_payload, timeout=300)
+            resp.raise_for_status()
+            return resp.json()
+
+    def _stream_program_chunks(
+        self, program, payload, hosts, job_id, splice_into_parent=True
+    ):
+        collection = payload.get("collection", "main")
+        skip_sim = payload.get("skip_sim", False)
+
+        # Initialize stream generator with job context for real-time progress
+        generator = ghidra_service.stream_bsim_data(
+            program,
+            payload,
+            chunk_size=100,
+            job_service=self.job_service,
+            job_id=job_id,
+        )
+        file_meta = next(generator)
+
+        # Merge CLI-provided metadata (upload --metadata) into the file metadata so
+        # it gets stored just like the `metadata propagate` path. The raw-upload
+        # route forwards it as file_metadata_extra; without this the streaming
+        # analysis path silently drops it.
+        extra_meta = payload.get("file_metadata_extra")
+        if extra_meta:
+            if isinstance(extra_meta, str):
+                extra_meta = json.loads(extra_meta)
+            file_meta.update(extra_meta)
+            if "file_name" in extra_meta:
+                file_meta["file_name"] = extra_meta["file_name"]
+
+        file_md5 = file_meta.get("file_md5")
+
+        # Look-ahead: send each chunk immediately without buffering all of them.
+        # Holding one chunk behind lets us detect the final chunk on arrival of the next.
+        idx = 0
+        prev_chunk = None
+        for chunk in generator:
+            if prev_chunk is not None:
+                self._post_chunk(
+                    prev_chunk,
+                    idx - 1,
+                    False,
+                    collection,
+                    file_md5,
+                    file_meta,
+                    skip_sim,
+                    payload,
+                    hosts,
+                    job_id,
+                    splice_into_parent=splice_into_parent,
+                )
+                self.job_service.update_progress(job_id, 80, f"Uploaded chunk {idx}")
+            prev_chunk = chunk
+            idx += 1
+
+        # Send the final chunk (or empty sentinel when the program has no functions)
+        final_chunk = prev_chunk if prev_chunk is not None else []
+        final_idx = max(idx - 1, 0)
+        res = self._post_chunk(
+            final_chunk,
+            final_idx,
+            True,
+            collection,
+            file_md5,
+            file_meta,
+            skip_sim,
+            payload,
+            hosts,
+            job_id,
+            splice_into_parent=splice_into_parent,
+        )
+        self.job_service.update_progress(job_id, 100, f"Uploaded chunk {idx}/{idx}")
+
+        pipeline_id = res.get("pipeline_id") if isinstance(res, dict) else None
+        return pipeline_id
+
     def _dispatch(self, jtype, payload, job_id):
         """Dispatcher for background jobs."""
         collection = payload.get("collection", "main")
-        file_id = payload.get("file_id")
         md5 = payload.get("md5")
+        file_id = payload.get("file_id")
         batch_uuid = payload.get("batch_uuid")
 
         if jtype == JobType.GHIDRA_ANALYZE.value:
@@ -177,9 +304,21 @@ class Worker:
                 with open(temp_path, "wb") as f:
                     f.write(raw_bytes)
 
-                # 3. Run Analysis
-                all_analysis_data = []
+                # 3. Run Analysis & Stream Chunks directly to API
+                app_host = os.getenv("APP_HOST", "localhost")
+                app_port = os.getenv("APP_PORT", "5000")
+                fallback_host = f"{app_host}:{app_port}"
 
+                # Check environment variables first, then fallback to config
+                hosts = (
+                    fallback_host
+                    if os.getenv("APP_PORT")
+                    else config_service.get("bsimvis.host", fallback_host)
+                )
+                if isinstance(hosts, str):
+                    hosts = [hosts]
+
+                # We will analyze using stream_bsim_data
                 if temp_path.endswith(".gpr.zip"):
                     self.job_service.add_log(
                         job_id, f"Extracting Ghidra project archive {orig_name}..."
@@ -208,163 +347,146 @@ class Worker:
                     self.job_service.add_log(
                         job_id, f"Starting Ghidra project analysis for {orig_name}..."
                     )
-                    all_analysis_data = ghidra_service.analyze_project(
-                        gpr_path, payload
+                    from ghidra.base.project import GhidraProject
+
+                    project = GhidraProject.openProject(
+                        Path(gpr_path).parent, Path(gpr_path).stem
                     )
+                    pipeline_ids = []
+                    try:
+                        root_folder = project.getProjectData().getRootFolder()
+                        files = self._collect_project_files(root_folder)
+                        for file in files:
+                            from ghidra.util.task import ConsoleTaskMonitor
+
+                            program = file.getDomainObject(
+                                project, True, False, ConsoleTaskMonitor()
+                            )
+                            try:
+                                binary_md5 = program.getExecutableMD5()
+                                if binary_md5:
+                                    # Check if already exists in collection
+                                    if self.r_data.sismember(
+                                        f"{collection}:all_files",
+                                        f"{collection}:file:{binary_md5}",
+                                    ):
+                                        self.job_service.add_log(
+                                            job_id,
+                                            f"Skipping {program.getName()} (MD5 {binary_md5} already exists in collection).",
+                                        )
+                                        continue
+
+                                ghidra_service.run_profile_analysis(
+                                    program,
+                                    payload.get("profile", "fast"),
+                                    force_reanalysis=False,
+                                )
+                                pipe_id = self._stream_program_chunks(
+                                    program,
+                                    payload,
+                                    hosts,
+                                    job_id,
+                                    splice_into_parent=True,
+                                )
+                                if pipe_id:
+                                    pipeline_ids.append(pipe_id)
+                            finally:
+                                if program:
+                                    program.release(project)
+
+                        if pipeline_ids:
+                            group_id = self.job_service.create_group(
+                                pipeline_ids, enqueue=False
+                            )
+                            parent_pipeline_id = self.r_queue.hget(
+                                f"job:{job_id}", "parent_id"
+                            )
+                            if parent_pipeline_id:
+                                parent_pipeline_id = (
+                                    parent_pipeline_id.decode()
+                                    if isinstance(parent_pipeline_id, bytes)
+                                    else parent_pipeline_id
+                                )
+                                pipe_data = self.r_queue.hgetall(
+                                    f"job:{parent_pipeline_id}"
+                                )
+                                if pipe_data and "task_ids" in pipe_data:
+                                    existing_tids = json.loads(pipe_data["task_ids"])
+                                    try:
+                                        idx = existing_tids.index(job_id)
+                                        updated_tids = (
+                                            existing_tids[: idx + 1]
+                                            + [group_id]
+                                            + existing_tids[idx + 1 :]
+                                        )
+                                    except ValueError:
+                                        updated_tids = existing_tids + [group_id]
+                                    self.r_queue.hset(
+                                        f"job:{parent_pipeline_id}",
+                                        "task_ids",
+                                        json.dumps(updated_tids),
+                                    )
+                                    self.job_service.add_log(
+                                        parent_pipeline_id,
+                                        f"Spliced child pipelines group {group_id} into pipeline.",
+                                    )
+                    finally:
+                        project.close()
                 else:
                     self.job_service.add_log(
                         job_id, f"Starting Ghidra analysis for {orig_name}..."
                     )
-                    all_analysis_data = [
-                        ghidra_service.analyze_file(temp_path, payload)
-                    ]
+                    # For a single file
+                    from ghidra.base.project import GhidraProject
 
-                # 4. Store JSON results and chain indexing
-                parent_id = self.r_queue.hget(f"job:{job_id}", "parent_id")
-                if parent_id:
-                    parent_id = (
-                        parent_id.decode()
-                        if isinstance(parent_id, bytes)
-                        else parent_id
-                    )
-
-                for analysis_data in all_analysis_data:
-                    real_md5 = analysis_data.get("file_metadata", {}).get("file_md5")
-                    if not real_md5:
-                        continue
-
-                    if payload.get("file_metadata_extra"):
-                        extra = payload["file_metadata_extra"]
-                        if isinstance(extra, str):
-                            extra = json.loads(extra)
-                        analysis_data.setdefault("file_metadata", {}).update(extra)
-                        if "file_name" in extra:
-                            analysis_data["file_metadata"]["file_name"] = extra[
-                                "file_name"
-                            ]
-
-                    file_id = f"{collection}:file:{real_md5}:data"
-                    self.r_data.set(file_id, json.dumps(analysis_data))
-
-                    self.job_service.add_log(
-                        job_id,
-                        f"Analysis complete for {analysis_data['file_metadata'].get('file_name')}. Result stored.",
-                    )
-
-                    # 5. Chain next tasks (if this is part of a pipeline)
-                    if parent_id:
-                        pipe_data = self.r_queue.hgetall(f"job:{parent_id}")
-                        if pipe_data and "task_ids" in pipe_data:
-                            task_ids = json.loads(pipe_data["task_ids"])
-
-                            # Define remaining tasks for this file
-                            next_tasks = [
-                                (
-                                    JobType.INDEX_META,
-                                    {
-                                        "collection": collection,
-                                        "file_id": file_id,
-                                        "md5": real_md5,
-                                    },
-                                ),
-                                (
-                                    JobType.INDEX_FUNCTIONS,
-                                    {
-                                        "collection": collection,
-                                        "file_id": file_id,
-                                        "md5": real_md5,
-                                    },
-                                ),
-                                (
-                                    JobType.INDEX_FEATURES,
-                                    {
-                                        "collection": collection,
-                                        "file_id": file_id,
-                                        "md5": real_md5,
-                                    },
-                                ),
-                            ]
-
-                            if not payload.get("skip_sim"):
-                                from bsimvis.app.services.milvus_service import (
-                                    milvus_service,
+                    with tempfile.TemporaryDirectory(
+                        prefix="bsim_"
+                    ) as project_temp_dir:
+                        project = GhidraProject.createProject(
+                            project_temp_dir, "TempGhidraProject", False
+                        )
+                        try:
+                            if payload.get("processor"):
+                                from ghidra.program.model.lang import (
+                                    LanguageID,
+                                    CompilerSpecID,
                                 )
+                                from ghidra.program.util import DefaultLanguageService
 
-                                build_sim_payload = {
-                                    "collection": collection,
-                                    "file_id": file_id,
-                                    "md5": real_md5,
-                                }
-                                # Copy similarity options
-                                for opt in [
-                                    "top_k",
-                                    "min_score",
-                                    "min_features",
-                                    "algo",
-                                ]:
-                                    if opt in payload:
-                                        build_sim_payload[opt] = payload[opt]
-
-                                if (
-                                    milvus_service.enabled
-                                    and build_sim_payload.get("algo") == "milvus_sparse"
-                                ):
-                                    next_tasks.append(
-                                        (
-                                            JobType.SYNC_MILVUS,
-                                            {"collection": collection},
-                                        )
-                                    )
-                                next_tasks.append(
-                                    (JobType.BUILD_SIM, build_sim_payload)
+                                lang_service = (
+                                    DefaultLanguageService.getLanguageService()
                                 )
+                                lang_id = LanguageID(payload.get("processor"))
+                                lang = lang_service.getLanguage(lang_id)
+                                if payload.get("cspec"):
+                                    cspec_id = CompilerSpecID(payload.get("cspec"))
+                                    cspec = lang.getCompilerSpecByID(cspec_id)
+                                else:
+                                    cspec = lang.getDefaultCompilerSpec()
+                                program = project.importProgram(
+                                    Path(temp_path), lang, cspec
+                                )
+                            else:
+                                program = project.importProgram(Path(temp_path))
 
-                            # Check if the parent pipeline is part of a group/batch
-                            has_grandparent = False
-                            grandparent_id = self.r_queue.hget(
-                                f"job:{parent_id}", "parent_id"
+                            ghidra_service.run_profile_analysis(
+                                program,
+                                payload.get("profile", "fast"),
+                                force_reanalysis=True,
                             )
-                            if grandparent_id:
-                                grandparent_id = (
-                                    grandparent_id.decode()
-                                    if isinstance(grandparent_id, bytes)
-                                    else grandparent_id
-                                )
-                                if grandparent_id:
-                                    has_grandparent = True
+                            self._stream_program_chunks(program, payload, hosts, job_id)
+                        finally:
+                            if "program" in locals() and program:
+                                program.release(project)
 
-                            if not has_grandparent:
-                                next_tasks.append(
-                                    (
-                                        JobType.ENRICH_FEATURES,
-                                        {"collection": collection},
-                                    )
-                                )
-
-                            # Create these jobs and append to task_ids
-                            new_tids = []
-                            for jt, pl in next_tasks:
-                                tid = self.job_service.create_job(
-                                    jt, pl, parent_id=parent_id, is_subtask=True
-                                )
-                                new_tids.append(tid)
-
-                            task_ids.extend(new_tids)
-                            self.r_queue.hset(
-                                f"job:{parent_id}", "task_ids", json.dumps(task_ids)
-                            )
-                            self.job_service.add_log(
-                                parent_id,
-                                f"Appended {len(new_tids)} indexing tasks for {analysis_data['file_metadata'].get('file_name')} to pipeline.",
-                            )
+                self.job_service.add_log(
+                    job_id, f"Analysis and streaming complete for {orig_name}."
+                )
 
                 return True
             except Exception as e:
                 self.job_service.add_log(job_id, f"Analysis failed: {str(e)}")
-                import traceback
-
-                logging.error(traceback.format_exc())
-                return False
+                raise
             finally:
                 if temp_path and os.path.exists(temp_path):
                     try:
@@ -372,19 +494,55 @@ class Worker:
                     except Exception:
                         pass
                 if temp_dir and os.path.exists(temp_dir):
+                    import shutil
+
                     try:
-                        os.rmdir(temp_dir)
+                        shutil.rmtree(temp_dir)
                     except Exception:
                         pass
 
         elif jtype == JobType.INDEX_META.value:
+            file_meta = payload.get("file_meta")
+            num_functions = payload.get("num_functions")
+            total_features = payload.get("total_features")
             return self.processing_service.index_metadata(
-                collection, file_id, self.job_service, job_id
+                collection,
+                file_id,
+                self.job_service,
+                job_id,
+                file_meta=file_meta,
+                num_functions=num_functions,
+                total_features=total_features,
             )
 
         elif jtype == JobType.INDEX_FUNCTIONS.value:
+            functions_list = payload.get("functions_list")
+            chunk_id = payload.get("chunk_id")
+            if chunk_id:
+                # ponytail: retrieve from Kvrocks & delete right away
+                raw_funcs = self.r_data.get(chunk_id)
+                if raw_funcs:
+                    functions_list = json.loads(raw_funcs)
+                    self.r_data.delete(chunk_id)
+                else:
+                    # ponytail: Duplicate run or missing data, finish gracefully
+                    self.job_service.add_log(
+                        job_id, "Chunk data empty or already processed. Skipping."
+                    )
+                    return True
+
+            file_meta = payload.get("file_meta")
+            file_md5 = payload.get("file_md5")
+            batch_uuid = payload.get("batch_uuid")
             return self.processing_service.index_functions(
-                collection, file_id, self.job_service, job_id
+                collection,
+                file_id,
+                self.job_service,
+                job_id,
+                functions_list=functions_list,
+                file_meta=file_meta,
+                file_md5=file_md5,
+                batch_uuid=batch_uuid,
             )
 
         elif jtype == JobType.INDEX_FEATURES.value:
@@ -430,18 +588,29 @@ class Worker:
                 "algo", config_service.get("similarity.algo", "unweighted_cosine")
             )
             top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
-            min_score = payload.get(
-                "min_score", config_service.get("similarity.min_score", 0.3)
+            # Collection-sticky: first build locks these; later payload values ignored
+            # so the BSim-vs-hash split (and canonical file score) stays stable.
+            from bsimvis.app.services.collection_config import resolve_and_lock
+
+            min_score = resolve_and_lock(
+                collection, "min_score", payload.get("min_score")
             )
-            min_features = payload.get(
-                "min_features", config_service.get("similarity.min_features", 0)
+            min_features = resolve_and_lock(
+                collection, "min_features", payload.get("min_features")
             )
+            # ponytail: Default to 'minimal' index depth to save indexing writes during build_sim
+            index_depth = payload.get("index_depth", "minimal")
 
             if not md5 and file_id:
                 # Fallback: Fetch monolith if MD5 is missing
-                data = self.r_data.json().get(file_id, "$")
-                if isinstance(data, list) and data:
-                    data = data[0]
+                raw = self.r_data.get(file_id)
+                data = {}
+                if raw:
+                    val = raw.decode() if isinstance(raw, bytes) else raw
+                    try:
+                        data = json.loads(val)
+                    except Exception:
+                        pass
                 md5 = data.get("file_md5")
 
             return self.similarity_service.build_batch(
@@ -452,6 +621,33 @@ class Worker:
                 top_k=top_k,
                 min_score=min_score,
                 min_features=min_features,
+                job_service=self.job_service,
+                job_id=job_id,
+                index_depth=index_depth,
+                skip_write=payload.get("skip_write", False),  # ponytail
+            )
+
+        elif jtype == JobType.INDEX_SIM.value:
+            algo = payload.get(
+                "algo", config_service.get("similarity.algo", "unweighted_cosine")
+            )
+            pool_id = payload.get("pool_id")
+            if not md5 and file_id:
+                raw = self.r_data.get(file_id)
+                data = {}
+                if raw:
+                    val = raw.decode() if isinstance(raw, bytes) else raw
+                    try:
+                        data = json.loads(val)
+                    except Exception:
+                        pass
+                md5 = data.get("file_md5")
+            return self.similarity_service.index_similarities(
+                collection,
+                algo=algo,
+                pool_id=pool_id,
+                md5=md5,
+                batch_uuid=batch_uuid,
                 job_service=self.job_service,
                 job_id=job_id,
             )
@@ -584,6 +780,14 @@ class Worker:
 
         elif jtype == JobType.REINDEX_BIN_SIM.value:
             algo = payload.get("algo", "unweighted_cosine")
+            pool_id = payload.get("pool_id")
+            if pool_id:
+                return self.similarity_service.reindex_pool_bin_sim(
+                    pool_id,
+                    algo=algo,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                )
             return bin_sim_service.reindex_bin_sim(
                 collection,
                 algo=algo,
@@ -612,6 +816,59 @@ class Worker:
                 payload.get("updates"),
                 job_service=self.job_service,
                 job_id=job_id,
+            )
+
+        elif jtype == JobType.INIT_POOL_BUILD.value:
+            pool_id = payload.get("pool_id")
+            from bsimvis.app.services.pool_service import pool_service
+
+            return pool_service.init_pool_build(pool_id)
+
+        elif jtype == JobType.FINALIZE_POOL_BUILD.value:
+            pool_id = payload.get("pool_id")
+            from bsimvis.app.services.pool_service import pool_service
+
+            return pool_service.finalize_pool_build(pool_id)
+
+        elif jtype == JobType.BUILD_POOL_SIM.value:
+            pool_id = payload.get("pool_id")
+            file_md5 = payload.get("file_md5")
+            index_depth = payload.get("index_depth", "none")
+            skip_write = payload.get("skip_write", False)
+            if file_md5:
+                return self.similarity_service.build_pool_file(
+                    pool_id,
+                    file_md5,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                    index_depth=index_depth,
+                    skip_write=skip_write,
+                )
+            else:
+                return self.similarity_service.build_pool(
+                    pool_id,
+                    job_service=self.job_service,
+                    job_id=job_id,
+                    index_depth=index_depth,
+                    skip_write=skip_write,
+                )
+
+        elif jtype == JobType.CLUSTER_POOL.value:
+            pool_id = payload.get("pool_id")
+            return cluster_service.run_pool_clustering(
+                pool_id, job_service=self.job_service, job_id=job_id
+            )
+
+        elif jtype == JobType.BUILD_POOL_BIN_SIM.value:
+            pool_id = payload.get("pool_id")
+            return self.similarity_service.build_pool_bin_sim(
+                pool_id, job_service=self.job_service, job_id=job_id
+            )
+
+        elif jtype == JobType.CLUSTER_POOL_BINARIES.value:
+            pool_id = payload.get("pool_id")
+            return cluster_service.run_pool_bin_clustering(
+                pool_id, job_service=self.job_service, job_id=job_id
             )
 
         return False

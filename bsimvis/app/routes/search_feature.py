@@ -72,7 +72,7 @@ def _scan_feature_keys(r, collection, feature_prefix, offset, limit, sort_by):
 
         if feature_list:
             zset_key = f"{collection}:features:by_tf"
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for f in feature_list:
                 pipe.zscore(zset_key, f["hash"])
             scores = pipe.execute()
@@ -88,7 +88,7 @@ def _enrich_feature_context(r, collection, feature_list):
         return feature_list
 
     try:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for f in feature_list:
             pipe.execute_command("HVALS", f"{collection}:feature:{f['hash']}:meta")
         first_metas_raw = pipe.execute()
@@ -100,7 +100,7 @@ def _enrich_feature_context(r, collection, feature_list):
             else:
                 first_metas.append([])
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for i, meta_pkg in enumerate(first_metas):
             fm = meta_pkg[0] if meta_pkg else None
             f = feature_list[i]
@@ -130,13 +130,13 @@ def _enrich_feature_context(r, collection, feature_list):
                 }
                 func_id = fm.get("function_id")
                 if func_id and f["context"]["line_idxs"]:
-                    pipe.json().get(f"{func_id}:source", "$")
+                    pipe.get(f"{func_id}:source")
                     f["_line_idx"] = f["context"]["line_idxs"][0]
                 else:
                     pipe.execute_command("ECHO", "no_source")
 
                 if not f["context"]["pcode_full"] and func_id:
-                    pipe.json().get(f"{func_id}:vec:meta", "$")
+                    pipe.get(f"{func_id}:vec:meta")
                 else:
                     pipe.execute_command("ECHO", "no_meta_fallback")
             else:
@@ -154,10 +154,20 @@ def _enrich_feature_context(r, collection, feature_list):
             if "context" not in f:
                 continue
             source_data = second_results[i * 2]
-            if isinstance(source_data, list) and source_data:
-                source_data = source_data[0]
+            if source_data:
+                source_data = (
+                    json.loads(source_data)
+                    if not isinstance(source_data, dict)
+                    else source_data
+                )
+                if isinstance(source_data, list) and source_data:
+                    source_data = source_data[0]
 
             vec_meta = second_results[i * 2 + 1]
+            if vec_meta:
+                vec_meta = (
+                    json.loads(vec_meta) if not isinstance(vec_meta, list) else vec_meta
+                )
             if isinstance(vec_meta, list) and vec_meta:
                 vec_meta = vec_meta[0]
 
@@ -210,12 +220,80 @@ def _enrich_feature_context(r, collection, feature_list):
 
 
 def query_features_advanced(r, collection, filters):
-    # Start with all features as candidates
-    all_features_key = f"{collection}:all_features"
-    candidates = {
-        d.decode() if isinstance(d, bytes) else str(d)
-        for d in r.smembers(all_features_key)
-    }
+    has_filters = any(
+        filters.get(k)
+        for k in [
+            "q",
+            "hash",
+            "type",
+            "op",
+            "min_frequency",
+            "max_frequency",
+            "min_tf_score",
+            "max_tf_score",
+        ]
+    )
+    sort_by = filters.get("sort_by", "tf_score")
+    sort_order = filters.get("sort_order", "desc")
+    reverse_sort = sort_order == "desc"
+    offset = filters.get("offset", 0)
+    limit = filters.get("limit", 20)
+
+    # ponytail: fast-path for search-all/sort-all without loading millions of entries into memory
+    if not has_filters and sort_by in ["tf_score", "frequency"]:
+        zset_key = f"{collection}:idx:feature:{sort_by}"
+        total = r.zcard(zset_key)
+        if total > 0:
+            if reverse_sort:
+                page_ids_raw = r.zrevrange(zset_key, offset, offset + limit - 1)
+            else:
+                page_ids_raw = r.zrange(zset_key, offset, offset + limit - 1)
+            page_ids = [
+                d.decode() if isinstance(d, bytes) else str(d) for d in page_ids_raw
+            ]
+            page_hashes = [doc_id.split(":")[-1] for doc_id in page_ids]
+
+            pipe = r.pipeline(transaction=False)
+            for fh in page_hashes:
+                pipe.get(f"{collection}:feature:{fh}:global_meta")
+            metas_raw = pipe.execute()
+
+            features = []
+            for fh, m_list in zip(page_hashes, metas_raw):
+                meta = (
+                    json.loads(m_list)
+                    if m_list and not isinstance(m_list, dict)
+                    else (m_list or None)
+                )
+                if meta and isinstance(meta, list):
+                    meta = meta[0]
+                if not meta:
+                    # Fallback dynamic enrichment
+                    meta = {
+                        "hash": fh,
+                        "feature_id": f"{collection}:feature:{fh}",
+                        "type": "N/A",
+                        "op": "N/A",
+                        "frequency": r.zcard(f"{collection}:feature:{fh}:functions"),
+                        "tf_score": r.zscore(f"{collection}:features:by_tf", fh) or 0.0,
+                        "context": {
+                            "type": "N/A",
+                            "op": "N/A",
+                            "pcode_full": "N/A",
+                            "c_code": None,
+                        },
+                    }
+                features.append(meta)
+            return features, total
+
+    candidates = None
+
+    def update_candidates(new_matches):
+        nonlocal candidates
+        if candidates is None:
+            candidates = set(new_matches)
+        else:
+            candidates.intersection_update(new_matches)
 
     def get_field_matches(field_name, search_val):
         registry_key = f"{collection}:reg:feature:{field_name}"
@@ -241,7 +319,7 @@ def query_features_advanced(r, collection, filters):
                     for t in r.smembers(matching_buckets[0])
                 }
             else:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for b in matching_buckets:
                     pipe.smembers(b)
                 for res in pipe.execute():
@@ -259,13 +337,13 @@ def query_features_advanced(r, collection, filters):
             word_matches = set()
             for field in search_fields:
                 word_matches.update(get_field_matches(field, word))
-            candidates.intersection_update(word_matches)
+            update_candidates(word_matches)
 
     # 2. Specific tag filters
     for field in ["hash", "type", "op"]:
         val = filters.get(field, "").strip()
         if val:
-            candidates.intersection_update(get_field_matches(field, val))
+            update_candidates(get_field_matches(field, val))
 
     # 3. Numeric range filters
     # Frequency
@@ -281,7 +359,7 @@ def query_features_advanced(r, collection, filters):
                     f"{collection}:idx:feature:frequency", fmin, fmax
                 )
             }
-            candidates.intersection_update(freq_matches)
+            update_candidates(freq_matches)
         except (ValueError, TypeError):
             pass
 
@@ -298,9 +376,16 @@ def query_features_advanced(r, collection, filters):
                     f"{collection}:idx:feature:tf_score", tmin, tmax
                 )
             }
-            candidates.intersection_update(tf_matches)
+            update_candidates(tf_matches)
         except (ValueError, TypeError):
             pass
+
+    if candidates is None:
+        all_features_key = f"{collection}:all_features"
+        candidates = {
+            d.decode() if isinstance(d, bytes) else str(d)
+            for d in r.smembers(all_features_key)
+        }
 
     total = len(candidates)
     candidate_list = list(candidates)
@@ -312,7 +397,7 @@ def query_features_advanced(r, collection, filters):
 
     if sort_by in ["frequency", "tf_score"]:
         zset_key = f"{collection}:idx:feature:{sort_by}"
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for doc_id in candidate_list:
             pipe.zscore(zset_key, doc_id)
         scores = pipe.execute()
@@ -326,18 +411,23 @@ def query_features_advanced(r, collection, filters):
         if sort_by == "hash":
             candidate_list.sort(key=lambda x: x.split(":")[-1], reverse=reverse_sort)
         else:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for doc_id in candidate_list:
                 f_hash = doc_id.split(":")[-1]
-                pipe.json().get(
-                    f"{collection}:feature:{f_hash}:global_meta", f"$.{sort_by}"
-                )
+                pipe.get(f"{collection}:feature:{f_hash}:global_meta")
             sort_vals = pipe.execute()
 
             def get_sort_val(v):
-                if isinstance(v, list) and v:
-                    v = v[0]
-                return str(v or "").lower()
+                if v:
+                    try:
+                        v_doc = json.loads(v) if not isinstance(v, dict) else v
+                        val = v_doc.get(sort_by, "")
+                        if isinstance(val, list) and val:
+                            val = val[0]
+                        return str(val or "").lower()
+                    except:
+                        pass
+                return ""
 
             sorted_candidates = [
                 (doc_id, get_sort_val(val))
@@ -357,14 +447,20 @@ def query_features_advanced(r, collection, filters):
     # 6. Enrichment
     page_hashes = [doc_id.split(":")[-1] for doc_id in page_ids]
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for fh in page_hashes:
-        pipe.json().get(f"{collection}:feature:{fh}:global_meta", "$")
+        pipe.get(f"{collection}:feature:{fh}:global_meta")
     metas_raw = pipe.execute()
 
     features = []
     for fh, m_list in zip(page_hashes, metas_raw):
-        meta = m_list[0] if (isinstance(m_list, list) and m_list) else None
+        meta = (
+            json.loads(m_list)
+            if m_list and not isinstance(m_list, dict)
+            else (m_list or None)
+        )
+        if meta and isinstance(meta, list):
+            meta = meta[0]
         if not meta:
             # Fallback dynamic enrichment
             meta = {
@@ -475,7 +571,7 @@ def get_feature_details(f_hash):
         paginated_meta = meta_data[offset : offset + limit]
 
         # Augment missing fields
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         augment_indices = []
         for i, occ in enumerate(paginated_meta):
             if (
@@ -486,7 +582,7 @@ def get_feature_details(f_hash):
             ):
                 func_id = occ.get("function_id")
                 if func_id:
-                    pipe.json().get(f"{func_id}:vec:meta", "$")
+                    pipe.get(f"{func_id}:vec:meta")
                     pipe.zscore(f"{func_id}:vec:tf", f_hash)
                     augment_indices.append(i)
 
@@ -496,8 +592,14 @@ def get_feature_details(f_hash):
                 for i, idx in enumerate(augment_indices):
                     occ = paginated_meta[idx]
                     vec_meta = extra_results[i * 2]
-                    if isinstance(vec_meta, list) and vec_meta and len(vec_meta) == 1:
-                        vec_meta = vec_meta[0]
+                    if vec_meta:
+                        vec_meta = (
+                            json.loads(vec_meta)
+                            if not isinstance(vec_meta, list)
+                            else vec_meta
+                        )
+                        if isinstance(vec_meta, list) and len(vec_meta) == 1:
+                            vec_meta = vec_meta[0]
                     tf_score = extra_results[i * 2 + 1]
                     if vec_meta:
                         for feat in vec_meta:

@@ -11,7 +11,7 @@ window.CallGraphView = {
         this.params = params;
         this.container = document.getElementById(containerId);
         
-        const collection = params.collection || 'main';
+        const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
         if (!file_md5) {
@@ -57,7 +57,8 @@ window.CallGraphView = {
 
             // Fetch file details for metadata and breadcrumb updates
             try {
-                const detailsRes = await fetch(`/api/file/details/${file_md5}?collection=${encodeURIComponent(collection)}`);
+                const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+                const detailsRes = await fetch(`/api/file/details/${file_md5}?${apiParams}`);
                 if (detailsRes.ok) {
                     const detailsData = await detailsRes.json();
                     if (detailsData && detailsData.file) {
@@ -65,15 +66,8 @@ window.CallGraphView = {
                         const fileName = file.file_name || file.file_names?.[0] || 'Unknown Binary';
                         window.filenameCache = window.filenameCache || {};
                         window.filenameCache[file_md5] = fileName;
-                        
-                        // Update breadcrumb item span dynamically
-                        const items = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
-                        if (items.length >= 3) {
-                            const fileSpan = items[1].querySelector('span');
-                            if (fileSpan) {
-                                fileSpan.innerText = fileName;
-                            }
-                        }
+                        Breadcrumbs.setFilename(file_md5, fileName);
+                        Breadcrumbs.refresh();
 
                         const renderRow = (icon, label, value, color, clickable = false, clickHandler = null) => {
                             if (!value) return '';
@@ -89,7 +83,7 @@ window.CallGraphView = {
                                 </div>
                             `;
                         };
-                        
+
                         let metaHtml = '';
                         metaHtml += renderRow('fa-solid fa-file-signature', 'Filename', fileName, 'var(--accent)', true, `const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${file_md5}', '${fileName.replace(/'/g, "\\\\'")}', event); }`);
                         metaHtml += renderRow('fa-solid fa-microchip', 'Architecture', file.language_id || file.language, '#ae81ff');
@@ -100,7 +94,7 @@ window.CallGraphView = {
                         if (file.first_seen) {
                             metaHtml += renderRow('fa-solid fa-clock', 'First Seen', new Date(file.first_seen * 1000).toLocaleString(), '#ccc');
                         }
-                        
+
                         document.getElementById('cg-meta-content').innerHTML = metaHtml || '<div class="dim">No metadata found.</div>';
                     }
                 }

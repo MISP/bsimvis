@@ -32,7 +32,7 @@
     <script src="/js/cluster_views.js?v=3"></script>
     <script src="/js/bin_cluster_views.js?v=3"></script>
     <script src="/js/call_graph.js?v=3"></script>
-    <script src="/js/binary_similarity.js?v=7"></script>
+    <script src="/js/binary_similarity.js?v=10"></script>
     <script src="/js/chord_graph.js?v=7"></script>
     <script src="/js/window_manager.js?v=3"></script>
     <script src="/js/upload.js?v=3"></script>
@@ -49,6 +49,8 @@
     <script src="/js/views/call_graph_view.js?v=3"></script>
     <script src="/js/views/feature_view.js?v=3"></script>
     <script src="/js/views/function_features_view.js?v=3"></script>
+    <script src="/js/views/collection_detail_view.js?v=3"></script>
+    <script src="/js/views/pool_detail_view.js?v=9"></script>
 </head>
 
 <body>
@@ -65,8 +67,7 @@
                 <i id="limit-warn-icon" class="fa-solid fa-circle-info" style="color:#60a5fa; display:none; cursor:help; font-size: 0.9rem;" title="Result Limit Reached"></i>
                 <div id="search-settings-container" style="display:none; align-items:center; gap:8px;"></div>
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
-                    <div id="diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
-                    <div id="file-diff-queue-status" style="font-size:0.8rem; color:var(--dim)"></div>
+
 
                     <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
                         title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
@@ -227,6 +228,13 @@
                 <button class="btn-action" onclick="closeJobModal()">Close</button>
             </div>
         </div>
+    </div>
+
+    <!-- Floating status panel for jobs and diff queues -->
+    <div id="floating-status-panel" class="floating-status-panel">
+        <span id="view-job-status" class="badge" style="background:rgba(96,165,250,0.1); color:#60a5fa; font-size:0.75rem; display:none; border:1px solid rgba(96,165,250,0.3); align-items:center; gap:6px;"></span>
+        <div id="diff-queue-status" class="diff-queue-status"></div>
+        <div id="file-diff-queue-status" class="file-diff-queue-status"></div>
     </div>
 </body>
 

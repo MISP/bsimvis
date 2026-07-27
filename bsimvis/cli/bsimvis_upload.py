@@ -331,19 +331,153 @@ def process_target(target, args, config, batch_order) -> tuple[int, list]:
             options["batch_order"] = batch_order
 
             pipeline_details = []
+
+            # Setup hosts
+            hosts = getattr(args, "hosts", [])
+            if not hosts:
+                hosts = [getattr(args, "host", "localhost:5000")]
+
+            collections = args.collections if args.collections else ["main"]
+
+            # Initialize Ghidra VM
+            ghidra_service.ensure_launcher()
+
             if target_path.suffix == ".gpr":
-                all_data = ghidra_service.analyze_project(target_path, options)
-                for data in all_data:
-                    details = upload_bsim_data(data, args, config)
-                    pipeline_details.extend(details)
+                project = ghidra_service.openProject(
+                    target_path.parent, target_path.stem
+                )
+                try:
+                    root_folder = project.getProjectData().getRootFolder()
+                    files = root_folder.getFiles()
+                    for file in files:
+                        from ghidra.util.task import ConsoleTaskMonitor
+
+                        program = file.getDomainObject(
+                            project, True, False, ConsoleTaskMonitor()
+                        )
+                        try:
+                            ghidra_service.run_profile_analysis(
+                                program,
+                                options.get("profile", "fast"),
+                                force_reanalysis=False,
+                            )
+                            stream_generator = ghidra_service.stream_bsim_data(
+                                program, options, chunk_size=100
+                            )
+                            file_meta = next(stream_generator)
+
+                            all_chunks = list(stream_generator)
+                            if not all_chunks:
+                                all_chunks = [[]]
+
+                            for collection in collections:
+                                for idx, chunk in enumerate(all_chunks):
+                                    chunk_payload = {
+                                        "collection": collection,
+                                        "file_md5": file_meta.get("file_md5"),
+                                        "chunk_index": idx,
+                                        "is_final": (idx == len(all_chunks) - 1),
+                                        "skip_sim": getattr(args, "skip_sim", False),
+                                        "file_metadata": (
+                                            file_meta if idx == 0 else None
+                                        ),
+                                        "functions": chunk,
+                                    }
+                                    # Copy other variables
+                                    for opt in [
+                                        "top_k",
+                                        "min_score",
+                                        "min_features",
+                                        "algo",
+                                    ]:
+                                        if getattr(args, opt, None) is not None:
+                                            chunk_payload[opt] = getattr(args, opt)
+
+                                    for api_host in hosts:
+                                        url = f"http://{api_host}/api/file/upload_chunk"
+                                        resp = requests.post(
+                                            url, json=chunk_payload, timeout=300
+                                        )
+                                        resp.raise_for_status()
+                        finally:
+                            if program:
+                                program.release(project)
+                finally:
+                    project.close()
             else:
-                data = ghidra_service.analyze_file(target_path, options)
-                details = upload_bsim_data(data, args, config)
-                pipeline_details.extend(details)
+                from ghidra.base.project import GhidraProject
+
+                with tempfile.TemporaryDirectory(prefix="bsim_") as project_temp_dir:
+                    project = GhidraProject.createProject(
+                        project_temp_dir, "TempGhidraProject", False
+                    )
+                    try:
+                        if options.get("processor"):
+                            from ghidra.program.model.lang import (
+                                LanguageID,
+                                CompilerSpecID,
+                            )
+                            from ghidra.program.util import DefaultLanguageService
+
+                            lang_service = DefaultLanguageService.getLanguageService()
+                            lang_id = LanguageID(options.get("processor"))
+                            lang = lang_service.getLanguage(lang_id)
+                            if options.get("cspec"):
+                                cspec_id = CompilerSpecID(options.get("cspec"))
+                                cspec = lang.getCompilerSpecByID(cspec_id)
+                            else:
+                                cspec = lang.getDefaultCompilerSpec()
+                            program = project.importProgram(target_path, lang, cspec)
+                        else:
+                            program = project.importProgram(target_path)
+
+                        ghidra_service.run_profile_analysis(
+                            program,
+                            options.get("profile", "fast"),
+                            force_reanalysis=True,
+                        )
+                        stream_generator = ghidra_service.stream_bsim_data(
+                            program, options, chunk_size=100
+                        )
+                        file_meta = next(stream_generator)
+
+                        all_chunks = list(stream_generator)
+                        if not all_chunks:
+                            all_chunks = [[]]
+
+                        for collection in collections:
+                            for idx, chunk in enumerate(all_chunks):
+                                chunk_payload = {
+                                    "collection": collection,
+                                    "file_md5": file_meta.get("file_md5"),
+                                    "chunk_index": idx,
+                                    "is_final": (idx == len(all_chunks) - 1),
+                                    "skip_sim": getattr(args, "skip_sim", False),
+                                    "file_metadata": file_meta if idx == 0 else None,
+                                    "functions": chunk,
+                                }
+                                for opt in [
+                                    "top_k",
+                                    "min_score",
+                                    "min_features",
+                                    "algo",
+                                ]:
+                                    if getattr(args, opt, None) is not None:
+                                        chunk_payload[opt] = getattr(args, opt)
+
+                                for api_host in hosts:
+                                    url = f"http://{api_host}/api/file/upload_chunk"
+                                    resp = requests.post(
+                                        url, json=chunk_payload, timeout=300
+                                    )
+                                    resp.raise_for_status()
+                    finally:
+                        if "program" in locals() and program:
+                            program.release(project)
 
             t_total = time.time() - t0
             logging.info(
-                f"[+] Local processing finished for {target_path.name} in {t_total:.3f}s"
+                f"[+] Local processing and chunked streaming finished for {target_path.name} in {t_total:.3f}s"
             )
             return 1, pipeline_details
         except Exception as e:

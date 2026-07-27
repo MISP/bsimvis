@@ -3,6 +3,23 @@
 const windowManager = new WindowManager();
 window.windowManager = windowManager;
 
+// Backend config defaults, loaded once at startup (see get_config in index.py).
+// Falls back to the same values baked into bsimvis_config.toml.
+window.APP_CONFIG = null;
+async function loadAppConfig() {
+    try {
+        const res = await fetch('/api/index/config');
+        if (res.ok) window.APP_CONFIG = await res.json();
+    } catch (e) {
+        console.error("Failed to load app config", e);
+    }
+}
+loadAppConfig();
+function defaultMinScore() {
+    const v = window.APP_CONFIG?.similarity?.min_score;
+    return (v !== undefined && v !== null) ? String(v) : '0.9';
+}
+
 let filterDebounceTimer = null;
 function debouncedSearch(searchFn) {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
@@ -173,8 +190,32 @@ const routes = {
     'collections': {
         title: 'Collections',
         api: '/api/collection/search',
-        headers: ['Name', 'Batches', 'Files', 'Functions', 'Last Updated', 'Actions'],
+        headers: [
+            { label: 'Name', sort: 'name' },
+            { label: 'Batches', sort: 'total_batches' },
+            { label: 'Files', sort: 'total_files' },
+            { label: 'Functions', sort: 'total_functions' },
+            { label: 'Last Updated', sort: 'last_updated' },
+            'Actions'
+        ],
         renderer: renderCollections
+    },
+    'pools': {
+        title: 'Pools',
+        api: '/api/pool',
+        headers: [
+            { label: 'Pool ID', sort: 'id', width: '15%' },
+            { label: 'Name', sort: 'name', width: '15%' },
+            { label: 'Collections', width: '20%' },
+            { label: 'Files', sort: 'total_files', width: '6%' },
+            { label: 'Funcs', sort: 'total_functions', width: '6%' },
+            { label: 'Sims', sort: 'total_func_similarities', width: '6%' },
+            { label: 'Clusters', sort: 'total_func_clusters', width: '7%' },
+            { label: 'Sync Status', sort: 'sync_status', width: '8%' },
+            { label: 'Created At', sort: 'created_at', width: '10%' },
+            { label: 'Actions', width: '7%' }
+        ],
+        renderer: renderPools
     },
     'batches': {
         title: 'Batches',
@@ -304,14 +345,14 @@ const routes = {
         title: 'Background Jobs',
         api: '/api/jobs',
         headers: [
-            { label: 'ID', width: '15%' },
-            { label: 'Type', width: '12%' },
+            { label: 'Task / ID', width: '27%' },
             { label: 'Collection', width: '10%' },
-            { label: 'Target', width: '15%' },
+            { label: 'Target', width: '12%' },
             { label: 'Status', width: '10%' },
             { label: 'Progress', width: '15%' },
-            { label: 'Created', width: '12%' },
-            { label: 'Actions', width: '11%' }
+            { label: 'Created', width: '11%' },
+            { label: 'Duration', width: '7%' },
+            { label: 'Actions', width: '8%' }
         ],
         renderer: (data) => window.renderJobs(data)
     }
@@ -367,6 +408,8 @@ window.ModuleLoader = {
             'call_graph': window.CallGraphView,
             'feature': window.FeatureView,
             'function_features': window.FunctionFeaturesView,
+            'pool-detail': window.PoolDetailView,
+            'collection-detail': window.CollectionDetailView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -440,21 +483,29 @@ function showDashboardActions() {
     });
 }
 
-async function refreshData(appendArg = false, force = false) {
+async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
-    const { viewKey, collection, params } = getRoutingState();
+    const { viewKey, collection, pool, params } = getRoutingState();
 
 
     // Check if we should load a module view
-    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features'].includes(viewKey)) {
+    if (['function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
+        stateParams.pool = pool;
         stateParams.view = viewKey;
         if (window.Breadcrumbs) {
-            const segments = window.Breadcrumbs.generate({ viewKey, collection, params }, null);
+            const segments = window.Breadcrumbs.generate({ viewKey, collection, pool, params }, null);
             window.Breadcrumbs.render(segments);
         }
         hideDashboardActions();
+        if (typeof updateNavbarLinks === 'function') {
+            updateNavbarLinks(collection);
+        }
+        if (typeof UI !== 'undefined' && UI.Sidebar && typeof UI.Sidebar.updateActiveState === 'function') {
+            UI.Sidebar.updateActiveState();
+        }
         await ModuleLoader.loadView(viewKey, stateParams);
         return;
     }
@@ -467,7 +518,7 @@ async function refreshData(appendArg = false, force = false) {
     // Set default parameters for search views if not present
     if (viewKey === 'files') {
         if (!params.has('min_cohesion')) {
-            params.set('min_cohesion', '0.95');
+            params.set('min_cohesion', '0.5');
         }
     } else if (viewKey === 'functions') {
         if (!params.has('min_cohesion')) {
@@ -475,7 +526,7 @@ async function refreshData(appendArg = false, force = false) {
         }
     } else if (viewKey === 'function-similarity') {
         if (!params.has('min_score')) {
-            params.set('min_score', '0.95');
+            params.set('min_score', defaultMinScore());
         }
         if (!params.has('max_score')) {
             params.set('max_score', '1.0');
@@ -491,7 +542,6 @@ async function refreshData(appendArg = false, force = false) {
         if (!isSilent) {
             currentOffset = 0;
             isEndOfResults = false;
-
             // Only clear if switching view types, otherwise just show loader
             if (viewKey !== lastViewPath) {
                 document.getElementById('table-body').innerHTML = '';
@@ -503,6 +553,64 @@ async function refreshData(appendArg = false, force = false) {
         }
     }
     lastPathName = currentUrlPath;
+    if (viewKey === 'pools') {
+        if (!skipHeader) renderPoolCreationForm();
+    } else if (viewKey === 'jobs') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) {
+            const hasPool = !!(pool || localStorage.getItem('lastPoolContext'));
+            const hasCol = !!(collection || localStorage.getItem('lastCollectionContext'));
+            const showContextBtn = hasPool || hasCol;
+
+            // Determine if we are currently filtered by context
+            const isContextFiltered = !!(pool || collection);
+
+            let buttonText = "Context Jobs";
+            if (pool) {
+                buttonText = "Pool Jobs";
+            } else if (collection) {
+                buttonText = "Collection Jobs";
+            } else {
+                const lastPool = localStorage.getItem('lastPoolContext');
+                const lastCol = localStorage.getItem('lastCollectionContext');
+                if (lastPool) {
+                    buttonText = "Pool Jobs";
+                } else if (lastCol) {
+                    buttonText = "Collection Jobs";
+                }
+            }
+
+            gridHeader.innerHTML = `
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.01);">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        ${showContextBtn ? `
+                            <button class="top-action-btn ${isContextFiltered ? 'active' : ''}" onclick="window.goToContextJobs()" style="${isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
+                                <i class="fa-solid fa-filter"></i> ${buttonText}
+                            </button>
+                        ` : ''}
+                        <button class="top-action-btn ${!isContextFiltered ? 'active' : ''}" onclick="window.goToAllJobs()" style="${!isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
+                            <i class="fa-solid fa-globe"></i> All Jobs
+                        </button>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span style="font-size: 0.8rem; color: var(--dim);">
+                            ${isContextFiltered ? `Viewing jobs for <b>${pool ? 'Pool: ' + pool : 'Collection: ' + collection}</b>` : 'Viewing all jobs in all collections'}
+                        </span>
+                        <button class="top-action-btn" onclick="window.expandAllPipelines()" title="Expand all pipelines" style="font-size: 0.75rem; padding: 3px 8px;">
+                            <i class="fa-solid fa-expand"></i> Expand All
+                        </button>
+                        <button class="top-action-btn" onclick="window.collapseAllPipelines()" title="Collapse all pipelines" style="font-size: 0.75rem; padding: 3px 8px;">
+                            <i class="fa-solid fa-compress"></i> Collapse All
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+    } else {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) gridHeader.innerHTML = '';
+    }
+
 
     if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
         const viewMode = params.get('view') || 'table';
@@ -553,20 +661,45 @@ async function refreshData(appendArg = false, force = false) {
         params.set('limit', countLimit);
     }
 
-    // Ensure collection is in params for the API call
-    if (viewKey !== 'jobs') {
+    // Ensure collection and pool are in params for the API call
+    if (viewKey !== 'jobs' && viewKey !== 'pools') {
         params.set('collection', collection);
-    } else {
-        const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('collection')) {
-            params.set('collection', urlParams.get('collection'));
+        const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+        if (pool) {
+            params.set('pool', pool);
         } else {
-            params.delete('collection');
+            params.delete('pool');
         }
+    } else if (viewKey === 'jobs') {
+        if (collection) {
+            params.set('collection', collection);
+        } else {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('collection')) {
+                params.set('collection', urlParams.get('collection'));
+            } else {
+                params.delete('collection');
+            }
+        }
+        if (pool) {
+            params.set('pool', pool);
+        } else {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('pool')) {
+                params.set('pool', urlParams.get('pool'));
+            } else {
+                params.delete('pool');
+            }
+        }
+        params.delete('pool_id');
+    } else {
+        params.delete('collection');
+        params.delete('pool');
+        params.delete('pool_id');
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
-    updateUI(viewKey, collection, params, route);
+    updateUI(viewKey, collection, params, route, force);
 
     const isGraphView = params.get('view') === 'graph' || params.get('view') === 'hierarchy' || params.get('view') === 'packing';
     if ((isGraphView && (viewKey === 'function-similarity' || viewKey === 'binary-similarity' || viewKey === 'clusters')) || !route.api) {
@@ -584,7 +717,7 @@ async function refreshData(appendArg = false, force = false) {
         const data = await response.json();
 
         // Extract the list of items based on the API response structure
-        const items = data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
+        const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
         const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
         const totalEl = document.getElementById('view-total');
@@ -639,10 +772,6 @@ async function refreshData(appendArg = false, force = false) {
         }
 
         let count = items.length;
-        if (viewKey === 'jobs') {
-            const jobIds = new Set(items.map(item => item.id));
-            count = items.filter(item => !item.parent_id || !jobIds.has(item.parent_id)).length;
-        }
 
         if (append) {
             currentOffset += count;
@@ -667,7 +796,105 @@ async function refreshData(appendArg = false, force = false) {
     }
 }
 
-function updateUI(viewKey, collection, params, route) {
+function updateNavbarLinks(col) {
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (!col && !pool) return;
+    
+    const updateNavLink = (id, targetView) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
+
+        let url;
+        if (pool) {
+            const poolId = pool;
+            url = `/pools/${encodeURIComponent(poolId)}/${targetView}`;
+            if (targetView === 'collections') {
+                url = `/collections`;
+            } else if (targetView === 'jobs') {
+                url = col ? `/pools/${encodeURIComponent(poolId)}/collections/${encodeURIComponent(col)}/jobs` : `/pools/${encodeURIComponent(poolId)}/jobs`;
+            } else if (targetView === 'files') {
+                url = `/pools/${encodeURIComponent(poolId)}/files`;
+            } else if (targetView === 'functions') {
+                url = `/pools/${encodeURIComponent(poolId)}/functions`;
+            } else if (targetView === 'batches') {
+                url = `/pools/${encodeURIComponent(poolId)}/batches`;
+            } else if (targetView === 'features-global') {
+                url = `/pools/${encodeURIComponent(poolId)}/features`;
+            } else if (targetView === 'upload') {
+                url = `/pools/${encodeURIComponent(poolId)}/upload`;
+            } else if (targetView === 'function-similarity') {
+                url = `/pools/${encodeURIComponent(poolId)}/functions/similarities`;
+            } else if (targetView === 'binary-similarity') {
+                url = `/pools/${encodeURIComponent(poolId)}/files/similarities`;
+            } else if (targetView === 'clusters') {
+                url = `/pools/${encodeURIComponent(poolId)}/functions/clusters`;
+            } else if (targetView === 'bin-clusters') {
+                url = `/pools/${encodeURIComponent(poolId)}/files/clusters`;
+            }
+        } else {
+            url = `/collections/${encodeURIComponent(col)}/${targetView}`;
+            if (targetView === 'collections') {
+                url = `/collections`;
+            } else if (targetView === 'jobs') {
+                url = `/collections/${encodeURIComponent(col)}/jobs`;
+            } else if (targetView === 'files') {
+                url = `/collections/${encodeURIComponent(col)}/files`;
+            } else if (targetView === 'functions') {
+                url = `/collections/${encodeURIComponent(col)}/functions`;
+            } else if (targetView === 'batches') {
+                url = `/collections/${encodeURIComponent(col)}/batches`;
+            } else if (targetView === 'features-global') {
+                url = `/collections/${encodeURIComponent(col)}/features`;
+            } else if (targetView === 'upload') {
+                url = `/collections/${encodeURIComponent(col)}/upload`;
+            } else if (targetView === 'function-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
+            } else if (targetView === 'binary-similarity') {
+                url = `/collections/${encodeURIComponent(col)}/files/similarities`;
+            } else if (targetView === 'clusters') {
+                url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
+            } else if (targetView === 'bin-clusters') {
+                url = `/collections/${encodeURIComponent(col)}/files/clusters`;
+            }
+        }
+
+        if (saved && targetView !== 'jobs') {
+            const savedParams = new URLSearchParams(saved);
+            savedParams.delete('collection'); // Already in path
+            savedParams.delete('pool'); // Already in path
+            if (savedParams.toString()) url += `?${savedParams.toString()}`;
+        }
+        el.href = url;
+
+        // Intercept click for SPA navigation
+        el.onclick = (e) => {
+            if (e.ctrlKey || e.metaKey) return;
+            e.preventDefault();
+            const currentState = getRoutingState();
+            if (currentState.viewKey === targetView) {
+                clearFilters();
+            } else {
+                Nav.openPath(url, e);
+            }
+        };
+    };
+
+    updateNavLink('nav-collections', 'collections');
+    updateNavLink('nav-batches', 'batches');
+    updateNavLink('nav-files', 'files');
+    updateNavLink('nav-functions', 'functions');
+    updateNavLink('nav-features-global', 'features-global');
+    updateNavLink('nav-function-similarity', 'function-similarity');
+    updateNavLink('nav-clusters', 'clusters');
+    updateNavLink('nav-bin-clusters', 'bin-clusters');
+    updateNavLink('nav-binary-similarity', 'binary-similarity');
+    updateNavLink('nav-upload', 'upload');
+    updateNavLink('nav-jobs', 'jobs');
+}
+window.updateNavbarLinks = updateNavbarLinks;
+
+function updateUI(viewKey, collection, params, route, force = false) {
     showDashboardActions();
     const routingState = getRoutingState();
     if (window.Breadcrumbs) {
@@ -724,9 +951,18 @@ function updateUI(viewKey, collection, params, route) {
         if (tableWrap) tableWrap.style.display = 'none';
         if (tableBodyWrap) tableBodyWrap.style.display = 'none';
         if (pag) pag.style.display = 'none';
-        document.getElementById('upload-view-container').style.display = 'block';
-        if (typeof renderUploadView === 'function') renderUploadView(params);
-    } else if (viewKey === 'binary-similarity') {
+        
+        const uploadView = document.getElementById('upload-view-container');
+        const isAlreadyVisible = uploadView.style.display === 'block';
+        const currentContext = uploadView.dataset.context;
+        uploadView.style.display = 'block';
+
+        if ((!isAlreadyVisible || force || currentContext !== collection) && typeof renderUploadView === 'function') {
+            uploadView.dataset.context = collection;
+            renderUploadView(params);
+        }
+    }
+ else if (viewKey === 'binary-similarity') {
         document.getElementById('header-top-actions').style.display = 'flex';
     } else {
         document.getElementById('header-top-actions').style.display = 'flex';
@@ -758,72 +994,12 @@ function updateUI(viewKey, collection, params, route) {
         }
     }
 
-    if (col) {
-        const updateNavLink = (id, targetView) => {
-            const el = document.getElementById(id);
-            if (!el) return;
-            const saved = localStorage.getItem(`savedFilters:${col}:${targetView}`);
-
-            let url = `/collections/${encodeURIComponent(col)}/${targetView}`;
-            if (targetView === 'collections') {
-                url = `/collections`;
-            } else if (targetView === 'jobs') {
-                url = `/jobs?collection=${encodeURIComponent(col)}`;
-            } else if (targetView === 'files') {
-                url = `/collections/${encodeURIComponent(col)}/files`;
-            } else if (targetView === 'functions') {
-                url = `/collections/${encodeURIComponent(col)}/functions`;
-            } else if (targetView === 'batches') {
-                url = `/collections/${encodeURIComponent(col)}/batches`;
-            } else if (targetView === 'features-global') {
-                url = `/collections/${encodeURIComponent(col)}/features`;
-            } else if (targetView === 'upload') {
-                url = `/collections/${encodeURIComponent(col)}/upload`;
-            } else if (targetView === 'function-similarity') {
-                url = `/collections/${encodeURIComponent(col)}/functions/similarities`;
-            } else if (targetView === 'binary-similarity') {
-                url = `/collections/${encodeURIComponent(col)}/files/similarities`;
-            } else if (targetView === 'clusters') {
-                url = `/collections/${encodeURIComponent(col)}/functions/clusters`;
-            } else if (targetView === 'bin-clusters') {
-                url = `/collections/${encodeURIComponent(col)}/files/clusters`;
-            }
-
-            if (saved) {
-                const savedParams = new URLSearchParams(saved);
-                if (targetView !== 'jobs') {
-                    savedParams.delete('collection'); // Already in path
-                    if (savedParams.toString()) url += `?${savedParams.toString()}`;
-                } else {
-                    savedParams.set('collection', col);
-                    url = `/jobs?${savedParams.toString()}`;
-                }
-            }
-            el.href = url;
-
-            // Intercept click for SPA navigation
-            el.onclick = (e) => {
-                if (e.ctrlKey || e.metaKey) return;
-                e.preventDefault();
-                const currentState = getRoutingState();
-                if (currentState.viewKey === targetView) {
-                    clearFilters();
-                } else {
-                    Nav.openPath(url, e);
-                }
-            };
-        };
-
-        updateNavLink('nav-collections', 'collections');
-        updateNavLink('nav-batches', 'batches');
-        updateNavLink('nav-files', 'files');
-        updateNavLink('nav-functions', 'functions');
-        updateNavLink('nav-features-global', 'features-global');
-        updateNavLink('nav-function-similarity', 'function-similarity');
-        updateNavLink('nav-clusters', 'clusters');
-        updateNavLink('nav-bin-clusters', 'bin-clusters');
-        updateNavLink('nav-binary-similarity', 'binary-similarity');
-        updateNavLink('nav-jobs', 'jobs');
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (col || pool) {
+        updateNavbarLinks(col);
+        if (typeof UI !== 'undefined' && UI.Sidebar && typeof UI.Sidebar.updateActiveState === 'function') {
+            UI.Sidebar.updateActiveState();
+        }
     }
 
     if (viewKey === 'function-similarity' && params.get('view') === 'graph') {
@@ -903,8 +1079,8 @@ function updateUI(viewKey, collection, params, route) {
     }
 
     if (pathChanged) {
-        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs') {
-            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : 'applyJobSearch'))))));
+        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
 
             let settingsHtml = '';
             settingsEl.style.display = 'flex';
@@ -1042,7 +1218,7 @@ function updateUI(viewKey, collection, params, route) {
                                 <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.5'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 </div>
@@ -1060,7 +1236,7 @@ function updateUI(viewKey, collection, params, route) {
                         headHtml += `
                             <th style="vertical-align: middle;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="sim-min-score" value="${p.get('min_score') || '0.95'}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
+                                    <input type="number" id="sim-min-score" value="${p.get('min_score') || defaultMinScore()}" step="0.05" min="0" max="1" title="Min Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="sim-max-score" value="${p.get('max_score') || '1.0'}" step="0.05" min="0" max="1" title="Max Score" style="width:45%; font-size:0.65rem;" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)">
                                 </div>
@@ -1149,20 +1325,13 @@ function updateUI(viewKey, collection, params, route) {
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
                 const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
                 headHtml += `<tr class="filter-row">
-                    <th></th><th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
-                    <th><select id="job-collection-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;"><option value="">All Collections</option></select></th>
-                    <th></th><th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
-                    <th></th><th></th><th></th>
+                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
+                    <th></th>
+                    <th></th>
+                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
+                    <th></th><th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
-                fetch('/api/collection/search').then(res => res.json()).then(data => {
-                    const collections = data.collections || (Array.isArray(data) ? data : []);
-                    const select = document.getElementById('job-collection-filter');
-                    if (select) {
-                        const currentVal = p.get('collection') || '';
-                        select.innerHTML = `<option value="">All Collections</option>` + collections.map(c => `<option value="${c.name}" ${currentVal === c.name ? 'selected' : ''}>${c.name}</option>`).join('');
-                    }
-                });
             } else if (path === 'binary-similarity') {
                 headHtml += `<tr class="filter-row">
                     <th>
@@ -1198,6 +1367,35 @@ function updateUI(viewKey, collection, params, route) {
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${p.get('max_cohesion') || ''}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${p.get('file_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${p.get('file_md5') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+            } else if (path === 'collections') {
+                const msToDate = (ms) => ms ? new Date(+ms).toISOString().slice(0, 10) : '';
+                const numRange = (minId, maxId, minP, maxP) => `<th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="${minId}" placeholder="Min..." min="0" value="${p.get(minP) || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="${maxId}" placeholder="Max..." min="0" value="${p.get(maxP) || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.6rem; width:45%; box-sizing:border-box;"></div></th>`;
+                headHtml += `<tr class="filter-row">
+                    <th><input type="text" id="flt-coll-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    ${numRange('flt-coll-min-batches', 'flt-coll-max-batches', 'min_batches', 'max_batches')}
+                    ${numRange('flt-coll-min-files', 'flt-coll-max-files', 'min_files', 'max_files')}
+                    ${numRange('flt-coll-min-functions', 'flt-coll-max-functions', 'min_functions', 'max_functions')}
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-coll-min-date" title="From" value="${msToDate(p.get('min_last_updated'))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-coll-max-date" title="To" value="${msToDate(p.get('max_last_updated'))}" onchange="debouncedSearch(applyCollectionSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th></th>
+                </tr>`;
+                thead.innerHTML = headHtml;
+            } else if (path === 'pools') {
+                const msToDate = (ms) => ms ? new Date(+ms).toISOString().slice(0, 10) : '';
+                const status = p.get('sync_status') || '';
+                const statusOpts = ['', 'current', 'outdated', 'created'].map(s => `<option value="${s}" ${status === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All'}</option>`).join('');
+                headHtml += `<tr class="filter-row">
+                    <th><input type="text" id="flt-pool-id" placeholder="ID..." value="${p.get('id') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th><input type="text" id="flt-pool-name" placeholder="Name..." value="${p.get('name') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th></th>
+                    <th></th>
+                    <th></th>
+                    <th></th>
+                    <th></th>
+                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
+                    <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${msToDate(p.get('min_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${msToDate(p.get('max_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
+                    <th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
             }
@@ -1245,6 +1443,10 @@ function updateUI(viewKey, collection, params, route) {
                     searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="bin-cluster-search-input" placeholder="Search by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinClusterSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'binary-similarity') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="bsim-search-input" placeholder="Search similarities by keywords..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyBinSimSearch()" title="Search"></i></div></div></div>`;
+                } else if (path === 'collections') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="collection-search-input" placeholder="Search collections by name..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyCollectionSearch)" onkeydown="handleFilterKey(event, applyCollectionSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyCollectionSearch()" title="Search"></i></div></div>`;
+                } else if (path === 'pools') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="pool-search-input" placeholder="Search pools by name, id, collection..." autofocus value="${p.get('q') || ''}" onchange="debouncedSearch(applyPoolSearch)" onkeydown="handleFilterKey(event, applyPoolSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyPoolSearch()" title="Search"></i></div></div>`;
                 } else { searchArea.innerHTML = ''; }
             }
         } else {
@@ -1264,7 +1466,9 @@ function updateUI(viewKey, collection, params, route) {
         syncInput('cluster-search-input', 'q');
         syncInput('bin-cluster-search-input', 'q');
         syncInput('bsim-search-input', 'q');
- 
+        syncInput('collection-search-input', 'q');
+        syncInput('pool-search-input', 'q');
+
         // Sync view settings
         syncInput('sim-pool-limit', 'pool_limit');
         syncInput('sim-limit', 'limit');
@@ -1302,6 +1506,17 @@ function updateUI(viewKey, collection, params, route) {
             syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type', 'file');
             syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion');
             syncInput('flt-bin-cluster-file-name', 'file_name'); syncInput('flt-bin-cluster-file-md5', 'file_md5');
+        } else if (path === 'collections') {
+            const syncDate = (id, paramName) => { const el = document.getElementById(id); if (el) { const ms = p.get(paramName); el.value = ms ? new Date(+ms).toISOString().slice(0, 10) : ''; } };
+            syncInput('flt-coll-name', 'name');
+            syncInput('flt-coll-min-batches', 'min_batches'); syncInput('flt-coll-max-batches', 'max_batches');
+            syncInput('flt-coll-min-files', 'min_files'); syncInput('flt-coll-max-files', 'max_files');
+            syncInput('flt-coll-min-functions', 'min_functions'); syncInput('flt-coll-max-functions', 'max_functions');
+            syncDate('flt-coll-min-date', 'min_last_updated'); syncDate('flt-coll-max-date', 'max_last_updated');
+        } else if (path === 'pools') {
+            const syncDate = (id, paramName) => { const el = document.getElementById(id); if (el) { const ms = p.get(paramName); el.value = ms ? new Date(+ms).toISOString().slice(0, 10) : ''; } };
+            syncInput('flt-pool-id', 'id'); syncInput('flt-pool-name', 'name'); syncSelect('flt-pool-status', 'sync_status', '');
+            syncDate('flt-pool-min-date', 'min_created_at'); syncDate('flt-pool-max-date', 'max_created_at');
         } else if (path === 'binary-similarity') {
             syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
             syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
@@ -1376,7 +1591,7 @@ function updateUI(viewKey, collection, params, route) {
 
     // Sync body colgroup from the header row's actual rendered widths.
     // We use requestAnimationFrame so the header table has laid out first.
-    if (pathChanged) {
+    if (true) {
         const syncColgroups = () => {
             const headerTable = document.getElementById('data-table-header');
             const bodyColgroup = document.getElementById('table-colgroup');
@@ -1601,7 +1816,7 @@ function applySimSearch() {
 
     params.set('q', globalQ || '');
     if (lang) params.set('language', lang); else params.delete('language');
-    params.set('min_score', minScore || '0.95');
+    params.set('min_score', minScore || defaultMinScore());
     params.set('max_score', maxScore || '1.0');
     params.set('algo', algo || 'unweighted_cosine');
     params.set('min_features', minFeatures || '0');
@@ -1704,7 +1919,7 @@ function applyAdvancedFileSearch() {
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
     if (clusterUuidFlt) params.set('bin_cluster_uuid', clusterUuidFlt); else params.delete('bin_cluster_uuid');
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
-    params.set('min_cohesion', minCohesionFlt || '0.95');
+    params.set('min_cohesion', minCohesionFlt || '0.5');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
     if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
     if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
@@ -1853,6 +2068,19 @@ function renderPagination(path) {
 
 function copyToClipboard(text, btn) {
     let success = false;
+    let tableSel = null;
+    if (window.tableSelections) {
+        tableSel = window.tableSelections.find(ts => ts.selectedCells && ts.selectedCells.size > 0);
+    }
+    if (tableSel) {
+        tableSel.copySelection();
+        if (btn) {
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+            setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+        }
+        return;
+    }
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         navigator.clipboard.writeText(text).then(() => {
             if (btn) {
@@ -1954,8 +2182,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             collection: col
         };
 
-        const clusters1 = (p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
-        const clusters2 = (p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+        // Single best-shared cluster for the pair (empty when the two share none).
+        const sharedClusters = (p.shared_clusters || []).map(cid => clustersMap[cid]).filter(Boolean);
 
         return `
         <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
@@ -1963,16 +2191,12 @@ function renderTopCorrelations(items, clustersMap = {}) {
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                    <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)" 
+                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)"
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)" 
-                        title="Run Aligned Diff" 
-                        style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                        <span>±</span>
-                    </button>
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
                 </div>
                 ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
             </td>
@@ -1999,10 +2223,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
                 </div>
             </td>
             <td>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters1).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters1)}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters2).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters2)}</div>
-                </div>
+                <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                 <div style="display:flex; flex-direction:column; gap:8px;">
@@ -2028,8 +2249,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m1}', '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta1?.file_name || ''}</b></div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m2}', '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta2?.file_name || ''}</b></div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2082,14 +2303,45 @@ function showDiffPanel(force = false) {
 }
 
 function openDiffDirectly(id1, name1, id2, name2, e) {
-    const url = buildDiffUrl(id1, id2);
+    // Build RESTful UI path (not API URL)
+    const p1 = window.parseFuncIdFromStr ? window.parseFuncIdFromStr(id1) : null;
+    const p2 = window.parseFuncIdFromStr ? window.parseFuncIdFromStr(id2) : null;
+    if (!p1 || !p2) {
+        // Fallback: try buildDiffUrl
+        url = buildDiffUrl(id1, id2);
+        Nav.openPath(url, e, { title: `Diff: ${name1} vs ${name2}`, type: 'diff' });
+        return;
+    }
+
+    const pool = p1.pool || (window.getRoutingState ? window.getRoutingState().pool : null);
+    const url = (pool
+        ? `/pools/${encodeURIComponent(pool)}/collections/${encodeURIComponent(p1.collection_a)}/files/${encodeURIComponent(p1.md5_a)}/functions/${encodeURIComponent(p1.addr_a)}/vs/${encodeURIComponent(p2.collection_b || p2.collection_a)}/${encodeURIComponent(p2.md5_b)}/${encodeURIComponent(p2.addr_b)}`
+        : `/collections/${encodeURIComponent(p1.collection_a)}/files/${encodeURIComponent(p1.md5_a)}/functions/${encodeURIComponent(p1.addr_a)}/vs/${encodeURIComponent(p2.collection_b || p2.collection_a)}/${encodeURIComponent(p2.md5_b)}/${encodeURIComponent(p2.addr_b)}`
+    );
     Nav.openPath(url, e, { title: `Diff: ${name1} vs ${name2}`, type: 'diff' });
 }
 
 function showDiffView() {
     let url = '/collections/main/diff';
     if (diffSelection.length === 2) {
-        url = buildDiffUrl(diffSelection[0].id, diffSelection[1].id);
+        const p1 = diffSelection[0], p2 = diffSelection[1];
+        const pool = p1.pool || (window.getRoutingState ? window.getRoutingState().pool : null);
+
+        if (p1.md5_a && p1.addr_a && p2.md5_b && p2.addr_b) {
+            // Flat params format
+            const collA = encodeURIComponent(p1.collection_a || '');
+            const collB = encodeURIComponent(p2.collection_b || p1.collection_a || '');
+            const md5A = encodeURIComponent(p1.md5_a);
+            const md5B = encodeURIComponent(p2.md5_b);
+            const addrA = encodeURIComponent(p1.addr_a);
+            const addrB = encodeURIComponent(p2.addr_b);
+            url = pool
+                ? `/pools/${encodeURIComponent(pool)}/collections/${collA}/files/${md5A}/functions/${addrA}/vs/${collB}/${md5B}/${addrB}`
+                : `/collections/${collA}/files/${md5A}/functions/${addrA}/vs/${collB}/${md5B}/${addrB}`;
+        } else {
+            // Back-compat: legacy ID format
+            url = buildDiffUrl(p1.id, p2.id);
+        }
 
         // Reset queue after opening in new window
         diffSelection = [];
@@ -2103,11 +2355,8 @@ function showFunctionCodeById(id, name, lineHash = '', e) {
     if (window.getSelection && window.getSelection().toString().trim()) {
         return;
     }
-    const parts = id.split(':');
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
-    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}${lineHash}`;
+    const f = window.parseFuncId(id);
+    const url = Nav.buildUIUrl(f.collection, ['function', f.md5, f.address]) + lineHash;
     Nav.openPath(url, e, { title: `Code: ${name}`, type: 'code' });
 }
 
@@ -2130,10 +2379,10 @@ function seeSimilarFromCode() {
             const params = url.searchParams;
             const id = params.get('id');
             if (id) {
-                const parts = id.split(':');
-                col = parts[0];
-                md5 = parts[2];
-                addr = parts[3];
+                const f = window.parseFuncId(id);
+                col = f.collection;
+                md5 = f.md5;
+                addr = f.address;
             } else {
                 col = params.get('collection');
                 md5 = params.get('md5') || params.get('file_md5');
@@ -2145,10 +2394,10 @@ function seeSimilarFromCode() {
         const params = url.searchParams;
         const id = params.get('id');
         if (id) {
-            const parts = id.split(':');
-            col = parts[0];
-            md5 = parts[2];
-            addr = parts[3];
+            const f = window.parseFuncId(id);
+            col = f.collection;
+            md5 = f.md5;
+            addr = f.address;
         }
     }
 
@@ -2165,21 +2414,18 @@ function seeSimilarFromCode() {
 
 
 function showFileDetailsPanel(col, md5, name, e) {
-    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}`;
+    const url = Nav.buildUIUrl(col, ['file', md5]);
     Nav.openPath(url, e, { title: `File: ${name}`, type: 'file' });
 }
 
 function showFeaturePanel(id, e) {
-    const parts = id.split(':');
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
-    const url = `/collections/${encodeURIComponent(col)}/files/${encodeURIComponent(md5)}/functions/${encodeURIComponent(addr)}/features`;
-    Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
+    const f = window.parseFuncId(id);
+    const url = Nav.buildUIUrl(f.collection, ['function_features', f.md5, f.address]);
+    Nav.openPath(url, e, { title: `Features: ${f.address}`, type: 'features' });
 }
 
 function showGlobalFeaturePanel(hash, collection, e) {
-    const url = `/collections/${encodeURIComponent(collection)}/features/${encodeURIComponent(hash)}`;
+    const url = Nav.buildUIUrl(collection, ['feature', hash]);
     Nav.openPath(url, e, { title: `Feature Analysis: ${hash.substring(0, 12)}...`, type: 'global-feature' });
 }
 
@@ -2208,34 +2454,81 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
     const restful = parseRestfulPath();
     const path = window.location.pathname;
     const parts = path.split('/').filter(Boolean);
-    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections';
-    const col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || 'main';
+    const hasColInPath = parts[0] === 'collection' || parts[0] === 'collections' || parts[0] === 'pool' || parts[0] === 'pools';
+    let col = collection || (hasColInPath ? restful.collection : null) || currentParams.get('collection') || null;
+    if (col === 'null' || col === 'undefined') {
+        col = null;
+    }
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    const isGlobalView = viewKey === 'pools' || viewKey === 'collections' || viewKey === 'jobs' || parts[0] === 'pools' || parts[0] === 'collections';
+    if (!isGlobalView && ((!col && !pool) || col === 'null' || col === 'undefined')) {
+        showNullContextWarning(col, pool, viewKey);
+    }
     const params = queryParams || currentParams;
 
-
-    let url = `/collections/${col}/${viewKey}`;
-    if (viewKey === 'files') {
-        url = `/collections/${col}/files`;
-    } else if (viewKey === 'functions') {
-        url = `/collections/${col}/functions`;
-    } else if (viewKey === 'batches') {
-        url = `/collections/${col}/batches`;
-    } else if (viewKey === 'features-global') {
-        url = `/collections/${col}/features`;
-    } else if (viewKey === 'clusters') {
-        url = `/collections/${col}/functions/clusters`;
-    } else if (viewKey === 'bin-clusters') {
-        url = `/collections/${col}/files/clusters`;
-    } else if (viewKey === 'binary-similarity') {
-        url = `/collections/${col}/files/similarities`;
-    } else if (viewKey === 'function-similarity') {
-        url = `/collections/${col}/functions/similarities`;
-    } else if (viewKey === 'upload') {
-        url = `/collections/${col}/upload`;
-    } else if (viewKey === 'collections') {
+    let url;
+    if (pool) {
+        const poolId = pool;
+        url = `/pools/${encodeURIComponent(poolId)}/${viewKey}`;
+        if (viewKey === 'pool-detail') {
+            url = `/pools/${encodeURIComponent(poolId)}`;
+        } else if (viewKey === 'files') {
+            url = `/pools/${encodeURIComponent(poolId)}/files`;
+        } else if (viewKey === 'functions') {
+            url = `/pools/${encodeURIComponent(poolId)}/functions`;
+        } else if (viewKey === 'batches') {
+            url = `/pools/${encodeURIComponent(poolId)}/batches`;
+        } else if (viewKey === 'features-global') {
+            url = `/pools/${encodeURIComponent(poolId)}/features`;
+        } else if (viewKey === 'clusters') {
+            url = `/pools/${encodeURIComponent(poolId)}/functions/clusters`;
+        } else if (viewKey === 'bin-clusters') {
+            url = `/pools/${encodeURIComponent(poolId)}/files/clusters`;
+        } else if (viewKey === 'binary-similarity') {
+            url = `/pools/${encodeURIComponent(poolId)}/files/similarities`;
+        } else if (viewKey === 'function-similarity') {
+            url = `/pools/${encodeURIComponent(poolId)}/functions/similarities`;
+        } else if (viewKey === 'upload') {
+            url = `/pools/${encodeURIComponent(poolId)}/upload`;
+        } else if (viewKey === 'pools') {
+            url = `/pools`;
+        }
+    } else {
+        url = `/collections/${col}/${viewKey}`;
+        if (viewKey === 'collection-detail') {
+            url = `/collections/${col}`;
+        } else if (viewKey === 'files') {
+            url = `/collections/${col}/files`;
+        } else if (viewKey === 'functions') {
+            url = `/collections/${col}/functions`;
+        } else if (viewKey === 'batches') {
+            url = `/collections/${col}/batches`;
+        } else if (viewKey === 'features-global') {
+            url = `/collections/${col}/features`;
+        } else if (viewKey === 'clusters') {
+            url = `/collections/${col}/functions/clusters`;
+        } else if (viewKey === 'bin-clusters') {
+            url = `/collections/${col}/files/clusters`;
+        } else if (viewKey === 'binary-similarity') {
+            url = `/collections/${col}/files/similarities`;
+        } else if (viewKey === 'function-similarity') {
+            url = `/collections/${col}/functions/similarities`;
+        } else if (viewKey === 'upload') {
+            url = `/collections/${col}/upload`;
+        }
+    }
+    if (viewKey === 'collections') {
         url = `/collections`;
     } else if (viewKey === 'jobs') {
-        url = `/jobs`;
+        if (pool) {
+            url = col ? `/pools/${encodeURIComponent(pool)}/collections/${encodeURIComponent(col)}/jobs` : `/pools/${encodeURIComponent(pool)}/jobs`;
+        } else if (col) {
+            url = `/collections/${encodeURIComponent(col)}/jobs`;
+        } else {
+            url = `/jobs`;
+        }
+    } else if (viewKey === 'pools') {
+        url = `/pools`;
     }
 
     // Clean up params as collection is in the path (except for jobs)
@@ -2296,15 +2589,28 @@ window.addEventListener('popstate', (e) => {
 
 // Deprecated hashchange listener for compatibility during transition
 window.addEventListener('hashchange', (e) => {
+    // Only handle legacy hash routing if we're on the root path
+    if (window.location.pathname !== '/' && window.location.pathname !== '') {
+        return;
+    }
+    
     // If we have a hash, convert it to a restful path and navigate
     if (window.location.hash) {
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || 'main';
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
 
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col);
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col);
+        }
     }
 });
 
@@ -2383,26 +2689,29 @@ function loadUIParams() {
 window.addEventListener('load', () => {
     loadUIParams();
 
-    const { collection, viewKey } = getRoutingState();
+    const { collection, viewKey, pool } = getRoutingState();
     updateNavVisibility(collection);
     if (window.location.pathname === '/' || window.location.pathname === '') {
         history.replaceState(null, '', '/collections');
-    } else {
-        const pathParts = window.location.pathname.split('/').filter(Boolean);
-        if ((pathParts[0] === 'collection' || pathParts[0] === 'collections') && pathParts.length === 2 && collection) {
-            history.replaceState(null, '', `/collections/${encodeURIComponent(collection)}/files`);
-        }
     }
-
-    if (window.location.hash) {
+    
+    if (window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || 'main';
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col, true);
-        return;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col, true);
+            return;
+        }
     }
 
     // Attach graph settings listeners
@@ -2557,7 +2866,12 @@ window.addEventListener('load', () => {
         }
     };
 
+    let jobStatusInFlight = false;
     window.updateJobStatusIcon = async () => {
+        // ponytail: one poll at a time. Without this, a slow /api/jobs/stats lets
+        // polls overlap and orphan intervals, which snowballs into more polls.
+        if (jobStatusInFlight) return;
+        jobStatusInFlight = true;
         try {
             const res = await fetch('/api/jobs/stats');
             if (!res.ok) return;
@@ -2584,7 +2898,7 @@ window.addEventListener('load', () => {
             const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
             const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
 
-            const { collection: currentCollection, viewKey: path } = getRoutingState();
+            const { collection: currentCollection, pool: currentPool, viewKey: path } = getRoutingState();
 
             // Rebuild animation should only show if a job FOR THIS COLLECTION is active
             const activeCollections = stats.active_collections || [];
@@ -2613,19 +2927,94 @@ window.addEventListener('load', () => {
                     headerRebuildBtn.style.display = 'none';
                 }
             }
+
+            // Update view-specific job indicator
+            const activeJobs = stats.active_jobs || [];
+            const isJobInContext = (job) => {
+                if (currentPool) {
+                    return job.pool_id === currentPool || job.collection === `pool:${currentPool}` || (currentCollection && job.collection === currentCollection);
+                }
+                if (currentCollection) {
+                    return job.collection === currentCollection;
+                }
+                return false;
+            };
+
+            const isJobRelevant = (job) => {
+                const type = job.type;
+                if (path === 'batches' || path === 'upload') {
+                    return ['file_data_ingest', 'ghidra_analyze'].includes(type);
+                }
+                if (path === 'files') {
+                    return ['file_data_ingest', 'ghidra_analyze', 'idx_meta'].includes(type);
+                }
+                if (path === 'features-global') {
+                    return ['idx_features', 'enrich_features'].includes(type);
+                }
+                if (path === 'function-similarity') {
+                    return ['idx_functions', 'idx_features', 'build_sim', 'build_pool_sim', 'sync_milvus'].includes(type);
+                }
+                if (path === 'clusters') {
+                    return ['cluster_functions', 'cluster_pool'].includes(type);
+                }
+                if (path === 'binary-similarity') {
+                    return ['build_bin_sim', 'build_pool_bin_sim'].includes(type);
+                }
+                if (path === 'bin-clusters') {
+                    return ['cluster_binaries', 'cluster_pool_binaries'].includes(type);
+                }
+                return false;
+            };
+
+            const formatJobType = (type) => {
+                if (!type) return 'Job';
+                return type.split('_')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            };
+
+            const matchingJob = activeJobs.find(job => isJobInContext(job) && isJobRelevant(job));
+            const statusBadge = document.getElementById('view-job-status');
+            if (statusBadge) {
+                if (matchingJob) {
+                    statusBadge.style.display = 'inline-flex';
+                    const iconClass = matchingJob.status === 'running' ? 'fa-circle-notch fa-spin' : 'fa-clock';
+                    const progressText = matchingJob.status === 'running' ? ` (${matchingJob.progress}%)` : '';
+                    statusBadge.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${formatJobType(matchingJob.type)}${progressText}`;
+                    statusBadge.title = `Job ID: ${matchingJob.id} is ${matchingJob.status}`;
+                    statusBadge.style.cursor = 'pointer';
+                    statusBadge.onclick = () => {
+                        if (window.showJobDetails) window.showJobDetails(matchingJob.id);
+                    };
+                } else {
+                    statusBadge.style.display = 'none';
+                }
+            }
+
+            window.jobsActive = isActive;
         } catch (e) {
             // Silently fail for navbar polling
+        } finally {
+            jobStatusInFlight = false;
         }
     };
+    // ponytail: one fixed interval, no self-rescheduling. Ticks at 3s but only
+    // hits the API when jobs are active or every 3rd tick otherwise.
+    let jobPollTick = 0;
     window.updateJobStatusIcon();
-    setInterval(window.updateJobStatusIcon, 10000); // Check every 10s
+    window.jobPollInterval = setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        jobPollTick++;
+        if (window.jobsActive || jobPollTick % 3 === 0) window.updateJobStatusIcon();
+    }, 3000);
 });
 
 function updateNavVisibility(collection) {
+    const { pool } = getRoutingState();
     const navItems = ['nav-batches', 'nav-files', 'nav-functions', 'nav-features-global', 'nav-function-similarity', 'nav-clusters', 'nav-bin-clusters', 'nav-binary-similarity', 'nav-chord-map'];
     navItems.forEach(id => {
         const el = document.getElementById(id);
-        if (el) el.style.display = collection ? 'flex' : 'none';
+        if (el) el.style.display = (collection || pool) ? 'flex' : 'none';
     });
 }
 
@@ -2667,10 +3056,10 @@ function renderClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Functions" onmouseenter="showClusterTableTooltip(event, '${c.cluster_uuid}', '${(c.cluster_name || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideClusterTableTooltip(event)" onmousemove="moveClusterTableTooltip(event)">
                         <i class="fa-solid fa-code"></i>
                     </a>
-                    <a href="/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/functions/similarities?cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Similarities" style="color:var(--info)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('function-similarity', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Similarities" style="color:var(--info)">
                         <i class="fa-solid fa-code-compare"></i>
                     </a>
                 </div>
@@ -2740,6 +3129,61 @@ function applyClusterSearch() {
     navigate(viewKey, params);
 }
 
+// Set param from an element value, or delete when empty
+function _setOrDel(params, key, val) {
+    if (val !== undefined && val !== null && val !== '') params.set(key, val);
+    else params.delete(key);
+}
+// Date input (YYYY-MM-DD) -> Unix ms. endOfDay adds a day span for max bounds.
+function _dateToMs(val, endOfDay) {
+    if (!val) return '';
+    const ms = Date.parse(val);
+    if (isNaN(ms)) return '';
+    return String(endOfDay ? ms + 86399999 : ms);
+}
+
+function applyCollectionSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+
+    _setOrDel(params, 'q', document.getElementById('collection-search-input')?.value);
+    _setOrDel(params, 'name', document.getElementById('flt-coll-name')?.value);
+    _setOrDel(params, 'min_batches', document.getElementById('flt-coll-min-batches')?.value);
+    _setOrDel(params, 'max_batches', document.getElementById('flt-coll-max-batches')?.value);
+    _setOrDel(params, 'min_files', document.getElementById('flt-coll-min-files')?.value);
+    _setOrDel(params, 'max_files', document.getElementById('flt-coll-max-files')?.value);
+    _setOrDel(params, 'min_functions', document.getElementById('flt-coll-min-functions')?.value);
+    _setOrDel(params, 'max_functions', document.getElementById('flt-coll-max-functions')?.value);
+    _setOrDel(params, 'min_last_updated', _dateToMs(document.getElementById('flt-coll-min-date')?.value, false));
+    _setOrDel(params, 'max_last_updated', _dateToMs(document.getElementById('flt-coll-max-date')?.value, true));
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+
+function applyPoolSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+
+    _setOrDel(params, 'q', document.getElementById('pool-search-input')?.value);
+    _setOrDel(params, 'id', document.getElementById('flt-pool-id')?.value);
+    _setOrDel(params, 'name', document.getElementById('flt-pool-name')?.value);
+    _setOrDel(params, 'sync_status', document.getElementById('flt-pool-status')?.value);
+    _setOrDel(params, 'min_created_at', _dateToMs(document.getElementById('flt-pool-min-date')?.value, false));
+    _setOrDel(params, 'max_created_at', _dateToMs(document.getElementById('flt-pool-max-date')?.value, true));
+
+    const countLimit = document.getElementById('sim-limit')?.value;
+    params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+
 function renderBinClusters(items) {
     const { collection, params } = getRoutingState();
     const nameType = params.get('cluster_name_type') || 'file';
@@ -2788,7 +3232,7 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
-                    <a href="/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}" onclick="Nav.openPath('/collections/${encodeURIComponent(collection)}/files?bin_cluster_uuid=${c.cluster_uuid}', event)" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
+                    <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" class="btn-action" title="Binaries" onmouseenter="showBinClusterTableTooltip(event, '${c.cluster_uuid}', '${(displayName || '').replace(/'/g, "\\'")}', ${c.count || 0}, ${c.avg_stability || 0}, ${c.cohesion_score || 0}, ${c.avg_features || 0})" onmouseleave="hideBinClusterTableTooltip(event)" onmousemove="moveBinClusterTableTooltip(event)">
                         <i class="fa-solid fa-file-code"></i>
                     </a>
                 </div>
@@ -3087,11 +3531,46 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// Forward wheel/scroll events on the main content background to the active scrollable table/container inside it
+document.addEventListener('wheel', (e) => {
+    let element = e.target;
+    let isScrollableTarget = false;
+    while (element && element !== document.body) {
+        const style = window.getComputedStyle(element);
+        const overflowY = style.overflowY || style.overflow || '';
+        if ((overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight) {
+            isScrollableTarget = true;
+            break;
+        }
+        element = element.parentElement;
+    }
+    
+    if (!isScrollableTarget) {
+        const mainContent = document.getElementById('main-content');
+        if (!mainContent) return;
+        
+        const scrollables = Array.from(mainContent.querySelectorAll('.table-body-wrap, .bsim-subtab-panel, div')).filter(el => {
+            if (el.offsetWidth === 0 || el.offsetHeight === 0) return false;
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY || style.overflow || '';
+            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+        });
+        
+        if (scrollables.length > 0) {
+            scrollables[0].scrollTop += e.deltaY;
+            e.preventDefault();
+        }
+    }
+}, { passive: false });
+
+
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
 window.applySimSearch = applySimSearch;
 window.applyBinSimSearch = applyBinSimSearch;
 window.applyClusterSearch = applyClusterSearch;
+window.applyCollectionSearch = applyCollectionSearch;
+window.applyPoolSearch = applyPoolSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
 window.refreshData = refreshData;
@@ -3257,7 +3736,7 @@ function getFilterSummary(path, params) {
         if (name) summary.push(`Func: "${name}"`);
         if (md5) summary.push(`MD5: ${md5.substring(0, 6)}`);
         if (address) summary.push(`Addr: ${address}`);
-        if (min_score && min_score !== '0.95') summary.push(`Score >= ${min_score}`);
+        if (min_score && min_score !== defaultMinScore()) summary.push(`Score >= ${min_score}`);
         if (max_score && max_score !== '1.0') summary.push(`Score <= ${max_score}`);
         if (algo && algo !== 'unweighted_cosine') summary.push(`Algo: ${algo}`);
         if (cross_binary) {
@@ -3328,7 +3807,7 @@ function addToHistory(path, queryString) {
     if (path === 'collections') return;
 
     const params = new URLSearchParams(queryString);
-    const col = params.get('collection') || 'main';
+    const col = params.get('collection') || '';
     const view = params.get('view') || 'table';
     const summary = getFilterSummary(path, params);
 
@@ -3375,7 +3854,7 @@ function addToHistory(path, queryString) {
                 }
             });
         }
-        return `${item.collection || 'main'}:${item.path || ''}:${item.view || 'table'}:${JSON.stringify(sortedParams)}`;
+        return `${item.collection || ''}:${item.path || ''}:${item.view || 'table'}:${JSON.stringify(sortedParams)}`;
     };
 
     const newItemFingerprint = getFingerprint(newItem);
@@ -3770,3 +4249,580 @@ async function refreshFunctionRow(funcId) {
 }
 
 window.refreshFunctionRow = refreshFunctionRow;
+
+async function renderPoolCreationForm() {
+    const gridHeader = document.getElementById('grid-header');
+    if (!gridHeader) return;
+
+    // Fetch existing collections to select from
+    let collections = [];
+    try {
+        const res = await fetch('/api/collection/search?limit=10000'); // ponytail: lift limit to get all collections
+        if (res.ok) {
+            const data = await res.json();
+            collections = data.collections || data || [];
+        }
+    } catch (e) {
+        console.error("Failed to fetch collections for pool creation", e);
+    }
+
+    // Fetch default config parameters dynamically
+    let config = null;
+    try {
+        const res = await fetch('/api/index/config');
+        if (res.ok) {
+            config = await res.json();
+        }
+    } catch (e) {
+        console.error("Failed to fetch default config for pool creation", e);
+    }
+
+    const clustering = config?.clustering || {};
+    const similarity = config?.similarity || {};
+
+    const funcAlgo = similarity.algo || 'unweighted_cosine';
+    const funcTopK = similarity.top_k !== undefined ? similarity.top_k : 1000;
+    const funcMinScore = similarity.min_score !== undefined ? similarity.min_score : 0.9;
+    const funcMinFeatures = similarity.min_features !== undefined ? similarity.min_features : 0;
+    const funcClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
+    const funcClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
+    const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
+    const funcClusterMethod = clustering.selection_method || 'eom';
+
+    const fileAlgo = similarity.algo || 'unweighted_cosine';
+    const fileTopK = 100; // default for file-level similarity
+    const fileMinScore = 0.5; // default for file-level similarity
+    const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
+    const fileClusterMinSamples = clustering.min_samples !== undefined ? clustering.min_samples : 1;
+    const fileClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.001;
+    const fileClusterMethod = clustering.selection_method || 'eom';
+
+    const colCheckboxes = collections.map(col => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
+            <input type="checkbox" name="pool-collections" value="${col.name}" onchange="updateAutoPoolName()">
+            <span>${col.name} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
+        </label>
+    `).join('');
+
+    gridHeader.innerHTML = `
+        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); overflow:hidden;">
+            <!-- COLLAPSIBLE HEADER -->
+            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:rgba(255,255,255,0.02); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+                <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
+                    <i class="fa-solid fa-diagram-project"></i> Create New Pool
+                </h3>
+                <div id="pool-toggle-icon" style="color:var(--dim); font-size:0.9rem; transition: transform 0.3s ease; transform: rotate(180deg);">
+                    <i class="fa-solid fa-chevron-up"></i>
+                </div>
+            </div>
+
+            <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
+                <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+                    <div style="margin-bottom: 25px;">
+                        <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
+                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                    </div>
+
+                    <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
+                        <!-- LEFT COLUMN: COLLECTIONS -->
+                        <div style="display:flex; flex-direction:column; gap:12px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <label style="font-size:0.75rem; color:var(--dim); font-weight:600; text-transform:uppercase;">Collections</label>
+                                <div style="display:flex; gap:10px;">
+                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = true); updateAutoPoolName();" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--accent); cursor:pointer; font-weight:600;">All</button>
+                                    <button onclick="event.preventDefault(); document.querySelectorAll('input[name=\\'pool-collections\\']').forEach(cb => cb.checked = false); updateAutoPoolName();" style="background:none; border:none; padding:0; font-size:0.7rem; color:var(--dim); cursor:pointer; font-weight:600;">None</button>
+                                </div>
+                            </div>
+                            <div style="position:relative;">
+                                <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:0.8rem; color:var(--dim);"></i>
+                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
+                            </div>
+                            <div id="pool-collections-list" style="background:rgba(0,0,0,0.15); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
+                                ${colCheckboxes.length ? colCheckboxes : '<div style="padding:20px; font-size:0.85rem; color:var(--dim); text-align:center;">No collections found.</div>'}
+                            </div>
+                        </div>
+                        
+                        <!-- RIGHT COLUMN: CONFIGURATION -->
+                        <div style="display:flex; flex-direction:column; gap:15px;">
+                            <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
+                                <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.2); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
+                                    <input type="checkbox" id="pool-cross-only" style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
+                                    <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
+                                        <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
+                                    </label>
+                                </div>
+                                <div style="flex:1;">
+                                    <div style="font-size:0.75rem; color:var(--text); font-weight:700; margin-bottom:2px; display:flex; align-items:center; gap:8px;">
+                                        <i class="fa-solid fa-bolt" style="color:var(--accent);"></i> Analysis Scope
+                                    </div>
+                                    <div style="font-size:0.7rem; color:var(--dim);">Discovery focused on cross-collection pairs only.</div>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                                <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
+                                    <i class="fa-solid fa-microchip"></i> Function-Level
+                                </div>
+                                
+                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+                                    <div>
+                                        <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
+                                            <div>
+                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
+                                                <select id="pool-func-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                                                    <option value="weighted_cosine" ${funcAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
+                                                    <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                                                </select>
+                                            </div>
+                                            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
+                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label>
+                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
+                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
+                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
+                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
+                                            <select id="pool-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <option value="eom" ${funcClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
+                                                <option value="leaf" ${funcClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                    <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
+                                        <i class="fa-solid fa-file-code"></i> File-Level
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); padding:2px 10px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                                        <input type="checkbox" id="pool-enable-files" checked onchange="document.getElementById('file-params-grid').style.opacity = this.checked ? '1' : '0.4'; document.getElementById('file-params-grid').style.pointerEvents = this.checked ? 'auto' : 'none';" style="cursor:pointer; width:12px; height:12px; accent-color:var(--accent);">
+                                        <label for="pool-enable-files" style="font-size:0.7rem; cursor:pointer; font-weight:600; color:var(--text);">Enabled</label>
+                                    </div>
+                                </div>
+                                
+                                <div id="file-params-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:20px; transition: opacity 0.2s;">
+                                    <div>
+                                        <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
+                                            <div>
+                                                <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
+                                                <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
+                                                    <option value="weighted_cosine" ${fileAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
+                                                    <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
+                                                </select>
+                                            </div>
+                                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
+                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                                <div>
+                                                    <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
+                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
+                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
+                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
+                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                        </div>
+                                        <div>
+                                            <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
+                                            <select id="pool-file-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
+                                                <option value="eom" ${fileClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
+                                                <option value="leaf" ${fileClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top:auto; padding-top:15px; display:flex; justify-content:flex-end; gap:12px;">
+                                <button onclick="renderPoolCreationForm()" class="btn-secondary" style="padding:10px 20px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer;">Reset</button>
+                                <button onclick="submitCreatePool(this)" class="btn-primary" style="padding:10px 25px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; box-shadow: 0 4px 10px rgba(255,171,46,0.15);">
+                                    <i class="fa-solid fa-plus-circle"></i> Create Pool
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="pool-create-error" style="color:#ef4444; font-size:0.85rem; margin-top:20px; padding:12px 18px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.2); border-radius:8px; display:none;"></div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    window.isPoolNameManuallyEdited = false;
+    const nameInput = document.getElementById('new-pool-name');
+    if (nameInput) {
+        nameInput.addEventListener('input', () => {
+            window.isPoolNameManuallyEdited = true;
+        });
+    }
+}
+window.renderPoolCreationForm = renderPoolCreationForm;
+
+function updateAutoPoolName() {
+    if (window.isPoolNameManuallyEdited) return;
+    const checked = Array.from(document.querySelectorAll('input[name="pool-collections"]:checked')).map(cb => cb.value);
+    const poolNameEl = document.getElementById('new-pool-name');
+    if (poolNameEl) {
+        if (checked.length === 0) {
+            poolNameEl.value = '';
+        } else {
+            poolNameEl.value = checked.join(', ') + ' Pool';
+        }
+    }
+}
+window.updateAutoPoolName = updateAutoPoolName;
+
+function togglePoolCreationForm() {
+    const content = document.getElementById('pool-creation-content');
+    const icon = document.getElementById('pool-toggle-icon');
+    if (!content || !icon) return;
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        icon.style.transform = 'rotate(0deg)';
+    } else {
+        content.style.display = 'none';
+        icon.style.transform = 'rotate(180deg)';
+    }
+}
+window.togglePoolCreationForm = togglePoolCreationForm;
+
+function filterPoolCollections(val) {
+    const list = document.getElementById('pool-collections-list');
+    if (!list) return;
+    const labels = list.querySelectorAll('label');
+    const query = val.toLowerCase();
+    labels.forEach(lbl => {
+        const text = lbl.innerText.toLowerCase();
+        lbl.style.display = text.includes(query) ? 'flex' : 'none';
+    });
+}
+window.filterPoolCollections = filterPoolCollections;
+
+async function submitCreatePool(btn) {
+    const poolNameEl = document.getElementById('new-pool-name');
+    const errEl = document.getElementById('pool-create-error');
+    
+    // Function settings
+    const crossOnly = document.getElementById('pool-cross-only')?.checked ?? false;
+    const funcAlgo = document.getElementById('pool-func-algo')?.value ?? 'unweighted_cosine';
+    const funcTopK = parseInt(document.getElementById('pool-func-topk')?.value || '1000');
+    const funcMinScore = parseFloat(document.getElementById('pool-func-minscore')?.value || defaultMinScore());
+    const funcMinFeatures = parseInt(document.getElementById('pool-func-minfeatures')?.value || '0');
+    const funcClusterMinSize = parseInt(document.getElementById('pool-cluster-min-size')?.value || '2');
+    const funcClusterMinSamples = parseInt(document.getElementById('pool-cluster-min-samples')?.value || '1');
+    const funcClusterEpsilon = parseFloat(document.getElementById('pool-cluster-epsilon')?.value || '0.1');
+    const funcClusterMethod = document.getElementById('pool-cluster-method')?.value ?? 'eom';
+    
+    // File settings
+    const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
+    const fileAlgo = document.getElementById('pool-file-algo')?.value ?? 'unweighted_cosine';
+    const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
+    const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
+    const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
+    const fileClusterMinSamples = parseInt(document.getElementById('pool-file-cluster-min-samples')?.value || '1');
+    const fileClusterEpsilon = parseFloat(document.getElementById('pool-file-cluster-epsilon')?.value || '0.1');
+    const fileClusterMethod = document.getElementById('pool-file-cluster-method')?.value ?? 'eom';
+
+    if (errEl) errEl.style.display = 'none';
+
+    const poolName = poolNameEl ? poolNameEl.value.trim() : '';
+    
+    const checkedBoxes = document.querySelectorAll('input[name="pool-collections"]:checked');
+    const collections = Array.from(checkedBoxes).map(cb => cb.value);
+
+    if (!poolName || !collections.length) {
+        if (errEl) {
+            errEl.innerText = "Error: Pool Name and at least one Collection are required.";
+            errEl.style.display = 'block';
+        }
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating...';
+    }
+
+    try {
+        const res = await fetch('/api/pool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name: poolName,
+                collections: collections,
+                config: {
+                    only_cross_collection: crossOnly,
+                    func_sim_params: {
+                        algo: funcAlgo,
+                        top_k: funcTopK,
+                        min_score: funcMinScore,
+                        min_features: funcMinFeatures
+                    },
+                    func_cluster_params: {
+                        min_cluster_size: funcClusterMinSize,
+                        min_samples: funcClusterMinSamples,
+                        epsilon: funcClusterEpsilon,
+                        selection_method: funcClusterMethod
+                    },
+                    file_sim_params: { 
+                        enabled: enableFiles,
+                        algo: fileAlgo,
+                        top_k: fileTopK,
+                        min_score: fileMinScore
+                    },
+                    file_cluster_params: { 
+                        enabled: enableFiles,
+                        min_cluster_size: fileClusterMinSize,
+                        min_samples: fileClusterMinSamples,
+                        epsilon: fileClusterEpsilon,
+                        selection_method: fileClusterMethod
+                    }
+                }
+            })
+        });
+
+        if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        
+        // Show success message with "Go to Pool" button
+        const formContainer = document.getElementById('pool-creation-form-container');
+        if (formContainer) {
+            formContainer.innerHTML = `
+                <div style="background:rgba(34,197,94,0.1); border:1px solid rgba(34,197,94,0.2); border-radius:8px; padding:30px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:20px;">
+                    <div style="width:60px; height:60px; background:rgba(34,197,94,0.2); color:#22c55e; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.5rem;">
+                        <i class="fa-solid fa-check"></i>
+                    </div>
+                    <div>
+                        <h4 style="margin:0 0 8px 0; color:#22c55e;">Pool Created Successfully!</h4>
+                        <p style="margin:0; font-size:0.85rem; color:var(--dim);">Pipeline <b>${data.job_id}</b> has been scheduled to process the pool.</p>
+                    </div>
+                    <div style="display:flex; gap:12px;">
+                        <button onclick="Nav.openPath('/pools/${encodeURIComponent(data.pool_id)}')" class="btn-primary" style="padding:10px 20px; font-weight:600; display:flex; align-items:center; gap:8px;">
+                            <i class="fa-solid fa-arrow-right"></i> Go to Pool
+                        </button>
+                        <button onclick="renderPoolCreationForm()" class="top-action-btn" style="padding:10px 20px; height:auto;">
+                            Create Another
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else {
+            alert(`Pool created! scheduled job pipeline ID: ${data.job_id}`);
+        }
+        
+        // Refresh the pools list without re-rendering the header creation form
+        refreshData(false, true, true);
+
+    } catch (e) {
+        if (errEl) {
+            errEl.innerText = `Error: ${e.message}`;
+            errEl.style.display = 'block';
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-plus"></i> Create & Process Pool';
+        }
+    }
+}
+window.submitCreatePool = submitCreatePool;
+
+async function deletePool(poolId, btn) {
+    if (!confirm(`Are you sure you want to delete pool "${poolId}"?`)) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {
+            method: 'DELETE'
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to delete pool: ${e.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        }
+    }
+}
+window.deletePool = deletePool;
+
+async function renamePool(poolId) {
+    const el = document.getElementById(`pool-name-${poolId}`);
+    const currentName = el ? el.textContent : '';
+    const newName = prompt(`Enter new name for pool "${poolId}":`, currentName);
+    if (newName === null || newName.trim() === '' || newName === currentName) return;
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName.trim() })
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to rename pool: ${e.message}`);
+    }
+}
+window.renamePool = renamePool;
+
+async function buildPool(poolId, btn) {
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/build`, {
+            method: 'POST'
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        alert(`Pool build enqueued! Job ID: ${data.job_id}`);
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to build pool: ${e.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-play"></i> Build';
+        }
+    }
+}
+window.buildPool = buildPool;
+
+async function rebuildPool(poolId, btn) {
+    if (!confirm(`Are you sure you want to WIPE and rebuild all data for pool "${poolId}"?`)) return;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`/api/pool/${encodeURIComponent(poolId)}/rebuild`, {
+            method: 'POST'
+        });
+
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        alert(`Pool wipe and rebuild enqueued! Job ID: ${data.job_id}`);
+        refreshData(false, true);
+    } catch (e) {
+        alert(`Failed to rebuild pool: ${e.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-rotate"></i> Rebuild';
+        }
+    }
+}
+window.rebuildPool = rebuildPool;
+
+window.goToContextJobs = function() {
+    const pool = localStorage.getItem('lastPoolContext');
+    const col = localStorage.getItem('lastCollectionContext');
+    let url;
+    if (pool) {
+        url = col ? `/pools/${encodeURIComponent(pool)}/collections/${encodeURIComponent(col)}/jobs` : `/pools/${encodeURIComponent(pool)}/jobs`;
+    } else if (col) {
+        url = `/collections/${encodeURIComponent(col)}/jobs`;
+    } else {
+        url = '/jobs';
+    }
+    Nav.openPath(url);
+};
+
+window.goToAllJobs = function() {
+    Nav.openPath('/jobs');
+};
+
+function applyJobSearch() {
+    const p = new URLSearchParams();
+    const type = document.getElementById('job-type-filter')?.value;
+    const collection = document.getElementById('job-collection-filter')?.value;
+    const status = document.getElementById('job-status-filter')?.value;
+
+    if (type) p.set('type', type);
+    if (collection) p.set('collection', collection);
+    if (status) p.set('status', status);
+
+    // Preserve pool context if present
+    const pool = window.getRoutingState ? window.getRoutingState().pool : null;
+    if (pool) p.set('pool', pool);
+
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate('jobs', p);
+}
+window.applyJobSearch = applyJobSearch;
+
+
+
+

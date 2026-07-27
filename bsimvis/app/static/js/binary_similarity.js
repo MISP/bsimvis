@@ -1,13 +1,28 @@
 // Binary Similarity View Logic
 
 let binSimDataCache = null;
+let binSimMetaCtx = null;
+let binSimMetaCache = null;
+let metaHighlightMode = 'different';
 let sankeyMode = 'simplified';
 let sankeyScale = 'count';
 let sankeySplit = 10;
 let binSimSortState = {
-    matched: { col: 'cohesion', dir: -1 },
+    matched: { col: 'similarity', dir: -1 },
     uniqueA: { col: 'cohesion', dir: -1 },
     uniqueB: { col: 'cohesion', dir: -1 }
+};
+
+// Change 4 (frontend): server-paged tables. Sankey uses the compact view; tables load
+// pages on demand. binSimFullDiff is lazily fetched only for the detailed Sankey.
+const BINSIM_LIMIT = 100;
+let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
+let binSimFullDiff = null;   // full diff, fetched only when detailed Sankey is opened
+let binSimPage = {
+    // keyed by sort-state key; maps to backend table + tbody id + filter prefix
+    matched: { table: 'matched', tbody: 'bin-sim-table-matched', prefix: 'matched', items: [], offset: 0, total: 0, loading: false },
+    uniqueA: { table: 'unique_to_a', tbody: 'bin-sim-table-unique-a', prefix: 'ua', items: [], offset: 0, total: 0, loading: false },
+    uniqueB: { table: 'unique_to_b', tbody: 'bin-sim-table-unique-b', prefix: 'ub', items: [], offset: 0, total: 0, loading: false },
 };
 function openClusterView(uuid, name, event) {
     const { collection: col } = getRoutingState();
@@ -42,116 +57,162 @@ function handleIframeMouseLeave(event) {
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
-    const collection = params.get('collection') || 'main';
+    const collection = params.get('collection');
+    if (!collection) {
+        throw new Error("renderBinarySimilarityView: collection is required.");
+    }
     let md5a = params.get('md5_a');
     let md5b = params.get('md5_b');
+    let collB = params.get('coll_b');
+    let poolId = params.get('pool_id');
 
-    // Parse new RESTful URL: /collections/{coll}/files/{md5_a}/vs/{coll_b}/{md5_b}
-    if (!md5a || !md5b) {
-        const parts = window.location.pathname.split('/').filter(Boolean);
-        const hasCol = parts[0] === 'collection' || parts[0] === 'collections';
-        const hasFile = parts[2] === 'file' || parts[2] === 'files';
-        if (hasCol && hasFile && parts[4] === 'vs') {
-            md5a = md5a || decodeURIComponent(parts[3]);
-            md5b = md5b || decodeURIComponent(parts[6]);
+    // Parse new RESTful URL using routing state or fallback
+    if (!md5a || !md5b || !collB || !poolId) {
+        if (window.getRoutingState) {
+            const state = window.getRoutingState();
+            md5a = md5a || state.md5;
+            md5b = md5b || state.md5_b;
+            collB = collB || state.coll_b;
+            poolId = poolId || state.pool;
         }
     }
+
+    // Index-based fallback for coll_b
+    if (!collB) {
+        const parts = window.location.pathname.split('/').filter(Boolean);
+        const vsIdx = parts.indexOf('vs');
+        if (vsIdx !== -1 && vsIdx + 1 < parts.length) {
+            collB = decodeURIComponent(parts[vsIdx + 1]);
+        }
+    }
+
     
     // Set up layout: Header (Selection/Summary) + Body (Sankey / Tables)
     let html = `
         <div id="bin-sim-results" style="display:none; flex:1; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
-            <!-- File Metadata Cards -->
-            <div id="bin-sim-meta-cards" style="display: flex; gap: 20px; margin-bottom: 5px;">
-                <div id="bin-sim-meta-a" style="flex: 1; min-width: 0;"></div>
-                <div id="bin-sim-meta-b" style="flex: 1; min-width: 0;"></div>
+            <!-- Similarity Hero (prominent, score-colored) -->
+            <div id="bin-sim-hero" style="border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 16px; background: var(--card-bg);">
+                <span style="color: var(--subtle); text-transform: uppercase; font-size: 0.8rem; font-weight: bold; letter-spacing: 0.08em;">Binary Similarity</span>
+                <span id="bin-sim-score-val" style="font-family: 'Consolas', monospace; font-weight: 800; font-size: 2.4rem; line-height: 1; color: var(--accent);">--%</span>
             </div>
 
-            <!-- Similarity Bar (exactly like function diff) -->
-            <div id="bin-sim-bar" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px 15px; margin-bottom: 15px; display: flex; align-items: center; justify-content: center; gap: 20px; font-family: 'Inter', sans-serif; font-size: 0.9rem;">
-                <div class="sim-info" style="display: flex; align-items: center; gap: 10px;">
-                    <span class="sim-label" style="color: var(--subtle); text-transform: uppercase; font-size: 0.75rem; font-weight: bold; letter-spacing: 0.05em;">Binary Similarity</span>
-                    <span id="bin-sim-score-val" class="sim-score" style="color: var(--accent); font-family: 'Consolas', monospace; font-weight: bold; font-size: 1.1rem; min-width: 60px; text-align: center;">--%</span>
-                </div>
+            <!-- Slim per-binary strip: user tags + notes only -->
+            <div style="display: flex; gap: 20px; margin-bottom: 12px;">
+                <div id="bin-sim-strip-a" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
+                <div id="bin-sim-strip-b" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
             </div>
-            
-            <!-- Sankey Graph Placeholder -->
-            <div class="resizable-card" id="bin-sim-sankey-card" style="position:relative; width:100%; height:400px; min-height:200px; margin-bottom:20px; border:1px solid var(--border); background:#121212; border-radius:8px; flex-shrink:0; display:flex; flex-direction:column; overflow:hidden;">
-                <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
-                    <button class="view-btn ${sankeyMode === 'detailed' ? 'active' : ''}" id="bsim-sankey-btn-detailed" onclick="setSankeyMode('detailed')" title="Show detailed function-level similarities">Detailed</button>
-                    <button class="view-btn ${sankeyMode === 'simplified' ? 'active' : ''}" id="bsim-sankey-btn-simplified" onclick="setSankeyMode('simplified')" title="Show simplified cluster-level summary">Simplified</button>
-                </div>
-                <div class="view-toggle" id="bin-sim-sankey-scale-toggle" style="position:absolute; top:15px; left:210px; z-index:10; margin:0; align-items:center; padding-left:10px;">
-                    <span style="font-size:0.7rem; color:#888; margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Scale:</span>
-                    <button class="view-btn ${sankeyScale === 'count' ? 'active' : ''}" id="bsim-sankey-scale-btn-count" onclick="setSankeyScale('count')" title="Scale flow by function count">Count</button>
-                    <button class="view-btn ${sankeyScale === 'features' ? 'active' : ''}" id="bsim-sankey-scale-btn-features" onclick="setSankeyScale('features')" title="Scale flow by BSim feature count">Features</button>
-                </div>
-                <div class="view-toggle" id="bin-sim-sankey-split-toggle" style="position:absolute; top:15px; left:410px; z-index:10; margin:0; align-items:center; padding-left:10px; display: ${sankeyMode === 'simplified' ? 'flex' : 'none'};">
-                    <span style="font-size:0.7rem; color:#888; margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Split:</span>
-                    <button class="view-btn ${sankeySplit === 5 ? 'active' : ''}" onclick="setSankeySplit(5)" title="5% granularity (20 bins)">5%</button>
-                    <button class="view-btn ${sankeySplit === 10 ? 'active' : ''}" onclick="setSankeySplit(10)" title="10% granularity (10 bins)">10%</button>
-                    <button class="view-btn ${sankeySplit === 20 ? 'active' : ''}" onclick="setSankeySplit(20)" title="20% granularity (5 bins)">20%</button>
-                    <button class="view-btn ${sankeySplit === 25 ? 'active' : ''}" onclick="setSankeySplit(25)" title="25% granularity (4 bins)">25%</button>
-                </div>
-                <div id="bin-sim-sankey" style="flex:1; width:100%; min-height:0; overflow-y:auto; position:relative;"></div>
-                <div class="drag-handle-v" style="height:8px; background:rgba(255,255,255,0.02); border-top:1px solid var(--border); cursor:ns-resize; display:flex; align-items:center; justify-content:center; transition:background 0.2s;">
-                    <div style="width:30px; height:2px; border-radius:1px; background:rgba(255,255,255,0.15); transition:background 0.2s;"></div>
-                </div>
+
+            <!-- Tab bar -->
+            <div class="bsim-tabbar" id="bin-sim-tabs">
+                <button class="bsim-tab active" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched functions</button>
+                <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched functions</button>
+                <button class="bsim-tab" id="bin-sim-tab-btn-graph" onclick="switchBinSimTab('graph')">Function graph</button>
+                <button class="bsim-tab" id="bin-sim-tab-btn-metadata" onclick="switchBinSimTab('metadata')">Metadata</button>
+                <button class="bsim-tab" id="bin-sim-tab-btn-inferred" onclick="switchBinSimTab('inferred')">Clusters</button>
             </div>
-            
-            <div style="display:flex; flex-direction:column; gap:20px; flex:1; min-height:0;">
-                <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; height:350px; min-height:200px; overflow:hidden; flex-shrink:0;">
-                    <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--success);">Matched Clusters</h3>
+
+            <!-- Matched functions tab -->
+            <div class="bsim-subtab-panel" id="bsim-panel-matched" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+                <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
                     <div style="flex:1; overflow:auto;">
-                        <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
-                                <!-- Rendered dynamically -->
-                            </thead>
+                        <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
                             <tbody id="bin-sim-table-matched"></tbody>
                         </table>
                     </div>
-                    <div class="drag-handle-v" style="height:8px; background:rgba(255,255,255,0.02); border-top:1px solid var(--border); cursor:ns-resize; display:flex; align-items:center; justify-content:center; transition:background 0.2s;">
-                        <div style="width:30px; height:2px; border-radius:1px; background:rgba(255,255,255,0.15); transition:background 0.2s;"></div>
+                </div>
+            </div>
+
+            <!-- Unmatched functions sub-tab -->
+            <div class="bsim-subtab-panel" id="bsim-panel-unmatched" style="flex:1; min-height:0; display:none; gap:20px;">
+                <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="flex:1; overflow:auto;">
+                        <table id="bin-sim-table-unique-a-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
+                            <tbody id="bin-sim-table-unique-a"></tbody>
+                        </table>
                     </div>
                 </div>
-                
-                <div class="resizable-card" style="display:flex; flex-direction:column; height:350px; min-height:200px; overflow:hidden; flex-shrink:0;">
-                    <div style="display:flex; gap:20px; flex:1; overflow:hidden;">
-                        <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                            <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unmatched to Binary A</h3>
-                            <div style="flex:1; overflow:auto;">
-                                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                                    <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
-                                        <!-- Rendered dynamically -->
-                                    </thead>
-                                    <tbody id="bin-sim-table-unique-a"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                        
-                        <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                            <h3 style="margin:0; padding:15px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border); color:var(--accent);">Unmatched to Binary B</h3>
-                            <div style="flex:1; overflow:auto;">
-                                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                                    <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
-                                        <!-- Rendered dynamically -->
-                                    </thead>
-                                    <tbody id="bin-sim-table-unique-b"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="drag-handle-v" style="height:8px; background:rgba(255,255,255,0.02); border:1px solid var(--border); border-radius:8px; margin-top:8px; cursor:ns-resize; display:flex; align-items:center; justify-content:center; transition:background 0.2s;">
-                        <div style="width:30px; height:2px; border-radius:1px; background:rgba(255,255,255,0.15); transition:background 0.2s;"></div>
+                <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="flex:1; overflow:auto;">
+                        <table id="bin-sim-table-unique-b-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
+                            <tbody id="bin-sim-table-unique-b"></tbody>
+                        </table>
                     </div>
                 </div>
             </div>
+
+            <!-- Graph sub-tab -->
+            <div class="bsim-subtab-panel" id="bsim-panel-graph" style="flex:1; min-height:0; display:none; flex-direction:column;">
+                <div id="bin-sim-sankey-card" style="position:relative; width:100%; flex:1; min-height:200px; border:1px solid var(--border); background:#121212; border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+                    <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
+                        <button class="view-btn ${sankeyMode === 'detailed' ? 'active' : ''}" id="bsim-sankey-btn-detailed" onclick="setSankeyMode('detailed')" title="Show detailed function-level similarities">Detailed</button>
+                        <button class="view-btn ${sankeyMode === 'simplified' ? 'active' : ''}" id="bsim-sankey-btn-simplified" onclick="setSankeyMode('simplified')" title="Show simplified cluster-level summary">Simplified</button>
+                    </div>
+                    <div class="view-toggle" id="bin-sim-sankey-scale-toggle" style="position:absolute; top:15px; left:210px; z-index:10; margin:0; align-items:center; padding-left:10px;">
+                        <span style="font-size:0.7rem; color:#888; margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Scale:</span>
+                        <button class="view-btn ${sankeyScale === 'count' ? 'active' : ''}" id="bsim-sankey-scale-btn-count" onclick="setSankeyScale('count')" title="Scale flow by function count">Count</button>
+                        <button class="view-btn ${sankeyScale === 'features' ? 'active' : ''}" id="bsim-sankey-scale-btn-features" onclick="setSankeyScale('features')" title="Scale flow by BSim feature count">Features</button>
+                    </div>
+                    <div class="view-toggle" id="bin-sim-sankey-split-toggle" style="position:absolute; top:15px; left:410px; z-index:10; margin:0; align-items:center; padding-left:10px; display: ${sankeyMode === 'simplified' ? 'flex' : 'none'};">
+                        <span style="font-size:0.7rem; color:#888; margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Split:</span>
+                        <button class="view-btn ${sankeySplit === 5 ? 'active' : ''}" onclick="setSankeySplit(5)" title="5% granularity (20 bins)">5%</button>
+                        <button class="view-btn ${sankeySplit === 10 ? 'active' : ''}" onclick="setSankeySplit(10)" title="10% granularity (10 bins)">10%</button>
+                        <button class="view-btn ${sankeySplit === 20 ? 'active' : ''}" onclick="setSankeySplit(20)" title="20% granularity (5 bins)">20%</button>
+                        <button class="view-btn ${sankeySplit === 25 ? 'active' : ''}" onclick="setSankeySplit(25)" title="25% granularity (4 bins)">25%</button>
+                    </div>
+                    <div id="bin-sim-sankey" style="flex:1; width:100%; min-height:0; overflow-y:auto; position:relative;"></div>
+                </div>
+            </div>
+
+            <!-- Metadata tab -->
+            <div class="bsim-subtab-panel" id="bsim-panel-metadata" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
+                <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-shrink:0;">
+                    <span style="font-size:0.7rem; color:#888; margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Highlight:</span>
+                    <div class="view-toggle" style="margin:0; display:flex;">
+                        <button class="view-btn active" id="meta-highlight-different" onclick="setMetaHighlightMode('different')" title="Highlight different metadata fields">Differences</button>
+                        <button class="view-btn" id="meta-highlight-similar" onclick="setMetaHighlightMode('similar')" title="Highlight identical metadata fields">Similarities</button>
+                        <button class="view-btn" id="meta-highlight-none" onclick="setMetaHighlightMode('none')" title="Do not highlight">None</button>
+                    </div>
+                </div>
+                <div id="bin-sim-meta-compare" style="color:var(--dim); text-align:center; padding:40px;">Loading metadata…</div>
+            </div>
+
+            <!-- Clusters tab -->
+            <div class="bsim-subtab-panel" id="bsim-panel-inferred" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
+                <div id="bin-sim-inferred-meta-container" style="color:var(--dim); text-align:center; padding:40px;">Loading clusters…</div>
+            </div>
         </div>
         <style>
+            .bsim-tabbar { display:flex; gap:4px; margin:0 0 16px 0; border-bottom:2px solid var(--border); }
+            .bsim-tab {
+                background:none; border:none; border-bottom:3px solid transparent;
+                margin-bottom:-2px; padding:10px 20px; cursor:pointer;
+                color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
+                transition:color 0.15s, border-color 0.15s, background 0.15s;
+            }
+            .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+            .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+            .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
+            .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+            .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
+            .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+            .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
+            .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
+            .bin-sim-mc-diff td { background:rgba(249,38,114,0.10); }
+            .bin-sim-mc-same td { background:rgba(166,226,46,0.10); }
             .drag-handle-v:hover {
                 background: rgba(255,255,255,0.08) !important;
             }
             .drag-handle-v:hover div {
                 background: var(--accent) !important;
+            }
+            #bin-sim-table-matched-table td,
+            #bin-sim-table-unique-a-table td,
+            #bin-sim-table-unique-b-table td {
+                position: relative;
+                user-select: text !important;
             }
         </style>
     `;
@@ -160,7 +221,13 @@ function renderBinarySimilarityView(params) {
     initResizableCards();
     
     if (md5a && md5b) {
-        fetchAndRenderBinaryDiff(collection, md5a, md5b);
+        // pool_id is encoded as a query param in the diff URL
+        const urlParams = new URLSearchParams(window.location.search);
+        let poolId = params.get('pool_id') || urlParams.get('pool_id') || null;
+        if (!poolId && window.getRoutingState) {
+            poolId = window.getRoutingState().pool || null;
+        }
+        fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId);
     }
 }
 
@@ -207,12 +274,16 @@ function initResizableCards() {
             });
             }
 
-            async function fetchAndRenderBinaryDiff(collection, md5a, md5b) {
+            async function fetchAndRenderBinaryDiff(collection, md5a, md5b, collB, poolId) {
 
     const resultsEl = document.getElementById('bin-sim-results');
     
     try {
-        const res = await fetch(`/api/bin_sim/diff?collection=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`);
+        // Compact summary: scores, counts, file meta, and the Sankey projection — no rows.
+        let url = `/api/diff?view=sankey&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
+        if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
+        if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
+        const res = await fetch(url);
         if (!res.ok) {
             let errMsg = "Failed to fetch similarity comparison";
             try {
@@ -224,43 +295,69 @@ function initResizableCards() {
         const data = await res.json();
         
         window.filenameCache = window.filenameCache || {};
-        if (data.file_metadata_a) window.filenameCache[md5a] = data.file_metadata_a.file_name || 'unknown';
-        if (data.file_metadata_b) window.filenameCache[md5b] = data.file_metadata_b.file_name || 'unknown';
+        if (data.file_metadata_a) window.filenameCache[md5a] = data.file_metadata_a.file_name || 'File';
+        if (data.file_metadata_b) window.filenameCache[md5b] = data.file_metadata_b.file_name || 'File';
 
-        // Dynamically update breadcrumbs with actual file names
-        const nameA = window.filenameCache[md5a];
-        const nameB = window.filenameCache[md5b];
-        const breadcrumbItems = document.querySelectorAll('#breadcrumbs-container .breadcrumb-item');
-        if (breadcrumbItems.length >= 4) {
-            const sourceSpan = breadcrumbItems[2].querySelector('span');
-            if (sourceSpan) sourceSpan.innerText = nameA;
-            const vsSpan = breadcrumbItems[3].querySelector('span');
-            if (vsSpan) vsSpan.innerText = `VS ${nameB}`;
-        }
+        const nameA = data.file_metadata_a?.file_name || 'Binary A';
+        const nameB = data.file_metadata_b?.file_name || 'Binary B';
+
+
+        Breadcrumbs.setFilename(md5a, data.file_metadata_a?.file_name || 'File');
+        Breadcrumbs.setFilename(md5b, data.file_metadata_b?.file_name || 'File');
+        Breadcrumbs.refresh();
         
-        // Render Summary
+        // Render Summary — prominent, score-colored
         const scoreVal = document.getElementById('bin-sim-score-val');
-        if (scoreVal) scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
-        
-        resultsEl.style.display = 'flex';
-        
-        // Render File Metadata Cards
-        if (typeof renderFileMetadata === 'function') {
-            const col = collection;
-            if (data.file_metadata_a) {
-                renderFileMetadata('bin-sim-meta-a', data.file_metadata_a, `${col}:file:${md5a}`, { side: 'l' });
-            }
-            if (data.file_metadata_b) {
-                renderFileMetadata('bin-sim-meta-b', data.file_metadata_b, `${col}:file:${md5b}`, { side: 'r' });
-            }
+        if (scoreVal) {
+            scoreVal.textContent = (data.score * 100).toFixed(1) + '%';
+            scoreVal.style.color = 'var(--success)';
         }
-        
-        // Save comparison data to cache
-        binSimDataCache = data;
 
-        // Render Tables
+        resultsEl.style.display = 'flex';
+
+        // Slim per-binary strip: user tags + notes only
+        renderBinSimStrip('bin-sim-strip-a', data.file_metadata_a, `${collection}:file:${md5a}`);
+        renderBinSimStrip('bin-sim-strip-b', data.file_metadata_b, `${collB || collection}:file:${md5b}`);
+
+        // Stash context for lazy Metadata tab load
+        binSimMetaCtx = {
+            collection, md5a, md5b, collB: collB || collection, poolId, loaded: false,
+        };
+
+        // Cache: compact summary + Sankey; tables load their rows via paging. diff{} is
+        // filled incrementally per table page; functions_metadata merged across pages.
+        binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId };
+        binSimFullDiff = null;
+        const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
+        binSimDataCache = {
+            score: data.score,
+            score_sim_weighted: data.score_sim_weighted,
+            file_metadata_a: data.file_metadata_a,
+            file_metadata_b: data.file_metadata_b,
+            sankey: data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] },
+            counts,
+            functions_metadata: {},
+            diff: { matched: [], unique_to_a: [], unique_to_b: [] },
+        };
+        ['matched', 'uniqueA', 'uniqueB'].forEach(k => {
+            binSimPage[k].items = []; binSimPage[k].offset = 0; binSimPage[k].total = 0; binSimPage[k].loading = false;
+        });
+
+        const btnMatched = document.getElementById('bin-sim-tab-btn-matched');
+        const btnUnmatched = document.getElementById('bin-sim-tab-btn-unmatched');
+        if (btnMatched) btnMatched.textContent = `Matched functions (${counts.matched})`;
+        if (btnUnmatched) btnUnmatched.textContent = `Unmatched functions (${counts.unique_to_a} / ${counts.unique_to_b})`;
+
+        // Render headers, the Sankey (from compact data), then load first page of each table.
         renderBinSimTables();
-        
+        renderBinaryDiffSankey(binSimDataCache);
+        loadBinSimTablePage('matched', { reset: true });
+        loadBinSimTablePage('uniqueA', { reset: true });
+        loadBinSimTablePage('uniqueB', { reset: true });
+
+        // Restore the tab from the URL hash (e.g. after a Back navigation).
+        applyBinSimTabFromHash();
+
     } catch(err) {
         console.error(err);
         if (resultsEl) {
@@ -277,14 +374,29 @@ function initResizableCards() {
 }
 
 
-function renderBinaryDiffSankey(data) {
+async function renderBinaryDiffSankey(data) {
     const container = document.getElementById('bin-sim-sankey');
-    container.innerHTML = '';
-    
-    if (!data.diff) {
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No diff data available</div>';
-        return;
+    if (!container) return;
+
+    // Detailed mode needs per-function ids/names → lazy-fetch the full diff once.
+    if (sankeyMode !== 'simplified' && !binSimFullDiff && binSimCtx) {
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">Loading detailed graph…</div>';
+        try {
+            let u = `/api/diff?collection_a=${encodeURIComponent(binSimCtx.collection)}&md5_a=${encodeURIComponent(binSimCtx.md5a)}&md5_b=${encodeURIComponent(binSimCtx.md5b)}`;
+            if (binSimCtx.collB) u += `&collection_b=${encodeURIComponent(binSimCtx.collB)}`;
+            if (binSimCtx.poolId) u += `&pool=${encodeURIComponent(binSimCtx.poolId)}`;
+            const r = await fetch(u);
+            binSimFullDiff = await r.json();
+        } catch (e) { console.error('detailed sankey fetch failed', e); }
     }
+    container.innerHTML = '';
+
+    // Data source: compact projection for simplified, full diff for detailed.
+    const isDetailed = sankeyMode !== 'simplified';
+    const src = isDetailed
+        ? (binSimFullDiff && binSimFullDiff.diff ? binSimFullDiff.diff : { matched: [], unique_to_a: [], unique_to_b: [] })
+        : (data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] });
+    const funcsMeta = isDetailed ? (binSimFullDiff && binSimFullDiff.functions_metadata) : null;
 
     const detailedBtn = document.getElementById('bsim-sankey-btn-detailed');
     if (detailedBtn) {
@@ -294,19 +406,22 @@ function renderBinaryDiffSankey(data) {
         detailedBtn.style.opacity = 1.0;
         detailedBtn.style.cursor = 'pointer';
     }
+
+    const filenameA = data.file_metadata_a?.file_name || 'A';
+    const filenameB = data.file_metadata_b?.file_name || 'B';
     
     const width = container.clientWidth;
     
-    const rawMatched = data.diff.matched || [];
-    const rawUniqueA = data.diff.unique_to_a || [];
-    const rawUniqueB = data.diff.unique_to_b || [];
+    const rawMatched = src.matched || [];
+    const rawUniqueA = src.unique_to_a || [];
+    const rawUniqueB = src.unique_to_b || [];
     
     let maxNodesInColumn = 10;
     if (sankeyMode !== 'simplified') {
-        const groupA_count = rawMatched.filter(m => m.funcs_a && m.funcs_a.length > 0).length + 
-                             rawUniqueA.filter(u => u.funcs && u.funcs.length > 0).length;
-        const groupB_count = rawMatched.filter(m => m.funcs_b && m.funcs_b.length > 0).length + 
-                             rawUniqueB.filter(u => u.funcs && u.funcs.length > 0).length;
+        const groupA_count = rawMatched.filter(m => m.func_a).length +
+                             rawUniqueA.filter(u => u.func_id).length;
+        const groupB_count = rawMatched.filter(m => m.func_b).length +
+                             rawUniqueB.filter(u => u.func_id).length;
         const cluster_count = rawMatched.length + rawUniqueA.length + rawUniqueB.length;
         maxNodesInColumn = Math.max(groupA_count, groupB_count, cluster_count, 10);
     }
@@ -335,7 +450,7 @@ function renderBinaryDiffSankey(data) {
     
     const getFuncValue = (fid) => {
         if (sankeyScale === 'features') {
-            const meta = (data && data.functions_metadata) ? data.functions_metadata[fid] : null;
+            const meta = funcsMeta ? funcsMeta[fid] : null;
             return Math.max(1, (meta && meta.bsim_features_count) ? parseInt(meta.bsim_features_count) : 1);
         }
         return 1;
@@ -344,9 +459,9 @@ function renderBinaryDiffSankey(data) {
     const sumFuncsValue = (funcs) => {
         return (funcs || []).reduce((sum, fid) => sum + getFuncValue(fid), 0);
     };
-    
+
     const getFuncDisplayName = (fid) => {
-        const meta = (data && data.functions_metadata) ? data.functions_metadata[fid] : null;
+        const meta = funcsMeta ? funcsMeta[fid] : null;
         if (meta && meta.name) {
             return meta.name;
         }
@@ -354,25 +469,22 @@ function renderBinaryDiffSankey(data) {
         return '@' + parts.pop();
     };
 
-    const filteredMatched = typeof applyFilters === 'function' ? applyFilters(data.diff.matched || [], 'matched') : (data.diff.matched || []);
-    const filteredUniqueA = typeof applyFilters === 'function' ? applyFilters(data.diff.unique_to_a || [], 'ua') : (data.diff.unique_to_a || []);
-    const filteredUniqueB = typeof applyFilters === 'function' ? applyFilters(data.diff.unique_to_b || [], 'ub') : (data.diff.unique_to_b || []);
-
-    const sortedMatched = typeof sortItems === 'function' ? sortItems([...filteredMatched], binSimSortState.matched) : filteredMatched;
-    const sortedUniqueA = typeof sortItems === 'function' ? sortItems([...filteredUniqueA], binSimSortState.uniqueA) : filteredUniqueA;
-    const sortedUniqueB = typeof sortItems === 'function' ? sortItems([...filteredUniqueB], binSimSortState.uniqueB) : filteredUniqueB;
+    // Sankey shows the full aggregate (server-computed); table filters apply to tables only.
+    const sortedMatched = rawMatched;
+    const sortedUniqueA = rawUniqueA;
+    const sortedUniqueB = rawUniqueB;
 
     const matchedRank = new Map(sortedMatched.map((m, idx) => [m.cluster_uuid, idx]));
     const uniqueARank = new Map(sortedUniqueA.map((u, idx) => [u.cluster_uuid, idx]));
     const uniqueBRank = new Map(sortedUniqueB.map((u, idx) => [u.cluster_uuid, idx]));
 
     if (sankeyMode === 'simplified') {
-        const sortCol = (binSimSortState.matched && binSimSortState.matched.col) || 'cohesion';
-        const groupCol = sortCol === 'cluster_name' ? 'cohesion' : sortCol;
+        const sortCol = (binSimSortState.matched && binSimSortState.matched.col) || 'similarity';
+        const groupCol = sortCol === 'cluster_name' ? 'similarity' : sortCol;
 
         let minVal = 0.0;
         let maxVal = 1.0;
-        if (groupCol === 'avg_features' || groupCol === 'count_a' || groupCol === 'count_b') {
+        if (groupCol === 'avg_features') {
             const vals = sortedMatched.map(m => m[groupCol] || 0);
             minVal = vals.length > 0 ? Math.min(...vals) : 0;
             maxVal = vals.length > 0 ? Math.max(...vals) : 100;
@@ -401,14 +513,16 @@ function renderBinaryDiffSankey(data) {
             let binIdx = Math.floor(fraction * numBins);
             if (binIdx >= numBins) binIdx = numBins - 1;
             
-            const wA = sumFuncsValue(m.funcs_a);
-            const wB = sumFuncsValue(m.funcs_b);
-            const cohesion = m.cohesion || 0;
-            
+            // Compact rows carry inlined feature counts (feat_a/feat_b); no func ids here.
+            const wVal = (f) => sankeyScale === 'features' ? Math.max(1, f || 1) : 1;
+            const wA = wVal(m.feat_a);
+            const wB = wVal(m.feat_b);
+            const similarity = m.similarity || 0;
+
             bins[binIdx].clusters.push(m);
             bins[binIdx].totalA += wA;
             bins[binIdx].totalB += wB;
-            bins[binIdx].sumCohesion += cohesion * (wA + wB);
+            bins[binIdx].sumCohesion += similarity * (wA + wB);
             bins[binIdx].sumWeights += (wA + wB);
         });
 
@@ -419,15 +533,12 @@ function renderBinaryDiffSankey(data) {
             totalMatchedB += b.totalB;
         });
 
+        const uVal = (u) => sankeyScale === 'features' ? Math.max(1, u.feat || 1) : 1;
         let totalUniqueA = 0;
-        sortedUniqueA.forEach(u => {
-            totalUniqueA += sumFuncsValue(u.funcs);
-        });
+        sortedUniqueA.forEach(u => { totalUniqueA += uVal(u); });
 
         let totalUniqueB = 0;
-        sortedUniqueB.forEach(u => {
-            totalUniqueB += sumFuncsValue(u.funcs);
-        });
+        sortedUniqueB.forEach(u => { totalUniqueB += uVal(u); });
 
         const metricSuffix = sankeyScale === 'features' ? 'feats' : 'funcs';
 
@@ -437,25 +548,25 @@ function renderBinaryDiffSankey(data) {
             const high = minVal + (binIdx + 1) * stepVal;
             
             let label = '';
-            if (groupCol === 'cohesion' || groupCol === 'sim_rarity') {
+            if (groupCol === 'similarity' || groupCol === 'cohesion' || groupCol === 'sim_rarity') {
                 const lowPct = Math.round(low * 100);
                 const highPct = Math.round(high * 100);
-                const colName = groupCol === 'cohesion' ? 'Cohesion' : 'Rarity';
+                const colName = groupCol === 'similarity' ? 'Similarity' : (groupCol === 'cohesion' ? 'Cohesion' : 'Rarity');
                 if (prefix === 'a') {
-                    label = `A Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
+                    label = `${filenameA} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
                 } else if (prefix === 'b') {
-                    label = `B Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
+                    label = `${filenameB} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
                 } else {
                     label = `Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
                 }
             } else {
                 const lowNum = Math.round(low);
                 const highNum = Math.round(high);
-                const colName = groupCol === 'avg_features' ? 'Avg Feat' : (groupCol === 'count_a' ? 'Funcs A' : 'Funcs B');
+                const colName = 'Avg Feat';
                 if (prefix === 'a') {
-                    label = `A Matched ${colName} ${lowNum}-${highNum} (${countText})`;
+                    label = `${filenameA} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
                 } else if (prefix === 'b') {
-                    label = `B Matched ${colName} ${lowNum}-${highNum} (${countText})`;
+                    label = `${filenameB} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
                 } else {
                     label = `Matched ${colName} ${lowNum}-${highNum} (${countText})`;
                 }
@@ -504,48 +615,46 @@ function renderBinaryDiffSankey(data) {
 
         let nodeA_unique, nodeC_uniqueA, nodeC_uniqueB, nodeB_unique;
         if (totalUniqueA > 0) {
-            nodeA_unique = getNode('simplified_a_unique', `A Unmatched (${totalUniqueA} ${metricSuffix})`, '#f92672');
+            nodeA_unique = getNode('simplified_a_unique', `${filenameA} Unmatched (${totalUniqueA} ${metricSuffix})`, '#f92672');
             nodeA_unique.alignOverride = 0;
-            nodeC_uniqueA = getNode('simplified_c_uniqueA', `Unmatched to A (${sortedUniqueA.length})`, '#f92672');
+            nodeC_uniqueA = getNode('simplified_c_uniqueA', `Unmatched to ${filenameA} (${sortedUniqueA.length})`, '#f92672');
             nodeC_uniqueA.alignOverride = 1;
             links.push({ source: nodeA_unique.index, target: nodeC_uniqueA.index, value: totalUniqueA });
         }
         if (totalUniqueB > 0) {
-            nodeC_uniqueB = getNode('simplified_c_uniqueB', `Unmatched to B (${sortedUniqueB.length})`, '#66d9ef');
+            nodeC_uniqueB = getNode('simplified_c_uniqueB', `Unmatched to ${filenameB} (${sortedUniqueB.length})`, '#66d9ef');
             nodeC_uniqueB.alignOverride = 1;
-            nodeB_unique = getNode('simplified_b_unique', `B Unmatched (${totalUniqueB} ${metricSuffix})`, '#66d9ef');
+            nodeB_unique = getNode('simplified_b_unique', `${filenameB} Unmatched (${totalUniqueB} ${metricSuffix})`, '#66d9ef');
             nodeB_unique.alignOverride = 2;
             links.push({ source: nodeC_uniqueB.index, target: nodeB_unique.index, value: totalUniqueB });
         }
     } else {
         // 1. Matched Clusters
         sortedMatched.forEach(m => {
-            const cohesion = m.cohesion || 0;
-            const cColor = `hsl(${cohesion * 120}, 70%, 55%)`;
+            const similarity = m.similarity || 0;
+            const cColor = `hsl(${similarity * 120}, 70%, 55%)`;
             const cNode = getNode('cluster_' + m.cluster_uuid, m.cluster_name, cColor);
-            cNode.cohesion = cohesion;
+            cNode.cohesion = m.cohesion || 0;
             cNode.cluster_uuid = m.cluster_uuid;
             cNode.cluster_name = m.cluster_name;
-            cNode.size = m.count_a + m.count_b;
+            cNode.size = 2;
             cNode.stability = 1.0;
             cNode.avg_features = m.avg_features || 0;
-            
-            if (m.funcs_a && m.funcs_a.length > 0) {
-                const fNames = m.funcs_a.map(fa => getFuncDisplayName(fa));
+
+            if (m.func_a) {
                 const fNodeId = 'funcgroup_a_' + m.cluster_uuid;
                 funcParentMap.set(fNodeId, m.cluster_uuid);
-                const fNode = getNode(fNodeId, fNames, cColor, m.funcs_a);
-                fNode.cohesion = cohesion;
-                links.push({ source: fNode.index, target: cNode.index, value: sumFuncsValue(m.funcs_a) });
+                const fNode = getNode(fNodeId, [getFuncDisplayName(m.func_a)], cColor, [m.func_a]);
+                fNode.cohesion = m.cohesion || 0;
+                links.push({ source: fNode.index, target: cNode.index, value: getFuncValue(m.func_a) });
             }
-            
-            if (m.funcs_b && m.funcs_b.length > 0) {
-                const fNames = m.funcs_b.map(fb => getFuncDisplayName(fb));
+
+            if (m.func_b) {
                 const fNodeId = 'funcgroup_b_' + m.cluster_uuid;
                 funcParentMap.set(fNodeId, m.cluster_uuid);
-                const fNode = getNode(fNodeId, fNames, cColor, m.funcs_b);
-                fNode.cohesion = cohesion;
-                links.push({ source: cNode.index, target: fNode.index, value: sumFuncsValue(m.funcs_b) });
+                const fNode = getNode(fNodeId, [getFuncDisplayName(m.func_b)], cColor, [m.func_b]);
+                fNode.cohesion = m.cohesion || 0;
+                links.push({ source: cNode.index, target: fNode.index, value: getFuncValue(m.func_b) });
             }
         });
         
@@ -556,17 +665,16 @@ function renderBinaryDiffSankey(data) {
             const cNode = getNode(targetNodeId, targetNodeName, '#f92672');
             cNode.cluster_uuid = u.is_clustered ? u.cluster_uuid : '';
             cNode.cluster_name = targetNodeName;
-            cNode.size = (cNode.size || 0) + u.funcs.length;
+            cNode.size = (cNode.size || 0) + 1;
             cNode.stability = 1.0;
             cNode.cohesion = u.cohesion || 0;
             cNode.avg_features = u.avg_features || 0;
-            
-            if (u.funcs && u.funcs.length > 0) {
-                const fNames = u.funcs.map(fa => getFuncDisplayName(fa));
+
+            if (u.func_id) {
                 const fNodeId = 'funcgroup_a_' + (u.is_clustered ? u.cluster_uuid : u.func_id);
                 funcParentMap.set(fNodeId, u.is_clustered ? u.cluster_uuid : 'unclustered_a_group');
-                const fNode = getNode(fNodeId, fNames, '#f92672', u.funcs);
-                links.push({ source: fNode.index, target: cNode.index, value: sumFuncsValue(u.funcs) });
+                const fNode = getNode(fNodeId, [getFuncDisplayName(u.func_id)], '#f92672', [u.func_id]);
+                links.push({ source: fNode.index, target: cNode.index, value: getFuncValue(u.func_id) });
             }
         });
         
@@ -577,17 +685,16 @@ function renderBinaryDiffSankey(data) {
             const cNode = getNode(targetNodeId, targetNodeName, '#66d9ef');
             cNode.cluster_uuid = u.is_clustered ? u.cluster_uuid : '';
             cNode.cluster_name = targetNodeName;
-            cNode.size = (cNode.size || 0) + u.funcs.length;
+            cNode.size = (cNode.size || 0) + 1;
             cNode.stability = 1.0;
             cNode.cohesion = u.cohesion || 0;
             cNode.avg_features = u.avg_features || 0;
-            
-            if (u.funcs && u.funcs.length > 0) {
-                const fNames = u.funcs.map(fb => getFuncDisplayName(fb));
+
+            if (u.func_id) {
                 const fNodeId = 'funcgroup_b_' + (u.is_clustered ? u.cluster_uuid : u.func_id);
                 funcParentMap.set(fNodeId, u.is_clustered ? u.cluster_uuid : 'unclustered_b_group');
-                const fNode = getNode(fNodeId, fNames, '#66d9ef', u.funcs);
-                links.push({ source: cNode.index, target: fNode.index, value: sumFuncsValue(u.funcs) });
+                const fNode = getNode(fNodeId, [getFuncDisplayName(u.func_id)], '#66d9ef', [u.func_id]);
+                links.push({ source: cNode.index, target: fNode.index, value: getFuncValue(u.func_id) });
             }
         });
     }
@@ -917,46 +1024,88 @@ function setBinSimSort(table, col) {
         binSimSortState[table].col = col;
         binSimSortState[table].dir = -1;
     }
+    // Re-render headers (sort arrows) then reload that table's first page from the server.
     renderBinSimTables();
+    loadBinSimTablePage(table, { reset: true });
 }
 
 function binSimFilterChange(shouldApply = false) {
     const prefixes = ['matched', 'ua', 'ub'];
     prefixes.forEach(prefix => {
-        const suffixes = prefix === 'matched' ? ['feat', 'ca', 'cb', 'coh', 'rar'] : ['feat', 'c', 'coh'];
+        const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
+        if (qEl) window[`bsim-flt-${prefix}-q-val`] = qEl.value;
+        const suffixes = prefix === 'matched' ? ['feat', 'coh', 'rar'] : ['feat', 'rar'];
         suffixes.forEach(suffix => {
             const minEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-min`);
             const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
             if (minEl) window[`bsim-flt-${prefix}-${suffix}-min-val`] = minEl.value;
             if (maxEl) window[`bsim-flt-${prefix}-${suffix}-max-val`] = maxEl.value;
         });
+        const noteSuffixes = prefix === 'matched' ? ['note-a', 'note-b'] : ['note'];
+        noteSuffixes.forEach(suffix => {
+            const el = document.getElementById(`bsim-flt-${prefix}-${suffix}`);
+            if (el) window[`bsim-flt-${prefix}-${suffix}-val`] = el.value;
+        });
     });
 
-    if (shouldApply) {
-        renderBinSimTables(true);
+    // Reload only the table whose filter input changed (derived from the focused input),
+    // so a search in one table doesn't reset the others. Fallback: reload all.
+    const el = document.activeElement;
+    let targets = ['matched', 'uniqueA', 'uniqueB'];
+    if (el && el.id) {
+        if (el.id.startsWith('bsim-flt-matched-')) targets = ['matched'];
+        else if (el.id.startsWith('bsim-flt-ua-')) targets = ['uniqueA'];
+        else if (el.id.startsWith('bsim-flt-ub-')) targets = ['uniqueB'];
     }
+    if (window._binSimFilterTimer) clearTimeout(window._binSimFilterTimer);
+    window._binSimFilterTimer = setTimeout(() => {
+        targets.forEach(k => loadBinSimTablePage(k, { reset: true }));
+    }, shouldApply ? 0 : 300);
 }
 
-const applyFilters = (items, prefix) => {
-    return items.filter(item => {
-        const count = item.count_a !== undefined ? Math.max(item.count_a, item.count_b) : item.funcs.length;
-        const caMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-ca-min`)?.value || document.getElementById(`bsim-flt-${prefix}-c-min`)?.value);
-        const caMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-ca-max`)?.value || document.getElementById(`bsim-flt-${prefix}-c-max`)?.value);
-        
-        if (!isNaN(caMin) && count < caMin) return false;
-        if (!isNaN(caMax) && count > caMax) return false;
+const funcSearchHaystack = (fid) => {
+    const meta = (binSimDataCache && binSimDataCache.functions_metadata)
+        ? (binSimDataCache.functions_metadata[fid] || {}) : {};
+    const addr = meta.entrypoint_address || fid.split(':').pop();
+    return [meta.name, meta.namespace, addr, ...(meta.tags || []), ...(meta.user_tags || [])]
+        .filter(Boolean).join(' ').toLowerCase();
+};
 
-        if (item.count_b !== undefined) {
-            const cbMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-cb-min`)?.value);
-            const cbMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-cb-max`)?.value);
-            if (!isNaN(cbMin) && item.count_b < cbMin) return false;
-            if (!isNaN(cbMax) && item.count_b > cbMax) return false;
+const applyFilters = (items, prefix) => {
+    const q = (document.getElementById(`bsim-flt-${prefix}-q`)?.value || '').trim().toLowerCase();
+    const checkNotes = (funcsList, searchOwner) => {
+        if (!searchOwner) return true;
+        return funcsList.some(fid => {
+            const owners = (binSimDataCache.functions_metadata && binSimDataCache.functions_metadata[fid]?.note_owners) || [];
+            return owners.some(o => o.toLowerCase().includes(searchOwner));
+        });
+    };
+
+    return items.filter(item => {
+        if (q) {
+            const fids = (item.func_a || item.func_b)
+                ? [item.func_a, item.func_b].filter(Boolean)
+                : (item.func_id ? [item.func_id] : []);
+            const hay = fids.map(funcSearchHaystack).join(' ');
+            if (!hay.includes(q)) return false;
         }
 
-        const cohMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-coh-min`)?.value);
-        const cohMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-coh-max`)?.value);
-        if (!isNaN(cohMin) && item.cohesion < cohMin) return false;
-        if (!isNaN(cohMax) && item.cohesion > cohMax) return false;
+        const noteA = (document.getElementById(`bsim-flt-${prefix}-note-a`)?.value || '').trim().toLowerCase();
+        if (noteA && !checkNotes(item.func_a ? [item.func_a] : [], noteA)) return false;
+
+        const noteB = (document.getElementById(`bsim-flt-${prefix}-note-b`)?.value || '').trim().toLowerCase();
+        if (noteB && !checkNotes(item.func_b ? [item.func_b] : [], noteB)) return false;
+
+        const noteU = (document.getElementById(`bsim-flt-${prefix}-note`)?.value || '').trim().toLowerCase();
+        if (noteU) {
+            if (!checkNotes(item.func_id ? [item.func_id] : [], noteU)) return false;
+        }
+
+        // Similarity filter (matched rows); unique rows have no similarity inputs so this is skipped.
+        const simMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-coh-min`)?.value);
+        const simMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-coh-max`)?.value);
+        if (!isNaN(simMin) && (item.similarity || 0) < simMin) return false;
+        if (!isNaN(simMax) && (item.similarity || 0) > simMax) return false;
         
         const featMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-feat-min`)?.value);
         const featMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-feat-max`)?.value);
@@ -984,53 +1133,70 @@ const sortItems = (items, state) => {
     });
 };
 
+// Pre-seed the shared cluster tooltip cache with sample members shipped on the row, so the
+// tooltip renders them directly instead of fetching by collection (which fails for
+// cross-collection / pool bin-sim). No-op when the cluster has no samples. [[dynamic]]
+function seedBinSimClusterSamples(cd) {
+    if (!cd || !cd.cluster_uuid || !cd.sample_functions || !cd.sample_functions.length) return;
+    if (!window.clusterTooltipMockCache) return;
+    window.clusterTooltipMockCache.set(cd.cluster_uuid, { data: {
+        uuid: cd.cluster_uuid, name: cd.cluster_name,
+        size: Number(cd.member_count || 0), stability: Number(cd.cluster_stability || 0),
+        cohesion: Number(cd.cohesion_score || 0), avg_features: Number(cd.avg_features || 0),
+        runtime_members: cd.sample_functions, scrollOffset: 0
+    }});
+}
+
 function renderBinSimTables(isFilterChange = false) {
-    if (!binSimDataCache || !binSimDataCache.diff) return;
+    if (!binSimDataCache) return;
     const data = binSimDataCache;
 
-    if (data.diff.unique_to_a) {
-        data.diff.unique_to_a.forEach(u => {
-            const meta = data.functions_metadata ? data.functions_metadata[u.func_id] : null;
-            u.func_name = meta && meta.name ? meta.name : ('sub_' + u.func_id.split(':').pop());
-        });
-    }
-    if (data.diff.unique_to_b) {
-        data.diff.unique_to_b.forEach(u => {
-            const meta = data.functions_metadata ? data.functions_metadata[u.func_id] : null;
-            u.func_name = meta && meta.name ? meta.name : ('sub_' + u.func_id.split(':').pop());
-        });
-    }
-
-    const renderFuncBadge = (fid) => {
+    // Build a full function object from the enriched functions_metadata so the diff
+    // tables can reuse the same rich renderers (colored signature, tags, notes, diff
+    // buttons) as the function-search view.
+    const buildFuncObj = (fid) => {
         const parts = fid.split(':');
         const entry = parts.pop();
         const md5 = parts.pop();
-        const type = parts.pop();
+        parts.pop(); // type segment (func/function/idx marker)
         const col = parts.join(':');
-        
-        const meta = (binSimDataCache && binSimDataCache.functions_metadata) ? binSimDataCache.functions_metadata[fid] : null;
-        const name = meta && meta.name ? meta.name : ('sub_' + entry);
-        const retType = meta && meta.return_type ? meta.return_type : 'void';
-        const params = meta && meta.parameters ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]).join(', ') : '';
-        const titleStr = `${retType} ${name}(${params})`;
-        
-        const cleanName = name.replace(/'/g, "\\'");
-        
-        const fData = {
+
+        const meta = (binSimDataCache && binSimDataCache.functions_metadata)
+            ? binSimDataCache.functions_metadata[fid] : null;
+        const params = meta && meta.parameters
+            ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
+        return {
             function_id: fid,
-            function_name: name,
+            function_name: (meta && meta.name) ? meta.name : ('sub_' + entry),
+            return_type: (meta && meta.return_type) ? meta.return_type : 'void',
+            parameters: params,
+            namespace: (meta && meta.namespace) ? meta.namespace : '',
+            entrypoint_address: (meta && meta.entrypoint_address) ? meta.entrypoint_address : entry,
+            bsim_features_count: (meta && meta.bsim_features_count) ? meta.bsim_features_count : 0,
             file_md5: md5,
-            entrypoint_address: entry,
-            collection: col
+            collection: col,
+            tags: (meta && meta.tags) || [],
+            user_tags: (meta && meta.user_tags) || [],
+            note_owners: (meta && meta.note_owners) || [],
+            note_count: (meta && meta.note_count) || 0,
         };
-        
-        return `<span class="badge clickable" title="${titleStr}" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); margin:2px;" 
-            data-entity-data='${JSON.stringify(fData).replace(/'/g, "&apos;")}'
-            onmouseenter="showCodePreview('${fid}', '${cleanName}', '${cleanName}', '${md5}', 0, event)" 
-            onmouseleave="hideCodePreview(event)" 
-            onmousemove="moveCodePreview(event)"
-            oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)"
-            onclick="showFunctionCodeById('${fid}', '${cleanName}', '', event)">${name}</span>`;
+    };
+
+    const renderFuncBadge = (fid) => {
+        const f = buildFuncObj(fid);
+        const sig = (typeof EntityRenderer !== 'undefined')
+            ? EntityRenderer.renderFunction(f, { isTable: true, hideNote: true, showActions: false })
+            : (f.function_name || fid);
+        const tagsHtml = (typeof EntityRenderer !== 'undefined')
+            ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags) : '';
+        return `
+            <div class="bsim-func-cell" style="display:flex; flex-direction:column; gap:2px; min-width:0; text-align:left; width:100%;">
+                ${sig}
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <span class="mono dim" style="font-size:0.65rem;">@ ${f.entrypoint_address}</span>
+                    ${tagsHtml}
+                </div>
+            </div>`;
     };
 
 
@@ -1049,14 +1215,34 @@ function renderBinSimTables(isFilterChange = false) {
             <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
         </div>`;
 
-    const restoreFilters = (prefix, suffixes) => {
+    // Free-text search over function name / namespace / address / tags for a table.
+    const searchHtml = (prefix) => `
+        <div onclick="event.stopPropagation()">
+            <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
+        </div>`;
+
+    const noteFilterHtml = (prefix, suffix) => `
+        <div onclick="event.stopPropagation()">
+            <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}" placeholder="Note Owner..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
+        </div>`;
+
+    const restoreFilters = (prefix, suffixes, noteSuffixes = []) => {
+        const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
+        if (qEl && window[`bsim-flt-${prefix}-q-val`]) qEl.value = window[`bsim-flt-${prefix}-q-val`];
         suffixes.forEach(suffix => {
             const minEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-min`);
             const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
             if (minEl && window[`bsim-flt-${prefix}-${suffix}-min-val`]) minEl.value = window[`bsim-flt-${prefix}-${suffix}-min-val`];
             if (maxEl && window[`bsim-flt-${prefix}-${suffix}-max-val`]) maxEl.value = window[`bsim-flt-${prefix}-${suffix}-max-val`];
         });
+        noteSuffixes.forEach(suffix => {
+            const el = document.getElementById(`bsim-flt-${prefix}-${suffix}`);
+            if (el && window[`bsim-flt-${prefix}-${suffix}-val`]) el.value = window[`bsim-flt-${prefix}-${suffix}-val`];
+        });
     };
+
+    const nameA = (data && data.file_metadata_a && data.file_metadata_a.file_name) || 'A';
+    const nameB = (data && data.file_metadata_b && data.file_metadata_b.file_name) || 'B';
 
     const tbodyMatched = document.getElementById('bin-sim-table-matched');
     if (tbodyMatched) {
@@ -1064,37 +1250,95 @@ function renderBinSimTables(isFilterChange = false) {
         if (thead && !isFilterChange) {
             thead.innerHTML = `
                 <tr>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'similarity')">Similarity <small>${getSortIcon('matched', 'similarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${nameA}</th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${nameB}</th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'avg_features')">Avg Feat <small>${getSortIcon('matched', 'avg_features')}</small><div class="resizer"></div></th>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cluster_name')">Cluster <small>${getSortIcon('matched', 'cluster_name')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'avg_features')">Avg Feat <small>${getSortIcon('matched', 'avg_features')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'count_a')">Funcs A <small>${getSortIcon('matched', 'count_a')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'count_b')">Funcs B <small>${getSortIcon('matched', 'count_b')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cohesion')">Cohesion <small>${getSortIcon('matched', 'cohesion')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Sim Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
-                    <th></th>
-                    <th>${filterHtml('matched', 'feat')}</th>
-                    <th>${filterHtml('matched', 'ca')}</th>
-                    <th>${filterHtml('matched', 'cb')}</th>
                     <th>${filterHtml('matched', 'coh')}</th>
+                    <th>${searchHtml('matched')}</th>
+                    <th>${noteFilterHtml('matched', 'note-a')}</th>
+                    <th></th>
+                    <th>${noteFilterHtml('matched', 'note-b')}</th>
                     <th>${filterHtml('matched', 'rar')}</th>
+                    <th>${filterHtml('matched', 'feat')}</th>
+                    <th></th>
                 </tr>
             `;
-            restoreFilters('matched', ['feat', 'ca', 'cb', 'coh', 'rar']);
+            restoreFilters('matched', ['feat', 'coh', 'rar'], ['note-a', 'note-b']);
         }
     }
 
-    if (data.diff.matched) {
-        let matched = applyFilters(data.diff.matched, 'matched');
-        matched = sortItems(matched, binSimSortState.matched);
-        
+    if (tbodyMatched) {
+        // Server already filtered + sorted; render the accumulated pages as-is.
+        const matched = binSimPage.matched.items;
+
         if (matched.length > 0) {
             tbodyMatched.innerHTML = matched.map(m => {
                 const cleanName = m.cluster_name.replace(/'/g, "\\'");
                 const escUuid = m.cluster_uuid;
-                const size = m.count_a + m.count_b;
-                const cohesion = m.cohesion || 0;
-                const avgFeat = m.avg_features || 0;
+                const noteBtn = (fid) => {
+                    const fObj = buildFuncObj(fid);
+                    return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
+                };
+                const notesAHtml = m.func_a ? noteBtn(m.func_a) : '';
+                const notesBHtml = m.func_b ? noteBtn(m.func_b) : '';
+
+                let similarityHtml = '';
+                if (m.func_a && m.func_b) {
+                    const fA = buildFuncObj(m.func_a);
+                    const fB = buildFuncObj(m.func_b);
+                    let diffUrl = '';
+                    if (window.buildDiffUrl) {
+                        diffUrl = window.buildDiffUrl(fA.function_id, fB.function_id);
+                    } else {
+                        // Fallback just in case
+                        let poolId = null;
+                        if (window.getRoutingState && window.getRoutingState().pool) {
+                            poolId = window.getRoutingState().pool;
+                        } else {
+                            poolId = new URLSearchParams(window.location.search).get('pool_id');
+                        }
+                        diffUrl = `/collections/${encodeURIComponent(fA.collection)}/files/${fA.file_md5}/functions/${fA.entrypoint_address}/vs/${encodeURIComponent(fB.collection)}/${fB.file_md5}/${fB.entrypoint_address}`;
+                        if (poolId) {
+                            diffUrl = `/pools/${encodeURIComponent(poolId)}` + diffUrl;
+                        }
+                    }
+
+                    const pairId = `${fA.function_id}|${fB.function_id}|unweighted_cosine`;
+
+                    similarityHtml = `
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                            onmouseenter="showDiffPreview('${fA.function_id}', '${(fA.function_name || '').replace(/'/g, "\\'")}', '${fB.function_id}', '${(fB.function_name || '').replace(/'/g, "\\'")}', ${m.similarity}, event)"
+                            onmousemove="moveCodePreview(event)"
+                            onmouseleave="hideDiffPreview(event)"
+                            onclick="Nav.openPath('${diffUrl}', event, { title: 'Diff: ${fA.function_name} vs ${fB.function_name}', type: 'diff' })"
+                            title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
+                    </div>
+                    ${EntityRenderer.renderTag('similarity', pairId, m.tags || [], m.user_tags || [])}
+                    `;
+                } else {
+                    similarityHtml = `<span class="mono" style="color:var(--accent); font-weight:bold;">${(m.similarity * 100).toFixed(1)}%</span>`;
+                }
+
+                const clusterData = (m.cluster_id || m.cluster_uuid) ? [{
+                    cluster_id: m.cluster_id,
+                    cluster_uuid: m.cluster_uuid,
+                    cluster_name: m.cluster_name,
+                    cohesion_score: m.cohesion || 0.0,
+                    member_count: m.cluster_member_count || 0,
+                    cluster_stability: m.cluster_stability || 0.0,
+                    avg_features: m.cluster_avg_features || 0.0,
+                    sample_functions: m.cluster_sample_functions || []
+                }] : [];
+                seedBinSimClusterSamples(clusterData[0]);
+
                 return `
                 <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
                     data-entity-data='${JSON.stringify({
@@ -1104,92 +1348,212 @@ function renderBinSimTables(isFilterChange = false) {
                     }).replace(/'/g, "&apos;")}'
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                     <td style="padding:10px;">
-                        <div class="clickable" style="font-weight:bold; color:var(--accent);"
-                             onmouseenter="if(window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) { window.parent.showClusterTableTooltipFromIframe(window.name, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}, event); } else if(window.showClusterTableTooltip) { window.showClusterTableTooltip(event, '${escUuid}', '${cleanName}', ${size}, 1.0, ${cohesion}, ${avgFeat}); }"
-                             onmousemove="if(window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) { window.parent.moveClusterTableTooltipFromIframe(window.name, event); } else if(window.moveClusterTableTooltip) { window.moveClusterTableTooltip(event); }"
-                             onmouseleave="if(window.parent && window.parent.hideClusterTableTooltipFromIframe && window.parent !== window) { window.parent.hideClusterTableTooltipFromIframe(); } else if(window.hideClusterTableTooltip) { window.hideClusterTableTooltip(); }"
-                             onclick="openClusterView('${escUuid}', '${cleanName}', event)">
-                             ${m.cluster_name}
-                        </div>
-                        <div class="mono dim" style="font-size:0.65rem;">UUID: ${m.cluster_uuid}</div>
+                        ${similarityHtml}
                     </td>
-                    <td style="padding:10px; text-align:center;">
-                        <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
-                    </td>
-                    <td style="padding:10px; text-align:center;">
-                        <div style="margin-bottom:4px; font-weight:bold;">${m.count_a}</div>
-                        <div style="display:flex; flex-wrap:wrap; justify-content:center; max-height:60px; overflow-y:auto;">
-                            ${m.funcs_a.map(renderFuncBadge).join('')}
+                    <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
+                            ${m.func_a ? renderFuncBadge(m.func_a) : ''}
                         </div>
                     </td>
                     <td style="padding:10px; text-align:center;">
-                        <div style="margin-bottom:4px; font-weight:bold;">${m.count_b}</div>
-                        <div style="display:flex; flex-wrap:wrap; justify-content:center; max-height:60px; overflow-y:auto;">
-                            ${m.funcs_b.map(renderFuncBadge).join('')}
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
+                            ${notesAHtml}
                         </div>
                     </td>
-                    <td style="padding:10px;">
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:40px;">
-                                <div style="height:100%; background:var(--info); width:${(m.cohesion * 100).toFixed(0)}%"></div>
-                            </div>
-                            <span class="dim">${m.cohesion.toFixed(2)}</span>
+                    <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
+                            ${m.func_b ? renderFuncBadge(m.func_b) : ''}
+                        </div>
+                    </td>
+                    <td style="padding:10px; text-align:center;">
+                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
+                            ${notesBHtml}
                         </div>
                     </td>
                     <td style="padding:10px;">
                         <div class="mono dim">${m.sim_rarity.toFixed(2)}</div>
                     </td>
+                    <td style="padding:10px;">
+                        <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
+                    </td>
+                    <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusterData).replace(/'/g, "&apos;")}' style="padding:10px;">
+                        ${EntityRenderer.renderClusterCard(clusterData)}
+                    </td>
                 </tr>
                 `;
             }).join('');
         } else {
-            tbodyMatched.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:20px;">No matched clusters</td></tr>';
+            tbodyMatched.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px;">No matched functions</td></tr>';
         }
     }
 
     const renderUnique = (itemsRaw, tbody, state, prefix) => {
+        if (!tbody) return;
         const stateKey = state === binSimSortState.uniqueA ? 'uniqueA' : 'uniqueB';
         const thead = tbody.previousElementSibling;
         if (thead && !isFilterChange) {
             thead.innerHTML = `
                 <tr>
                     <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
+                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
-                    <th></th>
+                    <th>${searchHtml(prefix)}</th>
+                    <th>${noteFilterHtml(prefix, 'note')}</th>
+                    <th>${filterHtml(prefix, 'rar')}</th>
                     <th>${filterHtml(prefix, 'feat')}</th>
+                    <th>${searchHtml(prefix + '-cl')}</th>
                 </tr>
             `;
-            restoreFilters(prefix, ['feat']);
+            restoreFilters(prefix, ['feat', 'rar'], ['note']);
         }
 
-        let items = applyFilters(itemsRaw || [], prefix);
-        items = sortItems(items, state);
-        
+        // Server already filtered + sorted (incl. cluster-name via cl_q); render as-is.
+        const items = itemsRaw || [];
+
         if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
             return;
         }
         tbody.innerHTML = items.map(u => {
-            const avgFeat = u.avg_features || 0;
+            const rarity = (u.sim_rarity !== undefined) ? u.sim_rarity : 0;
+            const funcs = u.funcs || (u.func_id ? [u.func_id] : []);
+            const notesHtml = funcs.map(fid => {
+                const fObj = buildFuncObj(fid);
+                return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
+            }).join('');
+            const clusterData = (u.cluster_id || u.cluster_uuid) ? [{
+                cluster_id: u.cluster_id,
+                cluster_uuid: u.cluster_uuid,
+                cluster_name: u.cluster_name,
+                cohesion_score: u.cohesion || 1.0,
+                member_count: u.cluster_member_count || 0,
+                cluster_stability: u.cluster_stability || 0.0,
+                avg_features: u.cluster_avg_features || 0.0,
+                sample_functions: u.cluster_sample_functions || []
+            }] : [];
+            seedBinSimClusterSamples(clusterData[0]);
             return `
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
-                <td style="padding:10px;">
-                    ${renderFuncBadge(u.func_id)}
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
+                data-entity-data='${JSON.stringify({
+                    cluster_id: u.cluster_id,
+                    cluster_uuid: u.cluster_uuid,
+                    cluster_name: u.cluster_name
+                }).replace(/'/g, "&apos;")}'
+                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
+                <td style="padding:8px;">
+                    ${funcs.map(renderFuncBadge).join('')}
                 </td>
                 <td style="padding:10px; text-align:center;">
-                    <div class="mono dim">${avgFeat.toFixed(0)}</div>
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        ${notesHtml}
+                    </div>
+                </td>
+                <td style="padding:10px;">
+                    <span class="dim">${rarity.toFixed(2)}</span>
+                </td>
+                <td style="padding:10px;">
+                    <span class="dim">${(u.avg_features || 0).toFixed(0)}</span>
+                </td>
+                <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusterData).replace(/'/g, "&apos;")}' style="padding:10px;">
+                    ${clusterData.length > 0 ? EntityRenderer.renderClusterCard(clusterData) : ''}
                 </td>
             </tr>
             `;
         }).join('');
     };
 
-    renderUnique(data.diff.unique_to_a, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');
-    renderUnique(data.diff.unique_to_b, document.getElementById('bin-sim-table-unique-b'), binSimSortState.uniqueB, 'ub');
+    renderUnique(binSimPage.uniqueA.items, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');
+    renderUnique(binSimPage.uniqueB.items, document.getElementById('bin-sim-table-unique-b'), binSimSortState.uniqueB, 'ub');
 
-    renderBinaryDiffSankey(data);
+    if (!isFilterChange && typeof TableSelection !== 'undefined') {
+        new TableSelection('bin-sim-table-matched-table');
+        new TableSelection('bin-sim-table-unique-a-table');
+        new TableSelection('bin-sim-table-unique-b-table');
+    }
+
+    ['matched', 'uniqueA', 'uniqueB'].forEach(setupBinSimInfiniteScroll);
+}
+
+// ---- Change 4 (frontend): server paging + infinite scroll for the diff tables ----
+
+function binSimFilterParams(prefix) {
+    const val = (id) => (document.getElementById(id)?.value || '').trim();
+    const p = {};
+    const q = val(`bsim-flt-${prefix}-q`);
+    if (q) p.q = q;
+    if (prefix === 'matched') {
+        const na = val('bsim-flt-matched-note-a'); if (na) p.note_a = na;
+        const nb = val('bsim-flt-matched-note-b'); if (nb) p.note_b = nb;
+        const smin = val('bsim-flt-matched-coh-min'); if (smin) p.sim_min = smin;
+        const smax = val('bsim-flt-matched-coh-max'); if (smax) p.sim_max = smax;
+    } else {
+        const n = val(`bsim-flt-${prefix}-note`); if (n) p.note = n;
+        const clq = val(`bsim-flt-${prefix}-cl-q`); if (clq) p.cl_q = clq;
+    }
+    const fmin = val(`bsim-flt-${prefix}-feat-min`); if (fmin) p.feat_min = fmin;
+    const fmax = val(`bsim-flt-${prefix}-feat-max`); if (fmax) p.feat_max = fmax;
+    const rmin = val(`bsim-flt-${prefix}-rar-min`); if (rmin) p.rar_min = rmin;
+    const rmax = val(`bsim-flt-${prefix}-rar-max`); if (rmax) p.rar_max = rmax;
+    return p;
+}
+
+async function loadBinSimTablePage(key, { reset = false } = {}) {
+    if (!binSimCtx) return;
+    const st = binSimPage[key];
+    if (st.loading) return;
+    if (!reset && st.items.length >= st.total && st.total > 0) return; // fully loaded
+    st.loading = true;
+    if (reset) { st.offset = 0; st.items = []; }
+
+    const sort = binSimSortState[key];
+    const params = new URLSearchParams({
+        view: 'table',  // ignored by backend; documents intent
+        table: st.table,
+        collection_a: binSimCtx.collection,
+        md5_a: binSimCtx.md5a,
+        md5_b: binSimCtx.md5b,
+        offset: st.offset,
+        limit: BINSIM_LIMIT,
+        sort_col: sort.col,
+        sort_dir: sort.dir === -1 ? 'desc' : 'asc',
+        ...binSimFilterParams(st.prefix),
+    });
+    if (binSimCtx.collB) params.set('collection_b', binSimCtx.collB);
+    if (binSimCtx.poolId) params.set('pool', binSimCtx.poolId);
+
+    try {
+        const res = await fetch(`/api/diff?${params.toString()}`);
+        const data = await res.json();
+        Object.assign(binSimDataCache.functions_metadata, data.functions_metadata || {});
+        st.items = st.items.concat(data.items || []);
+        st.offset = st.items.length;
+        st.total = data.total || 0;
+        binSimDataCache.diff[st.table] = st.items;
+    } catch (e) {
+        console.error('bin-sim page load failed', e);
+    } finally {
+        st.loading = false;
+    }
+    renderBinSimTables(true);
+}
+
+function setupBinSimInfiniteScroll(key) {
+    const st = binSimPage[key];
+    const tbody = document.getElementById(st.tbody);
+    if (!tbody) return;
+    const scroller = tbody.closest('.bin-sim-table-scroll') || tbody.closest('[style*="overflow"]') || tbody.parentElement;
+    if (!scroller || scroller._binSimScrollBound === key) return;
+    scroller._binSimScrollBound = key;
+    scroller.addEventListener('scroll', () => {
+        if (st.loading || st.items.length >= st.total) return;
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+            loadBinSimTablePage(key);
+        }
+    });
 }
 
 window.setSankeyMode = function(mode) {
@@ -1315,7 +1679,12 @@ function renderBinSimPairs(items) {
         let tagsB = Array.isArray(item.file_tags_b) ? item.file_tags_b : [];
         let userTagsB = Array.isArray(item.file_user_tags_b) ? item.file_user_tags_b : [];
         
-        const diffUrl = `/collection/${collection}/file/${item.md5_a}/vs/${collection}/${item.md5_b}`;
+        const collA = item.coll_a || collection;
+        const collB = item.coll_b || collA;
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        let diffUrl = `/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
+        if (poolId) diffUrl = `/pools/${encodeURIComponent(poolId)}/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
+
         const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
         const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' });`;
@@ -1324,19 +1693,16 @@ function renderBinSimPairs(items) {
             <tr class="sim-row">
                 <td>
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${scoreFormatted}</div>
-                        <button class="btn-diff-action" onclick="${onClickHandler}" title="Open Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                            <span>±</span>
-                        </button>
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${onClickHandler}" title="Open Diff">${scoreFormatted}</div>
                     </div>
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_a || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collection}', '${item.md5_a}', '${safeNameA}', event)">${item.file_name_a || 'Unknown'}</b>
+                            ${EntityRenderer.renderFileName(item.file_name_a, item.md5_a, collA)}
                         </div>
                         <div style="display:flex; align-items:center; overflow:hidden; min-height:24px;" title="${item.file_name_b || ''}">
-                            <b style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${collection}', '${item.md5_b}', '${safeNameB}', event)">${item.file_name_b || 'Unknown'}</b>
+                            ${EntityRenderer.renderFileName(item.file_name_b, item.md5_b, collB)}
                         </div>
                     </div>
                 </td>
@@ -1392,7 +1758,7 @@ if (typeof window.showFunctionCodeById === 'undefined') {
                 return;
             }
             const parts = id.split(':');
-            const col = parts[0] || 'main';
+            const col = parts[0] || '';
             const md5 = parts[2];
             const addr = parts[3];
             const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;
@@ -1406,5 +1772,348 @@ if (typeof window.showFunctionCodeById === 'undefined') {
         }
     };
 }
+
+// Refresh logic for function rows on note updates
+window.refreshFunctionRow = async function(funcId) {
+    if (!binSimDataCache) return;
+    try {
+        const parts = funcId.split(':');
+        const collection = parts[0];
+        const md5 = parts[2];
+        const addr = parts[3];
+        const res = await fetch(`/api/function/search?collection=${collection}&entrypoint_address=${addr}&file_md5=${md5}`);
+        const data = await res.json();
+        if (data.functions && data.functions.length > 0) {
+            const f = data.functions[0];
+            if (!binSimDataCache.functions_metadata) {
+                binSimDataCache.functions_metadata = {};
+            }
+            binSimDataCache.functions_metadata[funcId] = {
+                ...(binSimDataCache.functions_metadata[funcId] || {}),
+                note_owners: f.note_owners || [],
+                note_count: f.note_count || 0
+            };
+            renderBinSimTables();
+        }
+    } catch (e) {
+        console.error("Failed to refresh function note badge in comparison view:", e);
+    }
+};
+
+
+// ---- Slim per-binary strip (user tags + notes only) ----
+function renderBinSimStrip(containerId, m, fileId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    m = m || {};
+    const parts = fileId.split(':');
+    const col = parts[0];
+    const md5 = m.file_md5 || parts[parts.length - 1];
+    const name = m.file_name || md5 || 'File';
+    const fileUrl = Nav.buildUIUrl(col, ['file', md5]);
+    const safeName = name.replace(/'/g, "\\'");
+
+    // user tags only (pass empty static list)
+    const tags = (typeof EntityRenderer !== 'undefined')
+        ? EntityRenderer.renderTag('file', fileId, [], m.user_tags || [])
+        : '';
+    const noteBtn = (typeof EntityRenderer !== 'undefined')
+        ? EntityRenderer.renderFileNoteButton(fileId, m.note_owners || [], { raw_data: m })
+        : '';
+    el.innerHTML = `
+        <a href="${fileUrl}" onclick="event.preventDefault(); Nav.openPath('${fileUrl}', event, { title: 'File: ${safeName}', type: 'file' });" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40%; text-decoration:none;" title="${name}" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${name}</a>
+        <span style="display:inline-flex; gap:4px; flex:1; min-width:0; flex-wrap:wrap;">${tags}</span>
+        <span style="margin-left:auto;">${noteBtn}</span>
+    `;
+}
+
+// ---- Tab switching: Matched / Unmatched / Graph / Metadata / Inferred ----
+const BIN_SIM_TABS = ['matched', 'unmatched', 'graph', 'metadata', 'inferred'];
+
+// push=true (a real click) writes the tab into the URL hash so it lands in
+// browser history; Back/forward then fires hashchange and re-selects the tab.
+window.switchBinSimTab = function(tab, push = true) {
+    if (!BIN_SIM_TABS.includes(tab)) tab = 'matched';
+    BIN_SIM_TABS.forEach(t => {
+        const panel = document.getElementById(`bsim-panel-${t}`);
+        const btn = document.getElementById(`bin-sim-tab-btn-${t}`);
+        if (panel) panel.style.display = (t === tab) ? 'flex' : 'none';
+        if (btn) btn.classList.toggle('active', t === tab);
+    });
+    // Sankey needs a visible (non-zero) container to size itself; render on show.
+    if (tab === 'graph' && binSimDataCache) {
+        renderBinaryDiffSankey(binSimDataCache);
+    }
+    if ((tab === 'metadata' || tab === 'inferred') && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
+
+    if (push && location.hash.slice(1) !== tab) {
+        // pushState (not location.hash=) so the app's hashchange ROUTER doesn't
+        // re-render the whole view on every tab click. Adds a history entry;
+        // Back/forward fires popstate+hashchange -> the view re-renders and
+        // applyBinSimTabFromHash() restores the tab.
+        history.pushState(null, '', location.pathname + location.search + '#' + tab);
+    }
+};
+
+// Select the tab named in the URL hash (default matched). Called on initial
+// render and on Back/forward navigation.
+function applyBinSimTabFromHash() {
+    const tab = location.hash.slice(1);
+    window.switchBinSimTab(BIN_SIM_TABS.includes(tab) ? tab : 'matched', false);
+}
+window.applyBinSimTabFromHash = applyBinSimTabFromHash;
+
+if (!window.__binSimHashBound) {
+    window.addEventListener('hashchange', applyBinSimTabFromHash);
+    window.__binSimHashBound = true;
+}
+
+// ---- Lazy full-metadata load for the Metadata tab ----
+async function loadBinSimMetadata() {
+    const ctx = binSimMetaCtx;
+    if (!ctx) return;
+    const target = document.getElementById('bin-sim-meta-compare');
+    try {
+        const mkParams = (col) => {
+            let p = `collection=${encodeURIComponent(col)}`;
+            if (ctx.poolId) p += `&pool=${encodeURIComponent(ctx.poolId)}`;
+            return p;
+        };
+        const [ra, rb] = await Promise.all([
+            fetch(`/api/file/details/${encodeURIComponent(ctx.md5a)}?${mkParams(ctx.collection)}`),
+            fetch(`/api/file/details/${encodeURIComponent(ctx.md5b)}?${mkParams(ctx.collB)}`),
+        ]);
+        const da = await ra.json();
+        const db = await rb.json();
+        ctx.loaded = true;
+        binSimMetaCache = { da, db };
+        if (target) target.outerHTML = buildMetaCompareTable(da, db, ctx.collection, ctx.collB);
+        const inferredTarget = document.getElementById('bin-sim-inferred-meta-container');
+        if (inferredTarget) inferredTarget.innerHTML = buildInferredMetaCards(da, db, ctx.collection, ctx.collB);
+    } catch (e) {
+        console.error('Failed to load comparison metadata:', e);
+        if (target) target.innerHTML = '<div style="color:var(--dim); padding:20px;">Failed to load metadata.</div>';
+        const inferredTarget = document.getElementById('bin-sim-inferred-meta-container');
+        if (inferredTarget) inferredTarget.innerHTML = '<div style="color:var(--dim); padding:20px;">Failed to load clusters.</div>';
+    }
+}
+
+window.setMetaHighlightMode = function(mode) {
+    metaHighlightMode = mode;
+    ['different', 'similar', 'none'].forEach(m => {
+        const btn = document.getElementById(`meta-highlight-${m}`);
+        if (btn) btn.classList.toggle('active', m === mode);
+    });
+    if (binSimMetaCache && binSimMetaCtx) {
+        const target = document.getElementById('bin-sim-meta-compare');
+        if (target) {
+            target.outerHTML = buildMetaCompareTable(
+                binSimMetaCache.da,
+                binSimMetaCache.db,
+                binSimMetaCtx.collection,
+                binSimMetaCtx.collB
+            );
+        }
+    }
+};
+
+// ---- Categorized side-by-side compare table with diff highlighting ----
+function buildMetaCompareTable(da, db, colA, colB) {
+    const fa = (da && da.file) || {};
+    const fb = (db && db.file) || {};
+    const ia = (da && da.inferred_meta) || {};
+    const ib = (db && db.inferred_meta) || {};
+
+    const filenameA = fa.file_name || 'Binary A';
+    const filenameB = fb.file_name || 'Binary B';
+
+    const fmt = (v) => {
+        if (v === undefined || v === null || v === '') return '<span style="color:var(--dim)">—</span>';
+        if (Array.isArray(v)) return v.length ? v.join(', ') : '<span style="color:var(--dim)">—</span>';
+        return String(v);
+    };
+
+    const fmtDate = (timestamp) => {
+        if (!timestamp) return '';
+        const d = new Date(Number(timestamp) * 1000);
+        return d.toLocaleString();
+    };
+
+    const iconMap = {
+        'File Name': 'fa-solid fa-file',
+        'Other Names': 'fa-solid fa-tags',
+        'MD5': 'fa-solid fa-fingerprint',
+        'Batch UUID': 'fa-solid fa-box',
+        'Language': 'fa-solid fa-microchip',
+        'AV Type': 'fa-solid fa-shield',
+        'File Type': 'fa-solid fa-file-code',
+        'Yara': 'fa-solid fa-biohazard',
+        'CC IP': 'fa-solid fa-network-wired',
+        'Functions': 'fa-solid fa-list-ol',
+        'BSim Features': 'fa-solid fa-dna',
+        'BSim Features': 'fa-solid fa-dna',
+        'First Seen': 'fa-solid fa-clock',
+        'Related MD5s': 'fa-solid fa-link'
+    };
+
+    const categories = [
+        ['Identity', [
+            ['File Name', fa.file_name, fb.file_name],
+            ['Other Names', fa.file_names, fb.file_names],
+            ['MD5', fa.file_md5, fb.file_md5],
+            ['Related MD5s', fa.related_md5, fb.related_md5],
+            ['Batch UUID', fa.batch_uuid, fb.batch_uuid],
+            ['First Seen', fa.first_seen ? fmtDate(fa.first_seen) : '', fb.first_seen ? fmtDate(fb.first_seen) : ''],
+        ]],
+        ['Classification', [
+            ['Language', fa.language_id || fa.language, fb.language_id || fb.language],
+            ['AV Type', fa.avtype, fb.avtype],
+            ['File Type', fa.filetype, fb.filetype],
+            ['Yara', fa.yara, fb.yara],
+            ['CC IP', fa.cc_ip, fb.cc_ip],
+        ]],
+        ['Statistics', [
+            ['Functions', fa.function_count, fb.function_count],
+            ['BSim Features', fa.bsim_features_count, fb.bsim_features_count],
+        ]]
+    ];
+
+    if ((fa.file_format && Object.keys(fa.file_format).length > 0) || (fb.file_format && Object.keys(fb.file_format).length > 0)) {
+        const allKeys = new Set([...Object.keys(fa.file_format || {}), ...Object.keys(fb.file_format || {})]);
+        const formatFields = Array.from(allKeys).map(k => [k, (fa.file_format || {})[k], (fb.file_format || {})[k]]);
+        categories.push(['File Format', formatFields]);
+    }
+
+    const norm = (v) => Array.isArray(v) ? v.slice().sort().join('|') : (v === undefined || v === null ? '' : String(v));
+
+    let rows = '';
+    for (const [cat, fields] of categories) {
+        rows += `<tr><td class="bin-sim-mc-cat" colspan="3">${cat}</td></tr>`;
+        for (const [label, va, vb] of fields) {
+            const diff = norm(va) !== norm(vb);
+            const icon = iconMap[label] || 'fa-solid fa-circle-info';
+            
+            const isEmptyA = va === undefined || va === null || va === '' || (Array.isArray(va) && va.length === 0);
+            const isEmptyB = vb === undefined || vb === null || vb === '' || (Array.isArray(vb) && vb.length === 0);
+
+            let highlightClass = '';
+            if (!isEmptyA || !isEmptyB) {
+                if (metaHighlightMode === 'different' && diff) {
+                    highlightClass = 'bin-sim-mc-diff';
+                } else if (metaHighlightMode === 'similar' && !diff) {
+                    highlightClass = 'bin-sim-mc-same';
+                }
+            }
+
+            rows += `<tr class="${highlightClass}">
+                <td class="bin-sim-mc-label" style="display: flex; align-items: center; gap: 8px;"><i class="${icon}" style="width: 14px; text-align: center; color: var(--dim); opacity: 0.8;"></i>${label}</td>
+                <td>${fmt(va)}</td>
+                <td>${fmt(vb)}</td>
+            </tr>`;
+        }
+    }
+
+    // Render Inferred Rows helper for the side-by-side cards
+    const renderInferredRow = (icon, label, mapObj, collection) => {
+        if (!mapObj) return '';
+        const keys = Object.keys(mapObj).sort((a,b) => mapObj[b].percent - mapObj[a].percent);
+        if (keys.length === 0) return '';
+        const badges = keys.map(k => {
+            const confObj = mapObj[k];
+            const confScore = confObj.percent;
+            const confColor = d3.interpolateRdYlGn(confScore / 100);
+            const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
+            return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+        }).join('');
+        return `
+            <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
+            <div class="meta-value" style="display: flex; flex-wrap: wrap;">${badges}</div>
+        `;
+    };
+
+    const buildInferredHtml = (inferredMeta, collection) => {
+        let html = '';
+        html += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename || {}, collection);
+        html += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5 || {}, collection);
+        html += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype || {}, collection);
+        html += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype || {}, collection);
+        html += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara || {}, collection);
+        html += renderInferredRow('fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip || {}, collection);
+        return html || '<div class="dim" style="grid-column: 1 / -1; padding: 10px 0;">No clusters available.</div>';
+    };
+
+    const inferredHtmlA = buildInferredHtml(ia, colA);
+    const inferredHtmlB = buildInferredHtml(ib, colB);
+
+    return `<div id="bin-sim-meta-compare" style="display: flex; flex-direction: column; gap: 20px; width: 100%;">
+        <table class="bin-sim-mc-table">
+            <thead><tr><th></th><th>${filenameA}</th><th>${filenameB}</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+    </div>`;
+}
+
+// ---- Side-by-side inferred metadata cards for the Inferred Metadata tab ----
+function buildInferredMetaCards(da, db, colA, colB) {
+    const fa = (da && da.file) || {};
+    const fb = (db && db.file) || {};
+    const ia = (da && da.inferred_meta) || {};
+    const ib = (db && db.inferred_meta) || {};
+
+    const filenameA = fa.file_name || 'Binary A';
+    const filenameB = fb.file_name || 'Binary B';
+
+    // Render Inferred Rows helper for the side-by-side cards
+    const renderInferredRow = (icon, label, mapObj, collection) => {
+        if (!mapObj) return '';
+        const keys = Object.keys(mapObj).sort((a,b) => mapObj[b].percent - mapObj[a].percent);
+        if (keys.length === 0) return '';
+        const badges = keys.map(k => {
+            const confObj = mapObj[k];
+            const confScore = confObj.percent;
+            const confColor = d3.interpolateRdYlGn(confScore / 100);
+            const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
+            return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+        }).join('');
+        return `
+            <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
+            <div class="meta-value" style="display: flex; flex-wrap: wrap;">${badges}</div>
+        `;
+    };
+
+    const buildInferredHtml = (inferredMeta, collection) => {
+        let html = '';
+        html += renderInferredRow('fa-solid fa-file', 'File Name', inferredMeta.filename || {}, collection);
+        html += renderInferredRow('fa-solid fa-fingerprint', 'MD5', inferredMeta.md5 || {}, collection);
+        html += renderInferredRow('fa-solid fa-shield', 'AV Type', inferredMeta.avtype || {}, collection);
+        html += renderInferredRow('fa-solid fa-file-code', 'File Type', inferredMeta.filetype || {}, collection);
+        html += renderInferredRow('fa-solid fa-biohazard', 'Yara', inferredMeta.yara || {}, collection);
+        html += renderInferredRow('fa-solid fa-network-wired', 'CC IP', inferredMeta.ccip || {}, collection);
+        return html || '<div class="dim" style="grid-column: 1 / -1; padding: 10px 0;">No clusters available.</div>';
+    };
+
+    const inferredHtmlA = buildInferredHtml(ia, colA);
+    const inferredHtmlB = buildInferredHtml(ib, colB);
+
+    return `<div style="display: flex; gap: 20px; flex-wrap: wrap; width: 100%;">
+        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> ${filenameA}: Clusters
+            </div>
+            <div class="meta-grid" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;">
+                ${inferredHtmlA}
+            </div>
+        </div>
+        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> ${filenameB}: Clusters
+            </div>
+            <div class="meta-grid" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;">
+                ${inferredHtmlB}
+            </div>
+        </div>
+    </div>`;
+}
+
 
 

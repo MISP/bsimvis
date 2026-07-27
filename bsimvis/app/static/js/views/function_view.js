@@ -20,7 +20,7 @@ window.FunctionView = {
         this.params = params;
         this.container = document.getElementById(containerId);
         
-        const collection = params.collection || 'main';
+        const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
         const address = params.address;
 
@@ -70,14 +70,14 @@ window.FunctionView = {
                 window.filenameCache[file_md5] = data.meta.file_name;
             }
 
+            Breadcrumbs.setFilename(file_md5, data.meta?.file_name || 'File');
+            Breadcrumbs.setFuncName(collection, file_md5, address, window.currentFuncName);
+            Breadcrumbs.refresh();
+
             const loader = document.getElementById('function-loader');
             const content = document.getElementById('function-content');
             if (loader) loader.style.display = 'none';
             if (content) content.style.display = 'flex';
-
-            // Update breadcrumb with actual function name in the global breadcrumbs container
-            const bcCurrent = document.querySelector('#breadcrumbs-container .breadcrumb-item.current');
-            if (bcCurrent) bcCurrent.innerHTML = `<i class="fa-solid fa-code"></i><span>${window.currentFuncName}</span>`;
 
             // Render Metadata
             if (typeof window.renderFunctionMetadata === 'function') {
@@ -357,7 +357,7 @@ window.FunctionView = {
             document.body.appendChild(menu);
         }
 
-        const collection = this.id.split(':')[1] || 'main';
+        const collection = this.id.split(':')[1] || '';
 
         let html = `<div class="context-menu-header">Select Feature to Analyze</div>`;
         data[2].forEach(f => {

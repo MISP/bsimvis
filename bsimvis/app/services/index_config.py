@@ -18,15 +18,19 @@ File metadata is denormalized directly into the bin_sim index at build time.
 INDEX_CONFIG = {
     "file": {
         "file_name": ["file", "func", "sim"],  # propagated to sim for fast lookup
+        "parent_file_name": ["file", "func", "sim"],
+        "related_file_name": ["file", "func", "sim"],
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
+        "parent_md5": ["file", "func", "sim"],
+        "related_md5": ["file", "func", "sim"],
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
         "user_tags": ["file", "func", "sim"],  # not propagated
         "language_id": ["file", "func", "sim"],
-        "batch_uuid": ["file", "func", "sim"],
-        "type": ["file", "func", "sim"],
-        "batch_order": ["file", "func", "sim"],  # numeric
-        "entry_date": ["file", "func", "sim"],  # numeric
-        "file_date": ["file", "func", "sim"],  # numeric
+        "batch_uuid": ["file", "func"],
+        "type": ["file", "func"],
+        "batch_order": ["file", "func"],  # numeric
+        "entry_date": ["file", "func"],  # numeric
+        "file_date": ["file", "func"],  # numeric
         "function_count": ["file"],  # numeric
         "bsim_features_count": ["file"],  # numeric
         "cohesion_score": ["file"],  # numeric
@@ -34,13 +38,13 @@ INDEX_CONFIG = {
         "bin_cluster_uuid": ["file"],
         "bin_cluster_name": ["file"],
         "bin_cluster_stability": ["file"],
-        "first_seen": ["file", "func", "sim"],
-        "last_seen": ["file", "func", "sim"],
-        "filetype": ["file", "func", "sim"],
-        "avtype": ["file", "func", "sim"],
-        "yara": ["file", "func", "sim"],
-        "cc_ip": ["file", "func", "sim"],
-        "file_names": ["file", "func", "sim"],
+        "first_seen": ["file", "func"],
+        "last_seen": ["file", "func"],
+        "filetype": ["file", "func"],
+        "avtype": ["file", "func"],
+        "yara": ["file", "func"],
+        "cc_ip": ["file", "func"],
+        "file_names": ["file", "func"],
         "inferred_yara": ["file"],
         "inferred_avtype": ["file"],
         "inferred_filetype": ["file"],
@@ -55,12 +59,12 @@ INDEX_CONFIG = {
         "user_tags": ["func", "sim"],
         "namespace": ["func", "sim"],
         "return_type": ["func", "sim"],
-        "parameters": ["func", "sim"],
-        "calling_convention": ["func", "sim"],
+        "parameters": ["func"],
+        "calling_convention": ["func"],
         "entrypoint_address": ["func", "sim"],
-        "decompiler_id": ["func", "sim"],
-        "instruction_count": ["func", "sim"],  # numeric
-        "bsim_features_count": ["func", "sim"],  # numeric
+        "decompiler_id": ["func"],
+        "instruction_count": ["func"],  # numeric
+        "bsim_features_count": ["func"],  # numeric
         "cluster_id": ["func"],
         "cluster_uuid": ["func"],
         "cluster_name": ["func"],
@@ -83,9 +87,17 @@ INDEX_CONFIG = {
     "bin_sim": {
         "md5_a": ["bin_sim"],
         "md5_b": ["bin_sim"],
+        "file_parent_md5_a": ["bin_sim"],
+        "file_parent_md5_b": ["bin_sim"],
+        "file_related_md5_a": ["bin_sim"],
+        "file_related_md5_b": ["bin_sim"],
         "algo": ["bin_sim"],
         "file_name_a": ["bin_sim"],  # denormalized from file meta at build time
         "file_name_b": ["bin_sim"],
+        "file_parent_file_name_a": ["bin_sim"],
+        "file_parent_file_name_b": ["bin_sim"],
+        "file_related_file_name_a": ["bin_sim"],
+        "file_related_file_name_b": ["bin_sim"],
         "file_tags_a": ["bin_sim"],  # denormalized tags for binary A
         "file_tags_b": ["bin_sim"],
         "file_user_tags_a": ["bin_sim"],
@@ -166,6 +178,29 @@ EXACT_FIELDS = {
     # "cluster_uuid",
     # "file_md5",
     # "batch_uuid",
+}
+
+# Fields that are auto-analysis artifacts of clustering. Clustering runs per
+# namespace (a collection OR a pool), so these indexes belong to whichever
+# namespace produced them and must never be merged from member collections into
+# a pool — the labels would describe a different member set than the pool's own
+# similarity graph. Tags and notes are the opposite: they live on the origin
+# collection and ARE mirrored into every pool containing that collection.
+POOL_LOCAL_FIELDS = {
+    "bin_cluster_id",
+    "bin_cluster_uuid",
+    "bin_cluster_name",
+    "bin_cluster_stability",
+    "cluster_id",
+    "cluster_uuid",
+    "cluster_name",
+    "cluster_stability",
+    "inferred_yara",
+    "inferred_avtype",
+    "inferred_filetype",
+    "inferred_ccip",
+    "inferred_filename",
+    "inferred_md5",
 }
 
 

@@ -4,7 +4,7 @@ let selectedFiles = [];
 
 function renderUploadView(params) {
     const container = document.getElementById('upload-view-container');
-    const collection = params.get('collection') || 'main';
+    const collection = params.get('collection') || '';
     
     // Hide search area for upload
     const searchArea = document.getElementById('search-area');
@@ -58,6 +58,10 @@ function renderUploadView(params) {
                         <div class="form-group" style="margin-bottom: 20px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
                             <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
+                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
 
                         <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
@@ -222,18 +226,19 @@ async function startBatchUpload() {
         return;
     }
 
-    let collection = document.getElementById('upload-collection').value || 'main';
+    let collection = document.getElementById('upload-collection').value || '';
     if (collection === '__NEW__') {
         collection = document.getElementById('upload-new-collection').value.trim();
-        if (!collection) {
-            if (typeof showToast === 'function') showToast('Please enter a new collection name', 'warning');
-            return;
-        }
+    }
+    if (!collection) {
+        if (typeof showToast === 'function') showToast('Please select or enter a collection name', 'warning');
+        return;
     }
     const batchName = document.getElementById('upload-batch-name').value || 'Manual Upload';
     const profile = document.getElementById('upload-profile').value;
     const minFuncLen = document.getElementById('upload-min-func-len').value;
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
+    const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     
     let currentBatchUuid = null;
 
@@ -279,6 +284,7 @@ async function startBatchUpload() {
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
             tags.forEach(t => url.searchParams.append('tags', t));
+            relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
 
             const response = await fetch(url, {
                 method: 'POST',
@@ -343,6 +349,22 @@ async function startBatchUpload() {
     
     document.getElementById('start-upload-btn').innerHTML = '<i class="fa-solid fa-check"></i> Finished';
 
+    // Update the URL and Navbar to the new collection context
+    const uploadUrl = `/collections/${encodeURIComponent(collection)}/upload`;
+    history.pushState(null, '', uploadUrl);
+    if (typeof updateNavbarLinks === 'function') {
+        updateNavbarLinks(collection);
+    }
+    // Update breadcrumbs
+    if (window.Breadcrumbs && typeof getRoutingState === 'function' && typeof routes !== 'undefined') {
+        const routingState = getRoutingState();
+        const segments = window.Breadcrumbs.generate(routingState, routes['upload']);
+        window.Breadcrumbs.render(segments);
+    }
+    // Sync the context data attribute so refreshData doesn't re-render
+    const uploadView = document.getElementById('upload-view-container');
+    if (uploadView) uploadView.dataset.context = collection;
+
     // Show "Go to Collection" button once upload is done
     const collectionUrl = `/collections/${encodeURIComponent(collection)}`;
     const progressContainer = document.getElementById('upload-progress-container');
@@ -364,7 +386,7 @@ async function startBatchUpload() {
 
 async function populateUploadCollectionDropdown(currentCollection) {
     try {
-        const res = await fetch('/api/collection/search');
+        const res = await fetch('/api/collection/search?limit=10000'); // ponytail: lift limit to get all collections
         if (!res.ok) return;
         const data = await res.json();
         const collections = data.collections || (Array.isArray(data) ? data : []);
@@ -397,7 +419,7 @@ async function populateUploadCollectionDropdown(currentCollection) {
         const newOpt = document.createElement('option');
         newOpt.value = '__NEW__';
         newOpt.textContent = '+ Create New Collection...';
-        select.appendChild(newOpt);
+        select.insertBefore(newOpt, select.firstChild);
     } catch (e) {
         console.error("Failed to populate upload collection dropdown", e);
     }

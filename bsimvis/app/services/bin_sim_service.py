@@ -169,6 +169,8 @@ class BinSimService:
         binary_cluster_maps = {}
         cluster_binary_count_job = defaultdict(int)
         binary_fids = {}
+        # ponytail: reverse map fid -> set(cluster labels) so matched pairs can be tagged with a cluster
+        fid_clusters = defaultdict(set)
 
         binary_func_counts = {}
         for i, md5 in enumerate(binaries):
@@ -189,9 +191,12 @@ class BinSimService:
             b_cluster_map = defaultdict(set)
 
             if fids:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for fid in fids:
-                    pipe.smembers(f"{fid}:clusters")
+                    if collection.startswith("global:pool:"):
+                        pipe.smembers(f"{collection}:{fid}:clusters")
+                    else:
+                        pipe.smembers(f"{fid}:clusters")
 
                 results = pipe.execute()
 
@@ -205,6 +210,7 @@ class BinSimService:
                                 else str(c_raw)
                             )
                             b_cluster_map[cid].add(fid)
+                            fid_clusters[fid].add(cid)
 
             binary_cluster_maps[md5] = b_cluster_map
             for cid in b_cluster_map.keys():
@@ -217,46 +223,69 @@ class BinSimService:
                     f"Loading cluster maps: {i+1}/{num_binaries}",
                 )
 
+        # Load cluster metadata (uuid/name/cohesion) for every cluster seen, so matched
+        # function pairs can be tagged with their best-matching function cluster.
+        # ponytail: assumes clustering ran with the same algo as bin_sim (both default unweighted_cosine)
+        cluster_meta = {}
+        all_labels = list(cluster_binary_count_job.keys())
+        if all_labels:
+            pipe = r.pipeline(transaction=False)
+            for lbl in all_labels:
+                pipe.get(f"{collection}:cluster:{algo}:{lbl}:meta")
+            for lbl, res in zip(all_labels, pipe.execute()):
+                if not res:
+                    continue
+                m = json.loads(res.decode() if isinstance(res, bytes) else res)
+                if isinstance(m, str):
+                    m = json.loads(m)
+                if isinstance(m, dict):
+                    cluster_meta[lbl] = m
+
+        def _pick_label(candidates):
+            """Among candidate cluster labels, pick the one with tightest cohesion."""
+            best = None
+            best_coh = -1.0
+            for lbl in candidates:
+                meta = cluster_meta.get(lbl)
+                if not meta:
+                    continue
+                coh = float(meta.get("cohesion_score", 0.0))
+                if coh > best_coh:
+                    best_coh = coh
+                    best = lbl
+            return best
+
+        def pick_cluster_label(fid_a, fid_b):
+            """Best function cluster label for a matched pair: prefer a cluster both
+            share, else any cluster either belongs to; tie-break on tightest cohesion.
+            """
+            la = fid_clusters.get(fid_a, set())
+            lb = fid_clusters.get(fid_b, set())
+            shared = la & lb
+            return _pick_label(shared if shared else (la | lb))
+
+        def pick_cluster(fid_a, fid_b):
+            """Best-matching cluster meta for a matched pair (name/uuid for the UI)."""
+            lbl = pick_cluster_label(fid_a, fid_b)
+            return cluster_meta.get(lbl) if lbl else None
+
         def get_col_rarity(cid):
-            # Try to get the true collection count from cluster meta (set during HDBSCAN)
-            # Fallback to local job count if missing
+            # Rarity from how many distinct binaries in the collection share this
+            # function cluster: a rarer cluster => higher score. Primary source is the
+            # collection-wide unique_files_count (set during HDBSCAN); fall back to the
+            # local job count when that field is missing, and to maximal rarity when the
+            # function belongs to no cluster at all.
+            if not cid:
+                # ponytail: no cluster => function does not recur across the collection,
+                # so treat it as maximally rare. Upgrade path: per-function similarity
+                # neighbour count if a cheaper signal than clustering is ever stored.
+                return 1.0
             global_count = cluster_meta.get(cid, {}).get(
                 "unique_files_count", cluster_binary_count_job.get(cid, 0)
             )
-            return 1.0 / math.log(1 + global_count + 1)
+            return min(1.0, 1.0 / math.log(1 + global_count + 1))
 
-        # 3. Load cluster meta (cohesion)
-        all_cids = set()
-        for cmap in binary_cluster_maps.values():
-            all_cids.update(cmap.keys())
-
-        cluster_meta = {}
-        if all_cids:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id, f"[*] Loading metadata for {len(all_cids)} clusters..."
-                )
-
-            cids_list = list(all_cids)
-            pipe = r.pipeline()
-            for cid in cids_list:
-                pipe.json().get(f"{collection}:cluster:{algo}:{cid}:meta", "$")
-
-            meta_results = pipe.execute()
-            for i, cid in enumerate(cids_list):
-                res = meta_results[i]
-                if res:
-                    m = res[0] if isinstance(res, list) else res
-                    if isinstance(m, str):
-                        m = json.loads(m)
-                    cluster_meta[cid] = m
-                else:
-                    cluster_meta[cid] = {
-                        "cohesion_score": 0.0,
-                        "cluster_name": f"Cluster {cid}",
-                    }
-
-        # 3b. Load function metadata (for bsim_features_count of unclustered/unmatched functions)
+        # 3. Load function metadata (for bsim_features_count & names)
         func_meta_cache = {}
         all_unique_fids = set()
         for fids_set in binary_fids.values():
@@ -269,13 +298,13 @@ class BinSimService:
                     f"[*] Loading metadata for {len(all_unique_fids)} functions...",
                 )
             fids_list = list(all_unique_fids)
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for fid in fids_list:
-                pipe.json().get(f"{fid}:meta", "$")
+                pipe.get(f"{fid}:meta")
             meta_results = pipe.execute()
             for fid, res in zip(fids_list, meta_results):
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(m, str):
                         try:
                             m = json.loads(m)
@@ -305,51 +334,90 @@ class BinSimService:
                 job_id, f"[*] Computing similarities for {num_pairs} pairs..."
             )
 
-        # 5. Process Pairs (Greedy Sweep)
+        # 5. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
         processed = 0
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         pair_scores = {}
 
         # Pre-fetch file metadata for all binaries (for indexing)
         file_meta_cache = {}
-        pipe_meta = r.pipeline()
+        pipe_meta = r.pipeline(transaction=False)
         for md5 in binaries:
-            pipe_meta.json().get(f"{collection}:file:{md5}:meta", "$")
+            pipe_meta.get(f"{collection}:file:{md5}:meta")
         meta_results = pipe_meta.execute()
         for md5, res in zip(binaries, meta_results):
             if res:
-                m = res[0] if isinstance(res, list) else res
+                m = json.loads(res) if not isinstance(res, dict) else res
                 if isinstance(m, str):
                     m = json.loads(m)
                 file_meta_cache[md5] = m if isinstance(m, dict) else {}
             else:
                 file_meta_cache[md5] = {}
 
-        for m_a, m_b in pairs:
+        # ponytail: Determine if this collection is a pool or a normal collection
+        is_pool = collection.startswith("global:pool:") or collection.startswith(
+            "pool:"
+        )
+        if is_pool:
+            from bsimvis.app.services.index_service import get_pool_id
 
-            cmap_a = binary_cluster_maps[m_a]
-            cmap_b = binary_cluster_maps[m_b]
+            pool_id = get_pool_id(collection)
+            involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
+        else:
+            involves_file_prefix = f"{collection}:sim:involves:file:"
+
+        for m_a, m_b in pairs:
             file_meta_a = file_meta_cache.get(m_a, {})
             file_meta_b = file_meta_cache.get(m_b, {})
 
-            def get_pair_sim_rarity(cid):
-                count_in_pair = len(cmap_a.get(cid, [])) + len(cmap_b.get(cid, []))
-                return 1.0 / math.log(1 + count_in_pair + 1)
+            # ponytail: Use Kvrocks SINTER to fetch similarities involving both files without temporary keys
+            involves_a = f"{involves_file_prefix}{m_a}"
+            involves_b = f"{involves_file_prefix}{m_b}"
+            sim_keys = [
+                k.decode() if isinstance(k, bytes) else str(k)
+                for k in r.sinter(involves_a, involves_b)
+            ]
 
-            shared_cids = set(cmap_a.keys()).intersection(set(cmap_b.keys()))
+            # Fetch similarity documents in parallel
+            sim_docs = []
+            if sim_keys:
+                pipe_sim = r.pipeline(transaction=False)
+                for k in sim_keys:
+                    pipe_sim.get(k)
+                sim_res = pipe_sim.execute()
+                for res in sim_res:
+                    if res:
+                        sim_docs.append(
+                            json.loads(res.decode() if isinstance(res, bytes) else res)
+                        )
 
-            # Sort shared clusters by cohesion descending
-            shared_cids_sorted = sorted(
-                list(shared_cids),
-                key=lambda c: float(cluster_meta.get(c, {}).get("cohesion_score", 0.0)),
-                reverse=True,
-            )
+            # Filter/extract edges
+            edges = []
+            for doc in sim_docs:
+                fid1 = doc.get("id1")
+                fid2 = doc.get("id2")
+                score = doc.get("score", 0.0)
+                if fid1 and fid2:
+                    # ponytail: Extract exact MD5 out of function IDs (casing-insensitive)
+                    parts1 = fid1.split(":")
+                    parts2 = fid2.split(":")
+                    if len(parts1) >= 2 and len(parts2) >= 2:
+                        m1 = parts1[-2].lower()
+                        m2 = parts2[-2].lower()
+                        m_a_clean = m_a.lower()
+                        m_b_clean = m_b.lower()
+                        if m1 == m_a_clean and m2 == m_b_clean:
+                            edges.append((fid1, fid2, score))
+                        elif m1 == m_b_clean and m2 == m_a_clean:
+                            edges.append((fid2, fid1, score))
+
+            # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
+            edges.sort(key=lambda x: (-x[2], x[0], x[1]))
 
             assigned_a = set()
             assigned_b = set()
             diff_matched = []
 
-            # Weighted score accumulators
             sum_weighted_cohesion_sim = 0.0
             sum_weights_sim = 0.0
 
@@ -359,73 +427,41 @@ class BinSimService:
             sum_weighted_cohesion_unweighted = 0.0
             sum_weights_unweighted = 0.0
 
-            for cid in shared_cids_sorted:
-                pool_a = cmap_a[cid] - assigned_a
-                pool_b = cmap_b[cid] - assigned_b
+            # Match greedily
+            for fid_a, fid_b, score in edges:
+                if fid_a not in assigned_a and fid_b not in assigned_b:
+                    assigned_a.add(fid_a)
+                    assigned_b.add(fid_b)
 
-                if pool_a and pool_b:
-                    cohesion = float(
-                        cluster_meta.get(cid, {}).get("cohesion_score", 0.0)
+                    f_features_a = float(
+                        func_meta_cache.get(fid_a, {}).get("bsim_features_count", 1.0)
                     )
-                    if cohesion < min_cohesion:
-                        continue
-
-                    s_rarity = get_pair_sim_rarity(cid)
-                    c_rarity = get_col_rarity(cid)
-                    cluster_feat = float(
-                        cluster_meta.get(cid, {}).get("avg_features", 1.0)
+                    f_features_b = float(
+                        func_meta_cache.get(fid_b, {}).get("bsim_features_count", 1.0)
                     )
-                    # Avoid zero weight if avg_features is 0 or missing
-                    if cluster_feat <= 0:
-                        cluster_feat = 1.0
+                    f_features = max(f_features_a, f_features_b)
 
-                    count_a = len(pool_a)
-                    count_b = len(pool_b)
-                    match_ratio = min(count_a, count_b) / max(count_a, count_b)
-
+                    # Slim doc: persist only the stable/expensive triple. Cluster tag +
+                    # rarity are derived live at read (get_bin_sim) from current cluster
+                    # meta, so a cluster rebuild can't leave them stale. [[Change 1]]
                     diff_matched.append(
                         {
-                            "cluster_id": cid,
-                            "cluster_uuid": cluster_meta.get(cid, {}).get(
-                                "cluster_uuid", ""
-                            ),
-                            "cluster_name": cluster_meta.get(cid, {}).get(
-                                "cluster_name", str(cid)
-                            ),
-                            "cohesion": cohesion,
-                            "sim_rarity": s_rarity,
-                            "collection_rarity": c_rarity,
-                            "avg_features": cluster_feat,
-                            "funcs_a": list(pool_a),
-                            "funcs_b": list(pool_b),
-                            "count_a": count_a,
-                            "count_b": count_b,
-                            "match_ratio": match_ratio,
+                            "similarity": score,
+                            "avg_features": f_features,
+                            "func_a": fid_a,
+                            "func_b": fid_b,
                         }
                     )
 
-                    assigned_a.update(pool_a)
-                    assigned_b.update(pool_b)
+                    sum_weighted_cohesion_sim += score * f_features
+                    sum_weights_sim += f_features
 
-                    num_matched = min(count_a, count_b)
-                    num_total = count_a + count_b
+                    sum_weighted_cohesion_col += score * f_features
+                    sum_weights_col += f_features
 
-                    sum_weighted_cohesion_sim += (
-                        2.0 * num_matched * cohesion * s_rarity * cluster_feat
-                    )
-                    sum_weights_sim += num_total * s_rarity * cluster_feat
+                    sum_weighted_cohesion_unweighted += score * f_features
+                    sum_weights_unweighted += f_features
 
-                    sum_weighted_cohesion_col += (
-                        2.0 * num_matched * cohesion * c_rarity * cluster_feat
-                    )
-                    sum_weights_col += num_total * c_rarity * cluster_feat
-
-                    sum_weighted_cohesion_unweighted += (
-                        2.0 * num_matched * cohesion * cluster_feat
-                    )
-                    sum_weights_unweighted += num_total * cluster_feat
-
-            # Unique/Unmatched functions logic (includes clustered and unclustered unmatched functions)
             all_funcs_a_total = binary_fids[m_a]
             all_funcs_b_total = binary_fids[m_b]
 
@@ -433,152 +469,42 @@ class BinSimService:
             unassigned_b = all_funcs_b_total - assigned_b
 
             unique_to_a = []
-            unclustered_a = []
-            if unassigned_a:
-                cmap_a_funcs = set()
-                for funcs in cmap_a.values():
-                    cmap_a_funcs.update(funcs)
-                unclustered_a_set = unassigned_a - cmap_a_funcs
-                unclustered_a = list(unclustered_a_set)
+            for fid in sorted(list(unassigned_a)):
+                f_features = float(
+                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                )
+                if f_features <= 0:
+                    f_features = 1.0
 
-                for fid in sorted(list(unassigned_a)):
-                    cids = []
-                    for cid, funcs in cmap_a.items():
-                        if fid in funcs:
-                            cids.append(cid)
-
-                    is_clustered = len(cids) > 0
-                    if is_clustered:
-                        best_cid = max(
-                            cids,
-                            key=lambda c: float(
-                                cluster_meta.get(c, {}).get("cohesion_score", 0.0)
-                            ),
-                        )
-                        f_features = float(
-                            cluster_meta.get(best_cid, {}).get("avg_features", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = get_pair_sim_rarity(best_cid)
-                        c_rarity = get_col_rarity(best_cid)
-
-                        cluster_name = cluster_meta.get(best_cid, {}).get(
-                            "cluster_name", str(best_cid)
-                        )
-                        cluster_uuid = cluster_meta.get(best_cid, {}).get(
-                            "cluster_uuid", ""
-                        )
-                        cohesion = float(
-                            cluster_meta.get(best_cid, {}).get("cohesion_score", 0.0)
-                        )
-                    else:
-                        best_cid = ""
-                        cluster_uuid = ""
-                        cluster_name = "Unclustered"
-                        cohesion = 0.0
-
-                        f_features = float(
-                            func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = 1.0 / math.log(1 + 1 + 1)
-                        c_rarity = 1.0 / math.log(1 + 1 + 1)
-
-                    unique_to_a.append(
-                        {
-                            "func_id": fid,
-                            "funcs": [fid],
-                            "is_clustered": is_clustered,
-                            "cluster_id": best_cid,
-                            "cluster_uuid": cluster_uuid,
-                            "cluster_name": cluster_name,
-                            "cohesion": cohesion,
-                            "sim_rarity": s_rarity,
-                            "collection_rarity": c_rarity,
-                            "avg_features": f_features,
-                        }
-                    )
-                    sum_weights_sim += s_rarity * f_features
-                    sum_weights_col += c_rarity * f_features
-                    sum_weights_unweighted += 1.0 * f_features
+                # Slim: cluster tag + rarity derived at read. [[Change 1]]
+                unique_to_a.append(
+                    {
+                        "func_id": fid,
+                        "avg_features": f_features,
+                    }
+                )
+                sum_weights_sim += f_features
+                sum_weights_col += f_features
+                sum_weights_unweighted += f_features
 
             unique_to_b = []
-            unclustered_b = []
-            if unassigned_b:
-                cmap_b_funcs = set()
-                for funcs in cmap_b.values():
-                    cmap_b_funcs.update(funcs)
-                unclustered_b_set = unassigned_b - cmap_b_funcs
-                unclustered_b = list(unclustered_b_set)
+            for fid in sorted(list(unassigned_b)):
+                f_features = float(
+                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
+                )
+                if f_features <= 0:
+                    f_features = 1.0
 
-                for fid in sorted(list(unassigned_b)):
-                    cids = []
-                    for cid, funcs in cmap_b.items():
-                        if fid in funcs:
-                            cids.append(cid)
-
-                    is_clustered = len(cids) > 0
-                    if is_clustered:
-                        best_cid = max(
-                            cids,
-                            key=lambda c: float(
-                                cluster_meta.get(c, {}).get("cohesion_score", 0.0)
-                            ),
-                        )
-                        f_features = float(
-                            cluster_meta.get(best_cid, {}).get("avg_features", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = get_pair_sim_rarity(best_cid)
-                        c_rarity = get_col_rarity(best_cid)
-
-                        cluster_name = cluster_meta.get(best_cid, {}).get(
-                            "cluster_name", str(best_cid)
-                        )
-                        cluster_uuid = cluster_meta.get(best_cid, {}).get(
-                            "cluster_uuid", ""
-                        )
-                        cohesion = float(
-                            cluster_meta.get(best_cid, {}).get("cohesion_score", 0.0)
-                        )
-                    else:
-                        best_cid = ""
-                        cluster_uuid = ""
-                        cluster_name = "Unclustered"
-                        cohesion = 0.0
-
-                        f_features = float(
-                            func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                        )
-                        if f_features <= 0:
-                            f_features = 1.0
-
-                        s_rarity = 1.0 / math.log(1 + 1 + 1)
-                        c_rarity = 1.0 / math.log(1 + 1 + 1)
-
-                    unique_to_b.append(
-                        {
-                            "func_id": fid,
-                            "funcs": [fid],
-                            "is_clustered": is_clustered,
-                            "cluster_id": best_cid,
-                            "cluster_uuid": cluster_uuid,
-                            "cluster_name": cluster_name,
-                            "cohesion": cohesion,
-                            "sim_rarity": s_rarity,
-                            "collection_rarity": c_rarity,
-                            "avg_features": f_features,
-                        }
-                    )
-                    sum_weights_sim += s_rarity * f_features
-                    sum_weights_col += c_rarity * f_features
-                    sum_weights_unweighted += 1.0 * f_features
+                # Slim: cluster tag + rarity derived at read. [[Change 1]]
+                unique_to_b.append(
+                    {
+                        "func_id": fid,
+                        "avg_features": f_features,
+                    }
+                )
+                sum_weights_sim += f_features
+                sum_weights_col += f_features
+                sum_weights_unweighted += f_features
 
             score_sim_weighted = (
                 sum_weighted_cohesion_sim / sum_weights_sim
@@ -622,22 +548,25 @@ class BinSimService:
                 "shared_clusters": len(diff_matched),
                 "unique_clusters_a": len(unique_to_a),
                 "unique_clusters_b": len(unique_to_b),
-                "unclustered_a": len(unclustered_a),
-                "unclustered_b": len(unclustered_b),
+                "unclustered_a": len(unique_to_a),
+                "unclustered_b": len(unique_to_b),
                 "computed_at": int(time.time() * 1000),
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,
                     "unique_to_b": unique_to_b,
-                    "unclustered_a": unclustered_a,
-                    "unclustered_b": unclustered_b,
+                    "unclustered_a": [],
+                    "unclustered_b": [],
                 },
             }
 
-            pipe.json().set(sid, "$", doc)
-            pipe.zadd(
-                f"{collection}:bin_sim:score:{algo}", {sid: score_collection_weighted}
-            )
+            pipe.set(sid, json.dumps(doc))
+            # ponytail: Use the unweighted score for sorting when unweighted_cosine is active
+            final_bin_score = score_collection_weighted
+            if algo == "unweighted_cosine":
+                final_bin_score = score_unweighted
+
+            pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: final_bin_score})
             pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)
             pipe.sadd(f"{collection}:bin_sim:involves:{m_b}", sid)
             pipe.sadd(f"{collection}:bin_sim:built:{algo}", sid)
@@ -686,7 +615,7 @@ class BinSimService:
             involves_key = f"{collection}:bin_sim:involves:{md5}"
             sids = r.smembers(involves_key)
             if sids:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for sid_raw in sids:
                     sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
                     pipe.delete(sid)
@@ -773,12 +702,12 @@ class BinSimService:
         file_meta_cache = {}
         md5_list = list(md5s)
         if md5_list:
-            pipe_meta = r.pipeline()
+            pipe_meta = r.pipeline(transaction=False)
             for md5 in md5_list:
-                pipe_meta.json().get(f"{collection}:file:{md5}:meta", "$")
+                pipe_meta.get(f"{collection}:file:{md5}:meta")
             for md5, res in zip(md5_list, pipe_meta.execute()):
                 if res:
-                    m = res[0] if isinstance(res, list) else res
+                    m = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(m, str):
                         m = json.loads(m)
                     file_meta_cache[md5] = m if isinstance(m, dict) else {}
@@ -786,16 +715,16 @@ class BinSimService:
                     file_meta_cache[md5] = {}
 
         # Fetch all docs and reindex
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for sid in sids:
-            pipe.json().get(sid, "$")
+            pipe.get(sid)
         docs = pipe.execute()
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for i, (sid, res) in enumerate(zip(sids, docs)):
             if not res:
                 continue
-            doc = res[0] if isinstance(res, list) else res
+            doc = json.loads(res) if not isinstance(res, dict) else res
             if isinstance(doc, str):
                 doc = json.loads(doc)
             m_a = doc.get("md5_a", "")
@@ -810,7 +739,7 @@ class BinSimService:
             )
             if (i + 1) % 200 == 0:
                 pipe.execute()
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 if job_service and job_id:
                     job_service.update_progress(job_id, int((i + 1) / total * 100))
 

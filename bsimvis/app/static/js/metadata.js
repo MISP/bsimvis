@@ -8,11 +8,12 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     const returnType = m['return_type'] || 'void';
     const namespace = m['namespace'] || '';
     const parameters = m['parameters'] || [];
-    const addr = m['entrypoint_address'] || (fullId ? fullId.split(':').pop() : 'N/A');
-    const fileMd5 = m['file_md5'] || 'N/A';
+    const parsed = window.parseEntityId(fullId);
+    const addr = m['entrypoint_address'] || parsed.address || 'N/A';
+    const fileMd5 = m['file_md5'] || parsed.md5 || 'N/A';
 
-    const collection = fullId ? fullId.split(':')[0] : 'main';
-    const fileId = m['file_md5'] ? `${collection}:file:${m['file_md5']}` : null;
+    const collection = parsed.collection || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
+    const fileId = m['file_md5'] ? `${collection}:file:${m['file_md5']}` : (fileMd5 !== 'N/A' ? `${collection}:file:${fileMd5}` : null);
     
     // Tags and Clusters
     const fileTagsHtml = EntityRenderer.renderTag('file', fileId, m['file_tags'] || [], m['file_user_tags'] || []);
@@ -60,10 +61,10 @@ window.getNavHandler = () => {
             globalNav(id, name, lineHash, e);
         } else {
             // Fallback for standalone: construct and open with Nav if available, or window.open
-            const parts = id.split(':');
-            const col = parts[0];
-            const md5 = parts[2];
-            const addr = parts[3];
+            const parsed = window.parseEntityId(id);
+            const col = parsed.collection;
+            const md5 = parsed.md5;
+            const addr = parsed.address;
             const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}${lineHash}`;
             
             const Nav = window.Nav || (window.parent && window.parent.Nav);
@@ -97,20 +98,11 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
     // Action Buttons - Compact versions for header
     let headerActionsHtml = '';
     
-    if (options.showDiffBtn) {
-        const fullTextAttr = options.diffBtnFullText ? 'data-full-text="true"' : '';
-        const onhover = `onmouseenter="if(window.currentFuncId || '${fullId}') onHoverDiffButton(event, '${fullId}', '${label}')" onmouseleave="hideDiffPreview(event)" onmousemove="if(window.moveDiffPreview) moveDiffPreview(event)"`;
-        headerActionsHtml += `
-            <button id="${options.diffBtnId || 'add-diff-btn'}" class="btn-diff-action ${window.diffSelection && window.diffSelection.some(item => item.id === normalizeFuncId(fullId)) ? 'active' : ''}" 
-                data-func-id="${normalizeFuncId(fullId)}" ${fullTextAttr} ${onhover} onclick="addToDiff('${fullId}', '${label}')" 
-                title="Add to Diff" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;">
-                <span>±</span>
-            </button>`;
-    }
+    // Add to Diff moved to right-click > Actions menu
 
     if (options.showCodeLink) {
         headerActionsHtml += `
-            <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const parts = '${fullId}'.split(':'); const url = '/collection/' + encodeURIComponent(parts[0] || 'main') + '/function/' + encodeURIComponent(parts[2]) + '/' + encodeURIComponent(parts[3]); Nav.openPath(url, event, { title: 'Code: ' + parts[3], type: 'function' });" title="Open Code" 
+            <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const f = window.parseFuncId('${fullId}'); const url = '/collection/' + encodeURIComponent(f.collection) + '/function/' + encodeURIComponent(f.md5) + '/' + encodeURIComponent(f.address); Nav.openPath(url, event, { title: 'Code: ' + f.address, type: 'function' });" title="Open Code" 
                style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: rgba(102, 217, 239, 0.1); color: var(--accent); border: 1px solid rgba(102, 217, 239, 0.3);">
                <i class="fa-solid fa-code"></i>
             </a>`;
@@ -118,14 +110,14 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
 
     // Grouping Metadata
     const funcMetaKeys = [
-        'calling_convention', 'instruction_count', 'instructions_count', 'basic_blocks_count', 
-        'cyclomatic_complexity', 'size_bytes'
+        'calling_convention', 'instruction_count', 'instructions_count', 'basic_blocks_count',
+        'cyclomatic_complexity', 'size_bytes', 'function_id_hash'
     ];
     const bsimMetaKeys = ['bsim_features_count', 'bsim_unique_features_count', 'score', 'milvus_id'];
     const fileMetaKeys = ['file_name', 'language_id', 'file_size', 'file_md5'];
     
     const renderRow = (key, val, icon = null) => {
-        const labelText = key.replace(/_/g, ' ');
+        const labelText = key === 'function_id_hash' ? 'function hash' : key.replace(/_/g, ' ');
         const prefix = icon ? `<i class="fa-solid ${icon}" style="margin-right:8px; opacity:0.5; width:14px;"></i>` : '';
         let valueDisplay = (key === 'entrypoint_address') ? `@ ${val}` : (key === 'file_md5' ? `# ${val}` : val);
         const valueColor = (key.includes('address') || key.includes('md5') || key.includes('id') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
@@ -150,6 +142,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
         if (k === 'basic_blocks_count') return 'fa-cubes';
         if (k === 'cyclomatic_complexity') return 'fa-diagram-project';
         if (k === 'size_bytes') return 'fa-weight-hanging';
+        if (k === 'function_id_hash') return 'fa-hashtag';
         if (k === 'language_id') return 'fa-globe';
         if (k === 'file_name') return 'fa-file';
         if (k === 'file_size') return 'fa-floppy-disk';
@@ -199,10 +192,6 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                     <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
                     
                     <div class="meta-sig-actions" style="margin-left: 10px;">
-                        <a class="btn-sim-action" href="javascript:void(0)" onclick="seeSimilar('${fullId}')" 
-                           title="See Similar Functions" style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; background: rgba(174, 129, 255, 0.1); color: var(--info); border: 1px solid rgba(174, 129, 255, 0.3);">
-                           <i class="fa-solid fa-code-compare"></i>
-                        </a>
                         ${EntityRenderer.renderNoteButton(fullId, m.note_owners, { raw_data: m })}
                         ${headerActionsHtml}
                     </div>
@@ -323,11 +312,10 @@ function toggleMetaDetail(id, event) {
 }
 
 function navigateToFeatures(id, e) {
-    const parts = id.split(':');
-    if (parts.length < 4) return;
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
+    const parsed = window.parseEntityId(id);
+    const col = parsed.collection;
+    const md5 = parsed.md5;
+    const addr = parsed.address;
     const url = `/collection/${encodeURIComponent(col)}/function/${encodeURIComponent(md5)}/${encodeURIComponent(addr)}/features`;
 
     Nav.openPath(url, e, { title: `Features: ${addr}`, type: 'features' });
@@ -338,11 +326,10 @@ function seeSimilar(fullId, e) {
     const id = fullId || window.currentFuncId;
     if (!id) return;
 
-    const parts = id.split(':');
-    if (parts.length < 4) return;
-    const col = parts[0];
-    const md5 = parts[2];
-    const addr = parts[3];
+    const parsed = window.parseEntityId(id);
+    const col = parsed.collection;
+    const md5 = parsed.md5;
+    const addr = parsed.address;
     
     const url = `/collection/${encodeURIComponent(col)}/functions/similarities?md5=${encodeURIComponent(md5)}&address=${encodeURIComponent(addr)}&algo=unweighted_cosine`;
 
@@ -410,7 +397,7 @@ function renderFileMetadata(container, m, fullId, options = {}) {
     
     const fileName = m['file_name'] || 'unknown_file';
     const fileMd5 = m['file_md5'] || 'N/A';
-    const collection = fullId ? fullId.split(':')[0] : 'main';
+    const collection = fullId ? window.getCollectionFromId(fullId) : '';
     const fileId = fullId || (m['file_md5'] ? `${collection}:file:${m['file_md5']}` : null);
     
     const tagsHtml = EntityRenderer.renderTag('file', fileId, m['tags'] || [], m['user_tags'] || []);

@@ -13,6 +13,65 @@ Configurable via `.env` file:
 
 Hosts are also configurable via `KVROCKS_HOST`, `REDIS_HOST`, and `APP_HOST`.
 
+## Layout
+
+- `bsimvis/app/routes/` — endpoint implementations, imported by `bsimvis/app/swagger.py`.
+  `_list_query.py` holds the shared in-memory filter/sort/paginate helpers for the
+  small registry listings (collections, pools).
+- `bsimvis/app/services/` — all logic. `similarity_service.py` and `bin_sim_service.py`
+  build similarities, `pool_service.py` owns pools, `job_service.py` owns the queue,
+  `config_service.py` reads `bsimvis_config.toml`, `ghidra_service.py` owns the JVM.
+- `bsimvis/app/lua/` — only `search_function.lua`, `search_similarity.lua` and
+  `clear_similarity.lua`. Nothing else should become Lua: Kvrocks serializes every
+  `EVAL` under one global lock, so a Lua build step blocks all other workers.
+  Similarity candidate discovery is deliberately pure Python for that reason.
+- `bsimvis/worker.py` — the queue worker. One process per worker, each with its own
+  in-process Ghidra JVM.
+- `bsimvis/cli/` — subcommands wired in `bsimvis/cli/main.py` (`bsimvis <sub>`).
+  `bsimvis_bench.py` is a separate entry point (`bsimvis-bench`), not a subcommand.
+
+## Jobs
+
+`JobType` in `job_service.py` is the single source of truth for job types — add there,
+never hardcode a string. Pipelines and groups are jobs too (`type` = `pipeline` /
+`group`, children in `task_ids`).
+
+- `enqueue_job` is idempotent via a `queued` latch field; do not bypass it.
+- Chunked work re-enqueues itself as a *continuation* (`rpush` to the tail) so batches
+  from different jobs interleave instead of one job starving the fleet.
+- Clear jobs (`clear_sim`, `clear_features`, `clear_cluster`, `clear_bin_sim`,
+  `sync_milvus`) go to `jobs:pending:high`.
+
+## Pools
+
+A pool (`pool_service.py`, `routes/pools.py`) is a named union of collections with its
+own similarity/cluster namespace under `global:pool:{id}`. Its config carries
+`only_cross_collection` — when set, matches inside a single member collection are
+dropped, keeping only cross-collection pairs. Pool builds run as a pipeline:
+`init_pool_build` -> `build_pool_sim` chunks -> `finalize_pool_build`, then
+`cluster_pool` / `build_pool_bin_sim` / `cluster_pool_binaries`. Tags and notes stay
+written against the origin collection; only clusters are namespace-local.
+
+## Similarity
+
+`similarity.min_features` in `bsimvis_config.toml` is a BSim floor. Functions below it
+skip BSim entirely and get a deterministic 1.0/0 match from their exact Ghidra
+FunctionID hash (`{fid}:funcid` pointer, `{coll}:funcid:{hash}` buckets) — BSim is
+false-positive-prone on tiny functions. Both the collection and pool build paths do this.
+
+Binary similarity diff tables are paged, filtered and sorted **server-side**
+(`_page_diff` in `routes/bin_sim.py`). Don't reintroduce full-table client loads.
+
+## Workers and Ghidra memory
+
+Each worker holds its own JVM, so heap limits multiply by worker count.
+`ghidra.max_heap_mb` sets an absolute `-Xmx` per worker (keep
+`max_heap_mb * WORKERS_COUNT` under ~60% of host RAM); `ghidra.max_ram_percent` is only
+for the single-JVM `bsimvis upload` CLI. `ghidra.jvm_args` enables periodic G1 GC so an
+idle worker gives its heap back. `launch_tmux.sh` additionally caps `WORKERS_COUNT` by
+host RAM (~3 GB each) and wraps each worker in a systemd scope with
+`MemoryMax=$WORKER_MEMORY_MAX`, so a runaway worker is OOM-killed and its job requeued.
+
 ## Databases tip
 
 Never use `keys` or other commands that might freeze the Kvrocks database.
@@ -35,8 +94,34 @@ Since its only for jobs, the jobs are in :
 
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
-| `global:job:{id}` | **Hash** | Status and metadata for a background job. |
-| `global:pipeline:{id}:jobs` | **List** | Ordered list of job IDs for a multi-step pipeline. |
+| `job:{id}` | **Hash** | Status, payload and metadata for a job, pipeline or group. |
+| `jobs:pending` / `jobs:pending:high` | **List** | Work queues; workers pop from the tail. |
+| `jobs:processing` | **List** | In-flight job IDs; a worker `LMOVE`s here when it claims a job. |
+| `jobs:global` / `jobs:collection:{c}` | **List** | Recent job IDs, trimmed to 1000. |
+
+## Worktree testing
+
+Never read `data/kvrocks/` or `hs_err_pid*.log` — confidential (real binary md5s /
+function data). Tests use only the git-tracked `data/test/` fixtures.
+
+In a linked worktree, run `./scripts/wt-test.sh` before committing. It symlinks
+`bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an
+isolated `.env` (own `PROJECT_NAME` + offset ports + fresh local data dir, so it can
+run alongside the main stack without touching its confidential DB), launches the full
+stack via `launch_tmux.sh`, runs `test_api_endpoints.py`, and tears
+down. Do NOT commit if it prints `RESULT: FAIL` or the run was skipped. Show the output.
+
+Test files live at the repo root: `test_api_endpoints.py` (the broad suite — endpoints,
+pools, filtering and sorting sweeps; the old `test_pools.py` was absorbed into it),
+`test_bin_sim_file_tags.py`, `test_chunk_job_priority.py`, `test_origin_collection.py`.
+
+## Benchmarking
+
+`uv run bsimvis-bench` runs the ingest + similarity pipeline against the git-tracked
+JSON fixtures in `data/bench/` (`--dir` to override) into the `test_bench` collection.
+`--bench-pools` benchmarks the pool paths instead. Save runs with
+`--save data/bench_results/<name>.json` and regress against one with `--compare`;
+`data/bench_results/` is gitignored, `data/bench/` is not.
 
 ## Contributions
 

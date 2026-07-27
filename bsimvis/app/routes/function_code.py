@@ -1,6 +1,10 @@
 from flask import request
 from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
-from bsimvis.app.services.index_service import parse_timestamp
+from bsimvis.app.services.index_service import (
+    parse_timestamp,
+    get_pool_id,
+    enrich_pool_data,
+)
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.node_service import get_enriched_nodes
 import traceback
@@ -110,20 +114,34 @@ def get_function_code():
         return {"detail": "Missing function id"}, 400
 
     try:
-        parts = func_id.split(":")
-        if len(parts) < 4:
-            return {"detail": f"Invalid ID format: {func_id}"}, 400
-
-        if parts[0] == "idx":
-            # Standardized New Format: idx:collection:func:md5:addr
-            collection = parts[1]
-            md5 = parts[3]
-            addr = parts[4]
+        if ":func:" in func_id:
+            if func_id.startswith("idx:"):
+                collection, rest = func_id[4:].split(":func:", 1)
+            else:
+                collection, rest = func_id.split(":func:", 1)
+            parts = rest.split(":")
+            md5 = parts[0]
+            addr = parts[1]
+        elif ":function:" in func_id:
+            if func_id.startswith("idx:"):
+                collection, rest = func_id[4:].split(":function:", 1)
+            else:
+                collection, rest = func_id.split(":function:", 1)
+            parts = rest.split(":")
+            md5 = parts[0]
+            addr = parts[1]
         else:
-            # Legacy Format: collection:function:md5:addr
-            collection = parts[0]
-            md5 = parts[2]
-            addr = parts[3]
+            parts = func_id.split(":")
+            if len(parts) < 4:
+                return {"detail": f"Invalid ID format: {func_id}"}, 400
+            if parts[0] == "idx":
+                collection = parts[1]
+                md5 = parts[3]
+                addr = parts[4]
+            else:
+                collection = parts[0]
+                md5 = parts[2]
+                addr = parts[3]
 
         source, features, meta, tf_map = fetch_function_data(collection, md5, addr)
         if not source:
@@ -161,27 +179,39 @@ def get_function_code():
             try:
                 r = get_redis()
                 fid = f"{collection}:func:{md5}:{addr}"
-                cluster_ids = r.smembers(f"{fid}:clusters")
-                scores = r.hgetall(f"{fid}:cluster_scores")
+                pool_id = request.args.get("pool") or get_pool_id(collection)
+                if pool_id:
+                    cluster_ids = r.smembers(f"global:pool:{pool_id}:{fid}:clusters")
+                    scores = r.hgetall(f"global:pool:{pool_id}:{fid}:cluster_scores")
+                else:
+                    cluster_ids = r.smembers(f"{fid}:clusters")
+                    scores = r.hgetall(f"{fid}:cluster_scores")
                 clusters = []
                 algo = "unweighted_cosine"
                 if cluster_ids:
-                    cluster_pipe = r.pipeline()
+                    cluster_pipe = r.pipeline(transaction=False)
                     for cid_bytes in cluster_ids:
                         cid = (
                             cid_bytes.decode()
                             if isinstance(cid_bytes, bytes)
                             else cid_bytes
                         )
-                        cluster_pipe.json().get(
-                            f"{collection}:cluster:{algo}:{cid}:meta", "$"
-                        )
+                        if pool_id:
+                            cluster_pipe.get(
+                                f"global:pool:{pool_id}:cluster:{algo}:{cid}:meta"
+                            )
+                        else:
+                            cluster_pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
 
                     raw_cluster_metas = cluster_pipe.execute()
 
                     for raw_cm in raw_cluster_metas:
                         if raw_cm:
-                            cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                            cm = (
+                                json.loads(raw_cm)
+                                if not isinstance(raw_cm, dict)
+                                else raw_cm
+                            )
                             if isinstance(cm, str):
                                 cm = json.loads(cm)
                             if cm:
@@ -228,6 +258,10 @@ def get_function_code():
             except Exception as ex:
                 print(f"Error fetching clusters: {ex}")
 
+        pool_id = request.args.get("pool") or get_pool_id(collection)
+        if pool_id and meta:
+            enrich_pool_data(meta, pool_id)
+
         return {"rows": rows, "tips": tips, "meta": meta or {}}
     except Exception as e:
         # Capture the full stack trace as a string
@@ -264,9 +298,9 @@ def get_file_call_graph():
         if not func_ids:
             return {"nodes": [], "edges": []}
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for fid in func_ids:
-            pipe.json().get(f"{fid}:meta", "$")
+            pipe.get(f"{fid}:meta")
             pipe.smembers(f"{fid}:callees")
 
         results = pipe.execute()
@@ -283,7 +317,9 @@ def get_file_call_graph():
 
             meta = None
             if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                meta = (
+                    json.loads(raw_meta) if not isinstance(raw_meta, dict) else raw_meta
+                )
                 if isinstance(meta, str):
                     meta = json.loads(meta)
 
@@ -323,15 +359,19 @@ def get_file_call_graph():
         # Fetch metadata for unindexed nodes
         if unindexed_nodes:
             other_ids = list(unindexed_nodes)
-            other_pipe = r.pipeline()
+            other_pipe = r.pipeline(transaction=False)
             for oid in other_ids:
-                other_pipe.json().get(f"{oid}:meta", "$")
+                other_pipe.get(f"{oid}:meta")
             other_results = other_pipe.execute()
 
             for oid, raw_meta in zip(other_ids, other_results):
                 meta = None
                 if raw_meta:
-                    meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                    meta = (
+                        json.loads(raw_meta)
+                        if not isinstance(raw_meta, dict)
+                        else raw_meta
+                    )
                     if isinstance(meta, str):
                         meta = json.loads(meta)
 

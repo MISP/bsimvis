@@ -140,7 +140,7 @@ def main():
             dp.add_argument(
                 "--min-score",
                 type=float,
-                default=config_service.get("similarity.min_score", 0.0),
+                default=config_service.get("similarity.min_score", 0.9),
             )
             dp.add_argument(
                 "--min-feature",
@@ -348,6 +348,24 @@ def main():
 
     j_list = job_actions.add_parser("list", help="List recent jobs")
     j_list.add_argument("--limit", type=int, default=20)
+    j_list.add_argument(
+        "-t", "--tree", action="store_true", help="Show hierarchy as a tree"
+    )
+    j_list.add_argument(
+        "-d",
+        "--depth",
+        type=int,
+        default=2,
+        help="Max depth in tree mode (0 = unlimited, default: 2)",
+    )
+    j_list.add_argument(
+        "--follow", action="store_true", help="Keep refreshing the output every 2s"
+    )
+    j_list.add_argument(
+        "-p", "--parent", help="Filter: show children of this job/pipeline ID"
+    )
+    j_list.add_argument("-c", "--collection", help="Filter: jobs for this collection")
+    j_list.add_argument("--pool", help="Filter: jobs for this pool")
 
     j_status = job_actions.add_parser("status", help="Get job status & logs")
     j_status.add_argument(
@@ -369,6 +387,9 @@ def main():
 
     j_cancel = job_actions.add_parser("cancel", help="Cancel a job")
     j_cancel.add_argument("job_id", help="Job or Pipeline ID")
+
+    j_retry = job_actions.add_parser("retry", help="Retry a failed or cancelled job")
+    j_retry.add_argument("job_id", help="Job or Pipeline ID")
 
     # --- WORKER ---
     worker_parser = subparsers.add_parser("worker", help="Worker management")

@@ -7,23 +7,44 @@ def fetch_function_data(collection, md5, addr):
     Returns: (source_dict, features_list, meta_dict, tf_map)
     """
     try:
-        r = get_redis()
-        pipe = r.pipeline()
-        pipe.json().get(f"{collection}:func:{md5}:{addr}:source", "$")
-        pipe.json().get(f"{collection}:func:{md5}:{addr}:vec:meta", "$")
-        pipe.json().get(f"{collection}:func:{md5}:{addr}:meta", "$")
+        sub_collection = collection
+        if collection:
+            if collection.startswith("global:pool:"):
+                parts = collection.split(":")
+                if len(parts) >= 5 and parts[3] == "col":
+                    sub_collection = parts[4]
+                elif len(parts) >= 3:
+                    sub_collection = parts[2]
+            elif collection.startswith("pool:"):
+                parts = collection.split(":")
+                if len(parts) >= 4 and parts[2] == "col":
+                    sub_collection = parts[3]
+                elif len(parts) >= 2:
+                    sub_collection = parts[1]
 
-        tf_key = f"{collection}:func:{md5}:{addr}:vec:tf"
+        r = get_redis()
+        pipe = r.pipeline(transaction=False)
+        pipe.get(f"{sub_collection}:func:{md5}:{addr}:source")
+        pipe.get(f"{sub_collection}:func:{md5}:{addr}:vec:meta")
+        pipe.get(f"{sub_collection}:func:{md5}:{addr}:meta")
+
+        tf_key = f"{sub_collection}:func:{md5}:{addr}:vec:tf"
         pipe.zrange(tf_key, 0, -1, withscores=True)
 
-        source, features, meta, tf_raw = pipe.execute()
+        source_raw, features_raw, meta_raw, tf_raw = pipe.execute()
 
-        # Unwrap Dialect 2 / JSON.GET $ results (Kvrocks returns a list of results for path '$')
-        if isinstance(source, list) and source and len(source) == 1:
+        import json
+
+        source = json.loads(source_raw) if source_raw else None
+        if isinstance(source, list) and len(source) == 1:
             source = source[0]
-        if isinstance(features, list) and features and len(features) == 1:
+
+        features = json.loads(features_raw) if features_raw else None
+        if isinstance(features, list) and len(features) == 1:
             features = features[0]
-        if isinstance(meta, list) and meta and len(meta) == 1:
+
+        meta = json.loads(meta_raw) if meta_raw else None
+        if isinstance(meta, list) and len(meta) == 1:
             meta = meta[0]
 
         tf_map = (

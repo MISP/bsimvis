@@ -21,6 +21,8 @@ class FeatureService:
         milvus_chunk_size = 100
         indexed_features = set()
 
+        pipe = self.r.pipeline(transaction=False)
+
         for i, func_id in enumerate(function_ids):
             # Update job progress if applicable
             if job_service and job_id and (i % 10 == 0 or i == total - 1):
@@ -33,9 +35,12 @@ class FeatureService:
             tf_key = f"{func_id}:vec:tf"
 
             # 1. Fetch metadata and vector data
-            raw_meta = self.r.json().get(meta_key, "$")
-            if isinstance(raw_meta, list) and raw_meta and len(raw_meta) == 1:
-                raw_meta = raw_meta[0]
+            # NOTE: Getting data can't be pipelined easily since it is needed inside loop
+            raw_meta = self.r.get(meta_key)
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
 
             new_tf_data = self.r.zrange(tf_key, 0, -1, withscores=True)
             if not raw_meta or not new_tf_data:
@@ -44,34 +49,30 @@ class FeatureService:
                 )
                 continue
 
-            pipe = self.r.pipeline()
-
             # A. Recalculate L2 Norm
             sum_sq = sum(float(tf) ** 2 for _, tf in new_tf_data)
             pipe.set(f"{func_id}:vec:norm", math.sqrt(sum_sq))
 
             # B. Build Reverse Index (ZSETs)
-            tf_dict = {h: float(score) for h, score in new_tf_data}
+            tf_dict = {
+                h.decode() if isinstance(h, bytes) else str(h): float(score)
+                for h, score in new_tf_data
+            }
 
+            for f_hash, new_tf in tf_dict.items():
+                indexed_features.add(f_hash)
+                # Update function mapping for this feature
+                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
+                # Update global TF counter for this feature
+                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
+
+            # Store feature metadata as a JSON string in a HASH keyed by function_id
             for feat_item in raw_meta:
                 f_hash = feat_item.get("hash")
                 if not f_hash:
                     continue
-
-                indexed_features.add(f_hash)
-                new_tf = tf_dict.get(f_hash, 0)
-
-                # Update function mapping for this feature
-                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
-
-                # Update global TF counter for this feature
-                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
-
-                # Store feature metadata as a JSON string in a HASH keyed by function_id
-                # This allows the API to pick any function's context for a feature.
                 meta_entry = dict(feat_item)
                 meta_entry["function_id"] = func_id
-
                 # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
                 pipe.hset(
                     f"{collection}:feature:{f_hash}:meta",
@@ -81,7 +82,11 @@ class FeatureService:
 
             # Mark as indexed (Base ID)
             pipe.sadd(f"{collection}:indexed:functions", func_id)
-            pipe.execute()
+
+            # Execute pipeline in chunks to reduce memory footprint and network overhead
+            if (i + 1) % 100 == 0:
+                pipe.execute()
+                pipe = self.r.pipeline(transaction=False)
 
             # Milvus Buffer
             if milvus_service.enabled:
@@ -92,6 +97,8 @@ class FeatureService:
                             collection, milvus_data, index_type=itype
                         )
                     milvus_data = []
+
+        pipe.execute()
 
         # Final Milvus Flush
         if milvus_service.enabled and milvus_data:
@@ -170,14 +177,16 @@ class FeatureService:
         affected_features = set()
         for fid in function_ids:
             meta_key = f"{fid}:vec:meta"
-            raw_meta = r.json().get(meta_key, "$")
-            if isinstance(raw_meta, list) and raw_meta and len(raw_meta) == 1:
-                raw_meta = raw_meta[0]
+            raw_meta = r.get(meta_key)
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
 
             if not raw_meta:
                 continue
 
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for feat in raw_meta:
                 f_hash = feat.get("hash")
                 tf = feat.get("tf", 1)
@@ -264,12 +273,15 @@ class FeatureService:
                 continue
 
             meta_key = f"{collection}:batch:{uuid}"
-            name_raw = r.json().get(meta_key, "$")
+            name_raw = r.get(meta_key)
             name = "N/A"
             if name_raw:
+                name_raw = json.loads(name_raw)
                 if isinstance(name_raw, list):
                     name_raw = name_raw[0]
-                name = name_raw.get("name", "N/A")
+                name = (
+                    name_raw.get("name", "N/A") if isinstance(name_raw, dict) else "N/A"
+                )
 
             total = r.scard(batch_func_set)
             try:
@@ -305,11 +317,13 @@ class FeatureService:
                 continue
             md5 = parts[2]
 
-            meta = r.json().get(f_key, "$")
-            if meta and isinstance(meta, list):
-                meta = meta[0]
+            meta = r.get(f_key)
+            if meta:
+                meta = json.loads(meta)
+                if isinstance(meta, list):
+                    meta = meta[0]
 
-            name = meta.get("file_name", "N/A") if meta else "N/A"
+            name = meta.get("file_name", "N/A") if isinstance(meta, dict) else "N/A"
 
             # Get functions for this file (Base IDs now)
             file_func_set = f"{collection}:idx:file:functions:{md5}"
@@ -351,7 +365,7 @@ class FeatureService:
         )
 
         # Process in chunks to avoid blocking Kvrocks / Redis
-        chunk_size = 200
+        chunk_size = 500
         for i in range(0, len(feature_hashes), chunk_size):
             if job_service and job_id:
                 pct = int(i / len(feature_hashes) * 100)
@@ -361,199 +375,238 @@ class FeatureService:
 
             chunk = feature_hashes[i : i + chunk_size]
 
-            # --- STAGE 1: Batch fetch samples, frequencies, and scores ---
-            pipe1 = self.r.pipeline()
+            # --- STAGE 1: Batch fetch sparse samples, frequencies, and scores ---
+            pipe1 = self.r.pipeline(transaction=False)
             for fh in chunk:
-                # Use a single HSCAN call as a representative sample (1000 items)
-                pipe1.hscan(f"{collection}:feature:{fh}:meta", cursor=0, count=1000)
+                # HRANDFIELD withvalues → 100 random entries across ALL functions
+                # Covers every function proportionally, avoids first-N clustering bias
+                pipe1.hrandfield(
+                    f"{collection}:feature:{fh}:meta", count=100, withvalues=True
+                )
                 pipe1.hlen(f"{collection}:feature:{fh}:meta")
                 pipe1.zscore(f"{collection}:features:by_tf", fh)
 
             res1 = pipe1.execute()
 
-            # --- STAGE 2: Identify best occurrences and batch fetch contexts ---
-            context_fetch_pipe = self.r.pipeline()
-            fetch_map = []
+            # --- STAGE 2: Find best (type, op) per feature, assemble into save_pipe ---
+            save_pipe = self.r.pipeline(transaction=False)
+
+            # Phase A: parse HRANDFIELD, collect unique func_ids for context fetch
+            results = []
+            pending_funcs = {}  # func_id → {func_id, line_idxs list}
 
             for idx, fh in enumerate(chunk):
-                # res1 indices: HSCAN=idx*3, HLEN=idx*3+1, ZSCORE=idx*3+2
-                hscan_res = res1[idx * 3]
+                hr = res1[idx * 3]
+                # HRANDFIELD withvalues returns flat list [key1, val1, key2, val2, ...]
+                data_batch = dict(zip(hr[0::2], hr[1::2])) if hr else {}
                 total_freq = res1[idx * 3 + 1]
                 tf_score_val = res1[idx * 3 + 2]
 
-                # hscan_res is [cursor, {func_id: occ_str, ...}]
-                data_batch = (
-                    hscan_res[1]
-                    if (isinstance(hscan_res, (list, tuple)) and len(hscan_res) > 1)
-                    else {}
-                )
+                # If full hash < 100 entries, re-fetch all (HRANDFIELD may dedup)
+                if total_freq <= 100 and total_freq > 0:
+                    data_batch = self.r.hgetall(f"{collection}:feature:{fh}:meta")
 
-                occurrences = []
-                for func_id, occ_str in data_batch.items():
+                # parse each occ, include function_id from the hash field
+                parsed = {}
+                for func_key, occ_str in data_batch.items():
                     try:
                         occ = json.loads(occ_str)
-                        occ["function_id"] = func_id
-                        occurrences.append(occ)
+                        occ["function_id"] = (
+                            func_key.decode()
+                            if isinstance(func_key, bytes)
+                            else func_key
+                        )
+                        parsed[func_key] = occ
                     except Exception:
                         pass
 
-                if not occurrences:
-                    delete_feature(self.r, collection, fh)
-                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
-                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
-                    fetch_map.append(None)
-                    continue
-
-                # Group by (type, pcode_op) to find the most common pair
-                counts = {}
-                for occ in occurrences:
-                    pair = (
-                        str(occ.get("type", "N/A")),
-                        str(occ.get("pcode_op", "N/A")),
-                    )
-                    counts[pair] = counts.get(pair, 0) + 1
-
-                if not counts:
-                    delete_feature(self.r, collection, fh)
-                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
-                    context_fetch_pipe.execute_command("ECHO", "delete_dummy")
-                    fetch_map.append(None)
-                    continue
-
-                # Find most common
-                best_pair = max(counts.items(), key=lambda x: (x[1], x[0]))[0]
-                best_type, best_op = best_pair
-
-                # Filter occurrences to this best pair, and pick the first one
-                matching_occs = [
-                    occ
-                    for occ in occurrences
-                    if str(occ.get("type", "N/A")) == best_type
-                    and str(occ.get("pcode_op", "N/A")) == best_op
-                ]
-                best_occ = matching_occs[0]
-
-                func_id = best_occ.get("function_id")
-                line_idxs = best_occ.get("line_idx", [])
-
-                # Queue context fetches (Source Code and Full Vector Meta)
-                if func_id:
-                    context_fetch_pipe.json().get(f"{func_id}:source", "$")
-                else:
-                    context_fetch_pipe.execute_command("ECHO", "no_source")
-
-                if not best_occ.get("pcode_op_full") and func_id:
-                    context_fetch_pipe.json().get(f"{func_id}:vec:meta", "$")
-                else:
-                    context_fetch_pipe.execute_command("ECHO", "no_fallback_meta")
-
-                fetch_map.append(
-                    {
-                        "fh": fh,
-                        "best_type": best_type,
-                        "best_op": best_op,
-                        "best_occ": best_occ,
-                        "line_idxs": line_idxs,
-                        "frequency": total_freq,
-                        "tf_score": (
-                            float(tf_score_val) if tf_score_val is not None else 0.0
-                        ),
-                    }
-                )
-
-            context_res = context_fetch_pipe.execute()
-
-            # --- STAGE 3: Final assembly and batch save ---
-            save_pipe = self.r.pipeline()
-            for idx, info in enumerate(fetch_map):
-                if not info:
-                    continue
-
-                fh = info["fh"]
-                best_occ = info["best_occ"]
-                best_type = info["best_type"]
-                best_op = info["best_op"]
-                line_idxs = info["line_idxs"]
-
-                # Each fetch_map entry consumed 2 pipeline calls
-                source_data = context_res[idx * 2]
-                if isinstance(source_data, list) and source_data:
-                    source_data = source_data[0]
-
-                vec_meta = context_res[idx * 2 + 1]
-                if isinstance(vec_meta, list) and vec_meta:
-                    vec_meta = vec_meta[0]
-
-                # Extract C tokens
-                c_code = None
-                target_line = (
-                    int(line_idxs[0]) if (line_idxs and len(line_idxs) > 0) else -1
-                )
-                if source_data and isinstance(source_data, dict) and target_line != -1:
-                    try:
-                        c_tokens = source_data.get("c_tokens", [])
-                        line_tokens = [
-                            t for t in c_tokens if int(t.get("line", -1)) == target_line
-                        ]
-                        if line_tokens:
-                            c_code = [
-                                {
-                                    "type": t.get("type"),
-                                    "text": str(t.get("t", t.get("text", ""))),
-                                }
-                                for t in line_tokens
-                            ]
-                    except Exception as e:
-                        logging.error(
-                            f"Error extracting global tokens for feature {fh}: {e}"
+                # find most common (type, op) pair
+                best_type, best_op = "N/A", "N/A"
+                func_id, line_idxs, best_occ = None, [], {}
+                if parsed:
+                    counts = {}
+                    for key, occ in parsed.items():
+                        pair = (
+                            str(occ.get("type", "N/A")),
+                            str(occ.get("pcode_op", "N/A")),
                         )
+                        counts[pair] = counts.get(pair, 0) + 1
+                    if counts:
+                        best_pair = max(counts.items(), key=lambda x: (x[1], x[0]))[0]
+                        best_type, best_op = best_pair
+                        for key, occ in parsed.items():
+                            if (
+                                str(occ.get("type", "N/A")) == best_type
+                                and str(occ.get("pcode_op", "N/A")) == best_op
+                            ):
+                                best_occ = occ
+                                bk = key
+                                if isinstance(bk, bytes):
+                                    bk = bk.decode()
+                                func_id = bk  # func_id from hash field name
+                                line_idxs = best_occ.get("line_idx", [])
+                                break
+                        # pcode_op_full may be in a non-mode-matching entry — check all
+                        pcode_full = best_occ.get("pcode_op_full") or "lazy"
+                        if pcode_full == "lazy":
+                            for occ in parsed.values():
+                                if occ.get("pcode_op_full"):
+                                    pcode_full = occ["pcode_op_full"]
+                                    break
+                    else:
+                        delete_feature(self.r, collection, fh)
+                        continue
+                else:
+                    delete_feature(self.r, collection, fh)
+                    continue
 
-                # Extract Pcode fallback
-                pcode_full = best_occ.get("pcode_op_full")
-                if not pcode_full and isinstance(vec_meta, list):
-                    for feat in vec_meta:
-                        if feat.get("hash") == fh:
-                            pcode_full = feat.get("pcode_op_full")
-                            break
-                if not pcode_full:
-                    pcode_full = "N/A"
+                # Queue source fetch for this func if not already queued (dedup across chunk)
+                if func_id and func_id not in pending_funcs:
+                    pending_funcs[func_id] = func_id
 
-                # Function parts
-                fid = best_occ.get("function_id", "")
+                # Function parts from func_id (hash key format: {coll}:func:{md5}:{addr})
+                fid = func_id or "N/A"
                 parts = fid.split(":")
                 md5, addr = "N/A", "N/A"
                 if len(parts) >= 4:
                     md5 = parts[-2]
                     addr = parts[-1]
 
-                context = {
-                    "type": best_type,
-                    "op": best_op,
-                    "pcode_full": pcode_full,
-                    "func_id": fid,
-                    "seq": best_occ.get("seq"),
-                    "line_idxs": line_idxs,
-                    "md5": md5,
-                    "addr": addr,
-                    "name": best_occ.get("function_name", addr),
-                    "c_code": c_code,
-                }
+                pcode_full = pcode_full  # from Phase A loop
+                # Function parts from func_id (hash key format: {coll}:func:{md5}:{addr})
+                fid = func_id or "N/A"
+                parts = fid.split(":")
+                md5, addr = "N/A", "N/A"
+                if len(parts) >= 4:
+                    md5 = parts[-2]
+                    addr = parts[-1]
 
+                # pcode_full will be filled from source fetch below
+                results.append(
+                    {
+                        "fh": fh,
+                        "best_type": best_type,
+                        "best_op": best_op,
+                        "func_id": fid,
+                        "frequency": total_freq,
+                        "tf_score": (
+                            float(tf_score_val) if tf_score_val is not None else 0.0
+                        ),
+                        "line_idxs": line_idxs,
+                        "c_code": None,
+                        "pcode_full": pcode_full,
+                        "context": {
+                            "type": best_type,
+                            "op": best_op,
+                            "pcode_full": pcode_full,
+                            "func_id": fid,
+                            "seq": best_occ.get("seq"),
+                            "line_idxs": line_idxs,
+                            "md5": md5,
+                            "addr": addr,
+                            "name": best_occ.get("function_name", addr),
+                            "c_code": None,
+                        },
+                    }
+                )
+
+            # Phase B: 1 GET per unique func (2 per func: source + vec:meta)
+            source_lookup = {}
+            vec_meta_lookup = {}
+            if pending_funcs:
+                ctx_pipe = self.r.pipeline(transaction=False)
+                for func_id in pending_funcs:
+                    ctx_pipe.get(f"{func_id}:source")
+                ctx_res = ctx_pipe.execute()
+                for func_id, ctx_entry in zip(pending_funcs, ctx_res):
+                    if ctx_entry:
+                        entry_decoded = json.loads(ctx_entry)
+                        source_lookup[func_id] = (
+                            entry_decoded[0]
+                            if isinstance(entry_decoded, list)
+                            else entry_decoded
+                        )
+                    else:
+                        source_lookup[func_id] = {}
+
+                ctx_pipe2 = self.r.pipeline(transaction=False)
+                for func_id in pending_funcs:
+                    ctx_pipe2.get(f"{func_id}:vec:meta")
+                ctx_res2 = ctx_pipe2.execute()
+                func_vec = list(pending_funcs)
+                for func_id, ctx_entry in zip(func_vec, ctx_res2):
+                    if ctx_entry:
+                        entry_decoded = json.loads(ctx_entry)
+                        vec_meta_lookup[func_id] = (
+                            entry_decoded[0]
+                            if isinstance(entry_decoded, list)
+                            else entry_decoded
+                        )
+                    else:
+                        vec_meta_lookup[func_id] = []
+
+            # Phase C: fill in c_code and pcode_full from fetched data
+            for result in results:
+                if result["func_id"] not in pending_funcs:
+                    continue
+                source_data = source_lookup.get(result["func_id"], {})
+                if isinstance(source_data, dict):
+                    # Extract C tokens from source
+                    if result["line_idxs"]:
+                        try:
+                            c_tokens = source_data.get("c_tokens", [])
+                            target_line = (
+                                int(result["line_idxs"][0])
+                                if result["line_idxs"]
+                                else -1
+                            )
+                            if target_line != -1:
+                                line_tokens = [
+                                    t
+                                    for t in c_tokens
+                                    if int(t.get("line", -1)) == target_line
+                                ]
+                                result["c_code"] = [
+                                    {
+                                        "type": t.get("type"),
+                                        "text": str(t.get("t", t.get("text", ""))),
+                                    }
+                                    for t in line_tokens
+                                ]
+                        except Exception:
+                            pass
+                # Fill pcode_full from vec:meta when lazy
+                func_id_for_lookup = result["func_id"]
+                if result["pcode_full"] == "lazy":
+                    vec_entries = vec_meta_lookup.get(func_id_for_lookup, [])
+                    if vec_entries and isinstance(vec_entries, list):
+                        for feat in vec_entries:
+                            if feat.get("hash") == result["fh"]:
+                                result["pcode_full"] = feat.get("pcode_op_full", "N/A")
+                                break
+                result["context"]["pcode_full"] = result["pcode_full"]
+
+                # Fill c_code
+                result["context"]["c_code"] = result["c_code"]
+
+            # Phase D: build save_pipe
+            for result in results:
+                context = result["context"]
+                context["c_code"] = result["c_code"]
                 global_meta = {
-                    "hash": fh,
-                    "feature_id": f"{collection}:feature:{fh}",
-                    "type": best_type,
-                    "op": best_op,
-                    "frequency": info["frequency"],
-                    "tf_score": info["tf_score"],
+                    "hash": result["fh"],
+                    "feature_id": f"{collection}:feature:{result['fh']}",
+                    "type": result["best_type"],
+                    "op": result["best_op"],
+                    "frequency": result["frequency"],
+                    "tf_score": result["tf_score"],
                     "context": context,
                 }
-
-                # Write to Kvrocks JSON and Update Secondary Indexes
-                save_pipe.json().set(
-                    f"{collection}:feature:{fh}:global_meta", "$", global_meta
+                save_pipe.set(
+                    f"{collection}:feature:{result['fh']}:global_meta",
+                    json.dumps(global_meta),
                 )
-                save_feature(save_pipe, collection, fh, global_meta)
+                save_feature(save_pipe, collection, result["fh"], global_meta)
 
             save_pipe.execute()
 

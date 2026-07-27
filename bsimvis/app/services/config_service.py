@@ -23,7 +23,12 @@ class ConfigService:
                 with open(config_path, "rb") as f:
                     self._config = tomllib.load(f)
             else:
-                self._config = {}
+                example_path = Path("bsimvis_config.toml.example")
+                if example_path.exists():
+                    with open(example_path, "rb") as f:
+                        self._config = tomllib.load(f)
+                else:
+                    self._config = {}
         except Exception as e:
             logging.warning(f"Failed to load default config: {e}")
             self._config = {}

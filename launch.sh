@@ -30,6 +30,29 @@ wait_for_port() {
     echo " ready (${i}s)."
 }
 
+# Wait until a TCP port is no longer accepting connections (max 10s before force kill)
+wait_for_port_free() {
+    local port=$1
+    local name=$2
+    local max=10
+    local i=0
+    echo -n "  Waiting for ${name} port ${port} to be freed..."
+
+    # Check if any process is listening on the port
+    while lsof -i :"$port" >/dev/null 2>&1; do
+        sleep 1
+        i=$((i+1))
+        if [ $i -ge $max ]; then
+            echo " TIMEOUT. Force killing..."
+            # Use fuser or lsof to kill specifically the process on that port
+            fuser -k -n tcp "$port" 2>/dev/null || lsof -t -i tcp:"$port" | xargs kill -9 2>/dev/null
+            sleep 1
+            break
+        fi
+    done
+    echo " free."
+}
+
 # Check for screen
 if ! command -v screen > /dev/null; then
     echo "Error: 'screen' is not installed. Please install it first."
@@ -51,14 +74,38 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-# Optional screen cleanup (default off, enable with --clear or CLEAN_SCREEN=true)
-CLEAN_SCREEN=${CLEAN_SCREEN:-$CLEAR}
+# Defaults & Config
+REDIS_PORT=${REDIS_PORT:-6379}
+KVROCKS_PORT=${KVROCKS_PORT:-6666}
+WORKERS_COUNT=${WORKERS_COUNT:-5}
+ENABLE_MILVUS=${ENABLE_MILVUS:-false}
+DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
 
+# Optional screen cleanup (default off, enable with --clear or CLEAN_SCREEN=true)
+CLEAN_SCREEN=${CLEAN_SCREEN:-$CLEAR}
+
 if [ "$CLEAN_SCREEN" = "true" ]; then
+    # Try sending clean shutdown commands first
+    if command -v redis-cli > /dev/null; then
+        echo "Sending shutdown commands to Redis and Kvrocks..."
+        redis-cli -p "${REDIS_PORT}" shutdown 2>/dev/null || true
+        redis-cli -p "${KVROCKS_PORT}" shutdown 2>/dev/null || true
+    fi
+
     if screen -list | grep -q "${PROJECT_NAME}-"; then
         echo "Cleaning up stale ${PROJECT_NAME} screen sessions..."
         screen -ls | grep "${PROJECT_NAME}-" | cut -d. -f1 | awk '{print $1}' | xargs -I{} screen -X -S {} quit
+        
+        # Wait for ports to be freed
+        wait_for_port_free "${REDIS_PORT}" "Redis"
+        wait_for_port_free "${KVROCKS_PORT}" "Kvrocks"
+        if [ "$ENABLE_MILVUS" = "true" ]; then
+            ETCD_PORT=${ETCD_PORT:-2379}
+            MINIO_PORT=${MINIO_PORT:-9000}
+            wait_for_port_free "${ETCD_PORT}" "Etcd"
+            wait_for_port_free "${MINIO_PORT}" "Minio"
+        fi
     fi
 fi
 
@@ -87,14 +134,16 @@ if [ "$ENABLE_MILVUS" = "true" ]; then
     done
 fi
 
-# Defaults
-REDIS_PORT=${REDIS_PORT:-6379}
-KVROCKS_PORT=${KVROCKS_PORT:-6666}
-WORKERS_COUNT=${WORKERS_COUNT:-5}
-ENABLE_MILVUS=${ENABLE_MILVUS:-false}
-DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 
 echo "--- Launching Services (Data: ${DATA_BASE_DIR}) ---"
+
+# Ensure directories exist
+mkdir -p "${DATA_BASE_DIR}/redis"
+mkdir -p "${DATA_BASE_DIR}/kvrocks"
+if [ "$ENABLE_MILVUS" = "true" ]; then
+    mkdir -p "${DATA_BASE_DIR}/etcd"
+    mkdir -p "${DATA_BASE_DIR}/minio"
+fi
 
 # Start Redis
 start_screen "${PROJECT_NAME}-redis" "redis-server --port ${REDIS_PORT} --dir ${DATA_BASE_DIR}/redis"

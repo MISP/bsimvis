@@ -19,22 +19,24 @@ def get_function_features():
             clusters = []
             algo = "unweighted_cosine"
             if cluster_ids:
-                cluster_pipe = r.pipeline()
+                cluster_pipe = r.pipeline(transaction=False)
                 for cid_bytes in cluster_ids:
                     cid = (
                         cid_bytes.decode()
                         if isinstance(cid_bytes, bytes)
                         else cid_bytes
                     )
-                    cluster_pipe.json().get(
-                        f"{collection}:cluster:{algo}:{cid}:meta", "$"
-                    )
+                    cluster_pipe.get(f"{collection}:cluster:{algo}:{cid}:meta")
 
                 raw_cluster_metas = cluster_pipe.execute()
 
                 for raw_cm in raw_cluster_metas:
                     if raw_cm:
-                        cm = raw_cm[0] if isinstance(raw_cm, list) else raw_cm
+                        cm = (
+                            json.loads(raw_cm)
+                            if not isinstance(raw_cm, dict)
+                            else raw_cm
+                        )
                         if isinstance(cm, str):
                             import json
 

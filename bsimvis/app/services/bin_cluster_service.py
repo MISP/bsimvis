@@ -408,17 +408,13 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, "Extracting hierarchical clusters from tree...")
 
-        child_to_parent = dict(zip(tree_df["child"], tree_df["parent"]))
+        # Map leaves to the clusters they actually survive into (shed noise
+        # points excluded). See cluster_common.hierarchical_membership.
+        from bsimvis.app.services.cluster_common import hierarchical_membership
 
-        leaf_to_clusters = {}
-        for leaf in range(num_nodes):
-            clusters = set()
-            curr = leaf
-            while curr in child_to_parent:
-                p = child_to_parent[curr]
-                clusters.add(int(p))
-                curr = p
-            leaf_to_clusters[leaf] = list(clusters)
+        leaf_to_clusters, leaf_home = hierarchical_membership(
+            tree_df, num_nodes, global_root_id, min_size=min_cluster_size
+        )
 
         cluster_members = {}
         for leaf, clusters in leaf_to_clusters.items():
@@ -455,7 +451,7 @@ class BinClusterService:
 
         from bsimvis.app.services.index_service import _index_tag, _unindex_tag
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
 
         for c, members in cluster_members.items():
             pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:members", *members)
@@ -463,17 +459,12 @@ class BinClusterService:
                 pipe.execute()
         pipe.execute()
 
-        # Extract and save direct members (where child_size == 1)
+        # Direct members = leaves whose deepest surviving cluster is this node
+        # (shed noise points excluded, matching the membership rule above).
         direct_members = {}
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) == 1:
-                p = int(row["parent"])
-                leaf = int(row["child"])
-                if leaf in idx_to_id:
-                    fid = idx_to_id[leaf]
-                    if p not in direct_members:
-                        direct_members[p] = []
-                    direct_members[p].append(fid)
+        for leaf, p in leaf_home.items():
+            if leaf in idx_to_id:
+                direct_members.setdefault(p, []).append(idx_to_id[leaf])
 
         for c, d_members in direct_members.items():
             pipe.sadd(f"{collection}:bin_cluster:{algo}:{c}:direct_members", *d_members)
@@ -542,15 +533,20 @@ class BinClusterService:
 
         for i in range(0, total_members, 1000):
             chunk = all_member_file_ids[i : i + 1000]
-            m_pipe = r.pipeline()
+            m_pipe = r.pipeline(transaction=False)
             for file_id in chunk:
-                m_pipe.json().get(f"{file_id}:meta", "$")
+                m_pipe.get(f"{file_id}:meta")
             results = m_pipe.execute()
             for idx, file_id in enumerate(chunk):
                 meta_res = results[idx]
-                m = meta_res[0] if isinstance(meta_res, list) and meta_res else {}
-                if isinstance(m, str):
-                    m = json.loads(m)
+                m = {}
+                if meta_res:
+                    if isinstance(meta_res, bytes):
+                        meta_res = meta_res.decode("utf-8")
+                    try:
+                        m = json.loads(meta_res)
+                    except Exception:
+                        m = {}
                 all_member_meta[file_id] = m
 
             if i % 1000 == 0:
@@ -671,6 +667,17 @@ class BinClusterService:
                 filename_freq = []
                 md5_freq = []
 
+            sample_members = []
+            for file_id in members[:5]:
+                m = all_member_meta.get(file_id, {})
+                sample_members.append(
+                    {
+                        "id": file_id,
+                        "name": m.get("file_name", "Unknown"),
+                        "file_name": m.get("file_name", "Unknown"),
+                    }
+                )
+
             rep_file_id = members[0] if members else None
             rep_meta = all_member_meta.get(rep_file_id, {}) if rep_file_id else {}
             snippet = rep_meta.get("file_name", "unknown")
@@ -684,7 +691,8 @@ class BinClusterService:
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
-                "sample_members": names_list[:5],
+                "sample_files": names_list[:5],
+                "sample_members": sample_members,
                 "yara_distribution": yara_freq,
                 "avtype_distribution": avtype_freq,
                 "filetype_distribution": filetype_freq,
@@ -698,7 +706,7 @@ class BinClusterService:
                 if isinstance(v, float):
                     if not np.isfinite(v):
                         meta[k] = 0.0
-            pipe.json().set(f"{collection}:bin_cluster:{algo}:{label}:meta", "$", meta)
+            pipe.set(f"{collection}:bin_cluster:{algo}:{label}:meta", json.dumps(meta))
 
             if "bin_cluster_name" in file_tag_fields:
                 bucket_key = (
@@ -795,7 +803,7 @@ class BinClusterService:
             members_key = f"{collection}:bin_cluster:{algo}:{cid}:members"
             members = r.smembers(members_key)
             if members:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for j, mid_raw in enumerate(members):
                     mid = mid_raw.decode() if isinstance(mid_raw, bytes) else mid_raw
                     _unindex_tag(pipe, collection, "file", "bin_cluster_id", cid, mid)
@@ -842,7 +850,7 @@ class BinClusterService:
         reg_key = f"{collection}:reg:{level}:{field}"
         buckets = r.smembers(reg_key)
         if buckets:
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for b_raw in buckets:
                 b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
                 pipe.delete(b)

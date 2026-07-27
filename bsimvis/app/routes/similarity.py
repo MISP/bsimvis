@@ -1,3 +1,5 @@
+import json
+
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.similarity_service import SimilarityService
@@ -43,14 +45,14 @@ def list_similarities():
 
     results = []
     if sim_keys:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for k in sim_keys:
-            pipe.json().get(k, "$")
+            pipe.get(k)
         raw_docs = pipe.execute()
 
         for i, doc in enumerate(raw_docs):
             if doc:
-                d = doc[0] if isinstance(doc, list) else doc
+                d = json.loads(doc) if not isinstance(doc, dict) else doc
                 sid_key = sim_keys[i]
                 d["sid"] = sid_key.decode() if isinstance(sid_key, bytes) else sid_key
                 normalize_tags(d)
@@ -103,7 +105,7 @@ def build_similarity():
 
     min_score = data.get("min_score")
     if min_score is None:
-        min_score = config_service.get("similarity.min_score", 0.95)
+        min_score = config_service.get("similarity.min_score", 0.9)
 
     top_k = data.get("top_k")
     if top_k is None:
@@ -122,23 +124,32 @@ def build_similarity():
         "top_k": top_k,
         "min_features": min_features,
         "all": data.get("all", False),
+        "skip_write": data.get("skip_write", False),  # ponytail
     }
+
+    tasks = [(JobType.BUILD_SIM, payload)]
+    if not data.get("skip_write", False):
+        tasks.append(
+            (
+                JobType.INDEX_SIM,
+                {
+                    "collection": collection,
+                    "algo": algo,
+                    "md5": md5,
+                    "batch_uuid": batch_uuid,
+                },
+            )
+        )
 
     if algo in ["milvus_sparse"]:
         if not milvus_service.enabled:
             return {
                 "error": "Milvus is disabled. Cannot use milvus_sparse algorithm."
             }, 400
+        tasks.insert(0, (JobType.SYNC_MILVUS, {"collection": collection}))
 
-        tasks = [
-            (JobType.SYNC_MILVUS, {"collection": collection}),
-            (JobType.BUILD_SIM, payload),
-        ]
-        job_id = job_service.create_pipeline(tasks)
-        return {"job_id": job_id, "pipeline_id": job_id, "status": "enqueued"}
-    else:
-        job_id = job_service.create_job(JobType.BUILD_SIM, payload)
-        return {"job_id": job_id, "status": "enqueued"}
+    pipeline_id = job_service.create_pipeline(tasks)
+    return {"job_id": pipeline_id, "pipeline_id": pipeline_id, "status": "enqueued"}
 
 
 def rebuild_similarity():
@@ -159,7 +170,7 @@ def rebuild_similarity():
 
     min_score = data.get("min_score")
     if min_score is None:
-        min_score = config_service.get("similarity.min_score", 0.95)
+        min_score = config_service.get("similarity.min_score", 0.9)
 
     top_k = data.get("top_k")
     if top_k is None:
@@ -191,6 +202,15 @@ def rebuild_similarity():
                 "top_k": top_k,
                 "min_features": min_features,
                 "all": data.get("all", False),
+            },
+        ),
+        (
+            JobType.INDEX_SIM,
+            {
+                "collection": collection,
+                "algo": algo,
+                "md5": md5,
+                "batch_uuid": batch_uuid,
             },
         ),
     ]

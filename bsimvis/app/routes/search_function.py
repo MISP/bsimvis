@@ -6,7 +6,12 @@ import time
 import uuid
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import parse_timestamp, normalize_tags
+from bsimvis.app.services.index_service import (
+    parse_timestamp,
+    normalize_tags,
+    enrich_pool_data,
+    get_pool_id,
+)
 from bsimvis.app.services.lua_manager import lua_manager
 
 DEFAULT_LIMIT = 100
@@ -14,12 +19,38 @@ DEFAULT_POOL_LIMIT = 1000000
 MAX_POOL_LIMIT = 1000000
 
 
+def _sscan_page(r, key, offset, limit):
+    cursor = 0
+    seen = 0
+    doc_ids = []
+    scan_count = max(100, min(1000, offset + limit))
+
+    while True:
+        cursor, batch = r.sscan(key, cursor=cursor, count=scan_count)
+        for doc_id in batch:
+            if seen >= offset and len(doc_ids) < limit:
+                doc_ids.append(doc_id)
+            seen += 1
+            if len(doc_ids) >= limit:
+                break
+        if cursor == 0 or len(doc_ids) >= limit:
+            break
+
+    return doc_ids
+
+
 def search_functions():
     try:
         t_req_start = time.perf_counter()
+        pool_id = request.args.get("pool")
         col = request.args.get("collection")
-        if not col:
-            return {"error": "No collection specified"}, 400
+        if not col and not pool_id:
+            return {"error": "No collection or pool specified"}, 400
+
+        if pool_id:
+            col = f"global:pool:{pool_id}"
+        else:
+            pool_id = get_pool_id(col)
 
         session_id = str(uuid.uuid4())[:8]
 
@@ -111,7 +142,7 @@ def search_functions():
                     else:
                         try:
                             for bucket in r.sscan_iter(
-                                registry_key, match=f"*{val_lower}*"
+                                registry_key, match=f"*{val_lower}*", count=1000
                             ):
                                 bucket_str = (
                                     bucket.decode()
@@ -205,10 +236,12 @@ def search_functions():
                     # We handle both the target name (e.g. file_tags) and common aliases (md5 -> file_md5)
                     val = request.args.get(target_field)
 
+                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                        continue
+
                     # Alias handling (for backward compat or convenience)
                     if not val:
                         aliases = {
-                            "file_md5": ["md5"],
                             "entrypoint_address": ["address"],
                             "function_name": ["name"],
                             "language_id": ["language"],
@@ -229,7 +262,19 @@ def search_functions():
         # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
         # The existing code had some manual additions for unions, keeping them for now if not redundant.
         # Actually, the logic below handles tag lists which are distinct from single request.args.get()
-        tag_filter_configs = [
+        md5_val = request.args.get("md5") or request.args.get("file_md5")
+        md5_configs = []
+        if md5_val:
+            md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+            md5_configs = [([md5_val], "any_md5", md5_paths)]
+            
+        file_name_val = request.args.get("file_name")
+        file_name_configs = []
+        if file_name_val:
+            file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+            file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+
+        tag_filter_configs = md5_configs + file_name_configs + [
             (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
             (static_tag_filters, "static_tag", _paths("tags")),
             (user_tag_filters, "user_tag", _paths("user_tags")),
@@ -403,40 +448,63 @@ def search_functions():
                 }
             )
 
-        # Lua Exec
-        search_script = lua_manager.get_script("search_function")
-        if not search_script:
-            # Fallback to manual reload if script not found (first time)
-            lua_manager.register_all()
+        if not groups_raw:
+            all_key = f"{col}:all_functions"
+            total = r.scard(all_key)
+            pool_truncated = False
+
+            if sort_by != "id":
+                sort_key = f"{col}:idx:func:{sort_by}"
+                sorted_total = r.zcard(sort_key)
+                if sorted_total:
+                    total = sorted_total
+                    doc_ids = (
+                        r.zrevrange(sort_key, offset, offset + limit - 1)
+                        if sort_order == "desc"
+                        else r.zrange(sort_key, offset, offset + limit - 1)
+                    )
+                else:
+                    doc_ids = _sscan_page(r, all_key, offset, limit)
+            else:
+                doc_ids = _sscan_page(r, all_key, offset, limit)
+        else:
+            # Lua Exec
             search_script = lua_manager.get_script("search_function")
+            if not search_script:
+                # Fallback to manual reload if script not found (first time)
+                lua_manager.register_all()
+                search_script = lua_manager.get_script("search_function")
 
-        lua_config = {
-            "collection": col,
-            "pool_limit": pool_limit,
-            "groups": sorted(groups_raw, key=lambda x: x["weight"]),
-            "offset": offset,
-            "limit": limit,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        }
+            lua_config = {
+                "collection": col,
+                "pool_limit": pool_limit,
+                "groups": sorted(groups_raw, key=lambda x: x["weight"]),
+                "offset": offset,
+                "limit": limit,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+            }
 
-        try:
-            res = search_script(keys=[], args=[json.dumps(lua_config)])
-            total = res[0]
-            pool_truncated = bool(res[1])
-            doc_ids = res[2]
-        except Exception as e:
-            logging.error(f"FUNC LUA SEARCH CRASH: {e}")
-            return {"error": str(e)}, 500
+            try:
+                res = search_script(keys=[], args=[json.dumps(lua_config)])
+                total = res[0]
+                pool_truncated = bool(res[1])
+                doc_ids = res[2]
+            except Exception as e:
+                logging.error(f"FUNC LUA SEARCH CRASH: {e}")
+                return {"error": str(e)}, 500
 
         # --- ENRICHMENT (Optimized & Deduplicated) ---
         t_enrich_start = time.perf_counter()
 
         # Phase 1: Fetch Function Metadata & Cluster Scores (Bulk)
-        f_pipe = r.pipeline()
+        f_pipe = r.pipeline(transaction=False)
         for doc_id in doc_ids:
-            f_pipe.json().get(f"{doc_id}:meta", "$")
-            f_pipe.hgetall(f"{doc_id}:cluster_scores")
+            f_pipe.get(f"{doc_id}:meta")
+            if col.startswith("global:pool:"):
+                f_pipe.hgetall(f"{col}:{doc_id}:cluster_scores")
+            else:
+                f_pipe.hgetall(f"{doc_id}:cluster_scores")
 
         f_results_raw = f_pipe.execute()
 
@@ -448,7 +516,11 @@ def search_functions():
             m_json = f_results_raw[i * 2]
             scores_raw = f_results_raw[i * 2 + 1] or {}
 
-            meta = (m_json[0] if isinstance(m_json, list) and m_json else m_json) or {}
+            meta = (
+                json.loads(m_json)
+                if m_json and not isinstance(m_json, dict)
+                else (m_json or {})
+            )
             if isinstance(meta, str):
                 meta = json.loads(meta)
 
@@ -460,33 +532,43 @@ def search_functions():
 
             f_meta_list.append({"doc_id": doc_id, "meta": meta, "scores": scores})
             if meta.get("file_md5"):
-                unique_md5s.add(meta["file_md5"])
+                # File docs live in the origin collection; a pool owns none, so
+                # key the map by (collection, md5) taken from the function id.
+                unique_md5s.add((doc_id.split(":")[0], meta["file_md5"]))
 
         # Phase 2: Fetch File Metadata (DEDUPLICATED)
         file_meta_map = {}
         if unique_md5s:
-            file_pipe = r.pipeline()
+            file_pipe = r.pipeline(transaction=False)
             md5_list = list(unique_md5s)
-            for md5 in md5_list:
-                file_pipe.json().get(f"{col}:file:{md5}:meta", "$")
+            for f_coll, md5 in md5_list:
+                file_pipe.get(f"{f_coll}:file:{md5}:meta")
             file_results = file_pipe.execute()
-            for md5, res in zip(md5_list, file_results):
-                fm = (res[0] if isinstance(res, list) and res else res) or {}
+            for (f_coll, md5), res in zip(md5_list, file_results):
+                fm = (
+                    json.loads(res)
+                    if res and not isinstance(res, dict)
+                    else (res or {})
+                )
                 if isinstance(fm, str):
                     fm = json.loads(fm)
-                file_meta_map[md5] = fm
+                file_meta_map[f"{f_coll}:{md5}"] = fm
 
         # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
         cluster_meta_map = {}
         algo = "unweighted_cosine"  # Default algo
         if unique_cluster_ids:
-            c_pipe = r.pipeline()
+            c_pipe = r.pipeline(transaction=False)
             c_list = list(unique_cluster_ids)
             for cid in c_list:
-                c_pipe.json().get(f"{col}:cluster:{algo}:{cid}:meta", "$")
+                c_pipe.get(f"{col}:cluster:{algo}:{cid}:meta")
             c_results = c_pipe.execute()
             for cid, res in zip(c_list, c_results):
-                cm = (res[0] if isinstance(res, list) and res else res) or {}
+                cm = (
+                    json.loads(res)
+                    if res and not isinstance(res, dict)
+                    else (res or {})
+                )
                 if isinstance(cm, str):
                     cm = json.loads(cm)
                 # Apply cohesion threshold server-side
@@ -505,7 +587,9 @@ def search_functions():
 
             # File tags enrichment
             md5 = meta.get("file_md5")
-            file_meta = file_meta_map.get(md5, {})
+            file_meta = file_meta_map.get(f"{doc_id.split(':')[0]}:{md5}", {})
+            if pool_id:
+                enrich_pool_data(file_meta, pool_id)
             meta["file_tags"] = file_meta.get("tags", [])
             meta["file_user_tags"] = file_meta.get("user_tags", [])
 
@@ -521,6 +605,9 @@ def search_functions():
 
             normalize_tags(meta)
             normalize_tags(meta, tag_fields=["file_tags", "file_user_tags"])
+
+            if pool_id:
+                enrich_pool_data(meta, pool_id)
 
             # Enforce Unix timestamps
             for field in ["entry_date", "file_date"]:

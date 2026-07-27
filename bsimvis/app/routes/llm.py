@@ -121,10 +121,10 @@ def summarize_file():
     r = get_redis()
 
     # Fetch file meta
-    raw = r.json().get(f"{collection}:file:{md5}:meta", "$")
+    raw = r.get(f"{collection}:file:{md5}:meta")
     if not raw:
         return {"error": "File not found"}, 404
-    file_meta = raw[0] if isinstance(raw, list) else raw
+    file_meta = json.loads(raw) if not isinstance(raw, dict) else raw
     if isinstance(file_meta, str):
         file_meta = json.loads(file_meta)
 
@@ -139,12 +139,12 @@ def summarize_file():
     clusters = []
 
     if cluster_ids:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for cid in cluster_ids:
-            pipe.json().get(f"{collection}:bin_cluster:{algo}:{cid}:meta", "$")
+            pipe.get(f"{collection}:bin_cluster:{algo}:{cid}:meta")
         results = pipe.execute()
         for cid, res in zip(cluster_ids, results):
-            cm = (res[0] if isinstance(res, list) and res else res) or {}
+            cm = json.loads(res) if res and not isinstance(res, dict) else (res or {})
             if isinstance(cm, str):
                 cm = json.loads(cm)
             if (cm.get("cohesion_score") or 0) >= min_cohesion:

@@ -13,6 +13,8 @@ To change which fields are indexed and at which levels, edit index_config.py.
 import json
 import datetime
 
+from bsimvis.app.services.redis_client import get_redis
+
 
 def normalize_tags(data, tag_fields=None):
     """
@@ -30,6 +32,102 @@ def normalize_tags(data, tag_fields=None):
             data[field] = []
         elif not isinstance(val, list):
             data[field] = []
+
+    return data
+
+
+def get_pool_id(collection):
+    """Consistent helper to extract pool ID from collection/pool names."""
+    if not collection:
+        return None
+    if collection.startswith("global:pool:"):
+        rest = collection[len("global:pool:") :]
+        return rest.split(":")[0]
+    if collection.startswith("pool:"):
+        rest = collection[len("pool:") :]
+        return rest.split(":")[0]
+    return None
+
+
+def resolve_origin_collection(collection, entity_id=None, r=None):
+    """
+    Maps a pool namespace back to the origin collection that owns the entity.
+
+    Tags and notes live on the origin collection, never on the pool, so every
+    write path must resolve `global:pool:{id}` down to a real collection name.
+    Prefers the pool's declared member collections over parsing the entity id.
+    """
+    if not collection:
+        return collection
+    if ":col:" in collection:
+        return collection.split(":col:")[-1]
+
+    pool_id = get_pool_id(collection)
+    if not pool_id or not entity_id:
+        return collection
+
+    if ":col:" in entity_id:
+        return entity_id.split(":col:")[-1].split(":")[0]
+
+    # An entity id is "{collection}:{file|func|sim}:..." — match its leading
+    # segment against the collections this pool actually contains.
+    if r is None:
+        r = get_redis()
+    members = {
+        c.decode() if isinstance(c, bytes) else c
+        for c in r.smembers(f"global:pool:{pool_id}:collections_list")
+    }
+    for part in entity_id.split(":"):
+        if part in members:
+            return part
+
+    return collection
+
+
+def to_pool_indexed_id(indexed_id, lvl, pool_id):
+    """
+    Rewrites a collection-scoped doc id into its pool-scoped equivalent.
+
+    File and function docs are shared, so a pool index stores the same id the
+    collection does. Similarity docs are not: a pool builds its own sim docs
+    under `global:pool:{id}:sim:{a}::{b}`, keyed by full function ids, while a
+    collection stores `{coll}:sim:{algo}:{a}::{b}` with the collection prefix
+    stripped from both sides. Mirroring a collection sid into a pool index
+    without this rewrite indexes an id the pool has no document for.
+
+    Returns None when the id is not a sid this mapping applies to, so callers
+    skip it rather than index a bad key.
+    """
+    if lvl != "sim":
+        return indexed_id
+    parts = indexed_id.split(":")
+    if len(parts) < 4 or parts[1] != "sim":
+        return None
+    coll_name = parts[0]
+    rest = ":".join(parts[3:])
+    pivot = rest.find("::")
+    if pivot == -1:
+        return None
+    id1, id2 = rest[:pivot], rest[pivot + 2 :]
+    return f"global:pool:{pool_id}:sim:{coll_name}:func:{id1}::{coll_name}:func:{id2}"
+
+
+def enrich_pool_data(data, pool_id):
+    """
+    Ensures tag/note keys are present on a metadata dict (file, function, or
+    similarity) so callers can rely on them.
+    """
+    if not pool_id or not isinstance(data, dict):
+        return data
+
+    if "user_tags" not in data:
+        data["user_tags"] = []
+    if "notes" not in data:
+        data["notes"] = []
+    if "note_owners" not in data:
+        data["note_owners"] = []
+    if "note_count" not in data:
+        data["note_count"] = len(data["notes"])
 
     return data
 
@@ -88,12 +186,24 @@ FEATURE_NUM_FIELDS = get_native_fields("feature", is_num=True)
 # ---------------------------------------------------------------------------
 
 
-def _index_tag(pipe, coll, level, field, value, doc_id):
-    """Add doc_id to the tag set for field=value in a standardized registry/bucket structure."""
+def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
+    """Add doc_id to the tag set for field=value in a standardized registry/bucket structure.
+
+    seen: optional set to dedupe the registry sadd across many calls in one build
+    (the registry maps field->bucket and is identical for every doc sharing a value).
+    """
     if value is None:
         return
-    # Handle list values (e.g. tags)
-    values = value if isinstance(value, list) else [value]
+    # Handle list values (e.g. tags) and deduplicate them
+    if isinstance(value, list):
+        seen = set()
+        values = []
+        for v in value:
+            if v not in seen:
+                seen.add(v)
+                values.append(v)
+    else:
+        values = [value]
     for v in values:
         if v is None or v == "":
             continue
@@ -102,7 +212,11 @@ def _index_tag(pipe, coll, level, field, value, doc_id):
         pipe.sadd(bucket_key, doc_id)
         # Standardized Registry: {coll}:reg:{level}:{field} (points to many buckets)
         registry_key = f"{coll}:reg:{level}:{field}"
-        pipe.sadd(registry_key, bucket_key)
+        if seen is None:
+            pipe.sadd(registry_key, bucket_key)
+        elif (registry_key, bucket_key) not in seen:
+            pipe.sadd(registry_key, bucket_key)
+            seen.add((registry_key, bucket_key))
 
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
@@ -128,7 +242,15 @@ def _unindex_tag(pipe, coll, level, field, value, doc_id):
     """Remove doc_id from the tag set for field=value."""
     if value is None:
         return
-    values = value if isinstance(value, list) else [value]
+    if isinstance(value, list):
+        seen = set()
+        values = []
+        for v in value:
+            if v not in seen:
+                seen.add(v)
+                values.append(v)
+    else:
+        values = [value]
     for v in values:
         if v is None or v == "":
             continue
@@ -198,9 +320,12 @@ def save_similarity(
     func_meta2=None,
     file_meta1=None,
     file_meta2=None,
+    index_depth="full",
+    seen=None,
 ):
     """Write sim-level secondary indexes for all propagated fields.
     Pulls data from the sim doc itself, function meta, or file meta based on field source.
+    seen: optional set to dedupe registry writes across a build (see _index_tag).
     """
     propagated = get_propagated_fields("sim")
 
@@ -208,7 +333,16 @@ def save_similarity(
     for orig_field, target_field in propagated["sim"]:
         value = sim_doc.get(orig_field)
         if value is not None:
-            _index_tag(pipe, coll, "sim", target_field, value, sid)
+            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
+
+    if index_depth == "minimal":
+        # Only index file_md5 from file level
+        for orig_field, target_field in propagated["file"]:
+            if orig_field == "file_md5":
+                value = [v for v in [sim_doc.get("md5_1"), sim_doc.get("md5_2")] if v]
+                if value:
+                    _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
+        return
 
     # 2. Propagated Func Fields (source: func)
     for orig_field, target_field in propagated["func"]:
@@ -222,7 +356,7 @@ def save_similarity(
                     else:
                         value.append(v)
         if value:
-            _index_tag(pipe, coll, "sim", target_field, value, sid)
+            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
     # 3. Propagated File Fields (source: file)
     for orig_field, target_field in propagated["file"]:
@@ -240,7 +374,7 @@ def save_similarity(
                         else:
                             value.append(v)
         if value:
-            _index_tag(pipe, coll, "sim", target_field, value, sid)
+            _index_tag(pipe, coll, "sim", target_field, value, sid, seen=seen)
 
 
 def delete_similarity(
@@ -303,17 +437,23 @@ def delete_file(r, coll, file_md5):
     """Remove a file from all indexes."""
     base_id = f"{coll}:file:{file_md5}"
     doc_id = f"{base_id}:meta"
-    data = r.json().get(doc_id, "$")
-    if isinstance(data, list) and data:
-        data = data[0]
+    raw = r.get(doc_id)
+    data = {}
+    if raw:
+        val = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = json.loads(val)
+        except Exception:
+            pass
     if not data:
         return
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for f in FILE_TAG_FIELDS:
         _unindex_tag(pipe, coll, "file", f, data.get(f), base_id)
     for f in FILE_NUM_FIELDS:
         _unindex_num(pipe, coll, "file", f, base_id)
     pipe.srem(f"{coll}:all_files", base_id)
+    pipe.hincrby(f"global:collection:{coll}:meta", "total_files", -1)
     pipe.execute()
 
 
@@ -321,18 +461,24 @@ def delete_function(r, coll, md5, addr):
     """Remove a function from all indexes."""
     base_id = f"{coll}:func:{md5}:{addr}"
     doc_id = f"{base_id}:meta"
-    data = r.json().get(doc_id, "$")
-    if isinstance(data, list) and data:
-        data = data[0]
+    raw = r.get(doc_id)
+    data = {}
+    if raw:
+        val = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = json.loads(val)
+        except Exception:
+            pass
     if not data:
         return
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     for f in FUNC_TAG_FIELDS:
         _unindex_tag(pipe, coll, "func", f, data.get(f), base_id)
     for f in FUNC_NUM_FIELDS:
         _unindex_num(pipe, coll, "func", f, base_id)
     pipe.srem(f"{coll}:idx:file:functions:{md5}", base_id)
     pipe.srem(f"{coll}:all_functions", base_id)
+    pipe.hincrby(f"global:collection:{coll}:meta", "total_functions", -1)
     pipe.delete(f"{base_id}:callees")
     pipe.delete(f"{base_id}:callers")
     pipe.execute()
@@ -342,18 +488,23 @@ def delete_feature(r, coll, f_hash):
     """Remove a feature from all indexes."""
     base_id = f"{coll}:feature:{f_hash}"
     doc_id = f"{base_id}:global_meta"
-    data = r.json().get(doc_id, "$")
-    if isinstance(data, list) and data:
-        data = data[0]
+    raw = r.get(doc_id)
+    data = {}
+    if raw:
+        val = raw.decode() if isinstance(raw, bytes) else raw
+        try:
+            data = json.loads(val)
+        except Exception:
+            pass
 
-    pipe = r.pipeline()
+    pipe = r.pipeline(transaction=False)
     if data:
         for f in FEATURE_TAG_FIELDS:
             _unindex_tag(pipe, coll, "feature", f, data.get(f), base_id)
         for f in FEATURE_NUM_FIELDS:
             _unindex_num(pipe, coll, "feature", f, base_id)
     pipe.srem(f"{coll}:all_features", base_id)
-    pipe.json().delete(doc_id)
+    pipe.delete(doc_id)
     pipe.execute()
 
 
@@ -409,7 +560,7 @@ def query_ids(
             if not candidates:
                 break
             if not is_union:
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 for cid in candidates:
                     pipe.sismember(group_keys[0], cid)
                 results = pipe.execute()
@@ -430,7 +581,7 @@ def query_ids(
 
     # Standardized Numerical Filtering: idx:{col}:idx:{level}:{field}
     if num_filters and all_ids:
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         for field, (fmin, fmax) in num_filters.items():
             pipe.zrangebyscore(f"{coll}:idx:{lvl}:{field}", fmin, fmax)
         range_results = pipe.execute()
@@ -493,7 +644,10 @@ class IndexStatsService:
             if rtype == "hash":
                 return r.hlen(k) * 150  # Approx
             if "rejson" in rtype or "json" in rtype:
-                val = r.execute_command("JSON.GET", k)
+                try:
+                    val = r.execute_command("JSON.GET", k)
+                except Exception:
+                    val = r.get(k)
                 return len(str(val)) if val is not None else 0
         except Exception:
             pass

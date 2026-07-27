@@ -9,7 +9,10 @@ from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
     normalize_tags,
+    enrich_pool_data,
+    get_pool_id,
 )
+from bsimvis.app.services.config_service import config_service
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -21,10 +24,17 @@ MAX_CACHED_RESULTS = 10000
 def autocomplete():
     try:
         col = request.args.get("collection")
+        pool_id = request.args.get("pool")
         level = request.args.get("level", "func")
         field = request.args.get("field")
         query = request.args.get("q", "").lower().strip()
         limit = int(request.args.get("limit", 50))
+
+        if pool_id:
+            col = f"global:pool:{pool_id}"
+        elif col and (col.startswith("pool:") or col.startswith("global:pool:")):
+            pool_id = get_pool_id(col)
+            col = f"global:pool:{pool_id}"
 
         if not all([col, level, field]):
             return {"error": "Missing parameters"}, 400
@@ -59,7 +69,7 @@ def autocomplete():
             try:
                 # Parse key to get the suffix
                 count_found = 0
-                pipe = r.pipeline()
+                pipe = r.pipeline(transaction=False)
                 candidate_buckets = []
 
                 for bucket in r.sscan_iter(registry_key, match=match_pat, count=1000):
@@ -153,6 +163,7 @@ def similarity_search():
 
     try:
         t_req_all_start = time.perf_counter()
+        pool_id = request.args.get("pool")
         col = request.args.get("collection")
         algo = request.args.get("algo", "unweighted_cosine")
 
@@ -170,7 +181,11 @@ def similarity_search():
         intersection_configs = []
 
         try:
-            min_score = float(request.args.get("min_score", 0.95))
+            min_score = float(
+                request.args.get(
+                    "min_score", config_service.get("similarity.min_score", 0.9)
+                )
+            )
             max_score = float(request.args.get("max_score", 1.0))
             offset = int(request.args.get("offset", 0))
             limit = int(request.args.get("limit", DEFAULT_LIMIT))
@@ -241,25 +256,31 @@ def similarity_search():
         sort_by = request.args.get("sort_by", "score")
         sort_order = request.args.get("sort_order", "desc").lower()
 
-        if not col:
-            return {"error": "Missing collection"}, 400
+        if not col and not pool_id:
+            return {"error": "Missing collection or pool"}, 400
 
         r = get_redis()
 
-        # Algorithm Name Standardizer
-        # Map frontend 'milvus_sparse' to the ZSET name used in Redis
-        # Support legacy 'milvus_inverted' if it exists and milvus_sparse doesn't
-        if algo == "milvus_sparse":
-            if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(
-                f"{col}:sim:score:milvus_inverted"
-            ):
-                algo = "milvus_inverted"
-                logging.info(
-                    f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}"
-                )
+        is_pool = pool_id is not None
+        if is_pool:
+            col = f"global:pool:{pool_id}"
+            algo_zset = f"global:pool:{pool_id}:sim:score"
+            min_features_zset = f"global:pool:{pool_id}:sim:min_features"
+        else:
+            # Algorithm Name Standardizer
+            # Map frontend 'milvus_sparse' to the ZSET name used in Redis
+            # Support legacy 'milvus_inverted' if it exists and milvus_sparse doesn't
+            if algo == "milvus_sparse":
+                if not r.exists(f"{col}:sim:score:milvus_sparse") and r.exists(
+                    f"{col}:sim:score:milvus_inverted"
+                ):
+                    algo = "milvus_inverted"
+                    logging.info(
+                        f"[*] Mapping 'milvus_sparse' to legacy 'milvus_inverted' for collection {col}"
+                    )
 
-        algo_zset = f"{col}:sim:score:{algo}"
-        min_features_zset = f"{col}:sim:min_features"
+            algo_zset = f"{col}:sim:score:{algo}"
+            min_features_zset = f"{col}:sim:min_features"
         pool_truncated = False
         total = 0
 
@@ -417,31 +438,28 @@ def similarity_search():
                 val_lower = val.lower()
                 matches = []
 
-                for field in allowed_fields:
-                    # # 1. Try Exact Match (O(1))
-                    # exact_key = f"{col}:idx:{lvl}:{field}:{val_lower}"
-                    # if r.exists(exact_key):
-                    #     if lvl == "sim":
-                    #         matches.append((lvl, [exact_key.split(":")[-1]], field))
-                    #     else:
-                    #         targets = [t.decode() if isinstance(t, bytes) else str(t) for t in r.smembers(exact_key)]
-                    #         logging.info(f"SIM SEARCH | {session_id} | Resolved {len(targets)} exact {lvl}-level targets for '{field}:{val}'")
-                    #         matches.append((lvl, targets, field))
+                # Determine correct registry and index prefixes
+                if is_pool:
+                    reg_prefix = f"global:pool:{pool_id}:reg"
+                    idx_prefix = f"global:pool:{pool_id}:idx"
+                else:
+                    reg_prefix = f"{col}:reg"
+                    idx_prefix = f"{col}:idx"
 
-                    # 2. Try Registry-Based Match
-                    registry_key = f"{col}:reg:{lvl}:{field}"
+                for field in allowed_fields:
+                    registry_key = f"{reg_prefix}:{lvl}:{field}"
                     if r.exists(registry_key):
                         matching_buckets = []
 
                         # NEW: Perfect match fields
                         if field in EXACT_FIELDS:
-                            target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
+                            target_bucket = f"{idx_prefix}:{lvl}:{field}:{val_lower}"
                             if r.sismember(registry_key, target_bucket):
                                 matching_buckets = [target_bucket]
                         else:
                             try:
                                 for bucket in r.sscan_iter(
-                                    registry_key, match=f"*{val_lower}*"
+                                    registry_key, match=f"*{val_lower}*", count=1000
                                 ):
                                     bucket_str = (
                                         bucket.decode()
@@ -458,11 +476,11 @@ def similarity_search():
                             targets = []
                             if lvl == "sim":
                                 # Fix: Don't use split(":")[-1] as tags can contain colons
-                                prefix = f"{col}:idx:sim:{field}:"
+                                sim_idx_prefix = f"{idx_prefix}:sim:{field}:"
                                 targets = [
-                                    b[len(prefix) :]
+                                    b[len(sim_idx_prefix) :]
                                     for b in matching_buckets
-                                    if b.startswith(prefix)
+                                    if b.startswith(sim_idx_prefix)
                                 ]
                             else:
                                 if len(matching_buckets) == 1:
@@ -612,10 +630,12 @@ def similarity_search():
                     # We handle both the target name (e.g. func_tags) and common aliases
                     val = request.args.get(target_field)
 
+                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                        continue
+
                     # Alias handling
                     if not val:
                         aliases = {
-                            "file_md5": ["md5"],
                             "entrypoint_address": ["address"],
                             "function_name": ["name"],
                             "language_id": ["language"],
@@ -633,7 +653,19 @@ def similarity_search():
                             filter_configs.append((val, target_field, paths))
 
             # 2. Tag-specific logic (for unions)
-            tag_filter_configs = [
+            md5_val = request.args.get("md5") or request.args.get("file_md5")
+            md5_configs = []
+            if md5_val:
+                md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+                md5_configs = [([md5_val], "any_md5", md5_paths)]
+
+            file_name_val = request.args.get("file_name")
+            file_name_configs = []
+            if file_name_val:
+                file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+                file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+
+            tag_filter_configs = md5_configs + file_name_configs + [
                 (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
                 (static_tag_filters, "static_tag", _paths("tags")),
                 (user_tag_filters, "user_tag", _paths("user_tags")),
@@ -904,7 +936,7 @@ def similarity_search():
 
             # --- LUA CONFIG ---
             lua_config = {
-                "collection": col,
+                "collection": f"global:pool:{pool_id}" if is_pool else col,
                 "algo": algo,
                 "pool_limit": pool_limit,
                 "groups": groups,  # Use the sorted groups
@@ -971,9 +1003,9 @@ def similarity_search():
         cluster_meta_map = {}
         if page_results:
             # Phase 1: Fetch Similarity Metrics & Identity
-            pipe = r.pipeline()
+            pipe = r.pipeline(transaction=False)
             for sid, sort_sc in page_results:
-                pipe.json().get(sid, "$")
+                pipe.get(sid)
                 if sort_by == "score":
                     pipe.zscore(min_features_zset, sid)
                 else:
@@ -986,19 +1018,31 @@ def similarity_search():
             sim_data_map = {}  # sid -> {id1, id2, sim_doc, other_metric, sort_sc}
 
             def extract_from_sid(sid):
-                sim_prefix = f"{col}:sim:{algo}:"
-                if not sid.startswith(sim_prefix):
-                    return None, None
-                parts = sid[len(sim_prefix) :].split("::")
-                if len(parts) != 2:
-                    return None, None
-                return f"{col}:func:{parts[0]}", f"{col}:func:{parts[1]}"
+                if is_pool:
+                    # global:pool:{pool_id}:sim:{fid1}::{fid2}
+                    sim_prefix = f"global:pool:{pool_id}:sim:"
+                    if not sid.startswith(sim_prefix):
+                        return None, None
+                    parts = sid[len(sim_prefix) :].split("::")
+                    if len(parts) != 2:
+                        return None, None
+                    return parts[0], parts[1]
+                else:
+                    sim_prefix = f"{col}:sim:{algo}:"
+                    if not sid.startswith(sim_prefix):
+                        return None, None
+                    parts = sid[len(sim_prefix) :].split("::")
+                    if len(parts) != 2:
+                        return None, None
+                    return f"{col}:func:{parts[0]}", f"{col}:func:{parts[1]}"
 
             for i, (sid, sort_sc) in enumerate(page_results):
                 raw_json = sim_raw[i * 2]
                 if not raw_json:
                     continue
-                data = raw_json[0] if isinstance(raw_json, list) else raw_json
+                data = (
+                    json.loads(raw_json) if not isinstance(raw_json, dict) else raw_json
+                )
                 if isinstance(data, str):
                     data = json.loads(data)
 
@@ -1021,10 +1065,13 @@ def similarity_search():
             # Phase 2: Fetch Function Metadata & Cluster Scores (DEDUPLICATED)
             f_meta_map = {}  # fid -> {meta, scores}
             unique_fids_list = list(unique_fids)
-            f_pipe = r.pipeline()
+            f_pipe = r.pipeline(transaction=False)
             for fid in unique_fids_list:
-                f_pipe.json().get(f"{fid}:meta", "$")
-                f_pipe.hgetall(f"{fid}:cluster_scores")
+                f_pipe.get(f"{fid}:meta")
+                if is_pool:
+                    f_pipe.hgetall(f"global:pool:{pool_id}:{fid}:cluster_scores")
+                else:
+                    f_pipe.hgetall(f"{fid}:cluster_scores")
 
             f_results = f_pipe.execute()
 
@@ -1035,38 +1082,50 @@ def similarity_search():
                 m_json = f_results[i * 2]
                 scores_raw = f_results[i * 2 + 1] or {}
 
-                meta = (m_json[0] if isinstance(m_json, list) else m_json) or {}
+                meta = (
+                    json.loads(m_json)
+                    if m_json and not isinstance(m_json, dict)
+                    else (m_json or {})
+                )
                 if isinstance(meta, str):
                     meta = json.loads(meta)
+
+                meta["collection"] = fid.split(":")[0]
 
                 scores = {}
                 for k, v in scores_raw.items():
                     k_str = k.decode() if isinstance(k, bytes) else k
                     scores[k_str] = float(v)
-                    unique_cluster_ids.add(k_str)
+                    c_coll = f"global:pool:{pool_id}" if is_pool else meta["collection"]
+                    unique_cluster_ids.add((c_coll, k_str))
 
                 f_meta_map[fid] = {"meta": meta, "scores": scores}
                 if meta.get("file_md5"):
-                    unique_md5s.add(meta["file_md5"])
+                    coll = fid.split(":")[0]
+                    unique_md5s.add((coll, meta["file_md5"]))
 
             # Phase 3: Fetch File Metadata (DEDUPLICATED)
             file_meta_map = {}
             if unique_md5s:
-                file_pipe = r.pipeline()
+                file_pipe = r.pipeline(transaction=False)
                 md5_list = list(unique_md5s)
-                for md5 in md5_list:
-                    file_pipe.json().get(f"{col}:file:{md5}:meta", "$")
+                for f_coll, md5 in md5_list:
+                    file_pipe.get(f"{f_coll}:file:{md5}:meta")
                 file_results = file_pipe.execute()
-                for md5, res in zip(md5_list, file_results):
-                    fm = (res[0] if isinstance(res, list) else res) or {}
+                for (f_coll, md5), res in zip(md5_list, file_results):
+                    fm = (
+                        json.loads(res)
+                        if res and not isinstance(res, dict)
+                        else (res or {})
+                    )
                     if isinstance(fm, str):
                         fm = json.loads(fm)
-                    file_meta_map[md5] = fm
+                    file_meta_map[f"{f_coll}:{md5}"] = fm
 
             # Phase 4: Fetch Cluster Metadata (DEDUPLICATED & ALGO-AWARE)
             cluster_meta_map = {}
             if unique_cluster_ids:
-                c_pipe = r.pipeline()
+                c_pipe = r.pipeline(transaction=False)
                 c_list = list(unique_cluster_ids)
                 # Use the requested algo for clusters if it matches a known clustering algo
                 c_algo = (
@@ -1074,16 +1133,38 @@ def similarity_search():
                     if algo in ["unweighted_cosine", "weighted_cosine"]
                     else "unweighted_cosine"
                 )
-                for cid in c_list:
-                    c_pipe.json().get(f"{col}:cluster:{c_algo}:{cid}:meta", "$")
+                for c_coll, cid in c_list:
+                    c_pipe.get(f"{c_coll}:cluster:{c_algo}:{cid}:meta")
                 c_results = c_pipe.execute()
-                for cid, res in zip(c_list, c_results):
-                    cm = (res[0] if isinstance(res, list) else res) or {}
+                for (c_coll, cid), res in zip(c_list, c_results):
+                    cm = (
+                        json.loads(res)
+                        if res and not isinstance(res, dict)
+                        else (res or {})
+                    )
                     if isinstance(cm, str):
                         cm = json.loads(cm)
                     # Apply cohesion threshold server-side
                     if (cm.get("cohesion_score") or 0) >= min_cohesion:
                         cluster_meta_map[cid] = cm
+
+            # Phase 4b: best-shared cluster per pair, read from the prebuilt index
+            # ({col}:sim:best_cluster:{algo}, written during cluster propagation). No
+            # runtime per-function resolution — one best-matched cluster per edge.
+            best_cluster_by_sid = {}
+            bc_algo = (
+                algo
+                if algo in ["unweighted_cosine", "weighted_cosine"]
+                else "unweighted_cosine"
+            )
+            page_sids = list(sim_data_map.keys())
+            if page_sids:
+                raw = r.hmget(f"{col}:sim:best_cluster:{bc_algo}", page_sids)
+                for sid, cid in zip(page_sids, raw):
+                    if cid is not None:
+                        best_cluster_by_sid[sid] = (
+                            cid.decode() if isinstance(cid, bytes) else str(cid)
+                        )
 
             # Phase 5: Reconstruct Enriched Pairs
             for sid, sort_sc in page_results:
@@ -1098,8 +1179,25 @@ def similarity_search():
                 m1, s1 = f1_data["meta"], f1_data["scores"]
                 m2, s2 = f2_data["meta"], f2_data["scores"]
 
-                f1 = file_meta_map.get(m1.get("file_md5"), {})
-                f2 = file_meta_map.get(m2.get("file_md5"), {})
+                f1 = file_meta_map.get(
+                    f"{m1.get('collection')}:{m1.get('file_md5')}", {}
+                )
+                f2 = file_meta_map.get(
+                    f"{m2.get('collection')}:{m2.get('file_md5')}", {}
+                )
+
+                if is_pool:
+                    enrich_pool_data(f1, pool_id)
+                    enrich_pool_data(f2, pool_id)
+                    enrich_pool_data(m1, pool_id)
+                    enrich_pool_data(m2, pool_id)
+                    if s_data.get("sim_doc"):
+                        enrich_pool_data(s_data["sim_doc"], pool_id)
+
+                m1["file_tags"] = f1.get("tags", [])
+                m1["file_user_tags"] = f1.get("user_tags", [])
+                m2["file_tags"] = f2.get("tags", [])
+                m2["file_user_tags"] = f2.get("user_tags", [])
 
                 sim_score = (
                     float(s_data["sort_sc"])
@@ -1112,9 +1210,12 @@ def similarity_search():
                     else float(s_data["other_metric"] or 0)
                 )
 
-                # Cluster references — plain list of UUIDs (metadata is in top-level map)
-                clusters1 = [cid for cid in s1 if cid in cluster_meta_map]
-                clusters2 = [cid for cid in s2 if cid in cluster_meta_map]
+                # Single best-shared cluster for the pair (metadata in top-level map).
+                # None when the two functions share no cluster passing min_cohesion.
+                shared_cid = best_cluster_by_sid.get(sid)
+                if shared_cid is not None and shared_cid not in cluster_meta_map:
+                    shared_cid = None  # dropped by min_cohesion filter
+                shared_clusters = [shared_cid] if shared_cid else []
 
                 # Cleanup function meta before embedding
                 for field in [
@@ -1146,7 +1247,11 @@ def similarity_search():
                     "entry_date": parse_timestamp(s_data["sim_doc"].get("entry_date")),
                     "meta1": {
                         "file_md5": m1.get("file_md5"),
+                        "parent_md5": m1.get("parent_md5"),
+                        "related_md5": m1.get("related_md5"),
                         "file_name": m1.get("file_name"),
+                        "parent_file_name": m1.get("parent_file_name"),
+                        "related_file_name": m1.get("related_file_name"),
                         "entrypoint_address": m1.get("entrypoint_address"),
                         "tags": m1.get("tags"),
                         "user_tags": m1.get("user_tags"),
@@ -1156,7 +1261,7 @@ def similarity_search():
                         "namespace": m1.get("namespace", ""),
                         "parameters": m1.get("parameters", []),
                         "bsim_features_count": m1.get("bsim_features_count"),
-                        "clusters": clusters1,
+                        "clusters": [],
                         "file_tags": m1.get("file_tags"),
                         "file_user_tags": m1.get("file_user_tags"),
                         "entry_date": parse_timestamp(
@@ -1165,7 +1270,11 @@ def similarity_search():
                     },
                     "meta2": {
                         "file_md5": m2.get("file_md5"),
+                        "parent_md5": m2.get("parent_md5"),
+                        "related_md5": m2.get("related_md5"),
                         "file_name": m2.get("file_name"),
+                        "parent_file_name": m2.get("parent_file_name"),
+                        "related_file_name": m2.get("related_file_name"),
                         "entrypoint_address": m2.get("entrypoint_address"),
                         "tags": m2.get("tags"),
                         "user_tags": m2.get("user_tags"),
@@ -1175,13 +1284,14 @@ def similarity_search():
                         "namespace": m2.get("namespace", ""),
                         "parameters": m2.get("parameters", []),
                         "bsim_features_count": m2.get("bsim_features_count"),
-                        "clusters": clusters2,
+                        "clusters": [],
                         "file_tags": m2.get("file_tags"),
                         "file_user_tags": m2.get("file_user_tags"),
                         "entry_date": parse_timestamp(
                             m2.get("entry_date") or m2.get("file_date")
                         ),
                     },
+                    "shared_clusters": shared_clusters,
                     "tags": s_data["sim_doc"].get("tags", []),
                     "user_tags": s_data["sim_doc"].get("user_tags", []),
                     "algo": algo,

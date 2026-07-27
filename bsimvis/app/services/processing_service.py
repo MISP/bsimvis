@@ -1,4 +1,5 @@
 import logging
+import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
 
@@ -7,38 +8,61 @@ class ProcessingService:
     def __init__(self, r=None):
         self.r = r or get_redis()
 
-    def index_metadata(self, collection, file_id, job_service=None, job_id=None):
+    def index_metadata(
+        self,
+        collection,
+        file_id,
+        job_service=None,
+        job_id=None,
+        file_meta=None,
+        num_functions=None,
+        total_features=None,
+    ):
         """Indexes file, batch, and collection metadata globals and explodes file-level meta."""
-        logging.info(f"[*] Indexing metadata for {file_id} in {collection}...")
-
-        # Since we use SET instead of JSON.SET for the monolith, we load the whole string.
-        raw_data = self.r.get(file_id)
-        if not raw_data:
-            logging.error(f"Data not found for {file_id}")
-            return False
-
-        import json
-
-        data = json.loads(raw_data)
-
-        if not data:
-            logging.error(f"Data not found for {file_id}")
-            return False
-
-        file_meta = data.get("file_metadata", {})
-        file_md5 = file_meta.get("file_md5") or data.get("file_md5") or "unknown_md5"
-        batch_uuid = (
-            file_meta.get("batch_uuid")
-            or data.get("batch_uuid")
-            or "unknown_batch_uuid"
+        logging.info(
+            f"[*] Indexing metadata for {file_id or (file_meta and file_meta.get('file_md5'))} in {collection}..."
         )
-        batch_name = (
-            file_meta.get("batch_name")
-            or data.get("batch_name")
-            or "unknown_batch_name"
-        )
-        num_functions = len(data.get("functions", []))
-        timestamp = file_meta.get("entry_date") or data.get("entry_date") or 0
+
+        if file_meta is not None:
+            file_md5 = file_meta.get("file_md5") or "unknown_md5"
+            batch_uuid = file_meta.get("batch_uuid") or "unknown_batch_uuid"
+            batch_name = file_meta.get("batch_name") or "unknown_batch_name"
+            num_functions = num_functions or 0
+            total_features = total_features or 0
+            timestamp = file_meta.get("entry_date") or 0
+        else:
+            # Since we use SET instead of JSON.SET for the monolith, we load the whole string.
+            raw_data = self.r.get(file_id)
+            if not raw_data:
+                logging.error(f"Data not found for {file_id}")
+                return False
+
+            data = json.loads(raw_data)
+            if not data:
+                logging.error(f"Data not found for {file_id}")
+                return False
+
+            file_meta = data.get("file_metadata", {})
+            file_md5 = (
+                file_meta.get("file_md5") or data.get("file_md5") or "unknown_md5"
+            )
+            batch_uuid = (
+                file_meta.get("batch_uuid")
+                or data.get("batch_uuid")
+                or "unknown_batch_uuid"
+            )
+            batch_name = (
+                file_meta.get("batch_name")
+                or data.get("batch_name")
+                or "unknown_batch_name"
+            )
+            num_functions = len(data.get("functions", []))
+            timestamp = file_meta.get("entry_date") or data.get("entry_date") or 0
+            total_features = 0
+            for f in data.get("functions", []):
+                total_features += f.get("function_metadata", {}).get(
+                    "bsim_features_count", 0
+                )
 
         # Create the standalone file metadata key (exploded from the main blob)
         file_base_id = f"{collection}:file:{file_md5}"
@@ -49,18 +73,12 @@ class ProcessingService:
         coll_file_meta["file_id"] = file_base_id
         coll_file_meta["function_count"] = num_functions
 
-        # Calculate total bsim features
-        total_features = 0
-        for f in data.get("functions", []):
-            total_features += f.get("function_metadata", {}).get(
-                "bsim_features_count", 0
-            )
         coll_file_meta["bsim_features_count"] = total_features
 
-        pipe = self.r.pipeline()
+        pipe = self.r.pipeline(transaction=False)
 
         # 0. Store exploded file meta
-        pipe.json().set(file_meta_key, "$", coll_file_meta)
+        pipe.set(file_meta_key, json.dumps(coll_file_meta))
 
         # 1. Standard file-level indexing (secondary search)
         save_file(pipe, collection, file_md5, coll_file_meta)
@@ -81,10 +99,16 @@ class ProcessingService:
                 "last_updated": timestamp,
                 "collections": {collection: True},
             }
-            self.r.json().set(global_batch_key, "$", initial_global_batch)
+            self.r.set(global_batch_key, json.dumps(initial_global_batch))
         else:
-            pipe.json().set(global_batch_key, f'$["collections"]["{collection}"]', True)
-            pipe.json().set(global_batch_key, '$["last_updated"]', timestamp)
+            val = self.r.get(global_batch_key)
+            if val:
+                global_batch = json.loads(val)
+                if "collections" not in global_batch:
+                    global_batch["collections"] = {}
+                global_batch["collections"][collection] = True
+                global_batch["last_updated"] = timestamp
+                pipe.set(global_batch_key, json.dumps(global_batch))
 
         # 4. Collection Stats
         coll_meta_key = f"global:collection:{collection}:meta"
@@ -107,11 +131,18 @@ class ProcessingService:
                 "total_functions": 0,
                 "collection": collection,
             }
-            self.r.json().set(batch_key, "$", initial_batch_data)
+            self.r.set(batch_key, json.dumps(initial_batch_data))
+            batch_data = initial_batch_data
+        else:
+            val = self.r.get(batch_key)
+            batch_data = json.loads(val) if val else {}
 
-        pipe.json().numincrby(batch_key, '$["total_files"]', 1)
-        pipe.json().numincrby(batch_key, '$["total_functions"]', num_functions)
-        pipe.json().set(batch_key, '$["last_updated"]', timestamp)
+        batch_data["total_files"] = batch_data.get("total_files", 0) + 1
+        batch_data["total_functions"] = (
+            batch_data.get("total_functions", 0) + num_functions
+        )
+        batch_data["last_updated"] = timestamp
+        pipe.set(batch_key, json.dumps(batch_data))
 
         pipe.execute()
 
@@ -122,30 +153,48 @@ class ProcessingService:
 
         return True
 
-    def index_functions(self, collection, file_id, job_service=None, job_id=None):
+    def index_functions(
+        self,
+        collection,
+        file_id,
+        job_service=None,
+        job_id=None,
+        functions_list=None,
+        file_meta=None,
+        file_md5=None,
+        batch_uuid=None,
+    ):
         """Explodes and indexes all functions in a file."""
-        logging.info(f"[*] Exploding and indexing functions for {file_id}...")
+        logging.info(
+            f"[*] Exploding and indexing functions for {file_id or file_md5}..."
+        )
 
-        # Load monolith from SET
-        raw_data = self.r.get(file_id)
-        if not raw_data:
-            return False
+        if functions_list is not None:
+            functions = functions_list
+            file_meta = file_meta or {}
+            file_md5 = file_md5 or file_meta.get("file_md5")
+            batch_uuid = batch_uuid or file_meta.get("batch_uuid")
+        else:
+            # Load monolith from SET
+            raw_data = self.r.get(file_id)
+            if not raw_data:
+                return False
 
-        import json
+            data = json.loads(raw_data)
+            if not data:
+                return False
 
-        data = json.loads(raw_data)
+            functions = data.get("functions", [])
+            file_meta = data.get("file_metadata", {})
+            file_md5 = file_meta.get("file_md5") or data.get("file_md5")
+            batch_uuid = file_meta.get("batch_uuid") or data.get("batch_uuid")
 
-        if not data:
-            return False
-
-        functions = data.get("functions", [])
         total = len(functions)
-        file_meta = data.get("file_metadata", {})
-        file_md5 = file_meta.get("file_md5") or data.get("file_md5")
-        batch_uuid = file_meta.get("batch_uuid") or data.get("batch_uuid")
-
         if total == 0:
             return True
+
+        # Use a single pipeline for indexing functions
+        pipe = self.r.pipeline(transaction=False)
 
         for i, func_data in enumerate(functions):
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
@@ -182,15 +231,22 @@ class ProcessingService:
             func_meta["function_id"] = base_func_key
 
             # --- Store exploded data ---
-            pipe = self.r.pipeline()
-            pipe.json().set(f"{base_func_key}:meta", "$", func_meta)
-            pipe.json().set(f"{base_func_key}:source", "$", func_source)
+            pipe.set(f"{base_func_key}:meta", json.dumps(func_meta))
+            pipe.set(f"{base_func_key}:source", json.dumps(func_source))
+
+            # ponytail: exact-match bucket for small functions (below min_features
+            # BSim gives false positives, so we match them by FunctionID hash instead).
+            # {fid}:funcid pointer lets the sim builder read a func's hash without parsing meta.
+            fid_hash = func_meta.get("function_id_hash")
+            if fid_hash:
+                pipe.sadd(f"{collection}:funcid:{fid_hash}", base_func_key)
+                pipe.set(f"{base_func_key}:funcid", fid_hash)
 
             vec_meta = func_features.get("bsim_features_meta", [])
-            pipe.json().set(f"{base_func_key}:vec:meta", "$", vec_meta)
+            pipe.set(f"{base_func_key}:vec:meta", json.dumps(vec_meta))
 
             vec_raw = func_features.get("bsim_features_raw", [])
-            pipe.json().set(f"{base_func_key}:vec:raw", "$", vec_raw)
+            pipe.set(f"{base_func_key}:vec:raw", json.dumps(vec_raw))
 
             # --- Store Call Graph Sets ---
             callees_key = f"{base_func_key}:callees"
@@ -232,8 +288,12 @@ class ProcessingService:
             # --- Secondary Indexing ---
             save_function(pipe, collection, file_md5, addr, func_meta)
 
-            pipe.execute()
+            # Periodically execute the pipeline to reduce batch overhead / roundtrips
+            if (i + 1) % 100 == 0:
+                pipe.execute()
+                pipe = self.r.pipeline(transaction=False)
 
+        pipe.execute()
         return True
 
     def delete_collection(self, collection, job_service=None, job_id=None):
@@ -271,17 +331,15 @@ class ProcessingService:
             )
 
         # 2. Update global batch metadata
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         batches_removed = []
         for idx, batch_uuid in enumerate(batch_uuids):
             global_batch_key = f"global:batch:{batch_uuid}"
             # Fetch global batch metadata
-            raw_meta = r.json().get(global_batch_key, "$")
+            raw_meta = r.get(global_batch_key)
             if raw_meta:
-                meta = raw_meta[0] if isinstance(raw_meta, list) else raw_meta
+                meta = json.loads(raw_meta)
                 if isinstance(meta, str):
-                    import json
-
                     meta = json.loads(meta)
 
                 # Remove collection from collections dict
@@ -296,7 +354,7 @@ class ProcessingService:
                 else:
                     # Save updated collections dict
                     meta["collections"] = collections
-                    pipe.json().set(global_batch_key, "$", meta)
+                    pipe.set(global_batch_key, json.dumps(meta))
 
             if len(pipe) > 1000:
                 pipe.execute()
@@ -339,7 +397,7 @@ class ProcessingService:
 
         cursor = 0
         deleted_count = 0
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         while True:
             cursor, keys = r.scan(cursor=cursor, match=f"{collection}:*", count=1000)
             if keys:
@@ -390,7 +448,7 @@ class ProcessingService:
 
         patterns = [f"{collection}:file:*:data", f"{collection}:file:*:raw"]
 
-        pipe = r.pipeline()
+        pipe = r.pipeline(transaction=False)
         total_deleted = 0
 
         for pattern in patterns:

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_restx import Api, Resource, fields, Namespace
 import json
+from redis.exceptions import BusyLoadingError
 
 # Create a blueprint for the Swagger UI and API
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -12,6 +13,13 @@ api = Api(
     doc="/",  # Swagger UI at /api/
     mask_swagger=False,
 )
+
+
+@api.errorhandler(BusyLoadingError)
+def handle_busy_loading_error(error):
+    return {
+        "detail": "Redis database is loading the dataset in memory. Please retry in a few seconds."
+    }, 503
 
 
 # Namespaces (matching the first part of the path after /api)
@@ -36,6 +44,7 @@ ns_bin_sim = Namespace(
 )
 ns_notes = Namespace("notes", description="Function notes management")
 ns_llm = Namespace("llm", description="Large Language Model integration (Ollama)")
+ns_pool = Namespace("pool", description="Cross-collection pool management")
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -54,6 +63,7 @@ api.add_namespace(ns_diff)
 api.add_namespace(ns_bin_sim)
 api.add_namespace(ns_notes)
 api.add_namespace(ns_llm)
+api.add_namespace(ns_pool)
 
 # --- Models & Examples ---
 
@@ -331,6 +341,15 @@ class IndexStatus(Resource):
         return get_index_status()
 
 
+@ns_index.route("/config")
+class IndexConfig(Resource):
+    def get(self):
+        """Returns default configurations from bsimvis_config.toml."""
+        from bsimvis.app.routes.index import get_config
+
+        return get_config()
+
+
 # --- Jobs Namespace ---
 @ns_jobs.route("")
 class JobList(Resource):
@@ -342,6 +361,13 @@ class JobList(Resource):
                 "example": 20,
             },
             "offset": {"description": "Pagination offset", "default": 0, "example": 0},
+            "collection": {
+                "description": "Filter by collection name",
+                "required": False,
+            },
+            "pool": {"description": "Filter by pool UUID", "required": False},
+            "status": {"description": "Filter by job status", "required": False},
+            "type": {"description": "Filter by job type", "required": False},
         }
     )
     def get(self):
@@ -437,6 +463,20 @@ class CollectionSearch(Resource):
                 "description": "Keyword search across collection names",
                 "example": "main",
             },
+            "name": {"description": "Substring filter on collection name"},
+            "sort_by": {
+                "description": "name | total_files | total_functions | total_batches | last_updated",
+                "example": "last_updated",
+            },
+            "sort_order": {"description": "asc | desc", "example": "desc"},
+            "min_files": {"description": "Min file count"},
+            "max_files": {"description": "Max file count"},
+            "min_functions": {"description": "Min function count"},
+            "max_functions": {"description": "Max function count"},
+            "min_batches": {"description": "Min batch count"},
+            "max_batches": {"description": "Max batch count"},
+            "min_last_updated": {"description": "Min last-updated (Unix ms)"},
+            "max_last_updated": {"description": "Max last-updated (Unix ms)"},
             "format": {"description": "Export format: csv or json", "example": "json"},
         }
     )
@@ -518,8 +558,11 @@ class FileSearch(Resource):
         params={
             "collection": {
                 "description": "Collection name",
-                "required": True,
                 "example": "main",
+            },
+            "pool": {
+                "description": "Pool ID (targets a cross-collection pool)",
+                "example": "test_pool",
             },
             "q": {
                 "description": "Global keyword search (name, md5, language, batch)",
@@ -667,6 +710,15 @@ class FileUpload(Resource):
         return upload_file_data()
 
 
+@ns_file.route("/upload_chunk")
+class FileUploadChunk(Resource):
+    def post(self):
+        """Uploads a chunk of function analysis data (avoiding memory bloat)."""
+        from bsimvis.app.routes.file import upload_chunk
+
+        return upload_chunk()
+
+
 @ns_file.route("/upload")
 class RawFileUpload(Resource):
     @ns_file.doc(
@@ -751,8 +803,11 @@ class FunctionSearch(Resource):
         params={
             "collection": {
                 "description": "Collection name",
-                "required": True,
                 "example": "main",
+            },
+            "pool": {
+                "description": "Pool ID (targets a cross-collection pool)",
+                "example": "test_pool",
             },
             "q": {
                 "description": "Global keyword search across all indexed fields",
@@ -855,9 +910,19 @@ class FunctionCode(Resource):
 
 @ns_function.route("/diff")
 class FunctionDiff(Resource):
-    @ns_function.doc(params={"id1": "First function ID", "id2": "Second function ID"})
+    @ns_function.doc(
+        params={
+            "collection_a": "Collection name for side A (default: main)",
+            "collection_b": "Collection name for side B (defaults to collection_a)",
+            "md5_a": "First binary MD5 hash",
+            "md5_b": "Second binary MD5 hash",
+            "addr_a": "Function address on side A (omit for file-level bin_sim diff)",
+            "addr_b": "Function address on side B (omit for file-level bin_sim diff)",
+            "pool": "Pool ID for cross-collection pool-based lookups",
+        }
+    )
     def get(self):
-        """Returns side-by-side aligned diff of two functions."""
+        """Unified diff endpoint. Without addr_a/addr_b returns file bin_sim doc. With addr_a/addr_b returns side-by-side aligned function code diff."""
         from bsimvis.app.routes.function_diff import diff_api
 
         return diff_api()
@@ -921,6 +986,7 @@ class SearchAutocomplete(Resource):
     @ns_search.doc(
         params={
             "collection": "Collection name",
+            "pool": "Pool ID (optional, targets a cross-collection pool)",
             "level": "Index level (func, file, sim)",
             "field": "Field to search (e.g., function_name)",
             "q": "Search query prefix",
@@ -980,8 +1046,11 @@ class SimilaritySearch(Resource):
         params={
             "collection": {
                 "description": "Collection name",
-                "required": True,
                 "example": "main",
+            },
+            "pool": {
+                "description": "Pool ID (targets a cross-collection pool)",
+                "example": "test_pool",
             },
             "algo": {
                 "description": "Similarity algorithm",
@@ -1782,9 +1851,19 @@ class FeaturesClear(Resource):
 # --- Diff Namespace ---
 @ns_diff.route("")
 class DiffView(Resource):
-    @ns_diff.doc(params={"id1": "First function ID", "id2": "Second function ID"})
+    @ns_diff.doc(
+        params={
+            "collection_a": "Collection name for side A (default: main)",
+            "collection_b": "Collection name for side B (defaults to collection_a)",
+            "md5_a": "First binary MD5 hash",
+            "md5_b": "Second binary MD5 hash",
+            "addr_a": "Function address on side A (omit for file-level bin_sim diff)",
+            "addr_b": "Function address on side B (omit for file-level bin_sim diff)",
+            "pool": "Pool ID for cross-collection pool-based lookups",
+        }
+    )
     def get(self):
-        """Returns side-by-side aligned diff of two functions."""
+        """Unified diff endpoint. Without addr_a/addr_b returns file bin_sim doc. With addr_a/addr_b returns side-by-side aligned function code diff."""
         from bsimvis.app.routes.function_diff import diff_api
 
         return diff_api()
@@ -1825,17 +1904,21 @@ class BinSimClear(Resource):
 class BinSimDiff(Resource):
     @ns_bin_sim.doc(
         params={
-            "collection": "Collection name (default: main)",
-            "algo": "Algorithm (default: unweighted_cosine)",
+            "collection_a": "Collection name for side A (default: main)",
+            "collection_b": "Collection name for side B (defaults to collection_a)",
             "md5_a": "First binary MD5",
             "md5_b": "Second binary MD5",
+            "addr_a": "Function address on side A (omit for file-level bin_sim diff)",
+            "addr_b": "Function address on side B (omit for file-level bin_sim diff)",
+            "algo": "Algorithm (default: unweighted_cosine)",
+            "pool": "Pool ID for cross-collection pool-based lookups",
         }
     )
     def get(self):
-        """Returns binary similarity diff doc for a pair of binaries."""
-        from bsimvis.app.routes.bin_sim import get_bin_sim
+        """Unified diff endpoint. Without addr_a/addr_b returns file bin_sim doc. With addr_a/addr_b returns side-by-side aligned function code diff."""
+        from bsimvis.app.routes.function_diff import diff_api
 
-        return get_bin_sim()
+        return diff_api()
 
 
 @ns_bin_sim.route("/list")
@@ -1862,8 +1945,11 @@ class BinSimSearch(Resource):
         params={
             "collection": {
                 "description": "Collection name",
-                "required": True,
                 "example": "main",
+            },
+            "pool": {
+                "description": "Pool ID (targets a cross-collection pool)",
+                "example": "test_pool",
             },
             "algo": {
                 "description": "Algorithm (default: unweighted_cosine)",
@@ -1918,11 +2004,15 @@ class BinSimReindex(Resource):
             {
                 "collection": fields.String(default="main"),
                 "algo": fields.String(default="unweighted_cosine"),
+                "pool_id": fields.String(
+                    required=False, description="Reindex a pool instead of a collection"
+                ),
             },
         )
     )
     def post(self):
-        """Rebuilds secondary indexes for all existing binary similarity pairs (backfill)."""
+        """Rebuilds secondary indexes for all existing binary similarity pairs (backfill).
+        Pass pool_id to index a pool (enables fast pool search)."""
         from bsimvis.app.routes.bin_sim import reindex_bin_sim
 
         return reindex_bin_sim()
@@ -2063,3 +2153,169 @@ class LLMSummarizeFile(Resource):
         from bsimvis.app.routes.llm import summarize_file
 
         return summarize_file()
+
+
+# --- Pool Namespace ---
+
+pool_func_sim_params_model = api.model(
+    "PoolFuncSimParams",
+    {
+        "algo": fields.String(default="unweighted_cosine"),
+        "top_k": fields.Integer(default=1000),
+        "min_score": fields.Float(default=0.3),
+        "min_features": fields.Integer(default=0),
+    },
+)
+
+
+pool_func_cluster_params_model = api.model(
+    "PoolFuncClusterParams",
+    {
+        "cluster_algo": fields.String(default="hdbscan"),
+        "min_cluster_size": fields.Integer(default=2),
+        "min_samples": fields.Integer(default=1),
+        "epsilon": fields.Float(default=0.1),
+        "selection_method": fields.String(default="eom"),
+    },
+)
+
+pool_file_sim_params_model = api.model(
+    "PoolFileSimParams",
+    {
+        "enabled": fields.Boolean(default=True),
+        "min_cohesion": fields.Float(default=0.5),
+    },
+)
+
+pool_file_cluster_params_model = api.model(
+    "PoolFileClusterParams",
+    {
+        "min_cluster_size": fields.Integer(default=2),
+        "min_samples": fields.Integer(default=1),
+        "epsilon": fields.Float(default=0.1),
+        "selection_method": fields.String(default="eom"),
+    },
+)
+
+pool_config_model = api.model(
+    "PoolConfig",
+    {
+        "only_cross_collection": fields.Boolean(default=False),
+        "func_sim_params": fields.Nested(pool_func_sim_params_model),
+        "func_cluster_params": fields.Nested(pool_func_cluster_params_model),
+        "file_sim_params": fields.Nested(pool_file_sim_params_model),
+        "file_cluster_params": fields.Nested(pool_file_cluster_params_model),
+    },
+)
+
+pool_create_model = api.model(
+    "PoolCreate",
+    {
+        "pool_id": fields.String(required=False, example="my_pool"),
+        "name": fields.String(required=True, example="My Cross-Collection Pool"),
+        "collections": fields.List(
+            fields.String, required=True, example=["main", "bench"]
+        ),
+        "config": fields.Nested(pool_config_model),
+    },
+)
+
+
+@ns_pool.route("")
+class PoolList(Resource):
+    @ns_pool.doc(
+        params={
+            "collection": "Filter pools by collection membership",
+            "q": {
+                "description": "Keyword search across pool name / id / member collections / sync status",
+                "example": "mirai",
+            },
+            "name": {"description": "Substring filter on pool name"},
+            "sync_status": {"description": "Exact sync status: current | outdated | created"},
+            "sort_by": {
+                "description": "name | id | created_at | last_built_at | sync_status | count fields",
+                "example": "created_at",
+            },
+            "sort_order": {"description": "asc | desc", "example": "desc"},
+            "offset": {"description": "Pagination offset", "default": 0},
+            "limit": {"description": "Max results", "default": 100},
+            "refresh_sync": {
+                "description": "Recompute live sync status per pool (slower). 1 to enable.",
+            },
+            "min_created_at": {"description": "Min created-at (Unix ms)"},
+            "max_created_at": {"description": "Max created-at (Unix ms)"},
+            "min_last_built_at": {"description": "Min last-built (Unix ms)"},
+            "max_last_built_at": {"description": "Max last-built (Unix ms)"},
+        }
+    )
+    def get(self):
+        """Lists and searches defined pools with keyword filtering and sorting."""
+        from bsimvis.app.routes.pools import list_pools
+
+        return list_pools()
+
+    @ns_pool.expect(pool_create_model)
+    def post(self):
+        """Creates a new pool definition."""
+        from bsimvis.app.routes.pools import create_pool
+
+        return create_pool()
+
+
+@ns_pool.route("/<string:pool_id>")
+class PoolDetail(Resource):
+    @ns_pool.doc(params={"pool_id": "Pool ID"})
+    def get(self, pool_id):
+        """Returns details for a specific pool."""
+        from bsimvis.app.routes.pools import get_pool
+
+        return get_pool(pool_id)
+
+    def delete(self, pool_id):
+        """Deletes a pool and all its data."""
+        from bsimvis.app.routes.pools import delete_pool
+
+        return delete_pool(pool_id)
+
+    @ns_pool.expect(api.model("PoolUpdate", {"name": fields.String(required=True, example="New Name")}))
+    def put(self, pool_id):
+        """Updates the pool's name."""
+        from bsimvis.app.routes.pools import edit_pool
+
+        return edit_pool(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/build")
+class PoolBuild(Resource):
+    def post(self, pool_id):
+        """Enqueues a job to build/rebuild similarities for a pool."""
+        from bsimvis.app.routes.pools import build_pool
+
+        return build_pool(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/cluster")
+class PoolCluster(Resource):
+    def post(self, pool_id):
+        """Enqueues a job to run clustering for a pool."""
+        from bsimvis.app.routes.pools import cluster_pool
+
+        return cluster_pool(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/sync_check")
+class PoolSyncCheck(Resource):
+    def get(self, pool_id):
+        """Checks if the pool is outdated compared to source collections."""
+        from bsimvis.app.routes.pools import sync_check
+
+        return sync_check(pool_id)
+
+
+@ns_pool.route("/<string:pool_id>/rebuild")
+class PoolRebuild(Resource):
+    def post(self, pool_id):
+        """Wipes all pool data and enqueues jobs to rebuild similarities and clusters."""
+        from bsimvis.app.routes.pools import rebuild_pool
+
+        return rebuild_pool(pool_id)

@@ -4,6 +4,8 @@ trash/
 archive/
 pyrightconfig.json
 .aiexclude
+.opencode/
+.hermes/
 
 __pycache__
 
@@ -24,3 +26,6 @@ volumes/
 scratch_build/
 bin/
 bsimvis_config.toml
+# Claude Code worktrees: nested git repos, never part of this tree.
+# Three were committed as gitlinks with no .gitmodules — broken on clone.
+.claude/worktrees/

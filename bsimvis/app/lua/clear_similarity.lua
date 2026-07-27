@@ -18,7 +18,7 @@ local function rem_item(k, m)
     if t == 'set' then redis.call('SREM', k, m) end
 end
 local function cleanup_key(sm_key)
-    local doc_raw = redis.call('JSON.GET', sm_key)
+    local doc_raw = redis.call('GET', sm_key)
     if not doc_raw then return end
     local doc = cjson.decode(doc_raw)
     

@@ -661,12 +661,29 @@ class JobService:
         processing_ids = self.r.lrange("jobs:processing", 0, -1)
         pending_count = self.r.llen("jobs:pending") + self.r.llen("jobs:pending:high")
 
+        # ponytail: the UI polls this every 3s; fetch each job hash once, pipelined.
+        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
+            "jobs:pending:high", 0, 100
+        )
+        wanted_ids = list(dict.fromkeys(list(processing_ids) + list(pending_ids)))
+        pipe = self.r.pipeline(transaction=False)
+        for jid in wanted_ids:
+            pipe.hgetall(f"job:{jid}")
+        job_hashes = {}
+        for jid, job in zip(wanted_ids, pipe.execute()):
+            job_hashes[jid] = {
+                (k.decode() if isinstance(k, bytes) else k): (
+                    v.decode() if isinstance(v, bytes) else v
+                )
+                for k, v in (job or {}).items()
+            }
+
         total_speed = 0.0
         active_jobs_count = 0
         remaining_items = 0
 
         for jid in processing_ids:
-            job = self.r.hgetall(f"job:{jid}")
+            job = job_hashes.get(jid)
             if not job:
                 continue
 
@@ -696,26 +713,12 @@ class JobService:
 
         # Collect active collections
         active_collections = set()
-        # Check processing jobs
-        all_processing_ids = self.r.lrange("jobs:processing", 0, -1)
-        # Also check pending jobs (last 100 for efficiency)
-        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
-            "jobs:pending:high", 0, 100
-        )
 
         active_jobs = []
-        for jid in set(all_processing_ids + pending_ids):
-            job = self.r.hgetall(f"job:{jid}")
+        for jid in wanted_ids:
+            job = job_hashes.get(jid)
             if not job:
                 continue
-
-            # Decode key-value pairs of job if they are bytes
-            job_decoded = {}
-            for k, v in job.items():
-                k_str = k.decode() if isinstance(k, bytes) else k
-                v_str = v.decode() if isinstance(v, bytes) else v
-                job_decoded[k_str] = v_str
-            job = job_decoded
 
             status = job.get("status")
             if status in [

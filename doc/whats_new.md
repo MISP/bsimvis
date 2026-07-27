@@ -32,8 +32,6 @@ clusters stay attached to the right level.
 * Index jobs run as continuations so batches interleave rather than blocking
   each other.
 
-See `data/bench_results/BUILD_SIM_perf_report.md` for the full breakdown.
-
 ## Stability
 
 * Similarity scores are stable for a given set of parameters and no longer

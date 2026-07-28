@@ -1,9 +1,11 @@
-# API review — addendum from the Kaiten timeline follow-up
+# API review — addendum from the timeline follow-ups
 
-Second pass over the BSimVis API, driven by
-[`mirai7_kaiten_timeline.md`](mirai7_kaiten_timeline.md). Extends
+Findings from two further passes over the BSimVis API:
+[`mirai7_kaiten_timeline.md`](mirai7_kaiten_timeline.md) (§1–3, ~30 read calls,
+symbol-set method) and [`mirai7_mirai_timeline.md`](mirai7_mirai_timeline.md)
+(§4, ~380 read calls, cluster method). Extends
 [`api_pivoting_review.md`](api_pivoting_review.md); only **new** findings are
-here. Server `http://localhost:5001/api`, collection `mirai7`. ~30 read calls.
+here. Server `http://localhost:5001/api`, collection `mirai7`.
 
 ---
 
@@ -215,3 +217,96 @@ A `function/search?collection=&function_name_in=a,b,c` (or repeated
 `function_name=`) returning file → matched-name counts would give both answers
 in one call, and is the natural companion to the facet/`distinct` request in
 §4.11 of the original review.
+
+---
+
+## 4. Second pass — the Mirai capability timeline
+
+Findings from [`mirai7_mirai_timeline.md`](mirai7_mirai_timeline.md), which ran
+the same exercise over the 164 non-Kaiten files. That side of the corpus is
+almost entirely stripped, so the analysis ran on **clusters** rather than symbol
+names — a much better exercise for the API, and it surfaced different gaps.
+
+### 4.1 The `clusters` map is keyed by `cluster_id`, but you need `cluster_uuid`
+
+```jsonc
+// function/search?function_name=table_init
+"clusters": { "31836": { "cluster_id": 31836, "cluster_uuid": "8ec63aa85bd9", … } }
+```
+
+The key is the int id; the drill-down endpoint
+(`function/search?cluster_uuid=`) wants the uuid from the value. Passing the key
+returns `{"functions": [], "total": 0}` — an empty success, the same silent dead
+end already noted for `cluster/functions` in §4.3 of the original review. Key the
+map by uuid, or accept either.
+
+### 4.2 `function_name` is a substring match, and the `clusters` map is a flat union
+
+`function_name=attack_tcp_syn` also returns `attack_tcp_synr` and
+`attack_tcp_syn_aisuru`. That is defensible on its own — but the `clusters` map
+is a single union over **all** returned functions, with nothing tying a cluster
+to the function it came from. Resolving one symbol to its cluster reliably
+therefore takes: one name query, then one membership query per candidate cluster,
+then an intersection against the exact-name function ids.
+
+Two fixes, either is enough:
+
+* an `exact=true` flag on `function_name` (also solves §4.8 of the original
+  review, where substring matching on `file_name` produced a nonsense diff);
+* `cluster_uuid` as a field on each **function row**, which is the natural place
+  for it and removes the map lookup entirely.
+
+For 100 symbols this was 201 calls instead of 100.
+
+### 4.3 There is still no way to ask "which files kept their symbols"
+
+§4.11 of the original review asked for this. The Mirai pass shows the cost
+concretely: finding the 4 symbolised files out of 164 took **164
+`function/search?file_md5=` calls and ~6 MB** of responses, to compute one ratio
+per file (share of names not matching `FUN_*`).
+
+Those 4 files are the anchors for the entire analysis — every capability in the
+timeline is reached from them. So the *first* question in a stripped corpus is
+the one the API answers least efficiently. A `has_symbols=true` filter, or a
+`named_function_count` field on `file/search`, turns this step into one call.
+
+### 4.4 Clusters know their members, but not when those members appeared
+
+Building a timeline means joining, client-side, three things the server already
+has: cluster → member functions → member files → `first_seen`. A `first_seen` /
+`last_seen` pair on cluster responses (`cluster/list`, and the `clusters` map on
+`function/search`) would make "when did this code first appear in the corpus"
+a sort instead of a join. Same for `member_file_count`, which today means
+fetching up to 500 member rows to count distinct md5s.
+
+### 4.5 `cluster_name` cannot be used as a grouping key
+
+Already flagged as "a hint, not a label" in §4.21 of the original review. The
+Mirai pass shows the failure mode: the config-table routine's clusters are named
+`FUN_0040becc` in one case and `xor_init` in another — the same code, two labels,
+neither being the canonical `table_init`. Grouping by `cluster_name` silently
+splits a capability in two. Grouping by the cluster's **dominant symbol name**
+(computed client-side from the members) works; that computation belongs on the
+server.
+
+### 4.6 What the API got right here
+
+Worth stating, because this pass leant on it heavily:
+
+* **`function/search?cluster_uuid=` is the workhorse.** Full metadata per member —
+  file name, md5, architecture, feature count — so a cluster resolves to "which
+  samples carry this code" in one call. Everything in the Mirai timeline rests on
+  it.
+* **Clusters genuinely cross the naming conventions.** `xor_init` and
+  `table_init` land in one cluster; `attack_tcp_syn` and `attack_tcp_syn_aisuru`
+  land in one cluster. Symbol-set methods cannot see either, and the tool gets
+  this right with no tuning.
+* **Clusters are also honest about limits.** `mipsel`'s `flood_*` routines
+  cluster only with themselves, correctly reporting a rewritten attack layer
+  rather than forcing a match to `attack_*`.
+
+One caveat for any automated view built on this: **clusters resolve modules, not
+individual attack methods.** A single cluster holds `attack_tcp_syn`,
+`attack_tcp_ack`, `attack_gre_ip`, `attack_tcp_null` and six more — they share a
+packet loop. Counting capabilities from clusters undercounts, and a view that
+reports "22 attack capabilities" should say it is counting clusters.

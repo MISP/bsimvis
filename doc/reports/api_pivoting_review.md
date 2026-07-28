@@ -158,6 +158,38 @@ Genuinely useful: run on the stripped x86-64 `FUN_00407780` it described Mirai's
 cluster match. It also surfaced the `37.48.254.120` loader — which I verified in
 the raw decompiled strings before putting it in the report.
 
+### Step 8 — two-file version diff
+
+Driven for [`mirai7_diff_7b70_vs_botnet.md`](mirai7_diff_7b70_vs_botnet.md).
+Three table calls give the whole picture; `limit=0` returns every row:
+
+```bash
+for t in matched unique_to_a unique_to_b; do
+  curl -s ".../api/diff?collection=mirai7&md5_a=7b70aceca81d038bcf859ea5a28f9fd9\
+&md5_b=5d2c1d7436d3a989a6c3c580fb547525&table=$t&limit=0&sort_col=avg_features&sort_dir=desc"
+done
+# 96 matched / 117 unique_to_a / 532 unique_to_b
+```
+
+Each page carries `functions_metadata` keyed by function id, which is where the
+**names** come from — the rows themselves have no name field. Note the row shape
+differs per table: matched rows carry `func_a` + `func_b`, unique rows carry a
+single `func_id`.
+
+When both binaries retain symbols, the diff tables are not actually the fastest
+route. Two listings and a set difference answered "what changed" better:
+
+```bash
+curl -s ".../api/function/search?collection=mirai7&file_md5=<A>&limit=1000"   # names + feature counts
+curl -s ".../api/function/search?collection=mirai7&file_md5=<B>&limit=1000"
+# set-difference the malware-named symbols -> A-only = empty, B adds 19 -> B is a later build
+```
+
+…then `function/code` on the command dispatcher of each side and a regex for
+string literals, which yields the C2 command vocabulary — the sharpest version
+fingerprint available.
+
+
 ---
 
 ## 3. How good is the API for pivoting?
@@ -172,6 +204,7 @@ the raw decompiled strings before putting it in the report.
 | Cluster → member drill-down | Awkward. Two endpoints (`cluster/members`, `cluster/functions`) both underperform `function/search?cluster_uuid=`. |
 | Name → cluster → stripped twins | Excellent, and the highest-value path. Undocumented. |
 | Cluster → code | Excellent, but the ID format has to be reconstructed by hand (§4.4). |
+| Two-file version diff | Good raw material (`diff?table=…&limit=0` + `functions_metadata`), but it never flags that a "unique" function on both sides is the same function — see §4.18. When both binaries keep symbols, a symbol-set diff beats it. |
 | Cross-architecture reasoning | Works at function level (8 ISAs in one cluster), fails at binary level (MIPS BE↔LE only). Nothing in the docs sets that expectation. |
 | Annotation write-back | Excellent. `tags/bulk_add` eats `function_id` lists from search verbatim; cluster-wide labelling is one call. |
 | LLM assistance | Useful for stripped code, but see §4.10 (config points at an uninstalled model, response is plain text, no `model` override). |
@@ -490,7 +523,48 @@ side it applies to. For its obvious use — dropping degenerate binaries — `mi
 is what an analyst expects; as implemented, stub-vs-stub pairs disappear but
 stub-vs-real pairs remain.
 
-### 4.18 Smaller items
+### 4.18 The diff tables cannot tell you a function is *the same function*
+
+The single most useful fact in the version diff had to be reconstructed
+client-side: **86 function names appeared in `unique_to_a` *and* `unique_to_b`**
+— same name, same role, no match recorded (cross-ISA, MIPS:LE vs SuperH4). Of
+those, 24 had feature counts within 10 % of each other, i.e. provably the same
+source function that the engine simply could not match.
+
+Nothing in the response hints at this. `unique_to_a` and `unique_to_b` are
+presented as disjoint sets of "new" and "removed" code, and read naively they
+say 117 functions were deleted and 532 added — when in reality ~86 of those are
+the same functions on both sides. A `name_collision: true` flag on unique rows
+whose name occurs in the opposite table, or a `probable_pair` hint keyed on
+name + feature count, would cost one pass over the two lists and would prevent
+the wrong conclusion outright.
+
+### 4.19 Diff scores are not comparable across architectures or libc builds
+
+The pair above reports **0.107**. Two effects produce that number, neither of
+which is about the malware:
+
+* the samples are MIPS:LE and SuperH4, which alone blocks the 24 identical
+  functions above from matching;
+* B statically links ~390 more library functions than A (628 vs 213 total,
+  while malware-authored code is 47 vs 28), so the library mass dominates the
+  denominator — the §4.12 problem, in its sharpest form.
+
+A name-level Jaccard over malware symbols gives 0.60 with a strict subset
+relation, which is the honest description. Nothing in the API surfaces that, and
+nothing warns that a cross-ISA score is not on the same scale as a same-ISA one.
+At minimum the diff response should carry the architecture pair and the
+matched-libc share so a consumer can tell "unrelated" from "unmatchable".
+
+### 4.20 No set operations between two files
+
+Comparing two binaries by symbol name — the workflow that actually worked —
+requires pulling both full function listings (`function/search?file_md5=&limit=1000`)
+and diffing locally. There is no "functions in A not in B" endpoint, and no way
+to ask for names only, so both calls return full documents for every function.
+Fine at 213/628 functions; wasteful at corpus scale.
+
+### 4.21 Smaller items
 
 * `index/status` returns `num_sim_meta: 500000` — a suspiciously round number
   (cap? truncation?). Undocumented either way.

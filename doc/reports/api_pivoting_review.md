@@ -174,7 +174,7 @@ the raw decompiled strings before putting it in the report.
 | Cluster → code | Excellent, but the ID format has to be reconstructed by hand (§4.4). |
 | Cross-architecture reasoning | Works at function level (8 ISAs in one cluster), fails at binary level (MIPS BE↔LE only). Nothing in the docs sets that expectation. |
 | Annotation write-back | Excellent. `tags/bulk_add` eats `function_id` lists from search verbatim; cluster-wide labelling is one call. |
-| LLM assistance | Useful for stripped code, but see §4.11 (config points at an uninstalled model, response is plain text, no `model` override). |
+| LLM assistance | Useful for stripped code, but see §4.10 (config points at an uninstalled model, response is plain text, no `model` override). |
 | String / IOC search | **Missing.** No endpoint searches decompiled text or embedded strings; IOC extraction is a client-side loop over `function/code`. |
 
 Round-trip cost: the analysis was ~30 read calls plus ~20 annotation writes. No pagination pain, no
@@ -247,7 +247,15 @@ top-level keys. Observed, and inconsistent:
 | `function/search` | `functions` (+ undocumented `clusters` map, `pool_truncated`) |
 | `cluster/list`, `bin_cluster/list`, `bin_sim/search` | `results` |
 | `cluster/functions` | `functions` |
+| `bin_cluster/members` | `results` — and each item is only `{id, meta}` with `meta` empty; the md5 must be parsed out of `id` |
+| `bin_cluster/files` | `files` — full metadata, unlike `bin_cluster/members` |
 | `collection/search` | `collections` |
+
+Note the `members` / `files` split: `bin_cluster/members` gives you the complete
+membership but no metadata, `bin_cluster/files` gives metadata but is described
+as a "sample". Enumerating every cluster's full membership *with* metadata means
+calling `members` and joining against `file/search` locally — which is what
+Appendix A of the family report required.
 
 The `clusters` map on `function/search` is the key to the whole
 name→cluster→twins workflow and it isn't mentioned at all.
@@ -285,7 +293,7 @@ of how the scores are built and every analyst will hit it. One paragraph in
 `doc/similarity_filtering.md` would prevent wrong conclusions ("these samples are
 unrelated" when they share 34-file function clusters).
 
-### 4.11 LLM endpoints: undocumented failure mode and response type
+### 4.10 LLM endpoints: undocumented failure mode and response type
 
 * `bsimvis_config.toml` shipped pointing at `qwen3.6:35b`, which was not present
   in the local Ollama (`qwen3.5:4b`, `qwen3.5:9b`, `qwen3.6:latest` were). The
@@ -301,7 +309,75 @@ unrelated" when they share 34-file function clusters).
   ~2 minutes on a 9B local model. Worth a note that these calls are slow enough
   to need a long client timeout.
 
-### 4.12 No string / IOC search
+### 4.11 No "what names exist here?" endpoint — and it cost me a family
+
+The single worst analytical error in the companion report came from a missing
+capability. I pivoted by *guessing* symbol names
+(`function_name=attack_parse`, `table_init`, …) because there is no endpoint
+that answers **"list the distinct function names in this collection"**. That
+biased everything toward what I already expected to find, and I missed nine
+samples belonging to a different family (Kaiten/STD) whose attack API is named
+`SendOVH_STORM`, `SendDOMINATE`, `sendTLS`, … — visible immediately in any
+name listing.
+
+The workaround is brutal and only works because the collection is small:
+
+```bash
+curl -s "localhost:5001/api/function/search?collection=mirai7&limit=40000&sort_by=bsim_features_count&sort_order=desc" -o allfuncs.json
+# 34503 function documents, then filter non-FUN_ names client-side -> 5375
+```
+
+Pulling the entire function index to find out which names exist is not a
+workflow. What is missing:
+
+* a `distinct=function_name` / facet mode on `function/search` (same for
+  `language_id`, `avtype`, `yara`, `filetype` — every consumer counts these
+  client-side today);
+* a `has_symbols=true` filter, or at minimum `exclude_name_prefix=FUN_`, so an
+  analyst can ask "show me the symbolised functions" — the highest-value
+  starting point in a corpus of stripped binaries;
+* a "named functions per file" summary, which would have shown that nine
+  samples share 366 symbol names not present anywhere else.
+
+**Recommended default workflow, and it should be in the docs:** in a corpus of
+stripped binaries, start by enumerating the symbols that *are* present, then
+cluster from them. Do not start from a list of names you expect.
+
+### 4.12 The similarity score is dominated by statically-linked libc
+
+Covered in depth in §8 of the family report; the API-facing summary:
+
+* 82–99 % of functions in these samples are uClibc/pthreads/RPC. The top 24
+  clusters by member count are all libc.
+* Consequently `bin_sim/search` scores measure toolchain, not malware: two
+  samples from *different families* score 0.55 with 420 shared clusters, none
+  of which is malware code.
+* The API has every primitive to fix this — tags are searchable, and
+  `bin_sim/search` already supports `exclude_tag` / `exclude_file_tag`. What is
+  missing is (a) a way to bulk-identify library clusters and (b) a documented
+  "library-excluded" scoring path. A `min_features` parameter on
+  `bin_sim/build`/`search` that ignores small and library-like clusters when
+  computing the score would change the ranking from "useless by default" to
+  "useful by default".
+* Until then the docs should state plainly: **read the matched cluster names
+  (`/api/diff?table=matched`) before believing a similarity score**, and filter
+  clusters with `min_features` ≥ 50.
+
+### 4.13 Clustering silently drops files, and nothing reports it
+
+29 of 174 files (17 %) are in no cluster at all — HDBSCAN sheds them as noise.
+The docs mention this in one clause (*"Cluster membership excludes points shed
+as noise"*), but there is **no endpoint that lists the shed files**. You only
+find them by enumerating every cluster's membership and subtracting from
+`file/search`. Among the 29: `mipsel`, the only sample in the collection with
+exploit-based propagation, and `fucknet`/`cracknet`, which share 366 symbol
+names with eight clustered siblings.
+
+An analyst triaging by cluster membership would miss all three. A
+`clustered=false` filter on `file/search`, or a `noise_count` field on
+`cluster/list`, would cost nothing and prevent a real analytical failure.
+
+### 4.14 No string / IOC search
 
 The highest-value IOC in this collection (the loader `37.48.254.120`, embedded
 in five exploit scanner functions) is only reachable by fetching
@@ -310,7 +386,7 @@ indexes BSim features, not literals. A documented "search decompiled text /
 string literals" filter on `function/search` would remove a whole class of
 client-side loops.
 
-### 4.13 Smaller items
+### 4.15 Smaller items
 
 * `index/status` returns `num_sim_meta: 500000` — a suspiciously round number
   (cap? truncation?). Undocumented either way.

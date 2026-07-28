@@ -400,6 +400,27 @@ whose names belong to the malware source itself vs. everything else):
 | `cock` (Kaiten) | 591 | 48 | 8 % | 21 % |
 | `mipsel` (Mirai + exploit scanners) | 818 | 12 | 1 % | 4 % |
 
+> **How these numbers were derived — and their limits.** Purely by *name*, not
+> by clustering: all 34 503 function documents were pulled in one
+> `function/search?limit=40000` call, and each `function_name` was matched
+> against a regex allowlist of the two malware vocabularies (`attack_*`,
+> `table_*`, `scanner*`, `killer*`, `util_*`, … and `Send*`, `getRandomIP`,
+> `makeIPPacket`, `sockprintf`, `processCmd`, …). Everything else was counted as
+> library. Three consequences: (a) it is measured only on the four **symbolised**
+> samples, so the 82–99 % is extrapolated, not measured on the stripped majority;
+> (b) it is an allowlist, so any malware function outside those prefixes counts
+> as library — the malware share is a **lower bound**, and `mipsel`'s 1 %/4 % is
+> certainly understated because its scanner names only partly match; (c) the
+> supporting claims below (top-24 clusters, the 420 shared `cock`/`iran.mips`
+> clusters) are read off `cluster_name`, which is itself majority-vote naming.
+>
+> The rigorous version — seed from symbolised libc functions, walk their
+> clusters, mark every stripped `FUN_*` sibling as library — is the `table_init`
+> Rosetta-stone method run in reverse and in bulk. It would measure the stripped
+> samples directly and produce exactly the reusable `lib:uclibc` tag set that
+> §8.3 asks for. It has not been done here. The direction of the finding is
+> solid; the precise percentages are a name-derived estimate on four samples.
+
 **82–99 % of the functions in every sample are uClibc**, pulled in by static
 linking: `__stdio_wcommit`, `_ppfs_setargs`, `_ppfs_parsespec`, `__stdio_rfill`,
 `malloc`/`__heap_free`, `memchr`/`memrchr`/`strchr`, `fseeko64`, `opendir`,

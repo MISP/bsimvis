@@ -180,10 +180,59 @@ architecture**. Cluster 208 mixes ARM variants of the same campaign, and named
 samples repeatedly cluster with hash-named unknowns — which is exactly how you
 attribute an unknown sample here.
 
+### 4.1 Leaves vs. parents — how these clusters were selected, and why leaves alone are the wrong cut
+
+I took **all 50 leaves**, mechanically. That was a shortcut rather than a
+judgement, and it is worth correcting, because the tree is **strictly binary** —
+every internal node merges exactly two children — so the leaf set is the
+*maximally split* view of the collection. Splitting a campaign into its
+build-variants is sometimes what you want; for "what is in this family" it is
+usually not.
+
+What the parents give back:
+
+| Node | n | Cohesion | What it is | Split by leaves into |
+|---|---|---|---|---|
+| **197** | 26 | **0.875** | the entire `boatnet` packed build set, all architectures, as one group | 208 (14), 209 (3), 206 (5), 207 (4) … |
+| **268** | 7 | **0.748** | the whole `iran` MIPS group — `iran.mips`, `iran.mipsel`, `upnnpd`, `40cfee29…`, `6ab3f168…`, `32817e09…`, `4854ea67…` | 274 (2), 275 (2), plus three files in *no* leaf |
+| **190** | 30 | 0.661 | `boatnet` packed set + the `pmips`/`pmpsl` variants | 197, 196 |
+| **250** | 5 | 0.527 | `nuclear.arm`/`arm5` with `unet` and two hash-named | 254, 255 |
+| **264** | 12 | 0.590 | `iran` group **+** `cock`/`net`/`nova.mipsel` | 268, 269 |
+
+Node 197 is the single most useful cluster in the collection and it is invisible
+in a leaf-only view: one node, cohesion 0.875, holding the complete
+cross-architecture `boatnet` campaign that the leaves scatter across four
+clusters.
+
+**Better selection: a cohesion cut.** Descend from the root and stop at the first
+node whose `cohesion_score` clears a threshold, instead of descending all the way:
+
+```python
+def cut(root, thr):
+    out, stack = [], [root]
+    while stack:
+        c = stack.pop()
+        if cl[c]['cohesion_score'] >= thr or not kids[c]: out.append(c)
+        else: stack += kids[c]
+    return out
+```
+
+At `thr = 0.7` this yields 46 clusters covering 148 files, with `boatnet` intact
+as node 197 and the `iran` group intact as node 268 — strictly more informative
+than the leaf set at the same cost.
+
+**But the threshold matters, and too low blurs families.** At `thr = 0.5` the cut
+returns node **264** (n=12, cohesion 0.59) — which merges the Mirai `iran` group
+with the Kaiten `cock`/`net` samples. That is the libc effect of §8 pulling two
+unrelated families together. At 0.7 they separate cleanly into 268 (Mirai) and
+269 (Kaiten). **Rule of thumb for this corpus: cut at ≥ 0.7, and inspect anything
+that merges samples with different symbol vocabularies.**
+
 **The full set of all 50 leaf clusters — including every 2- and 3-file cluster —
 is in [Appendix A](#appendix-a--every-binary-cluster-including-the-small-ones),
-and the 29 files HDBSCAN left unclustered are in
-[Appendix B](#appendix-b--the-29-files-in-no-cluster).** The small clusters carry
+and the 29 files that fall in no leaf are in
+[Appendix B](#appendix-b--the-29-files-in-no-leaf-only-2-are-in-no-cluster-at-all)
+— of which only **2** are genuinely unclustered.** The small clusters carry
 most of the attribution value: seven of them are the only link between a
 hash-named unknown and a named campaign.
 
@@ -848,17 +897,50 @@ not: clusters `ec3821a244d0` and `89f59cdca8ba` have members in **`mipsel`
 only**. Cluster 267's 0.515 cohesion is shared base-Mirai code, not the exploit
 scanners. The exploit capability is confined to a single sample in this corpus.
 
-## Appendix B — the 29 files in no cluster
+## Appendix B — the 29 files in no *leaf* (only 2 are in no cluster at all)
 
 > **Pivot** — set-subtract every cluster's membership from `file/search`, because
 > **no endpoint lists the files HDBSCAN shed as noise** (§4.13 of the API review).
 > Then `bin_sim/search?md5=<md5>&limit=1&sort_by=score` per orphan for its nearest
 > neighbour.
-> *Insight: 17 % of this corpus is unclustered, including its single most capable
-> sample. Triaging by cluster membership alone silently skips them.*
+> *Insight: do the subtraction against **all** nodes, not just leaves — see the
+> correction immediately below. Subtracting leaves only manufactures orphans that
+> are in fact well-placed inside a parent node.*
 
-HDBSCAN sheds these as noise. That is a statement about density, not about
-relevance, so each one is listed with its nearest binary-similarity neighbour:
+> ### Correction
+>
+> An earlier version of this appendix called these 29 files "unclustered". That
+> was an artefact of the leaf-only selection criticised in §4.1. Counting
+> membership across **every** node in the tree:
+>
+> * files in ≥ 1 leaf: **145**
+> * files in ≥ 1 non-root node: **172**
+> * files in *no* cluster but the root: **2** — `xnxnxnxnxnxnxnxnsh4xnxn` and
+>   `xnxnxnxnxnxnxnxnx86_64xnxn` (both packed stubs)
+>
+> So 27 of the 29 are members of an internal node; HDBSCAN shed them at a deeper
+> split, not from the clustering. Their deepest containing node is where their
+> real placement is:
+>
+> | File | Deepest node | n | Cohesion | Grouped with |
+> |---|---|---|---|---|
+> | `upnnpd`, `6ab3f168…`, `40cfee29…` | **268** | 7 | **0.75** | `iran.mips`, `iran.mipsel`, `32817e09…`, `4854ea67…` |
+> | `mipsel` | 264 | 12 | 0.59 | the `iran` group + `cock`/`net` |
+> | `boatnet.i686` | 188 | 7 | 0.48 | `boatnet.x86`, `px86*` |
+> | `arm6` | 256 | 6 | 0.34 | `DEMONS.arm6`, `dicknet`, `1108e443…` |
+> | `39c4e32f…` | 210 | 8 | 0.25 | the m68k set |
+> | `boatnet.mips`, `mpsl`, `tuxnokill.mpsl`, `20f37ddd…`, `927d2f4d…` | 242 | 30 | 0.31 | the large MIPS blob |
+> | `cracknet`, `ppc`, `766183f3…` | 226 | 67 | 0.11 | — too shallow to mean anything |
+> | `fucknet`, `ppc` | 211 | 73 | 0.10 | — idem |
+> | `mipsle`, `6e05a46a…`, `nuclear.spc`, `pkf4m2`, `44a94732…`, `676346035726…` | 176 | 116 | 0.05 | — idem |
+>
+> The three `iran`-adjacent files are the clearest case: I inferred their
+> grouping from nearest-neighbour scores below, and the tree had already placed
+> them correctly in node 268 at cohesion 0.75. The `fucknet`/`cracknet` entries,
+> by contrast, really are unplaced — their deepest node is a 67–73 file blob at
+> cohesion ~0.1, which is the libc floor and carries no information.
+
+Each file is listed below with its nearest binary-similarity neighbour:
 
 | File | Arch | Funcs | Nearest neighbour (bin_sim) | Score |
 |---|---|---|---|---|
@@ -895,9 +977,10 @@ relevance, so each one is listed with its nearest binary-similarity neighbour:
 Reading notes:
 
 * **`upnnpd` (0.76 to `iran.mips`), `6ab3f168…` (0.69 to `iran.mipsel`),
-  `40cfee29…` (0.67 to `upnnpd`)** are ordinary members of the `iran` MIPS
-  cluster that fell just below the density threshold. They should be treated as
-  part of that group.
+  `40cfee29…` (0.67 to `upnnpd`)** are ordinary members of the `iran` MIPS group
+  — and the tree says so directly: all three sit in node **268** (n=7, cohesion
+  0.748) with `iran.mips` and `iran.mipsel`. Reading the parent would have
+  answered this without the nearest-neighbour detour.
 * **`fucknet` and `cracknet`** are Kaiten samples (366 shared symbols with the
   other seven, §7) that HDBSCAN failed to cluster — their top binary neighbour
   is `unet` at 0.14/0.21. This is a **clustering false negative**: samples we
@@ -910,6 +993,7 @@ Reading notes:
   entirely. Worth a manual look; they are the genuinely unexplained samples in
   this collection.
 * **`mipsel`**, the most capable sample in the corpus (five exploit scanners),
-  is itself unclustered at file level. Anyone triaging by cluster membership
-  alone would have skipped it.
+  is in no leaf — but it is in node 264 (n=12, cohesion 0.59) and in node 267
+  (n=4, 0.51) with `manji.mpsl`. Anyone triaging by *leaf* membership would have
+  skipped it; a cohesion cut at 0.5–0.7 keeps it.
 * `847e331148…` (12 functions) and `676346035726…` (15) are stubs.

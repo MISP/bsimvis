@@ -386,6 +386,17 @@ An analyst triaging by cluster membership would miss all three. A
 `clustered=false` filter on `file/search`, or a `noise_count` field on
 `cluster/list`, would cost nothing and prevent a real analytical failure.
 
+**Related trap, and the one that actually bit me:** "unclustered" depends
+entirely on which level of the tree you subtract. Against the *leaves*, 29 files
+look orphaned; against *all* nodes, only 2 are. The other 27 sit in an internal
+node — e.g. `upnnpd` and two hash-named samples are in node 268 at cohesion
+0.748 with `iran.mips`/`iran.mipsel`, a perfectly good grouping. Since
+`bin_cluster/list` hands back a dendrogram with no indication of which level is
+meant to be consumed, the obvious "take the leaves" reading silently
+manufactures orphans. The API should either expose a `cut=<cohesion>` parameter
+that returns a flat, meaningful partition, or document the descend-until-cohesion
+recipe (see §4.1 of the family report).
+
 ### 4.14 No string / IOC search
 
 The highest-value IOC in this collection (the loader `37.48.254.120`, embedded

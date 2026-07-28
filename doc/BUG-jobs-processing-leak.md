@@ -3,7 +3,9 @@
 **Date:** 2026-07-28
 **Severity:** High — caused two host-level freezes requiring hard restart (2026-07-27, 2026-07-28)
 **Components:** `bsimvis/worker.py` (queue loop), Ghidra/JVM lifecycle in worker process
-**Status:** Diagnosed. Queue manually drained 2026-07-28 13:10 (see "Remediation applied"); no code fix yet.
+**Status:** Root causes A, B and D fixed (`410423b`, `672fe5d`). Queue manually drained
+2026-07-28 13:10. Still open: C (no orphan recovery after SIGKILL/reboot) and E (fleet
+sizing ignores milvus and ollama); no `earlyoom` installed.
 
 ---
 
@@ -257,11 +259,20 @@ Ordered by cost/benefit.
    `job:{id}` status is terminal or whose `started_at` exceeds a threshold. Fixes C, and
    would have auto-healed the 2026-07-06 orphans.
 
-4. **Add `project.close()` in a `finally` at all three `createProject` sites**
-   (`worker.py:448`, `ghidra_service.py:753`, `bsimvis_upload.py:411`), matching what the
-   `openProject` paths already do. Fixes D — the actual memory leak. The release must be
-   ordered `program.release(project)` then `project.close()`, and `close()` must happen
-   before the enclosing `TemporaryDirectory` tears the project directory down.
+4. ~~**Add `project.close()` at all three `createProject` sites.**~~ **Done** — see
+   commit `672fe5d`. Note the fix *replaces* the manual `program.release(project)`
+   rather than following it: `GhidraProject.close()` already iterates `openPrograms`,
+   ends their transactions and calls `p.release(this)`, and `importProgram` registers
+   programs there. Releasing first makes `close()` throw
+   `IllegalArgumentException: Attempted to release domain object with unknown consumer`.
+
+   Verified by `test_ghidra_project_leak.py`, counting `File System Lis` threads over
+   three consecutive analyses:
+
+   | | round 1 | round 2 | round 3 |
+   |---|---|---|---|
+   | before fix | 1 | 2 | 3 |
+   | after fix | 0 | 0 | 0 |
 
 5. **Install `earlyoom`.** Kills on a free-memory threshold rather than waiting for
    reclaim to fail, which is the exact condition the kernel never reached on 2026-07-28.

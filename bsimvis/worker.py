@@ -479,8 +479,20 @@ class Worker:
                             )
                             self._stream_program_chunks(program, payload, hosts, job_id)
                         finally:
-                            if "program" in locals() and program:
-                                program.release(project)
+                            # close() releases every program importProgram() registered
+                            # and disposes the project's LocalFileSystem, which is what
+                            # stops its "File System Listener" thread. Without it the
+                            # thread and the whole Ghidra object graph it pins leak for
+                            # the life of the worker. Must run before the enclosing
+                            # TemporaryDirectory removes the project directory.
+                            #
+                            # Do NOT call program.release(project) first -- close()
+                            # already does it, and the second release throws
+                            # IllegalArgumentException: unknown consumer. The
+                            # openProject path above is different: those programs come
+                            # from DomainFile.getDomainObject(), are not tracked in
+                            # GhidraProject.openPrograms, and must be released by hand.
+                            project.close()
 
                 self.job_service.add_log(
                     job_id, f"Analysis and streaming complete for {orig_name}."

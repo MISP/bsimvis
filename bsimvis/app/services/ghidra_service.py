@@ -780,8 +780,12 @@ class GhidraService:
                 logging.error(f"[!] Analysis failed for file : {target_path.name}: {e}")
                 raise
             finally:
-                if "program" in locals() and program:
-                    program.release(project)
+                # close() releases every program importProgram() registered, ends
+                # their transactions, and disposes the project's LocalFileSystem --
+                # which is what stops its "File System Listener" thread. Do not
+                # release the program first: that consumer is already gone by then
+                # and close() would throw "unknown consumer". See worker.py.
+                project.close()
 
     def analyze_project(self, project_path, options=None):
         from ghidra.base.project import GhidraProject

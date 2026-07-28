@@ -13,6 +13,15 @@ collection `mirai7`, algo `unweighted_cosine`. Date of analysis: 2026-07-28.
 
 ## 1. Collection at a glance
 
+> **Pivot** — `collection/search?q=mirai` to find it, `index/status?collection=mirai7`
+> to size it, then **one** `file/search?collection=mirai7&limit=200` for everything
+> below. That single call returns `language_id`, `filetype`, `avtype`, `yara`,
+> `cc_ip`, `first_seen`, `function_count`, `bsim_features_count` — aggregate it
+> locally with `collections.Counter`. Start here in any collection.
+> *Insight I missed on the first pass: read the AV label distribution as data, not
+> as decoration. The 15 `Tsunami` labels were the second family, sitting in plain
+> sight (§7).*
+
 | Metric | Value |
 |---|---|
 | Files | 174 (1 ingestion batch) |
@@ -41,6 +50,10 @@ by code in §7. YARA hits:
 on **55 samples**.
 
 ## 2. Packing: half the collection is a stub
+
+> **Pivot** — no dedicated call: the `function_count` field from the §1 dump,
+> cross-referenced with `yara`. `Counter(f['function_count'] < 10 for f in files)`
+> is the whole detection. Do this **before** looking at any similarity score.
 
 54 files expose fewer than 10 functions; 53 of those carry the `UPX_Protector`
 YARA hit. Those samples decompile to a 2-function UPX stub, so they are
@@ -106,6 +119,12 @@ know to distrust it.
 
 ## 3. Campaigns inside the collection
 
+> **Pivot** — file names from the §1 dump, stemmed client-side
+> (`re.sub(r'(mips|mpsl|arm\d*|x86.*|m68k|ppc|spc|sh4)$', '', name.split('.')[0])`).
+> Then `file/search?cc_ip=143.20.185.245` to pull each C2's build set.
+> *Insight: `cc_ip`, `yara` and `avtype` are first-class filters at file **and**
+> function level — infrastructure pivots are one call, no code similarity needed.*
+
 Grouping file names by stem (after stripping the arch suffix):
 
 | Campaign stem | Files | Notes |
@@ -127,6 +146,17 @@ Both sets are hash-named (no original filename), so *without* code similarity
 they look like 13 unrelated unknowns.
 
 ## 4. Binary clustering — how the family splits
+
+> **Pivot** — `bin_cluster/list?limit=200&sort_by=count&sort_order=desc`, then
+> derive leaves client-side:
+> ```python
+> par = {str(c['parent']) for c in results}          # parent is a STRING,
+> leaves = [c for c in results if str(c['cluster_id']) not in par]   # cluster_id an INT
+> ```
+> Full membership needs `bin_cluster/members?cluster_id=` (ids only — join against
+> the §1 file dump for metadata); `bin_cluster/files` has metadata but is a sample.
+> *Insight: sorting by `count` first is the trap — the top node is the root holding
+> all 174 files at cohesion 0.043. Descend until `cohesion_score` is meaningful.*
 
 `bin_cluster/list` returns an HDBSCAN **dendrogram**, not a flat partition: 100
 nodes, root node `174` covering all 174 files at cohesion 0.043. The interesting
@@ -159,6 +189,13 @@ hash-named unknown and a named campaign.
 
 ## 5. Binary similarity — cross-endian, but not cross-ISA
 
+> **Pivot** — `bin_sim/search?min_funcs=50&min_score=0.5&sort_by=score` (15 051
+> pairs → 89), then `bin_sim/diff?md5_a=&md5_b=&view=sankey` for one pair's
+> matched/unique counts without downloading the full diff document.
+> *Insight: resolve names to `file_md5` before diffing — `file_name` matching is
+> substring-based and silently diffed the wrong `net` for me. And a high score
+> means little until you read the matched cluster names (§7.4).*
+
 Filtering `bin_sim/search` to `min_funcs=50, min_score=0.5` leaves 89 pairs.
 Highlights:
 
@@ -181,6 +218,18 @@ for two endiannesses, with a handful of functions added on one side.
 
 ## 6. Function-level code reuse — the real signal
 
+> **Pivot, and the highest-value one in the whole API** —
+> `function/search?function_name=<symbol>` returns a `clusters` map next to the
+> matched functions. Take the `cluster_uuid` from there and feed it back in:
+> ```bash
+> curl ".../function/search?collection=mirai7&function_name=table_init&min_cohesion=0.9"
+> curl ".../function/search?collection=mirai7&cluster_uuid=8ec63aa85bd9&limit=200"
+> ```
+> The second call returns every member **with** file name, arch and feature count —
+> use it, not `cluster/functions`, which omits those fields entirely.
+> *Insight: one symbolised sample names the stripped twins in every other binary.
+> But see §7 — pivot from the symbols the corpus **has**, not the ones you expect.*
+
 This is where the cross-ISA link that binary similarity misses shows up.
 
 The collection contains a few **symbolised** samples (`nuclear.*`, `mipsel`,
@@ -192,6 +241,12 @@ named function to its similarity cluster, and every `FUN_xxxxxxxx` member of tha
 cluster in a stripped sample inherits the meaning.
 
 ### 6.1 `table_init` — the config-table decryptor, across 8 architectures
+
+> **Pivot** — `function/code?id=<function_id>` on two members of the same cluster,
+> one symbolised and one stripped. `function_id` from any search endpoint works
+> as-is (the documented `idx:` prefix is optional). Rows → tokens → join
+> `token['text']`. Reading both side by side is what turns a similarity score into
+> evidence — and it is how the `FROSTED` branding string surfaced.
 
 The cluster containing `nuclear.arm7:table_init` (uuid `8ec63aa85bd9`, 40 members
 in 34 distinct files, cohesion 0.991, avg 95 BSim features) spans:
@@ -287,6 +342,17 @@ the `nuclear` attack-command parser verbatim.
 
 ## 7. The second family: Kaiten/STD (`*net` samples) — **not Mirai**
 
+> **Pivot, the one I should have run first** — dump every function and look at the
+> names that actually exist, instead of probing for expected ones:
+> ```bash
+> curl ".../function/search?collection=mirai7&limit=40000&sort_by=bsim_features_count&sort_order=desc" -o allfuncs.json
+> # 34 503 docs -> 5 375 non-FUN_ names -> group by file -> two disjoint vocabularies
+> ```
+> There is no facet/distinct endpoint, so this brute pull is the only route
+> (§4.11 of the API review).
+> *Insight: in a stripped corpus, the symbolised minority defines what you can
+> find. Enumerate their vocabulary before choosing a single query.*
+
 Enumerating every non-`FUN_` symbol in the collection (34 503 functions →
 5 375 named) instead of probing for known Mirai names exposes a completely
 different vocabulary in nine samples:
@@ -356,6 +422,11 @@ purely on code.
 
 ### 7.4 The libc trap — why binary similarity said "related" and was wrong
 
+> **Pivot** — `diff?md5_a=&md5_b=&table=matched&limit=400&sort_col=avg_features`,
+> then `Counter(item['cluster_name'])` over the page. Thirty seconds of work that
+> turns "0.55, related" into "420 shared clusters, all uClibc".
+> *Make this reflex: never report a similarity score without reading what matched.*
+
 `cock` (Kaiten) vs `iran.mips` (Mirai) scores **0.55 with 420 shared clusters**
 in `bin_sim/search`. Reading the matched table (`/api/diff?table=matched`) shows
 what those 420 clusters actually are:
@@ -388,6 +459,9 @@ This deserves its own section, because it is simultaneously the tool's most
 impressive result and its biggest analytical hazard.
 
 ### 8.1 The finding
+
+> **Pivot** — the `allfuncs.json` dump from §7 again, bucketed by a name regex,
+> summing `bsim_features_count` per bucket. No extra calls.
 
 BSimVis recovered the **shared library code** across these samples with high
 accuracy and no symbols. Measured on the symbolised samples (counting functions
@@ -533,6 +607,13 @@ by hand every single time.
 
 ## 9. The `mipsel` fork: exploit propagation and a loader IP
 
+> **Pivot** — `function/search?function_name=scanner_init` showed the fork had
+> *extra* scanners; then `function/code` on each and a regex for IPs/URLs over the
+> joined token text. There is no string-search endpoint, so IOC extraction is a
+> client-side loop over decompiled functions.
+> *Insight: the LLM flagged the loader IP first, but I only used it after finding
+> the literal string in the code. Treat model output as a lead, never as evidence.*
+
 Reading the decompiled scanner strings (`function/code`) turned up the payload
 URLs embedded in each exploit, all pointing at **one loader host not present in
 any sample's `cc_ip` metadata**:
@@ -552,6 +633,15 @@ This fork is a real capability upgrade over stock Mirai (which brute-forces
 telnet only), and it is the only sample set in the collection carrying it.
 
 ## 10. LLM-assisted triage (`/api/llm/summarize`)
+
+> **Pivot** — `POST /api/llm/summarize {"func_id": ..., "func_name": ...}`.
+> Returns **plain text**, not JSON, and takes ~2 min per function on a local 9B
+> model — set a long client timeout. If `[llm].model` in `bsimvis_config.toml`
+> names a model that is not pulled in Ollama you get HTTP **200** with an error
+> string in the body; check `curl localhost:11434/api/tags` first.
+> *Insight: best used on stripped functions where you already have a cluster
+> hypothesis — it either confirms the semantics independently or contradicts them.
+> Then write the answer back with `notes/add` so it survives the session.*
 
 Per-function summaries were generated through the API and written back as notes
 (owner `claude-report`). Value: the summaries independently reproduced the
@@ -575,6 +665,14 @@ semantics that the clustering had *implied*, without seeing the symbol names.
   was treated as a lead, not as evidence.
 
 ## 11. Annotations written back to the collection
+
+> **Pivot** — `tags/bulk_add` accepts the `function_id` / `file_id` list straight
+> out of any search response, so "search a cluster → tag every member" is two
+> calls. Tag the **cluster**, not the function: that is what propagates a name to
+> stripped twins across the corpus.
+> *Caveat found the hard way: tags containing a colon cannot be used as
+> `bin_sim/search` filters (§4.15 of the API review) — they still work on
+> `file/search`/`function/search`.*
 
 All via the API, so they are visible in the UI and reusable by the next analyst.
 
@@ -649,6 +747,11 @@ labelled `mirai:config_table` — the naming propagates without touching Ghidra.
 ---
 
 ## Appendix A — every binary cluster, including the small ones
+
+> **Pivot** — for each leaf: `bin_cluster/members?cluster_id=` (full membership,
+> `{id, meta}` only) joined locally against the §1 `file/search` dump for arch,
+> function count and YARA. 50 calls; there is no bulk "all clusters with members"
+> form.
 
 Section 4 highlighted seven clusters; this is the complete leaf set. 50 leaf
 clusters cover 145 of 174 files. Small clusters (n = 2–4) are **not** noise here:
@@ -746,6 +849,13 @@ only**. Cluster 267's 0.515 cohesion is shared base-Mirai code, not the exploit
 scanners. The exploit capability is confined to a single sample in this corpus.
 
 ## Appendix B — the 29 files in no cluster
+
+> **Pivot** — set-subtract every cluster's membership from `file/search`, because
+> **no endpoint lists the files HDBSCAN shed as noise** (§4.13 of the API review).
+> Then `bin_sim/search?md5=<md5>&limit=1&sort_by=score` per orphan for its nearest
+> neighbour.
+> *Insight: 17 % of this corpus is unclustered, including its single most capable
+> sample. Triaging by cluster membership alone silently skips them.*
 
 HDBSCAN sheds these as noise. That is a statement about density, not about
 relevance, so each one is listed with its nearest binary-similarity neighbour:

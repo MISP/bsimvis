@@ -24,21 +24,29 @@ class StubPipe:
     def hgetall(self, key):
         self.ops.append(("hgetall", key))
 
-    # write side: recorded, no result needed
-    def set(self, key, value):
-        self.ops.append(("w", "set", key))
+    # write side: applied to the store so results can be asserted
+    def _w(self, fn):
+        self.stats["cmds"] += 1
+        self.ops.append(("w", fn))
+
+    def mset(self, mapping):
+        self._w(lambda: self.store.update(mapping))
 
     def zadd(self, key, mapping):
-        self.ops.append(("w", "zadd", key))
+        self._w(lambda: self.store.setdefault(key, {}).update(mapping))
 
     def zincrby(self, key, amount, member):
-        self.ops.append(("w", "zincrby", key))
+        def apply():
+            z = self.store.setdefault(key, {})
+            z[member] = z.get(member, 0.0) + amount
 
-    def hset(self, key, field, value):
-        self.ops.append(("w", "hset", key))
+        self._w(apply)
+
+    def hset(self, key, field=None, value=None, mapping=None):
+        self._w(lambda: self.store.setdefault(key, {}).update(mapping or {field: value}))
 
     def sadd(self, key, *values):
-        self.ops.append(("w", "sadd", key))
+        self._w(lambda: self.store.setdefault(key, set()).update(values))
 
     def execute(self):
         self.stats["executes"] += 1
@@ -51,6 +59,7 @@ class StubPipe:
             elif op[0] == "hgetall":
                 out.append(self.store.get(op[1], {}))
             else:
+                op[1]()
                 out.append(True)
         self.ops = []
         return out
@@ -59,7 +68,7 @@ class StubPipe:
 class StubRedis:
     def __init__(self, store):
         self.store = store
-        self.stats = {"executes": 0, "direct": 0}
+        self.stats = {"executes": 0, "direct": 0, "cmds": 0}
 
     def pipeline(self, transaction=False):
         return StubPipe(self.store, self.stats)
@@ -76,26 +85,47 @@ class StubRedis:
         self.store.setdefault(key, set()).update(values)
 
 
-def test_batched_reads():
-    n = 250
+def test_batched_and_correct():
+    """Realistic shape: many functions sharing a small pool of feature hashes."""
+    n, per_func, pool = 250, 40, 60
     store = {}
     fids = [f"main:function:abc:{i}" for i in range(n)]
-    for fid in fids:
-        store[f"{fid}:vec:meta"] = json.dumps([{"hash": f"h{fid}", "tf": 1}, {"hash": f"g{fid}", "tf": 1}])
-        store[f"{fid}:vec:tf"] = [(f"h{fid}", 2.0)]
+    hashes = {}  # fid -> {f_hash: tf}
+    for k, fid in enumerate(fids):
+        hs = {f"h{(k + j) % pool}": float(j + 1) for j in range(per_func)}
+        hashes[fid] = hs
+        store[f"{fid}:vec:meta"] = json.dumps(
+            [{"hash": h, "tf": tf} for h, tf in hs.items()]
+        )
+        store[f"{fid}:vec:tf"] = list(hs.items())
 
     r = StubRedis(store)
-    svc = FeatureService(r)
-    assert svc.index_functions("main", fids) is True
+    assert FeatureService(r).index_functions("main", fids) is True
 
     # No per-function blocking reads outside the pipeline.
     assert r.stats["direct"] == 0, r.stats
 
-    # 250 funcs / READ_BATCH 100 => 3 read flushes, plus write flushes.
-    assert r.stats["executes"] <= 8, r.stats
+    # Naive fan-out would be n*per_func*3 = 30000 commands.
+    assert r.stats["cmds"] < 3000, r.stats
 
-    # Features still land in the pending-enrichment set.
-    assert len(store["main:features:pending_enrichment"]) == n
+    # --- writes must be identical to the un-merged version ---
+    expected_by_tf = {}
+    for fid, hs in hashes.items():
+        for h, tf in hs.items():
+            expected_by_tf[h] = expected_by_tf.get(h, 0.0) + tf
+            assert store[f"main:feature:{h}:functions"][fid] == tf
+            entry = json.loads(store[f"main:feature:{h}:meta"][fid])
+            assert entry["function_id"] == fid and entry["hash"] == h
+    for h, total in expected_by_tf.items():
+        assert abs(store["main:features:by_tf"][h] - total) < 1e-9, h
+
+    assert store["main:indexed:functions"] == set(fids)
+    assert len(store["main:features:pending_enrichment"]) == pool
+    # L2 norm per function
+    fid = fids[0]
+    assert abs(
+        store[f"{fid}:vec:norm"] ** 2 - sum(tf**2 for tf in hashes[fid].values())
+    ) < 1e-6
 
 
 def test_missing_data_skipped():
@@ -111,6 +141,6 @@ def test_missing_data_skipped():
 
 
 if __name__ == "__main__":
-    test_batched_reads()
+    test_batched_and_correct()
     test_missing_data_skipped()
     print("ok")

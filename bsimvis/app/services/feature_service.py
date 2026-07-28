@@ -1,8 +1,33 @@
 import math
+from collections import defaultdict
 import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.milvus_service import milvus_service
+
+
+class _WriteBuffer:
+    """Merges one window of index_functions writes, keyed by feature hash."""
+
+    def __init__(self):
+        self.norms = {}  # norm key -> value
+        self.zadds = defaultdict(dict)  # f_hash -> {func_id: tf}
+        self.incrs = defaultdict(float)  # f_hash -> summed tf
+        self.metas = defaultdict(dict)  # f_hash -> {func_id: json}
+        self.indexed = []  # func_ids
+
+    def flush(self, pipe, collection):
+        if self.norms:
+            pipe.mset(self.norms)
+        for f_hash, members in self.zadds.items():
+            pipe.zadd(f"{collection}:feature:{f_hash}:functions", members)
+        for f_hash, amount in self.incrs.items():
+            pipe.zincrby(f"{collection}:features:by_tf", amount, f_hash)
+        for f_hash, fields in self.metas.items():
+            pipe.hset(f"{collection}:feature:{f_hash}:meta", mapping=fields)
+        if self.indexed:
+            pipe.sadd(f"{collection}:indexed:functions", *self.indexed)
+        self.__init__()
 
 
 class FeatureService:
@@ -44,6 +69,11 @@ class FeatureService:
         pipe = self.r.pipeline(transaction=False)
         batch = {}  # func_id -> (raw_meta, tf_data), refilled every READ_BATCH funcs
         last_pct = -1
+        # The write fan-out (one ZADD/ZINCRBY/HSET per function *per feature*) is
+        # what actually dominates this job. Features repeat heavily across the
+        # functions of one file, so merge a window's writes per feature hash:
+        # ~40 commands per function collapse to ~1 per distinct feature.
+        acc = _WriteBuffer()
 
         for i, func_id in enumerate(function_ids):
             # Update job progress if applicable. update_progress is expensive (it
@@ -73,7 +103,7 @@ class FeatureService:
 
             # A. Recalculate L2 Norm
             sum_sq = sum(float(tf) ** 2 for _, tf in new_tf_data)
-            pipe.set(f"{func_id}:vec:norm", math.sqrt(sum_sq))
+            acc.norms[f"{func_id}:vec:norm"] = math.sqrt(sum_sq)
 
             # B. Build Reverse Index (ZSETs)
             tf_dict = {
@@ -84,9 +114,9 @@ class FeatureService:
             for f_hash, new_tf in tf_dict.items():
                 indexed_features.add(f_hash)
                 # Update function mapping for this feature
-                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
+                acc.zadds[f_hash][func_id] = new_tf
                 # Update global TF counter for this feature
-                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
+                acc.incrs[f_hash] += float(new_tf)
 
             # Store feature metadata as a JSON string in a HASH keyed by function_id
             for feat_item in raw_meta:
@@ -96,17 +126,14 @@ class FeatureService:
                 meta_entry = dict(feat_item)
                 meta_entry["function_id"] = func_id
                 # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
-                pipe.hset(
-                    f"{collection}:feature:{f_hash}:meta",
-                    func_id,
-                    json.dumps(meta_entry),
-                )
+                acc.metas[f_hash][func_id] = json.dumps(meta_entry)
 
             # Mark as indexed (Base ID)
-            pipe.sadd(f"{collection}:indexed:functions", func_id)
+            acc.indexed.append(func_id)
 
             # Execute pipeline in chunks to reduce memory footprint and network overhead
             if (i + 1) % 100 == 0:
+                acc.flush(pipe, collection)
                 pipe.execute()
                 pipe = self.r.pipeline(transaction=False)
 
@@ -120,6 +147,7 @@ class FeatureService:
                         )
                     milvus_data = []
 
+        acc.flush(pipe, collection)
         pipe.execute()
 
         # Final Milvus Flush

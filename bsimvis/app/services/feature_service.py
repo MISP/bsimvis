@@ -9,6 +9,26 @@ class FeatureService:
     def __init__(self, r=None):
         self.r = r or get_redis()
 
+    READ_BATCH = 100
+
+    def _fetch_vec_batch(self, func_ids):
+        """GET :vec:meta + ZRANGE :vec:tf for a batch of functions in one round-trip."""
+        pipe = self.r.pipeline(transaction=False)
+        for fid in func_ids:
+            pipe.get(f"{fid}:vec:meta")
+            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        res = pipe.execute()
+
+        out = {}
+        for idx, fid in enumerate(func_ids):
+            raw_meta = res[idx * 2]
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
+            out[fid] = (raw_meta, res[idx * 2 + 1])
+        return out
+
     def index_functions(self, collection, function_ids, job_service=None, job_id=None):
         """
         Reverse feature indexing for a list of functions.
@@ -22,27 +42,29 @@ class FeatureService:
         indexed_features = set()
 
         pipe = self.r.pipeline(transaction=False)
+        batch = {}  # func_id -> (raw_meta, tf_data), refilled every READ_BATCH funcs
+        last_pct = -1
 
         for i, func_id in enumerate(function_ids):
-            # Update job progress if applicable
-            if job_service and job_id and (i % 10 == 0 or i == total - 1):
+            # Update job progress if applicable. update_progress is expensive (it
+            # re-aggregates the parent pipeline with one HGET per sibling task), so
+            # only fire it when the whole percent actually moves.
+            if job_service and job_id:
                 pct = int((i + 1) / total * 100)
-                job_service.update_progress(
-                    job_id, pct, f"Indexing features: {i+1}/{total}"
+                if pct != last_pct or i == total - 1:
+                    last_pct = pct
+                    job_service.update_progress(
+                        job_id, pct, f"Indexing features: {i+1}/{total}"
+                    )
+
+            # 1. Fetch metadata and vector data, one round-trip per READ_BATCH
+            # functions instead of two per function.
+            if func_id not in batch:
+                batch = self._fetch_vec_batch(
+                    function_ids[i : i + self.READ_BATCH]
                 )
 
-            meta_key = f"{func_id}:vec:meta"
-            tf_key = f"{func_id}:vec:tf"
-
-            # 1. Fetch metadata and vector data
-            # NOTE: Getting data can't be pipelined easily since it is needed inside loop
-            raw_meta = self.r.get(meta_key)
-            if raw_meta:
-                raw_meta = json.loads(raw_meta)
-                if isinstance(raw_meta, list) and len(raw_meta) == 1:
-                    raw_meta = raw_meta[0]
-
-            new_tf_data = self.r.zrange(tf_key, 0, -1, withscores=True)
+            raw_meta, new_tf_data = batch.pop(func_id)
             if not raw_meta or not new_tf_data:
                 logging.warning(
                     f"  [!] Skipping {func_id}: Missing metadata or vector data."
@@ -395,6 +417,18 @@ class FeatureService:
             results = []
             pending_funcs = {}  # func_id → {func_id, line_idxs list}
 
+            # Features with < 100 occurrences need a full HGETALL (HRANDFIELD may
+            # dedup). That is the common case, so batch them into one round-trip.
+            small_pipe = self.r.pipeline(transaction=False)
+            small_hashes = [
+                fh
+                for idx, fh in enumerate(chunk)
+                if 0 < res1[idx * 3 + 1] <= 100
+            ]
+            for fh in small_hashes:
+                small_pipe.hgetall(f"{collection}:feature:{fh}:meta")
+            small_full = dict(zip(small_hashes, small_pipe.execute()))
+
             for idx, fh in enumerate(chunk):
                 hr = res1[idx * 3]
                 # HRANDFIELD withvalues returns flat list [key1, val1, key2, val2, ...]
@@ -402,9 +436,8 @@ class FeatureService:
                 total_freq = res1[idx * 3 + 1]
                 tf_score_val = res1[idx * 3 + 2]
 
-                # If full hash < 100 entries, re-fetch all (HRANDFIELD may dedup)
-                if total_freq <= 100 and total_freq > 0:
-                    data_batch = self.r.hgetall(f"{collection}:feature:{fh}:meta")
+                if fh in small_full:
+                    data_batch = small_full[fh]
 
                 # parse each occ, include function_id from the hash field
                 parsed = {}

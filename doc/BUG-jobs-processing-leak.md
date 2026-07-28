@@ -192,12 +192,47 @@ Nothing expires a `jobs:processing` entry. There is no `started_at` watchdog, no
 heartbeat, and no startup sweep. A job orphaned on 2026-07-06 was still sitting in the
 list 22 days later, across many restarts.
 
-### D. Ghidra resources not released on all paths
+### D. `GhidraProject.createProject` is never closed
 
-`program.release(project)` appears at `worker.py:395` and `worker.py:480`, both inside
-conditional branches. Failure and early-return paths do not release, so `File System
-Listener` threads and their associated Ghidra objects accumulate for the life of the
-worker. This is the memory leak that drives the GC spiral.
+**Corrected 2026-07-28.** An earlier draft of this report blamed `program.release(project)`
+being inside conditional branches. That was wrong — every `program.release` call *is*
+already in a `finally`. The actual leak is one level up: the **project** is never closed.
+
+The codebase has two shapes. Every `openProject` path closes correctly:
+
+| site | creates | closes |
+|---|---|---|
+| `worker.py:355` | `openProject` | ✅ `project.close()` at :437 |
+| `ghidra_service.py:792` | `openProject` | ✅ `project.close()` at :817 |
+| `bsimvis_upload.py:346` | `openProject` | ✅ `project.close()` at :406 |
+| `worker.py:448` | `createProject` | ❌ **none** |
+| `ghidra_service.py:753` | `createProject` | ❌ **none** |
+| `bsimvis_upload.py:411` | `createProject` | ❌ **none** |
+
+All three `createProject` sites release the program and then let the project object fall
+out of scope unclosed. `worker.py:448` is the hot one — it is the single-file
+`ghidra_analyze` path that workers execute for every uploaded binary.
+
+Why this leaks a thread per job: `GhidraProject.createProject` builds a
+`ProjectFileManager` over a `LocalFileSystem`, which constructs a
+`FileSystemEventManager`. That class starts a dispatch thread — confirmed by extracting
+`Ghidra/Framework/FileSystem/lib/FileSystem.jar`, where the string `File System Listener`
+lives in `ghidra/framework/store/FileSystemEventManager$FileSystemEventProcessingThread`.
+`FileSystemEventManager.dispose()` is what stops it, and it is only reached via
+`project.close()`. No close, no dispose, thread runs forever.
+
+This matches the observed evidence exactly: **21 `File System Lis` threads parked in
+`futex_do_wait`** in worker 8749 — one per single-file analysis that worker had run,
+each pinning its project, filesystem, and associated Ghidra object graph in the JVM heap.
+
+Note the `TemporaryDirectory` context manager at `worker.py:445` deletes the project
+directory on exit while the project is still open, so the leaked object graph outlives
+the files it refers to.
+
+Secondary issue at the same sites: `if "program" in locals() and program:`
+(`worker.py:482`, `ghidra_service.py:783`) — `locals()` is function-scoped, so on a
+second call within the same frame a stale `program` from an earlier iteration could be
+released twice. Not the leak, but worth tightening to `program = None` before the `try`.
 
 ### E. Fleet sizing ignores co-tenants
 
@@ -222,8 +257,11 @@ Ordered by cost/benefit.
    `job:{id}` status is terminal or whose `started_at` exceeds a threshold. Fixes C, and
    would have auto-healed the 2026-07-06 orphans.
 
-4. **Release Ghidra programs in a context manager.** Wrap acquire/release so every path
-   releases, fixing D — the actual memory leak.
+4. **Add `project.close()` in a `finally` at all three `createProject` sites**
+   (`worker.py:448`, `ghidra_service.py:753`, `bsimvis_upload.py:411`), matching what the
+   `openProject` paths already do. Fixes D — the actual memory leak. The release must be
+   ordered `program.release(project)` then `project.close()`, and `close()` must happen
+   before the enclosing `TemporaryDirectory` tears the project directory down.
 
 5. **Install `earlyoom`.** Kills on a free-memory threshold rather than waiting for
    reclaim to fail, which is the exact condition the kernel never reached on 2026-07-28.

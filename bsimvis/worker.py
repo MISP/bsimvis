@@ -81,23 +81,26 @@ class Worker:
 
                 # Fetch job metadata
                 job_id = job_id.decode() if isinstance(job_id, bytes) else job_id
-                job_data = self.r_queue.hgetall(f"job:{job_id}")
 
-                if not job_data:
-                    logging.warning(f"[!] Job {job_id} metadata missing. Skipping.")
-                    self.r_queue.lrem("jobs:processing", 1, job_id)
-                    continue
+                # The claim is now held. Release it on every exit path, or the entry
+                # leaks in jobs:processing forever (nothing expires or sweeps it).
+                # Count 0 removes every copy: a job enqueued twice would otherwise
+                # leave a permanent orphan behind after one successful completion.
+                try:
+                    job_data = self.r_queue.hgetall(f"job:{job_id}")
 
-                if job_data.get("status") == JobStatus.CANCELLED.value:
-                    logging.info(f"[-] Job {job_id} was cancelled. Skipping.")
-                    self.r_queue.lrem("jobs:processing", 1, job_id)
-                    continue
+                    if not job_data:
+                        logging.warning(f"[!] Job {job_id} metadata missing. Skipping.")
+                        continue
 
-                # Execute Job
-                self._execute_job(job_id, job_data)
+                    if job_data.get("status") == JobStatus.CANCELLED.value:
+                        logging.info(f"[-] Job {job_id} was cancelled. Skipping.")
+                        continue
 
-                # Success: Remove from processing
-                self.r_queue.lrem("jobs:processing", 1, job_id)
+                    # Execute Job
+                    self._execute_job(job_id, job_data)
+                finally:
+                    self.r_queue.lrem("jobs:processing", 0, job_id)
 
             except Exception as e:
                 logging.error(f"[!] Worker loop error: {e}")

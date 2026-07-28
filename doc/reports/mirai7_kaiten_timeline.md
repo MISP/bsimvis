@@ -47,6 +47,56 @@ So the `*net` set is not a timeline at all. There are exactly **two points**:
 2026-02-09   8 samples  59 malware fns    8 architectures
 ```
 
+### Shared malware functions across time
+
+Flow widths are function counts. Left column is A's 37 functions by role, all of
+which survive into 2026-02 (§2 proves it at similarity 1.000); the `NEW` nodes
+are the 22 functions that first appear in 2026-02; the right column is what the
+2026-03 fork picked up.
+
+```mermaid
+sankey-beta
+
+2025-04 · C2 transport,2026-02 · 8-arch build,9
+2025-04 · dispatch + runtime,2026-02 · 8-arch build,5
+2025-04 · L3/L4 floods,2026-02 · 8-arch build,12
+2025-04 · packet crafting + RNG,2026-02 · 8-arch build,7
+2025-04 · output helpers,2026-02 · 8-arch build,4
+NEW · L7 / CDN attacks,2026-02 · 8-arch build,6
+NEW · provider bypasses,2026-02 · 8-arch build,6
+NEW · L3/L4 floods,2026-02 · 8-arch build,4
+NEW · competitor eviction,2026-02 · 8-arch build,2
+NEW · support,2026-02 · 8-arch build,4
+2026-02 · 8-arch build,2026-03 · fork m-p.s-l.dick,12
+2026-02 · 8-arch build,2026-02 · not reused by fork,47
+```
+
+| Generation | Bucket | n | Functions |
+|---|---|---|---|
+| 2025-04 | C2 transport | 9 | `initConnection` `connectTimeout` `recvLine` `sockprintf` `socket_connect` `getOurIP` `getHost` `getArch` `getPortz` |
+| 2025-04 | dispatch + runtime | 5 | `processCmd` `main` `listFork` `trim` `fdgets` |
+| 2025-04 | L3/L4 floods | 12 | `atcp` `ftcp` `rtcp` `audp` `astd` `SendUDP` `SendSTD` `SendSTDHEX` `SendSTD_HEX` `stdhexflood` `vseattack` `makevsepacket` |
+| 2025-04 | packet crafting + RNG | 7 | `csum` `tcpcsum` `makeIPPacket` `rand_cmwc` `init_rand` `getRandomIP` `makeRandomStr` |
+| 2025-04 | output helpers | 4 | `print` `printi` `prints` `printchar` |
+| **NEW 2026-02** | L7 / CDN attacks | 6 | `SendCloudflare` `SendHTTPCloudflare` `SendHTTPHex` `sendHTTPtwo` `httpattack` `sendTLS` |
+| **NEW 2026-02** | provider bypasses | 6 | `SendOVH_STORM` `HIPER_OVH` `SendDOMINATE` `sendHLD` `SendHOME1` `SendHOME2` |
+| **NEW 2026-02** | L3/L4 floods | 4 | `DNSw` `UDPRAW` `xtdcustom` `senditbudAMP` |
+| **NEW 2026-02** | competitor eviction | 2 | `competitiveKiller` `sendKILLALL` |
+| **NEW 2026-02** | support | 4 | `Randhex` `realrand` `sendPkt` `sendnfo` |
+
+Read across the diagram: **no flow terminates at 2025-04.** Nothing was dropped,
+nothing was replaced. The 2026-02 build is the 2025-04 build plus 22 functions,
+and the entire growth is in the two anti-mitigation buckets (12 of 22) plus the
+competitor killer.
+
+The 12 functions the 2026-03 fork takes are the reusable substrate, not the bot:
+4 from C2 transport (`getArch`, `getHost`, `getOurIP`, `socket_connect`), 5 from
+packet crafting (`csum`, `tcpcsum`, `makeIPPacket`, `makeRandomStr`,
+`rand_cmwc`), 2 from runtime (`main`, `fdgets`) and 1 from the new support
+bucket (`realrand`). That last one dates the fork: `realrand` does not exist in
+the 2025-04 build, so `m-p.s-l.dick` was lifted from the **2026-02** source, not
+from a common ancestor.
+
 ## 2. A ⊂ net, proven at similarity 1.000
 
 > **Pivot** — `diff?md5_a=A&md5_b=net&table=matched|unique_to_a&limit=0`.

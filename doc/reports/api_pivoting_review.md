@@ -362,6 +362,15 @@ Covered in depth in §8 of the family report; the API-facing summary:
 * Until then the docs should state plainly: **read the matched cluster names
   (`/api/diff?table=matched`) before believing a similarity score**, and filter
   clusters with `min_features` ≥ 50.
+* A cheap first cut is available today with no new endpoint: match library
+  symbol names (`__stdio_*`, `_ppfs_*`, `xdr_*`, `svc_*`, `clnt*`, `pthread_*`,
+  `sem_*`, POSIX/ANSI names) on whatever symbolised samples a collection
+  contains, `tags/bulk_add` the hits as `lib:uclibc`, then tag each hit's whole
+  cluster so the stripped `FUN_*` siblings inherit the label. This turns a
+  handful of symbolised binaries into a corpus-wide library mask. Shipping that
+  as a built-in "identify library code" job — and defaulting similarity to
+  exclude it — would be the highest-value change to the product, not just to the
+  docs. See §8.3 of the family report for the four-step version.
 
 ### 4.13 Clustering silently drops files, and nothing reports it
 

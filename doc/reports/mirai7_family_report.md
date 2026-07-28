@@ -487,6 +487,29 @@ None of this is unfixable — it is a filtering and presentation problem:
   cluster names is what turned "cock and iran.mips are 55 % similar" into "they
   share nothing but uClibc". This should be the reflex before believing any
   binary similarity number.
+* **Bootstrap the library set from the names you already have.** The crude
+  regex used for §8.1 is not just a measurement hack — it is a workable *first
+  stage* of library elimination, and it costs one API call. uClibc symbol names
+  are highly regular (`__stdio_*`, `_ppfs_*`, `xdr_*`, `svc_*`, `clnt*`,
+  `pthread_*`, `sem_*`, `pmap_*`, `__x*stat*`, plus the POSIX/ANSI names), so a
+  name pattern over the symbolised samples produces a high-confidence library
+  seed set with no clustering at all. The pipeline writes itself:
+
+  1. `function/search?limit=…` once, keep functions whose name matches the
+     library patterns — on this collection that is ~5 000 named functions of
+     which the overwhelming majority are libc;
+  2. `tags/bulk_add` them as `lib:uclibc` (the whole seed set in a few calls);
+  3. for each seeded function, take its `cluster_uuid` and tag the **rest of the
+     cluster** — that is where the stripped `FUN_*` siblings in every other
+     binary get labelled, which the regex alone can never reach;
+  4. re-score with those clusters excluded (§4.12 of the API review).
+
+  Step 3 is the same Rosetta-stone move used for `table_init`, just run in the
+  opposite direction and in bulk. The seed does not need to be perfect: a false
+  positive removes one function from the score, and a false negative just leaves
+  a bit of noise behind. Starting from names is the cheap 80 % — worth doing
+  before building anything cleverer.
+
 * **Build a library-exclusion set.** The collection already contains the
   material: cluster the libc functions once (they are the huge, low-cohesion
   clusters), tag them `lib:uclibc`, and offer an `exclude_tag` on

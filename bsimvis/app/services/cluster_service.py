@@ -915,13 +915,20 @@ class ClusterService:
         """Delete all index buckets for a field using its registry, then clear the registry."""
         r = self.r
         reg_key = f"{collection}:reg:{level}:{field}"
-        buckets = r.smembers(reg_key)
+        buckets = list(r.smembers(reg_key))
         if buckets:
-            pipe = r.pipeline(transaction=False)
-            for b_raw in buckets:
-                b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
-                pipe.delete(b)
-            pipe.execute()
+            t0 = time.time()
+            # ponytail: fixed 1000-cmd chunks; one giant pipeline here was a multi-minute
+            # silent stall on big collections. Tune if a round trip ever dominates.
+            for i in range(0, len(buckets), 1000):
+                pipe = r.pipeline(transaction=False)
+                for b_raw in buckets[i : i + 1000]:
+                    b = b_raw.decode() if isinstance(b_raw, bytes) else b_raw
+                    pipe.delete(b)
+                pipe.execute()
+            logging.info(
+                f"[*] Cleared {len(buckets)} {level}:{field} index buckets in {time.time() - t0:.1f}s"
+            )
         r.delete(reg_key)
 
     def _update_similarity_indexing(
@@ -933,6 +940,18 @@ class ClusterService:
         On build: fetches function cluster metadata and re-indexes each similarity if propagation is enabled.
         """
         r = self.r
+
+        phase_t = time.time()
+
+        def phase(msg):
+            """Log a phase boundary with the elapsed time of the previous phase."""
+            nonlocal phase_t
+            now = time.time()
+            logging.info(f"[*] sim-index: {msg} (prev phase {now - phase_t:.1f}s)")
+            phase_t = now
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
         # Pool sim keys are namespaced under global:pool:{id} WITHOUT the algo segment,
         # and pool member fids are full source-collection fids ({srccoll}:func:{md5}:{addr}),
         # not algo-relative clean ids. Non-pool keys carry :{algo}: and strip to clean ids.
@@ -985,7 +1004,17 @@ class ClusterService:
             return True
 
         # BUILD PATH
+        from bsimvis.app.services.config_service import config_service
+
+        if not config_service.get("clustering.propagate_sim_indexes", True):
+            phase(
+                "Sim cluster index propagation disabled "
+                "(clustering.propagate_sim_indexes=false) — skipping."
+            )
+            return True
+
         # 0. Wipe existing sim cluster indexes to avoid stale entries
+        phase("Wiping stale sim cluster indexes...")
         for orig, target in cluster_prop:
             self._clear_indexes_via_registry(collection, "sim", target)
         for f in cluster_prop_num:
@@ -993,8 +1022,7 @@ class ClusterService:
         r.delete(f"{collection}:sim:best_cluster:{algo}")
 
         # 1. Pre-fetch all cluster metadata records matching {collection}:cluster:{algo}:*:meta
-        if job_service and job_id:
-            job_service.add_log(job_id, "Pre-fetching cluster metadata records...")
+        phase("Pre-fetching cluster metadata records...")
 
         cluster_meta_map = {}
         cluster_list_key = f"{collection}:cluster:list:{algo}"
@@ -1019,12 +1047,13 @@ class ClusterService:
                 if cursor == 0:
                     break
 
-        if meta_keys:
+        for i in range(0, len(meta_keys), 1000):
+            chunk_keys = meta_keys[i : i + 1000]
             c_pipe = r.pipeline(transaction=False)
-            for k in meta_keys:
+            for k in chunk_keys:
                 c_pipe.get(k)
             res_list = c_pipe.execute()
-            for k, res in zip(meta_keys, res_list):
+            for k, res in zip(chunk_keys, res_list):
                 if res:
                     cm = json.loads(res) if not isinstance(res, dict) else res
                     if isinstance(cm, str):
@@ -1034,16 +1063,17 @@ class ClusterService:
                         cluster_meta_map[cid] = cm
 
         # 2. Fetch function cluster metadata into memory (only for clustered functions)
-        if job_service and job_id:
-            job_service.add_log(
-                job_id, "Fetching function metadata for similarity re-indexing..."
-            )
+        phase(
+            f"Reading members of {len(cluster_meta_map)} clusters "
+            "for similarity re-indexing..."
+        )
 
         # First, gather all clustered function IDs by reading the members of all discovered clusters
         clustered_funcs_set = set()
-        if cluster_meta_map:
+        cid_list = list(cluster_meta_map.keys())
+        for i in range(0, len(cid_list), 1000):
             m_pipe = r.pipeline(transaction=False)
-            for cid in cluster_meta_map.keys():
+            for cid in cid_list[i : i + 1000]:
                 m_pipe.smembers(f"{collection}:cluster:{algo}:{cid}:members")
             for mem_set in m_pipe.execute():
                 if mem_set:
@@ -1054,8 +1084,13 @@ class ClusterService:
 
         func_meta = {}
         funcs_list = list(clustered_funcs_set)
+        phase(f"Fetching cluster assignments for {len(funcs_list)} functions...")
 
         for i in range(0, len(funcs_list), 1000):
+            if i and i % 20000 == 0:
+                logging.info(
+                    f"[*] sim-index: cluster assignments {i}/{len(funcs_list)}"
+                )
             chunk = funcs_list[i : i + 1000]
             pipe = r.pipeline(transaction=False)
             for fid_raw in chunk:
@@ -1130,11 +1165,9 @@ class ClusterService:
                 # Pool fids are already the involves-index key form; non-pool strip the prefix.
                 clustered_clean_ids.add(fid if is_pool else fid[len(func_prefix) :])
 
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions...",
-            )
+        phase(
+            f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions..."
+        )
 
         prefix = f"{collection}:sim:" if is_pool else f"{collection}:sim:{algo}:"
         candidate_sids = set()
@@ -1142,6 +1175,11 @@ class ClusterService:
         involves_pipe = r.pipeline(transaction=False)
 
         for i in range(0, len(clean_ids_list), 1000):
+            if i and i % 20000 == 0:
+                logging.info(
+                    f"[*] sim-index: involves scan {i}/{len(clean_ids_list)} "
+                    f"({len(candidate_sids)} candidates so far)"
+                )
             chunk = clean_ids_list[i : i + 1000]
             for c1 in chunk:
                 involves_pipe.smembers(f"{collection}:sim:involves:func:{c1}")
@@ -1160,15 +1198,10 @@ class ClusterService:
         processed = 0
         indexed = 0
 
-        if job_service and job_id:
-            job_service.add_log(
-                job_id,
-                f"Propagating cluster indexes to {total_candidates} candidate similarities "
-                f"(out of {total_sims} total sims)...",
-            )
-            logging.info(
-                f"[*] Starting similarity index propagation for {total_candidates} candidates..."
-            )
+        phase(
+            f"Propagating cluster indexes to {total_candidates} candidate similarities "
+            f"(out of {total_sims} total sims)..."
+        )
 
         candidate_list = list(candidate_sids)
         update_pipe = r.pipeline(transaction=False)
@@ -1254,6 +1287,10 @@ class ClusterService:
             if processed % 5000 == 0:
                 flush_batch()
                 update_pipe = r.pipeline(transaction=False)
+                logging.info(
+                    f"[*] sim-index: propagated {processed}/{total_candidates} "
+                    f"({time.time() - start_prop:.1f}s)"
+                )
                 if job_service and job_id:
                     pct = (
                         int((processed / total_candidates) * 100)

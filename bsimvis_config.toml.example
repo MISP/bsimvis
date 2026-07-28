@@ -38,6 +38,10 @@
     min_sim = 0.0
     min_features = 0
     min_cohesion = 0.5
+    # Propagate cluster info to similarity-level indexes after clustering.
+    # Powers `shared_clusters` in similarity search and sim-level cluster
+    # filters. Slowest phase of a clustering run; set false to skip it.
+    propagate_sim_indexes = true
 
 [similarity]
     top_k = 1000

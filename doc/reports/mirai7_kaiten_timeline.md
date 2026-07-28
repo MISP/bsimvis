@@ -57,18 +57,18 @@ are the 22 functions that first appear in 2026-02; the right column is what the
 ```mermaid
 sankey-beta
 
-2025-04 · C2 transport,2026-02 · 8-arch build,9
-2025-04 · dispatch + runtime,2026-02 · 8-arch build,5
-2025-04 · L3/L4 floods,2026-02 · 8-arch build,12
-2025-04 · packet crafting + RNG,2026-02 · 8-arch build,7
-2025-04 · output helpers,2026-02 · 8-arch build,4
-NEW · L7 / CDN attacks,2026-02 · 8-arch build,6
-NEW · provider bypasses,2026-02 · 8-arch build,6
-NEW · L3/L4 floods,2026-02 · 8-arch build,4
-NEW · competitor eviction,2026-02 · 8-arch build,2
-NEW · support,2026-02 · 8-arch build,4
-2026-02 · 8-arch build,2026-03 · fork m-p.s-l.dick,12
-2026-02 · 8-arch build,2026-02 · not reused by fork,47
+2025-04 C2 transport,2026-02 8-arch build,9
+2025-04 dispatch + runtime,2026-02 8-arch build,5
+2025-04 L3/L4 floods,2026-02 8-arch build,12
+2025-04 packet crafting + RNG,2026-02 8-arch build,7
+2025-04 output helpers,2026-02 8-arch build,4
+NEW L7 / CDN attacks,2026-02 8-arch build,6
+NEW provider bypasses,2026-02 8-arch build,6
+NEW L3/L4 floods,2026-02 8-arch build,4
+NEW competitor eviction,2026-02 8-arch build,2
+NEW support,2026-02 8-arch build,4
+2026-02 8-arch build,2026-03 fork m-p.s-l.dick,12
+2026-02 8-arch build,not reused by fork,47
 ```
 
 | Generation | Bucket | n | Functions |

@@ -799,6 +799,11 @@ class ClusterService:
                 r.delete(pool_cluster_list_key)
                 r.sadd(pool_cluster_list_key, *[str(k) for k in cluster_members.keys()])
 
+        # Free the graph structures before propagation: adj_sim alone holds two dict
+        # entries per edge (~14M on a real collection) and kept the worker swapping
+        # through the whole sim-index phase.
+        del adj_sim, comp_to_edges, edges, all_member_meta
+
         logging.info(f"Update sim indexes...")
 
         # 7. Update all similarities in the collection to propagate cluster info
@@ -957,9 +962,7 @@ class ClusterService:
         # not algo-relative clean ids. Non-pool keys carry :{algo}: and strip to clean ids.
         is_pool = collection.startswith("global:pool:")
         sim_score_key = (
-            f"{collection}:sim:score"
-            if is_pool
-            else f"{collection}:sim:score:{algo}"
+            f"{collection}:sim:score" if is_pool else f"{collection}:sim:score:{algo}"
         )
 
         from bsimvis.app.services.index_service import (
@@ -1165,45 +1168,18 @@ class ClusterService:
                 # Pool fids are already the involves-index key form; non-pool strip the prefix.
                 clustered_clean_ids.add(fid if is_pool else fid[len(func_prefix) :])
 
-        phase(
-            f"Fetching similarity candidates for {len(clustered_clean_ids)} clustered functions..."
-        )
-
         prefix = f"{collection}:sim:" if is_pool else f"{collection}:sim:{algo}:"
-        candidate_sids = set()
         clean_ids_list = list(clustered_clean_ids)
-        involves_pipe = r.pipeline(transaction=False)
-
-        for i in range(0, len(clean_ids_list), 1000):
-            if i and i % 20000 == 0:
-                logging.info(
-                    f"[*] sim-index: involves scan {i}/{len(clean_ids_list)} "
-                    f"({len(candidate_sids)} candidates so far)"
-                )
-            chunk = clean_ids_list[i : i + 1000]
-            for c1 in chunk:
-                involves_pipe.smembers(f"{collection}:sim:involves:func:{c1}")
-            results = involves_pipe.execute()
-            for res in results:
-                if res:
-                    for sid_raw in res:
-                        sid = (
-                            sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
-                        )
-                        if sid.startswith(prefix):
-                            candidate_sids.add(sid)
-
-        total_candidates = len(candidate_sids)
+        total_funcs = len(clean_ids_list)
         total_sims = r.zcard(sim_score_key) or 0
         processed = 0
         indexed = 0
 
         phase(
-            f"Propagating cluster indexes to {total_candidates} candidate similarities "
+            f"Propagating cluster indexes from {total_funcs} clustered functions "
             f"(out of {total_sims} total sims)..."
         )
 
-        candidate_list = list(candidate_sids)
         update_pipe = r.pipeline(transaction=False)
 
         start_prop = time.time()
@@ -1234,12 +1210,37 @@ class ClusterService:
             num_zsets.clear()
             best_cluster_map.clear()
 
-        for idx, sid in enumerate(candidate_list):
-            id_part = sid[len(prefix) :]
-            if "::" not in id_part:
-                continue
-            c1, c2 = id_part.split("::")
+        def iter_candidates():
+            """Stream (sid, c1, c2) from the involves index, 1000 functions at a time.
 
+            ponytail: deliberately no global candidate set. Materializing all sim ids
+            (7M on a real collection) cost ~2GB and swapped the worker to a standstill.
+            Each sim is emitted exactly once, by accepting it only from the involves
+            set of its first endpoint — c1's set always contains it.
+            """
+            for i in range(0, total_funcs, 1000):
+                if i and i % 50000 == 0:
+                    logging.info(f"[*] sim-index: involves scan {i}/{total_funcs}")
+                chunk = clean_ids_list[i : i + 1000]
+                scan_pipe = r.pipeline(transaction=False)
+                for c in chunk:
+                    scan_pipe.smembers(f"{collection}:sim:involves:func:{c}")
+                for c, res in zip(chunk, scan_pipe.execute()):
+                    for sid_raw in res or ():
+                        sid = (
+                            sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                        )
+                        if not sid.startswith(prefix):
+                            continue
+                        id_part = sid[len(prefix) :]
+                        if "::" not in id_part:
+                            continue
+                        c1, c2 = id_part.split("::")
+                        # Skip here when c is the second endpoint: c1's own set emits it.
+                        if c1 == c:
+                            yield sid, c1, c2
+
+        for sid, c1, c2 in iter_candidates():
             # Skip if either function is not clustered
             if c1 not in clustered_clean_ids or c2 not in clustered_clean_ids:
                 continue
@@ -1288,19 +1289,19 @@ class ClusterService:
                 flush_batch()
                 update_pipe = r.pipeline(transaction=False)
                 logging.info(
-                    f"[*] sim-index: propagated {processed}/{total_candidates} "
+                    f"[*] sim-index: propagated {processed}/~{total_sims} "
                     f"({time.time() - start_prop:.1f}s)"
                 )
                 if job_service and job_id:
                     pct = (
-                        int((processed / total_candidates) * 100)
-                        if total_candidates > 0
+                        min(int((processed / total_sims) * 100), 99)
+                        if total_sims > 0
                         else 100
                     )
                     job_service.update_progress(
                         job_id,
                         pct,
-                        f"Scanning similarities: {processed}/{total_candidates} ({indexed} indexed)",
+                        f"Scanning similarities: {processed}/~{total_sims} ({indexed} indexed)",
                     )
 
         flush_batch()

@@ -55,6 +55,55 @@ Naming convention observed: samples prefixed `p` (`pmips`, `pmpsl`, `parm5`,
 `px86_64`, `pm68k`) and the `xnxnxnxnxnxnxnxn<arch>xnxn` set are the packed
 variants; the same campaigns also appear unpacked.
 
+### 2.1 The packed stubs poison the clustering, and they are hard to get rid of
+
+This is worth spelling out, because it is the most persistent practical problem
+in working with this collection.
+
+**Scale of the contamination.** 54 stub files produce **26 of the 50 leaf
+binary clusters** (Appendix A) — more than half the clustering output describes
+UPX headers. They occupy the top of every score-sorted list: cluster 208 is 14
+files at cohesion **1.000**, and it is 14 copies of a 2-function decompression
+stub. A perfect similarity over two functions is not a finding, but it outranks
+every genuine result in the collection.
+
+**Why it happens.** A UPX-packed ELF decompiles to an entry stub and one helper.
+Both are compiler boilerplate, identical across every sample packed with the
+same UPX version — so *every stub pairs with every other stub at 1.0*, giving
+~1 400 perfect-score pairs out of 15 051. The score is arithmetically correct
+and analytically worthless: it measures the packer, not the malware.
+
+**And the filters don't cleanly remove them.** What I actually found trying:
+
+| Attempt | Result |
+|---|---|
+| `bin_cluster/list?min_funcs=50` (and `min_function_count`, `min_functions`) | **Silently ignored** — total stays 100. Unknown params are dropped with no 400 and no warning, so it looks like a filter that did nothing. |
+| `bin_cluster/list?min_count=…` | Works, but filters on *cluster size* (number of files), not on how large those files are. A 14-file stub cluster passes any `min_count`. |
+| `bin_sim/search?min_funcs=50` | Works, but the semantics are `max(funcs_a, funcs_b) >= min_funcs` — it keeps a pair if **either** side is big enough. Sorting the filtered set ascending returns `boatnet.arm7` (**2 functions**) paired with `nuclear.arm7` (396). Stub-vs-stub pairs go, stub-vs-real pairs stay. |
+| `bin_sim/search?exclude_file_tag=analysis:stub-only` (I tagged all 54) | **No effect** — 15 051 pairs before and after. The documented escape hatch fails silently; cause in the API review, §4.15. |
+| `file/search?min_function_count=50` | Works (116 of 174 files) — but there is no way to feed that file set into `bin_cluster/list` or to constrain `bin_sim/search` by it. |
+
+So the only reliable method is what I ended up doing: pull everything, and filter
+client-side on `function_count`. For a 174-file collection that is fine. It does
+not scale, and more importantly it means the **defaults are wrong** — the first
+page of every ranked view in the UI is packer boilerplate, and an analyst has to
+know to distrust it.
+
+**What would fix it, in order of cost:**
+
+1. Accept `min_funcs` / `max_funcs` on `bin_cluster/list` (and make unknown
+   parameters an error, not a silent no-op).
+2. Change `bin_sim/search?min_funcs` to `min(funcs_a, funcs_b)`, or add a
+   separate `min_funcs_both`. Excluding degenerate binaries is the obvious
+   intent; `max()` does not serve it.
+3. Fix the file-tag filter (§4.15 of the API review) so tagging stubs once is a
+   working corpus-wide exclusion.
+4. Best: skip similarity/cluster builds for binaries under N functions
+   altogether, or mark them at ingest. A 2-function file carries no similarity
+   information — computing 1 400 perfect-score pairs from it is wasted storage
+   as well as wasted analyst attention. The packer detection is already there:
+   `UPX_Protector` is in the YARA metadata of 53 of the 54 files.
+
 ## 3. Campaigns inside the collection
 
 Grouping file names by stem (after stripping the arch suffix):
@@ -88,7 +137,7 @@ cluster):
 
 | Cluster | n | Cohesion | Content |
 |---|---|---|---|
-| 208 | 14 | **1.000** | `boatnet.arm / arm5 / arm6 / arm7` + hash-named twins — one build, one day |
+| 208 | 14 | **1.000** | `boatnet.arm / arm5 / arm6 / arm7` + hash-named twins — **but all 14 are 2-function UPX stubs, see §2.1**; the 1.000 measures the packer |
 | 206 | 5 | 0.963 | `pmpsl`, `wife.mpsl`, `boatnet.mips`, `pmips` — packed MIPS set |
 | 207 | 4 | 1.000 | `boatnet.mpsl` ×3 + hash-named |
 | 181 | 4 | 1.000 | `boatnet.ppc` ×4 |

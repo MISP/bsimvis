@@ -386,7 +386,91 @@ indexes BSim features, not literals. A documented "search decompiled text /
 string literals" filter on `function/search` would remove a whole class of
 client-side loops.
 
-### 4.15 Smaller items
+### 4.15 **Bug**: file-tag filters on `bin_sim/search` ignore any tag containing a colon
+
+Reproduced end to end. With 54 files tagged `analysis:stub-only`:
+
+```bash
+curl -s ".../bin_sim/search?collection=mirai7&limit=1&file_tag=analysis:stub-only"          # total 0
+curl -s ".../bin_sim/search?collection=mirai7&limit=1&exclude_file_tag=analysis:stub-only"  # total 15051 (unfiltered)
+```
+
+The tag is definitely there — the same endpoint *returns* it in the enrichment
+fields (`file_user_tags_a: ["packed:upx","analysis:stub-only","campaign:boatnet"]`)
+and `file/search?user_tag=analysis:stub-only` correctly returns 54 files. The
+registry is populated too (`mirai7:reg:file:user_tags` holds 12 buckets).
+
+Isolating it with a colon-free control tag:
+
+| Filter | Total | Verdict |
+|---|---|---|
+| baseline | 15 051 | — |
+| `file_tag=stubtest` | 173 | works |
+| `exclude_file_tag=stubtest` | 14 878 | works (15051 − 173) |
+| `file_tag=analysis:stub-only` | 0 | **broken** |
+| `file_tag=analysis` (prefix) | 0 | **broken** |
+| `file_tag=stub-only` (last segment) | 7 911 | matches, by accident |
+
+Cause is in `_file_tag_union` (`bsimvis/app/routes/search_bin_sim.py:55`). Bucket
+keys look like `mirai7:idx:file:user_tags:analysis:stub-only`, and the guard is:
+
+```python
+if val_l in bs.rsplit(":", 1)[-1].lower():
+```
+
+`rsplit(":", 1)[-1]` keeps only the text after the **last** colon — `"stub-only"`.
+So a namespaced tag can never match itself, only its final segment. The comment
+above the line says it splits this way so a value colliding with the prefix can't
+drag in every bucket; the fix that preserves that intent is to strip the known
+key prefix instead of splitting on the last colon:
+
+```python
+tag = bs[len(f"{collection}:idx:file:{field}:"):]
+if val_l in tag.lower():
+```
+
+Impact is larger than it looks: `namespace:value` is the natural tagging
+convention (and the one this collection now uses — `family:kaiten-std`,
+`c2:143.20.185.245`, `campaign:boatnet`, `packed:upx`). Every one of those is
+currently unusable as a `bin_sim/search` filter, and the failure is silent —
+`file_tag` returns an empty result set that reads as "no such pairs", and
+`exclude_file_tag` returns everything, which reads as "nothing to exclude".
+Both are wrong answers rather than errors.
+
+Worth checking whether `search_function.py` (which reads the same `file_tag` /
+`exclude_file_tag` params at line 85/93) shares the defect — `function/search`
+tag filters behaved correctly in my testing, so the two paths differ.
+
+### 4.16 Unknown query parameters are silently ignored
+
+`bin_cluster/list?min_funcs=50`, `&min_function_count=50`, `&min_functions=50`
+all return the same 100 clusters as the unfiltered call. There is no 400 and no
+warning, so a mistyped or non-existent filter looks like a filter that matched
+everything. Combined with §4.15 this cost me real time: two different ways of
+"filtering out the packed stubs" both appeared to run and both did nothing.
+
+Flask-RESTX can reject unknown args; at minimum the docs should list exactly
+which range filters each cluster endpoint accepts (`bin_cluster/list` has
+`min_count`/`max_count`, `min_cohesion`, `min_stability` — and **no** notion of
+how many functions the member files have).
+
+### 4.17 `min_funcs` on `bin_sim/search` is `max()`, not `min()`
+
+`search_bin_sim.py:470`:
+
+```python
+if f["min_funcs"] is not None and max(funcs_a, funcs_b) < f["min_funcs"]:
+    continue
+```
+
+A pair survives if **either** side is large enough. With `min_funcs=50`, sorting
+ascending returns `boatnet.arm7` (2 functions) paired with `nuclear.arm7` (396).
+The parameter is documented only as "function count", with no indication of which
+side it applies to. For its obvious use — dropping degenerate binaries — `min()`
+is what an analyst expects; as implemented, stub-vs-stub pairs disappear but
+stub-vs-real pairs remain.
+
+### 4.18 Smaller items
 
 * `index/status` returns `num_sim_meta: 500000` — a suspiciously round number
   (cap? truncation?). Undocumented either way.

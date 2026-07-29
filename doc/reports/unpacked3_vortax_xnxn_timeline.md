@@ -40,7 +40,7 @@ triggered. Date of analysis: 2026-07-29.
 Two opposite detection failures sit in that table and both are instructive.
 ClamAV misses Vortax entirely because it is Go and looks like nothing in the
 signature set. ClamAV *catches* every `xnxn` file — and files all 22 under a
-Mirai signature that §3.5 shows is wrong. **`OK` is not clean and a label is not
+Mirai signature that §2.5 shows is wrong. **`OK` is not clean and a label is not
 attribution**; the family report made the first point, this one makes the second.
 
 ---
@@ -110,7 +110,56 @@ and across all eight samples **no method has ever been removed**. A flow diagram
 of a thing that does not branch is a stacked bar with extra ceremony, and the
 absence it would have to show is the one thing sankey cannot draw.
 
-### 1.3 The 2026-04-05 04:15 group is one build run — with an ARM caveat
+### 1.3 The family is 8 files, but not 8 binaries
+
+Worth stating precisely, because "8 samples" overstates it. Same-architecture
+`bin_sim` scores:
+
+| Pair | Score | Shared | Reading |
+|---|---:|---:|---|
+| MIPS:LE:64 03-26 21:00 vs 04-05 01:47 | **1.000** | 4 299 / 4 300 | different MD5, **same build** |
+| MIPS:BE 03-26 00:00 vs 04-05 04:15 | 0.997 | 4 363 | the 5→7 method change, and nothing else |
+| ARM ×3 (all 04-05 04:15) | 0.947–0.985 | 4 374–4 439 | 3 ARM sub-targets, differing only in unnamed `FUN_*` |
+
+So: **8 files, 8 MD5s, 2 code versions, ~5 genuinely distinct binaries** — one
+source tree, one developer, four architectures, six weeks. Note the 0.997: nine
+unique clusters separate the family's oldest build from its newest. Nine
+clusters is Vortax's entire visible history.
+
+### 1.4 There is no clean Vortax binary cluster — and the near miss is instructive
+
+No binary cluster contains exactly the 8. The candidates:
+
+| Cluster | Members | Composition |
+|---|---:|---|
+| 258 | 253 | dendrogram root |
+| **262** (`3f8bcdd7cd29`) | 8 | **7 Vortax + `mipsle`** — the x86-64 sample is *not* in it |
+| 265 | 4 | the 4 MIPS Vortax files, nothing else |
+| 266 / 267 / 268 | 2 | ARM pair, MIPS64 pair, MIPS:BE pair |
+
+Cluster 262 is the tempting one, and it is a trap of exactly the kind §2.5
+takes apart. `mipsle` (`7315d6b3…`, MIPS:LE:64, 1 108 functions, 5.4 MB,
+2026-05-09) is one of the family report's two unattributed large outliers. Apply
+the same test used on `xnxn`:
+
+| | Functions |
+|---|---:|
+| Vortax MIPS64 functions in a cluster shared with `mipsle` | 260 |
+| …that are `vortax_server/*` or `main.*` | **0** |
+
+The 260 are `runtime` (122), `internal` (30), `crypto` (24), `math` (17), `net`
+(12), `time`, `sync`, `reflect`. **`mipsle` is a stripped Go binary that is not
+Vortax**, and cluster 262 at cohesion 0.22 is a *Go runtime* cut, the direct
+analogue of the static-libc cuts everywhere else in this corpus. This also
+explains the outlier: the family report attributed `mipsle`'s isolation to an
+unshared libc; it has no libc, it has a Go runtime, and the only other Go in the
+collection is Vortax.
+
+The cluster is therefore named **`vortax x7 + mipsle (Go runtime cut)`**, not
+`vortax`. A cluster is not a family, and naming this one after its majority
+would file a fourth, unidentified Go bot as Vortax on proximity alone.
+
+### 1.5 The 2026-04-05 04:15 group is one build run — with an ARM caveat
 
 Five files share `first_seen` to the minute. Pairwise symbol Jaccard:
 
@@ -135,7 +184,7 @@ worth. The MIPS builds link them too. So all eight samples come from one
 reasonably recent Go toolchain, and the family's whole visible history is
 6 weeks of one developer's build machine.
 
-### 1.4 The C2 protocol, fully recovered
+### 1.6 The C2 protocol, fully recovered
 
 > **Pivot** — `function/code?id=<collection>:func:<md5>:<addr>` on `main.main`
 > of the x86-64 sample (`c57c374c…:0059d960`, 2 351 instructions). One call.
@@ -192,7 +241,7 @@ Method-level details, from the same decompiles:
 `net.Dial("tcp", …)` with no TLS wrapper — the crypto tree arrives via
 `net/http` and is dead weight.
 
-### 1.5 The limitation, restated with what it actually costs
+### 1.7 The limitation, restated with what it actually costs
 
 Only the x86-64 sample yields string literals; on ARM, MIPS and MIPS64 Ghidra
 recovers names and source paths but no constants. I decompiled `main.main` on
@@ -548,10 +597,14 @@ seriously.
   need a byte-level read the decompiler will not give — this is the one question
   in this report the API cannot answer.
 - Confirm Vortax's C2 on a non-x86 sample. Needs Ghidra-side Go string recovery
-  for ARM/MIPS; until then 7 of 8 samples are inference (§1.5).
+  for ARM/MIPS; until then 7 of 8 samples are inference (§1.7).
 - Both DDNS names are live-resolvable infrastructure with no detection coverage
   on the payload — worth resolving and pivoting outside this corpus, as with
   `5.175.221.69`.
-- `bin.x86_64` (2 284 functions, 2026-02-20, labelled Mirai) sits in the same
-  toolchain cluster set as `p*` and `xnxn` but belongs to neither family by
-  symbol or protocol evidence. It is the next unattributed file worth an hour.
+- Two files now have a *reason* for being unattributed rather than just a lack
+  of matches, and both are worth an hour: `bin.x86_64` (2 284 functions,
+  2026-02-20, labelled Mirai) sits in the `p*`/`xnxn` toolchain cluster set but
+  belongs to neither family by symbol or protocol evidence; `mipsle`
+  (`7315d6b3…`, 2026-05-09) is a stripped Go bot that is not Vortax (§1.4) and
+  is the newest thing in the collection after Kaiten's `chernobyl.mips`. A
+  stripped Go binary needs a Go-aware pass, not more clustering.

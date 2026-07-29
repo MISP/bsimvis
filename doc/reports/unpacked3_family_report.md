@@ -295,8 +295,17 @@ give it a family, and the verdict here stands unchanged.
 
 The remaining 12 files are one-per-architecture stragglers plus two large outliers:
 `mipsle` (MIPS64, 1 108 functions, 2026-05-09) and `baf3d3df…` (AARCH64, 932
-functions). Both are statically linked with a libc the rest of the corpus does
+functions), both statically linked against a runtime the rest of the corpus does
 not share, which suppresses every similarity signal available.
+
+For `mipsle` that runtime is now identified, and it is not a libc: **it is Go**.
+It shares 260 functions with the Vortax MIPS64 build — `runtime` (122),
+`internal`, `crypto`, `net`, `time`, `sync` — and **none** of Vortax's 29
+`vortax_server`/`main.*` symbols. It is a stripped 5.4 MB Go binary with no
+recoverable strings, `OK` on ClamAV, no YARA hit. Not Vortax, not attributable
+here; the binary-cluster cut that groups it with Vortax (cluster 262, cohesion
+0.22) is a **Go runtime cut**, which is why it is named
+`vortax x7 + mipsle (Go runtime cut)` and not `vortax`.
 
 ### 6.1 The libc trap, reproduced exactly
 

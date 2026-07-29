@@ -186,7 +186,7 @@ def write_metadata_csv(rows, path):
             writer.writerow([md5, original, "object"])
 
 
-def upload_group(group_dir, key, args, metadata_csv):
+def upload_group(group_dir, key, args, metadata_csv, targets):
     library, version, variant = key
     tags = [
         "stdlib",
@@ -194,9 +194,15 @@ def upload_group(group_dir, key, args, metadata_csv):
         f"ver:{version}",
         f"variant:{variant}",
     ]
+    # There is no `bsimvis-upload` binary -- uploading is a subcommand of the
+    # single `bsimvis` entrypoint (pyproject [project.scripts]).
+    # Targets must be individual files: bsimvis rejects a bare directory
+    # ("Target path is not a file") -- its "directory/*" help means a
+    # shell-expanded glob.
     cmd = [
-        "bsimvis-upload",
-        str(group_dir),
+        args.bsimvis_bin,
+        "upload",
+        *[str(t) for t in targets],
         "-c",
         args.collection,
         # A reference collection is only compared across collections, so
@@ -207,21 +213,43 @@ def upload_group(group_dir, key, args, metadata_csv):
         "-n",
         str(args.threads),
     ]
+    # bsimvis resolves bsimvis_config.toml relative to the working directory,
+    # which is not where this script necessarily runs from.
+    if args.bsimvis_config:
+        cmd += ["-C", args.bsimvis_config]
     for host in args.hosts:
         cmd += ["-H", host]
     for tag in tags:
         cmd += ["-t", tag]
 
     if not args.upload:
-        print("  " + " ".join(f"'{c}'" if " " in c else c for c in cmd))
-        return True
+        # Show the target directory rather than every file, or the line is
+        # thousands of paths long.
+        shown = cmd[:2] + [f"{group_dir}/*"] + cmd[2 + len(targets) :]
+        print("  " + " ".join(f"'{c}'" if " " in c else c for c in shown))
+        return len(targets)
 
-    logging.info("[*] uploading %s", group_dir.name)
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        logging.error("[!] upload failed for %s (rc=%d)", group_dir.name, result.returncode)
-        return False
-    return True
+    logging.info("[*] uploading %s (%d files)", group_dir.name, len(targets))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+
+    # bsimvis upload exits 0 even when every file failed, so the exit code
+    # cannot be trusted -- read the success count it prints instead.
+    match = re.search(r"Success rate\s*:\s*[\d.]+%\s*\((\d+)/(\d+)\)", result.stdout)
+    if not match:
+        logging.error(
+            "[!] %s: could not read a success rate from bsimvis (rc=%d)",
+            group_dir.name,
+            result.returncode,
+        )
+        return 0
+    uploaded, attempted = int(match.group(1)), int(match.group(2))
+    if uploaded < attempted:
+        logging.error(
+            "[!] %s: only %d/%d files uploaded", group_dir.name, uploaded, attempted
+        )
+    return uploaded
 
 
 def main():
@@ -232,6 +260,21 @@ def main():
     parser.add_argument("-c", "--collection", default="stdlib-ref")
     parser.add_argument("-H", "--host", dest="hosts", action="append", default=[])
     parser.add_argument("-n", "--threads", type=int, default=4)
+    parser.add_argument(
+        "--bsimvis-bin",
+        default="bsimvis",
+        help="path to the bsimvis entrypoint (e.g. .venv/bin/bsimvis)",
+    )
+    parser.add_argument(
+        "--bsimvis-config",
+        default="",
+        help="path to bsimvis_config.toml (bsimvis otherwise looks in the cwd)",
+    )
+    parser.add_argument(
+        "--only",
+        default="",
+        help="only bridge groups whose library/version/variant contains this substring",
+    )
     parser.add_argument("--limit", type=int, default=0, help="only process N groups")
     parser.add_argument(
         "--upload",
@@ -253,10 +296,13 @@ def main():
 
     repo = load_repo(args.repo, args.sighthouse_src)
     groups = collect_groups(repo, args.limit)
+    if args.only:
+        groups = {k: v for k, v in groups.items() if args.only in "__".join(k)}
     print(f"[i] {len(groups)} groups to bridge")
 
     failures = 0
     total_files = 0
+    uploaded_files = 0
     for key in sorted(groups):
         group_dir, extracted = extract_group(repo, key, groups[key], out_root)
         if not extracted:
@@ -275,11 +321,15 @@ def main():
             ],
             metadata_csv,
         )
-        if not upload_group(group_dir, key, args, metadata_csv):
+        targets = [path for path, _ in extracted]
+        ok = upload_group(group_dir, key, args, metadata_csv, targets)
+        uploaded_files += ok
+        if ok < len(targets):
             failures += 1
 
-    verb = "uploaded" if args.upload else "prepared"
-    print(f"[i] {verb} {total_files} files across {len(groups)} groups into {out_root}")
+    print(f"[i] extracted {total_files} files across {len(groups)} groups into {out_root}")
+    if args.upload:
+        print(f"[i] uploaded {uploaded_files} of {total_files} files")
     if failures:
         print(f"[!] {failures} group(s) failed")
         return 1

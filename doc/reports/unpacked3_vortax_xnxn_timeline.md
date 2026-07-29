@@ -103,19 +103,12 @@ change later, that is *still* the only difference. This is a developer adding
 two functions to `Methods/` and re-running the build script, and the symbol
 table says so without a single decompilation.
 
-```mermaid
-sankey-beta
-
-TCP UDP PPS Discord Priv7 (2026-03-26 00:00),kept by all 6 later builds,5
-DNS GREIP (added 2026-03-26 21:00),kept by all 6 later builds,2
-```
-
-Nothing flows out of either box into a "dropped" one: across all eight samples,
-**no Vortax method has ever been removed.** Compare the Kaiten timeline, where
-the two newest builds discard 19–21 of the 22 functions the previous generation
-added — Vortax is six weeks old and has not yet had anything to regret.
-
-![Vortax build lineage](img/unpacked3_vortax_subset.png)
+No diagram here, deliberately. The Kaiten timeline earns its sankey because 59
+functions *split* four ways out of one peak — kept by both branches, kept by
+one, kept by the other, dropped by both. Vortax has no split: 5 methods, then 7,
+and across all eight samples **no method has ever been removed**. A flow diagram
+of a thing that does not branch is a stacked bar with extra ceremony, and the
+absence it would have to show is the one thing sankey cannot draw.
 
 ### 1.3 The 2026-04-05 04:15 group is one build run — with an ARM caveat
 
@@ -468,22 +461,42 @@ is a signature hit on shared runtime code, and it is wrong.
 
 ## 3. Timeline
 
+Plotted on a real date axis, because the spacing *is* the finding — a
+category-per-column timeline hides it.
+
 ```mermaid
-timeline
-    title Vortax and xnxn build history
-    2026-02-14 : xnxn 11 arches : C2 feather-daddy.duckdns.org
-    2026-03-25 : xnxn 11 arches rebuilt : C2 itzmeyourbro.duckdns.org : one function changed
-    2026-03-26 : Vortax MIPS BE 5 methods : then MIPS64 7 methods 21h later
-    2026-04-05 : Vortax 6 builds 4 arches : same 7 methods
+gantt
+    title Build history to scale (first_seen, 2026)
+    dateFormat YYYY-MM-DD-HH-mm
+    axisFormat %b %d
+    todayMarker off
+    section xnxn
+    11 arches, C2 feather-daddy :milestone, 2026-02-14-08-50, 0d
+    11 arches rebuilt, C2 itzmeyourbro, 1 function changed :milestone, 2026-03-25-13-16, 0d
+    section Vortax
+    MIPS BE, 5 methods :milestone, 2026-03-26-00-00, 0d
+    MIPS64, 7 methods (+DNS +GREIP) :milestone, 2026-03-26-21-00, 0d
+    MIPS64 rebuild :milestone, 2026-04-05-01-47, 0d
+    5 arches at once, same 7 methods :milestone, 2026-04-05-04-15, 0d
+    section for scale
+    newest file in the whole collection (Kaiten chernobyl.mips) :milestone, 2026-05-31-00-00, 0d
 ```
 
-![xnxn and Vortax timeline](img/unpacked3_vortax_xnxn_timeline.png)
+![xnxn and Vortax build history](img/unpacked3_vortax_xnxn_timeline.png)
 
-Read the two rows against each other. The `xnxn` operator ships 11
-architectures at once, twice, six weeks apart, and changes exactly one string.
-The Vortax operator ships 1–5 architectures at a time, three times in eleven
-days, and changes code. Same corpus, same window, two completely different
-release disciplines — and the `xnxn` one is the mature operation.
+Two release disciplines, and the axis shows them without a word of commentary.
+`xnxn` fires **two** shots 39 days apart, 11 architectures each, and between
+them changes one string in one function. Vortax fires **four** times inside
+11 days, 1–5 architectures at a time, and changes code twice in the first 21
+hours. One is a maintained product on a release cycle; the other is a developer
+iterating in public.
+
+The empty stretch matters too: nothing from either family lands after
+2026-04-05, while the collection keeps growing until 2026-05-31. Both families
+either went quiet, moved to infrastructure this corpus does not sample, or —
+for `xnxn`, whose C2 rotation left no code trace — rebuilt again in a way
+nothing here would detect. §2.3 is the reason to take that third option
+seriously.
 
 ---
 

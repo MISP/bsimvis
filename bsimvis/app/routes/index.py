@@ -13,6 +13,14 @@ def get_index_status():
     return stats
 
 
+def get_languages():
+    """Returns the Ghidra language IDs and their valid compiler specs."""
+    from bsimvis.app.services.ghidra_lang_service import get_languages as languages
+
+    result = languages()
+    return {"total": len(result), "languages": result}
+
+
 def get_config():
     """Returns the default configuration values."""
     from bsimvis.app.services.config_service import config_service

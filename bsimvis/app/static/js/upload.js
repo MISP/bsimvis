@@ -55,6 +55,21 @@ function renderUploadView(params) {
                             </div>
                         </div>
 
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                            <div class="form-group">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Processor</label>
+                                <select id="upload-processor" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                    <option value="">Auto-detect</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Compiler Spec</label>
+                                <select id="upload-cspec" disabled style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                    <option value="">Default</option>
+                                </select>
+                            </div>
+                        </div>
+
                         <div class="form-group" style="margin-bottom: 20px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
                             <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
@@ -113,6 +128,49 @@ function renderUploadView(params) {
     setupUploadEvents();
     updateFileList();
     populateUploadCollectionDropdown(collection);
+    populateUploadLanguageDropdowns();
+}
+
+// Compiler specs are valid per-language, so the cspec list is rebuilt from the
+// selected processor rather than being a flat list of every spec Ghidra has.
+async function populateUploadLanguageDropdowns() {
+    const procSelect = document.getElementById('upload-processor');
+    const cspecSelect = document.getElementById('upload-cspec');
+    if (!procSelect || !cspecSelect) return;
+
+    let languages = [];
+    try {
+        const res = await fetch('/api/index/languages');
+        if (res.ok) languages = (await res.json()).languages || [];
+    } catch (e) {
+        console.warn('Failed to load Ghidra languages', e);
+    }
+
+    if (!languages.length) {
+        procSelect.disabled = true;
+        procSelect.title = 'Ghidra install not reachable from the API';
+        return;
+    }
+
+    for (const lang of languages) {
+        const opt = document.createElement('option');
+        opt.value = lang.id;
+        opt.innerText = lang.description ? `${lang.id} — ${lang.description}` : lang.id;
+        procSelect.appendChild(opt);
+    }
+
+    procSelect.onchange = () => {
+        const lang = languages.find(l => l.id === procSelect.value);
+        cspecSelect.innerHTML = '<option value="">Default</option>';
+        cspecSelect.disabled = !lang;
+        if (!lang) return;
+        for (const c of lang.compilers) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.innerText = c.name === c.id ? c.id : `${c.id} (${c.name})`;
+            cspecSelect.appendChild(opt);
+        }
+    };
 }
 
 function setupUploadEvents() {
@@ -237,6 +295,8 @@ async function startBatchUpload() {
     const batchName = document.getElementById('upload-batch-name').value || 'Manual Upload';
     const profile = document.getElementById('upload-profile').value;
     const minFuncLen = document.getElementById('upload-min-func-len').value;
+    const processor = document.getElementById('upload-processor').value;
+    const cspec = document.getElementById('upload-cspec').value;
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     
@@ -283,6 +343,8 @@ async function startBatchUpload() {
             url.searchParams.set('batch_name', batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
+            if (processor) url.searchParams.set('processor', processor);
+            if (processor && cspec) url.searchParams.set('cspec', cspec);
             tags.forEach(t => url.searchParams.append('tags', t));
             relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
 

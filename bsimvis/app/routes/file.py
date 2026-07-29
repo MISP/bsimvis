@@ -390,6 +390,16 @@ def upload_raw_binary():
 
         logging.info(f"[*] Received {len(raw_bytes)} bytes for raw upload")
 
+        # Reject a bad language/cspec pair here: otherwise it only fails deep
+        # inside the Ghidra import, after the job has been queued.
+        from bsimvis.app.services.ghidra_lang_service import validate as validate_lang
+
+        lang_error = validate_lang(
+            request.args.get("processor"), request.args.get("cspec")
+        )
+        if lang_error:
+            return {"error": lang_error}, 400
+
         # Get metadata from headers or query params
         collection = request.args.get("collection", "main")
         file_name = request.args.get("file_name", "unknown")

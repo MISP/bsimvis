@@ -341,6 +341,15 @@ class IndexStatus(Resource):
         return get_index_status()
 
 
+@ns_index.route("/languages")
+class IndexLanguages(Resource):
+    def get(self):
+        """Lists Ghidra language IDs and the compiler specs valid for each."""
+        from bsimvis.app.routes.index import get_languages
+
+        return get_languages()
+
+
 @ns_index.route("/config")
 class IndexConfig(Resource):
     def get(self):

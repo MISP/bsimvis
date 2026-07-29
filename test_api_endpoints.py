@@ -439,6 +439,78 @@ def resolve_ids():
 
 
 # ---------------------------------------------------------------------------
+# Ghidra language / compiler-spec listing and upload validation
+# ---------------------------------------------------------------------------
+def test_ghidra_languages():
+    """Checks /api/index/languages and the processor/cspec validation on upload."""
+    body = test_endpoint("GET", "/api/index/languages")
+    langs = (body or {}).get("languages") or []
+
+    if not check(
+        "languages endpoint returns entries",
+        langs,
+        "empty list -- is GHIDRA_INSTALL_DIR set for the API process?",
+    ):
+        return
+
+    check(
+        "languages carry id + per-language compilers",
+        all(l.get("id") and isinstance(l.get("compilers"), list) for l in langs),
+    )
+    check(
+        "x86:LE:64:default is listed",
+        any(l["id"] == "x86:LE:64:default" for l in langs),
+    )
+
+    x86 = next((l for l in langs if l["id"] == "x86:LE:64:default"), None)
+    if x86:
+        check(
+            "x86:LE:64:default offers a gcc compiler spec",
+            any(c["id"] == "gcc" for c in x86["compilers"]),
+            f"got: {[c['id'] for c in x86['compilers']]}",
+        )
+
+    # Upload validation: bad processor, and a cspec valid for another language
+    # but not this one, must both be rejected before the job is queued.
+    bad_proc = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": COLLECTION,
+            "file_name": "lang_validation.bin",
+            "processor": "nonexistent:LE:64:default",
+        },
+        raw_body=b"\x7fELF not-a-real-binary",
+        expected_ok=False,
+        label="POST /api/file/upload?processor=<invalid> (expect 400)",
+    )
+    check(
+        "invalid processor rejected with an error",
+        isinstance(bad_proc, dict) and "error" in bad_proc,
+        str(bad_proc)[:200],
+    )
+
+    bad_cspec = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": COLLECTION,
+            "file_name": "lang_validation.bin",
+            "processor": "x86:LE:64:default",
+            "cspec": "not_a_cspec",
+        },
+        raw_body=b"\x7fELF not-a-real-binary",
+        expected_ok=False,
+        label="POST /api/file/upload?cspec=<invalid> (expect 400)",
+    )
+    check(
+        "invalid cspec for the language rejected",
+        isinstance(bad_cspec, dict) and "error" in bad_cspec,
+        str(bad_cspec)[:200],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Step 4 – Full endpoint sweep
 # ---------------------------------------------------------------------------
 def run_all_tests():
@@ -785,6 +857,7 @@ def run_all_tests():
     # ── Misc (index config / details) ──────────────────────────────────────
     print(_color("\n  [Misc]", BOLD))
     test_endpoint("GET", "/api/index/config")
+    test_ghidra_languages()
     if file_md5:
         test_endpoint(
             "GET",

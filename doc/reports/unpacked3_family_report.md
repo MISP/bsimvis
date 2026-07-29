@@ -11,10 +11,11 @@ Analysis performed entirely through the BSimVis REST API (`localhost:5001/api`),
 collection `mirai_unpacked_and_renamed3`, algo `unweighted_cosine`. Read-only, no
 jobs triggered. Date of analysis: 2026-07-28.
 
-Two companions carry the per-family detail:
+Three companions carry the per-family detail:
 
 - [`unpacked3_kaiten_timeline.md`](unpacked3_kaiten_timeline.md) — Kaiten/STD, now 20 files and **three** generations
 - [`unpacked3_mirai_timeline.md`](unpacked3_mirai_timeline.md) — Mirai proper, now **13** symbolised seeds instead of 4
+- [`unpacked3_vortax_xnxn_timeline.md`](unpacked3_vortax_xnxn_timeline.md) — Vortax and `xnxn`, the two families with no history: Go symbol lineage, and an AES-encrypted config cracked
 
 ---
 
@@ -275,12 +276,24 @@ and 2026-03-25), function counts identical within each arch pair.
 
 Its nearest labelled neighbour by function-cluster Jaccard is `px86_i686`
 (Mirai) at **0.28**, against a background of 0.10 for unrelated files and 0.60+
-for confirmed same-family pairs. Same lineage, different toolchain — but 0.28 is
-below the threshold this report set in advance, and moving the threshold after
-seeing the answer is how §7.4 of the mirai7 report happened. **Left
-unattributed, deliberately.**
+for confirmed same-family pairs. That is below the threshold this report set in
+advance, and moving the threshold after seeing the answer is how §7.4 of the
+mirai7 report happened. **Left unattributed, deliberately.**
 
-The remaining 12 are one-per-architecture stragglers plus two large outliers:
+The follow-up analysis in
+[`unpacked3_vortax_xnxn_timeline.md`](unpacked3_vortax_xnxn_timeline.md) says
+what that 0.28 was: 79 of the campaign's 257 x86-64 functions sit in clusters
+shared with the `p*` Mirai campaign, and **none of them is bot code** — the
+dispatcher, the C2 resolver, the AES routines and every flood worker are
+`xnxn`-only. Shared static C runtime, not shared lineage. The same report
+decrypts the campaign's AES-128-CBC configuration (key
+`fd00e82a0a3d86af73deacaa9df16432`, shipped in `.rodata`) and recovers its
+C2s — `feather-daddy.duckdns.org:54128` in February,
+`itzmeyourbro.duckdns.org:54128` in March, token `fewgjh48iw3hg5uh` throughout.
+Config decryption gives the campaign infrastructure and a protocol; it does not
+give it a family, and the verdict here stands unchanged.
+
+The remaining 12 files are one-per-architecture stragglers plus two large outliers:
 `mipsle` (MIPS64, 1 108 functions, 2026-05-09) and `baf3d3df…` (AARCH64, 932
 functions). Both are statically linked with a libc the rest of the corpus does
 not share, which suppresses every similarity signal available.
@@ -376,13 +389,22 @@ Two campaigns deserve a note:
 6. **The two methodological traps from the first report both reproduced
    exactly** — the libc-dominated binary score (§6.1) and the cross-ISA blind
    spot (§6). Neither is fixed by unpacking. They are the next thing to fix.
+7. **The `xnxn` campaign's config is decryptable and its C2 rotated** —
+   AES-128-CBC with the key in `.rodata`: `feather-daddy.duckdns.org:54128` in
+   February, `itzmeyourbro.duckdns.org:54128` in March, token
+   `fewgjh48iw3hg5uh` in both. The rebuild changed **one function out of 257**,
+   and 10 of the 11 architecture pairs still score a perfect 1.000 in
+   `bin_sim` — a reminder that binary similarity cannot see configuration.
+   It remains unattributed as a family (§6). See the Vortax/`xnxn` timeline.
 
 ### Recommended follow-ups
 
-- Attribute the `xnxn…` campaign properly. It needs one symbolised sample or a
-  cross-ISA-capable comparison; the 0.28 Jaccard says the answer is there.
-- Pivot on `5.175.221.69` outside this corpus — it is a live C2 with no
-  detection coverage.
+- Pivot on `5.175.221.69` and `feather-daddy.duckdns.org` /
+  `itzmeyourbro.duckdns.org` outside this corpus — active C2 hosts with limited
+  or no detection coverage. For `xnxn`, retrohunt the AES key rather than the
+  domains: the key survived the rotation, the domains did not.
+- Attribute the `xnxn` campaign properly. It needs one symbolised sample or a
+  cross-ISA-capable comparison; the toolchain overlap with `p*` is not lineage.
 - Re-run the mirai7 conclusions that rested on packed samples. Any statement
   about the 55 was a statement about UPX.
 - Feature request, restated from mirai7 §2.1 and still valid: skip similarity

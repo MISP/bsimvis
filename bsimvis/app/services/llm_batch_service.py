@@ -191,6 +191,18 @@ class LLMBatchService:
         if vocabulary is None and "tags" in actions:
             vocabulary = tag_service.get_llm_vocabulary(collection)
 
+        if "tags" in actions and not vocabulary:
+            # Silent free-form is how a collection ends up with 60 one-off tags:
+            # say it in the job log so the run is explainable afterwards.
+            msg = (
+                "No tag flagged for the LLM vocabulary in this collection -- "
+                "tagging runs free-form and tag names will drift. Flag tags on "
+                "the Tags page to constrain it."
+            )
+            logging.warning(f"LLM batch on {collection}: {msg}")
+            if job_service and job_id:
+                job_service.add_log(job_id, msg)
+
         if job_service and job_id:
             job_service.add_log(
                 job_id,

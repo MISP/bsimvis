@@ -54,11 +54,18 @@ class LLMService:
                 "If none apply, write 'TAGS: none'."
             )
         else:
+            # Free-form drifts: an open-ended range reads as a quota to fill, and
+            # the model invents near-synonyms (big-int / bigint / biginteger).
+            # Ask for restraint explicitly and give the shape of a good tag.
             tag_rule = (
-                "Then, on a final line starting with 'TAGS:', list 1-5 short "
-                "lowercase keyword tags describing what the function does "
+                "Then, on a final line starting with 'TAGS:', list at most 3 "
+                "short lowercase keyword tags naming what the function does "
                 "(e.g. crypto, network, parser), comma separated. "
-                "If none apply, write 'TAGS: none'."
+                "Fewer is better: tag only what is clearly true of this "
+                "function, omit anything you are guessing at, and write "
+                "'TAGS: none' when nothing applies. Prefer one common word per "
+                "concept -- never a near-synonym or a hyphenated variant of a "
+                "tag that means the same thing."
             )
 
         full_prompt = (

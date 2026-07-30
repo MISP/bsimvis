@@ -2606,20 +2606,37 @@ class SimilarityService:
 
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
+            # Same field names as the collection bin_sim doc, plus the pool-only
+            # endpoints (coll_a/coll_b), so readers need no translation layer.
             doc = {
                 "type": "bin_sim",
                 "pool_id": pool_id,
+                "md5_a": md5_a,
+                "md5_b": md5_b,
+                "coll_a": coll_a,
+                "coll_b": coll_b,
                 "algo": algo,
+                "functions_count_a": len(all_funcs_a_total),
+                "functions_count_b": len(all_funcs_b_total),
                 "score": final_score,
-                "md5_1": md5_a,
-                "md5_2": md5_b,
-                "coll_1": coll_a,
-                "coll_2": coll_b,
-                "sim_weighted_score": sim_score,
-                "collection_weighted_score": col_weighted_score,
-                "unweighted_score": unweighted_score,
-                "matched_count": len(diff_matched),
-                "entry_date": now,
+                "score_sim_weighted": sim_score,
+                "score_collection_weighted": col_weighted_score,
+                "coverage_a": (
+                    len(assigned_a) / len(all_funcs_a_total)
+                    if all_funcs_a_total
+                    else 0.0
+                ),
+                "coverage_b": (
+                    len(assigned_b) / len(all_funcs_b_total)
+                    if all_funcs_b_total
+                    else 0.0
+                ),
+                "shared_clusters": len(diff_matched),
+                "unique_clusters_a": len(unique_to_a),
+                "unique_clusters_b": len(unique_to_b),
+                "unclustered_a": len(unique_to_a),
+                "unclustered_b": len(unique_to_b),
+                "computed_at": now,
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,
@@ -2703,18 +2720,23 @@ class SimilarityService:
                 d = json.loads(raw) if not isinstance(raw, dict) else raw
                 if isinstance(d, str):
                     d = json.loads(d)
-                c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
-                c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
+                c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
+                c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
                 slim = {
-                    "coll_1": c1,
-                    "md5_1": m1,
-                    "coll_2": c2,
-                    "md5_2": m2,
-                    "matched_count": d.get("matched_count", 0),
-                    "unweighted_score": d.get("unweighted_score", d.get("score", 0.0)),
-                    "sim_weighted_score": d.get("sim_weighted_score", 0.0),
-                    "collection_weighted_score": d.get("collection_weighted_score", 0.0),
-                    "entry_date": d.get("entry_date", 0),
+                    k: d.get(k)
+                    for k in (
+                        "coll_a",
+                        "md5_a",
+                        "coll_b",
+                        "md5_b",
+                        "score",
+                        "score_sim_weighted",
+                        "score_collection_weighted",
+                        "coverage_a",
+                        "coverage_b",
+                        "shared_clusters",
+                        "computed_at",
+                    )
                 }
                 docs.append((sid, slim))
                 md5set.add((c1, m1))
@@ -2740,27 +2762,18 @@ class SimilarityService:
 
         pipe = r.pipeline(transaction=False)
         for i, (sid, d) in enumerate(docs):
-            c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
-            c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
-            matched = d.get("matched_count", 0)
-            # Normalize pool doc field names to the collection shape _index_bin_sim_pair expects.
-            norm = {
-                "md5_a": m1,
-                "md5_b": m2,
-                "algo": algo,
-                "architecture_a": meta_map.get((c1, m1), {}).get("language_id", ""),
-                "architecture_b": meta_map.get((c2, m2), {}).get("language_id", ""),
-                "functions_count_a": func_map.get((c1, m1), 0),
-                "functions_count_b": func_map.get((c2, m2), 0),
-                "score": d.get("unweighted_score", d.get("score", 0.0)),
-                "score_sim_weighted": d.get("sim_weighted_score", 0.0),
-                "score_collection_weighted": d.get("collection_weighted_score", 0.0),
-                # pool build doesn't persist coverage; approximate as legacy search did
-                "coverage_a": 1.0 if matched > 0 else 0.0,
-                "coverage_b": 1.0 if matched > 0 else 0.0,
-                "shared_clusters": matched,
-                "computed_at": d.get("entry_date", 0),
-            }
+            c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
+            c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
+            # Pool docs already carry the collection field names; only the
+            # denormalized file metadata has to be filled in here.
+            norm = dict(
+                d,
+                algo=algo,
+                architecture_a=meta_map.get((c1, m1), {}).get("language_id", ""),
+                architecture_b=meta_map.get((c2, m2), {}).get("language_id", ""),
+                functions_count_a=func_map.get((c1, m1), 0),
+                functions_count_b=func_map.get((c2, m2), 0),
+            )
             _index_bin_sim_pair(
                 pipe, prefix, sid, norm, meta_map.get((c1, m1)), meta_map.get((c2, m2))
             )

@@ -286,7 +286,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # collection pairs, build order for pools). Re-orient the doc to the requested
     # order so every "_a"/"_b" — file metadata, unique_to_b, func_b — describes the
     # binary the caller called A/B.
-    stored_a = diff_data.get("md5_1") or diff_data.get("md5_a")
+    stored_a = diff_data.get("md5_a")
     if stored_a and stored_a != req_md5_a:
         _flip_diff_sides(diff_data)
     coll_a, md5_a, coll_b, md5_b = req_coll_a, req_md5_a, req_coll_b, req_md5_b

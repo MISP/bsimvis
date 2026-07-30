@@ -409,13 +409,14 @@ def _pool_page(r, pool_id, algo, f):
         doc = json.loads(raw) if not isinstance(raw, dict) else raw
         if isinstance(doc, str):
             doc = json.loads(doc)
-        matched_cnt = doc.get("matched_count", 0)
         ld["score"] = float(doc.get("score", 0.0))
-        ld["score_sim_weighted"] = float(doc.get("sim_weighted_score") or doc.get("score", 0.0))
-        ld["score_collection_weighted"] = float(doc.get("collection_weighted_score") or doc.get("score", 0.0))
-        ld["coverage_a"] = float(doc.get("coverage_a") or (1.0 if matched_cnt > 0 else 0.0))
-        ld["coverage_b"] = float(doc.get("coverage_b") or (1.0 if matched_cnt > 0 else 0.0))
-        ld["shared_clusters"] = int(doc.get("shared_clusters") or matched_cnt)
+        ld["score_sim_weighted"] = float(doc.get("score_sim_weighted", 0.0))
+        ld["score_collection_weighted"] = float(
+            doc.get("score_collection_weighted", 0.0)
+        )
+        ld["coverage_a"] = float(doc.get("coverage_a", 0.0))
+        ld["coverage_b"] = float(doc.get("coverage_b", 0.0))
+        ld["shared_clusters"] = int(doc.get("shared_clusters", 0))
         ld["doc"] = doc
 
     score_field = (
@@ -603,19 +604,14 @@ def search_bin_sims():
             doc["_id"] = sid
             doc.pop("diff", None)
 
-            m_a = doc.get("md5_a") or doc.get("md5_1") or ld["m_a"]
-            m_b = doc.get("md5_b") or doc.get("md5_2") or ld["m_b"]
+            m_a = doc.get("md5_a") or ld["m_a"]
+            m_b = doc.get("md5_b") or ld["m_b"]
             coll_a = ld["coll_a"]
             coll_b = ld["coll_b"]
             doc["md5_a"] = m_a
             doc["md5_b"] = m_b
             doc["coll_a"] = coll_a
             doc["coll_b"] = coll_b
-            # Pool docs carry matched_count instead of coverage/shared_clusters.
-            matched = doc.get("matched_count", 0)
-            doc["coverage_a"] = doc.get("coverage_a") or ld.get("coverage_a") or (1.0 if matched > 0 else 0.0)
-            doc["coverage_b"] = doc.get("coverage_b") or ld.get("coverage_b") or (1.0 if matched > 0 else 0.0)
-            doc["shared_clusters"] = doc.get("shared_clusters") or ld.get("shared_clusters") or matched
 
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})

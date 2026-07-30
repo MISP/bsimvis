@@ -12,8 +12,6 @@ DEFAULT_LIMIT = 50
 # Mirrors the numeric indexes written by _index_bin_sim_pair.
 SORT_ZSET_MAP = {
     "score": "score",
-    "score_sim_weighted": "score_sim_weighted",
-    "score_collection_weighted": "score_collection_weighted",
     "coverage": "coverage_a",
     "shared_clusters": "shared_clusters",
     "functions_count": "functions_count_a",
@@ -129,14 +127,6 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     sort_zset_field = SORT_ZSET_MAP.get(f["sort_by"], "score")
     reverse = f["sort_order"] != "asc"
 
-    # score filter uses the score variant matching the chosen sort, else col-weighted
-    score_field = (
-        f["sort_by"]
-        if f["sort_by"]
-        in ("score", "score_sim_weighted", "score_collection_weighted")
-        else "score_collection_weighted"
-    )
-
     candidates = None  # None == unconstrained (all sims for this algo)
 
     def restrict(s):
@@ -166,9 +156,9 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Numeric range filters via ZSET indexes (a/b union semantics) ---
     if f["min_score"] is not None:
-        restrict(_znum(r, collection, score_field, f["min_score"], None))
+        restrict(_znum(r, collection, "score", f["min_score"], None))
     if f["max_score"] is not None:
-        restrict(_znum(r, collection, score_field, None, f["max_score"]))
+        restrict(_znum(r, collection, "score", None, f["max_score"]))
     # coverage: min keeps if max(a,b)>=min (union); max keeps if min(a,b)<=max (union)
     if f["min_cov"] is not None:
         restrict(
@@ -388,8 +378,6 @@ def _pool_page(r, pool_id, algo, f):
                 "coll_a": coll_a,
                 "coll_b": coll_b,
                 "score": 0.0,
-                "score_sim_weighted": 0.0,
-                "score_collection_weighted": 0.0,
                 "coverage_a": 0.0,
                 "coverage_b": 0.0,
                 "shared_clusters": 0,
@@ -410,20 +398,11 @@ def _pool_page(r, pool_id, algo, f):
         if isinstance(doc, str):
             doc = json.loads(doc)
         ld["score"] = float(doc.get("score", 0.0))
-        ld["score_sim_weighted"] = float(doc.get("score_sim_weighted", 0.0))
-        ld["score_collection_weighted"] = float(
-            doc.get("score_collection_weighted", 0.0)
-        )
         ld["coverage_a"] = float(doc.get("coverage_a", 0.0))
         ld["coverage_b"] = float(doc.get("coverage_b", 0.0))
         ld["shared_clusters"] = int(doc.get("shared_clusters", 0))
         ld["doc"] = doc
 
-    score_field = (
-        f["sort_by"]
-        if f["sort_by"] in ("score", "score_sim_weighted", "score_collection_weighted")
-        else "score_collection_weighted"
-    )
     filtered = []
     for ld in light_docs:
         coll_a, m_a = ld["coll_a"], ld["m_a"]
@@ -454,9 +433,9 @@ def _pool_page(r, pool_id, algo, f):
             hay = " ".join([name_a, name_b, m_a, m_b] + tags_a + tags_b).lower()
             if not all(w in hay for w in f["q"].split()):
                 continue
-        if f["min_score"] is not None and ld.get(score_field, 0) < f["min_score"]:
+        if f["min_score"] is not None and ld.get("score", 0) < f["min_score"]:
             continue
-        if f["max_score"] is not None and ld.get(score_field, 0) > f["max_score"]:
+        if f["max_score"] is not None and ld.get("score", 0) > f["max_score"]:
             continue
         if f["min_cov"] is not None and max(ld["coverage_a"], ld["coverage_b"]) < f["min_cov"]:
             continue

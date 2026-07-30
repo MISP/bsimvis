@@ -1449,8 +1449,6 @@ SEARCH_SPECS = [
         "pool": True,
         "sorts": {
             "score": "score",
-            "score_sim_weighted": "score_sim_weighted",
-            "score_collection_weighted": "score_collection_weighted",
             "coverage": "coverage_a",
             "shared_clusters": "shared_clusters",
             "functions_count": "functions_count_a",
@@ -1458,8 +1456,8 @@ SEARCH_SPECS = [
             "architecture": "architecture_a",
         },
         "ranges": [
-            ("min_score", "score_collection_weighted", "min"),
-            ("max_score", "score_collection_weighted", "max"),
+            ("min_score", "score", "min"),
+            ("max_score", "score", "max"),
             ("min_shared", "shared_clusters", "min"),
             ("max_shared", "shared_clusters", "max"),
         ],
@@ -2229,8 +2227,6 @@ def test_pool_collection_equivalence():
             # shared field has to agree — not just the score and the diff.
             floats = (
                 "score",
-                "score_sim_weighted",
-                "score_collection_weighted",
                 "coverage_a",
                 "coverage_b",
             )

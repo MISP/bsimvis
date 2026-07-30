@@ -449,8 +449,6 @@ def _sankey_summary(diff_data):
         k: diff_data.get(k)
         for k in (
             "score",
-            "score_sim_weighted",
-            "score_collection_weighted",
             "file_metadata_a",
             "file_metadata_b",
         )

@@ -2520,14 +2520,8 @@ class SimilarityService:
             assigned_b = set()
             diff_matched = []
 
-            sum_weighted_cohesion_sim = 0.0
-            sum_weights_sim = 0.0
-
-            sum_weighted_cohesion_col = 0.0
-            sum_weights_col = 0.0
-
-            sum_weighted_cohesion_unweighted = 0.0
-            sum_weights_unweighted = 0.0
+            sum_weighted_cohesion = 0.0
+            sum_weights = 0.0
 
             for fid_a, fid_b, score in edges:
                 if fid_a not in assigned_a and fid_b not in assigned_b:
@@ -2556,14 +2550,8 @@ class SimilarityService:
                         }
                     )
 
-                    sum_weighted_cohesion_sim += score * f_features
-                    sum_weights_sim += f_features
-
-                    sum_weighted_cohesion_col += score * f_features
-                    sum_weights_col += f_features
-
-                    sum_weighted_cohesion_unweighted += score * f_features
-                    sum_weights_unweighted += f_features
+                    sum_weighted_cohesion += score * f_features
+                    sum_weights += f_features
 
             # Unique/Unmatched functions logic
             all_funcs_a_total = binary_fids[b1]
@@ -2573,36 +2561,16 @@ class SimilarityService:
             unassigned_b = all_funcs_b_total - assigned_b
 
             unique_to_a = [unique_entry[(coll_a, fid)] for fid in sorted(unassigned_a)]
-            uw_a = sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
-            sum_weights_sim += uw_a
-            sum_weights_col += uw_a
-            sum_weights_unweighted += uw_a
+            sum_weights += sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
 
             unique_to_b = [unique_entry[(coll_b, fid)] for fid in sorted(unassigned_b)]
-            uw_b = sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
-            sum_weights_sim += uw_b
-            sum_weights_col += uw_b
-            sum_weights_unweighted += uw_b
+            sum_weights += sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
 
-            sim_score = (
-                (sum_weighted_cohesion_sim / sum_weights_sim)
-                if sum_weights_sim > 0
-                else 0.0
+            # `algo` is a provenance tag, not a choice of file score: the score is
+            # always the feature-weighted cohesion mean, as at collection level.
+            final_score = (
+                (sum_weighted_cohesion / sum_weights) if sum_weights > 0 else 0.0
             )
-            col_weighted_score = (
-                (sum_weighted_cohesion_col / sum_weights_col)
-                if sum_weights_col > 0
-                else 0.0
-            )
-            unweighted_score = (
-                (sum_weighted_cohesion_unweighted / sum_weights_unweighted)
-                if sum_weights_unweighted > 0
-                else 0.0
-            )
-
-            # `algo` is a provenance tag, not a choice of file score. Always sort on
-            # the unweighted cohesion mean, matching the collection-level score.
-            final_score = unweighted_score
 
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
@@ -2619,8 +2587,6 @@ class SimilarityService:
                 "functions_count_a": len(all_funcs_a_total),
                 "functions_count_b": len(all_funcs_b_total),
                 "score": final_score,
-                "score_sim_weighted": sim_score,
-                "score_collection_weighted": col_weighted_score,
                 "coverage_a": (
                     len(assigned_a) / len(all_funcs_a_total)
                     if all_funcs_a_total
@@ -2730,8 +2696,6 @@ class SimilarityService:
                         "coll_b",
                         "md5_b",
                         "score",
-                        "score_sim_weighted",
-                        "score_collection_weighted",
                         "coverage_a",
                         "coverage_b",
                         "shared_clusters",

@@ -127,7 +127,7 @@ class ChordGraph {
             const i = md5ToIndex.get(d.md5_a);
             const j = md5ToIndex.get(d.md5_b);
             // We use score as the weight
-            const score = d.score_collection_weighted || d.score || 0;
+            const score = d.score || 0;
             matrix[i][j] = score;
             matrix[j][i] = score; // Symmetrical
         });

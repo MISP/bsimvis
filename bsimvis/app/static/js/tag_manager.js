@@ -36,7 +36,9 @@ async function tagPost(path, body) {
 window.renderTagVocabulary = function (items) {
     return items.map(t => {
         const tag = escapeHtml(t.tag);
-        const js = jsString(t.tag);
+        // jsString() already returns a quoted JS literal -- it goes into the
+        // handler bare, then the whole handler is attribute-escaped.
+        const js = escapeAttr(jsString(t.tag));
         const color = safeCssColor(t.color);
         return `
         <tr data-id="${tag}">
@@ -46,23 +48,23 @@ window.renderTagVocabulary = function (items) {
             <td>
                 <input type="color" value="${color}" title="Tag color"
                     style="width:34px; height:22px; background:none; border:none; cursor:pointer;"
-                    onchange="setTagColorValue('${js}', this.value)">
+                    onchange="setTagColorValue(${js}, this.value)">
             </td>
             <td>
                 <input type="number" value="${t.priority || 0}" title="Priority"
                     style="width:60px; background:var(--card-bg); color:var(--fg); border:1px solid var(--border); border-radius:4px; padding:2px 4px;"
-                    onchange="setTagPriorityValue('${js}', this.value)">
+                    onchange="setTagPriorityValue(${js}, this.value)">
             </td>
             <td>
                 <input type="checkbox" ${t.llm ? 'checked' : ''} title="Include this tag in the LLM tagging vocabulary"
-                    onchange="setTagLLMFlag('${js}', this.checked)">
+                    onchange="setTagLLMFlag(${js}, this.checked)">
             </td>
             <td class="mono">${t.function_count}</td>
             <td class="mono">${t.file_count}</td>
             <td class="mono">${t.similarity_count}</td>
             <td>
                 <button class="btn-action" style="background:none; border:none; padding:0; color:#ff6b6b; cursor:pointer;"
-                    onclick="deleteTagWithConfirm('${js}', ${t.total_count})">Delete</button>
+                    onclick="deleteTagWithConfirm(${js}, ${t.total_count})">Delete</button>
             </td>
         </tr>`;
     }).join('');

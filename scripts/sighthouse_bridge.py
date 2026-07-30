@@ -19,16 +19,53 @@ The upload always passes --skip-sim: a reference collection is only ever
 compared *against* other collections (via a pool with only_cross_collection),
 so intra-collection similarities are wasted work.
 
-Usage:
-    # extract only, show what would be uploaded
-    python scripts/sighthouse_bridge.py --out /tmp/refcorpus
+Prerequisites
+-------------
+Sighthouse's rustfs must be running, because the artifacts are only readable
+through its S3 API (on disk they are MinIO-style erasure chunks):
 
-    # extract and upload to a running BSimVis
+    cd ~/github/sighthouse/docker/testing-pipeline
+    docker compose -f docker-compose.yml -f docker-compose.hostaccess.yml \\
+        -f docker-compose.autotools.yml up -d rustfs
+
+rustfs does *not* publish port 9000 to the host, so --repo needs its container
+address rather than localhost:
+
+    docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' \\
+        testing-pipeline-rustfs-1
+
+This script also needs boto3 and requests, plus Sighthouse's
+`sighthouse.core.utils.repo` on sys.path (--sighthouse-src points at its
+checkout). BSimVis itself does not depend on either, so a throwaway venv is
+the usual way to run this.
+
+Usage
+-----
+Extract only, printing the upload commands it would run:
+
     python scripts/sighthouse_bridge.py --out /tmp/refcorpus \\
-        --upload -H 127.0.0.1:5000 -c stdlib-ref
+        --repo s3://admin:password@<rustfs-ip>:9000/uploads
 
-Requires boto3 and Sighthouse's `sighthouse.core.utils.repo` on sys.path
-(--sighthouse-src points at its checkout).
+Extract and upload for real. --bsimvis-bin and --bsimvis-config are both
+needed in practice: there is no `bsimvis-upload` binary (upload is a
+subcommand), and bsimvis looks for bsimvis_config.toml in the working
+directory, which a worktree does not have. This is the exact form verified
+end-to-end:
+
+    python scripts/sighthouse_bridge.py --out /tmp/refcorpus \\
+        --repo s3://admin:password@<rustfs-ip>:9000/uploads \\
+        --only zlib__v1.2.13__x86_64-O1 \\
+        --upload -H localhost:5001 -c stdlib-ref \\
+        --bsimvis-bin /path/to/bsimvis2/.venv/bin/bsimvis \\
+        --bsimvis-config /path/to/bsimvis2/bsimvis_config.toml
+
+Drop --only to bridge all groups. Each file lands in the target collection
+(default: stdlib-ref) tagged `stdlib`, `lib:<name>`, `ver:<version>` and
+`variant:<arch-opt>`.
+
+Known limitation: the noise filter is path-based, so demo programs that sit at
+a build tree's top level rather than under test/ are still included -- zlib's
+example.o and minigzip.o get tagged `stdlib` alongside the real library code.
 """
 
 import argparse
@@ -45,7 +82,9 @@ import tarfile
 from collections import defaultdict
 from pathlib import Path
 
-DEFAULT_REPO = "s3://admin:password@127.0.0.1:9000/uploads"
+# No default repo URI: rustfs does not publish 9000 to the host, so the address
+# is whatever the container currently has. A wrong default just fails obscurely.
+DEFAULT_REPO = ""
 DEFAULT_SIGHTHOUSE_SRC = "/home/thomas/github/sighthouse/sighthouse-core/src"
 ANALYZER_DIR = "success/Ghidra Analyzer"
 
@@ -254,7 +293,12 @@ def upload_group(group_dir, key, args, metadata_csv, targets):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--repo", default=DEFAULT_REPO, help="Sighthouse S3 repo URI")
+    parser.add_argument(
+        "--repo",
+        default=DEFAULT_REPO,
+        required=not DEFAULT_REPO,
+        help="Sighthouse S3 repo URI, e.g. s3://admin:password@<rustfs-ip>:9000/uploads",
+    )
     parser.add_argument("--sighthouse-src", default=DEFAULT_SIGHTHOUSE_SRC)
     parser.add_argument("--out", required=True, help="directory to extract into")
     parser.add_argument("-c", "--collection", default="stdlib-ref")

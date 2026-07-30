@@ -21,7 +21,10 @@ confounder #1.
    never creates (kuna right, and BsimVis loses 8 of the corpus's own test
    functions per win_x32 binary), ~13% mid-body addresses (kuna wrong).
 5. **No Ghidra analyzer recovers the genuine misses** — but a 20-line
-   create-functions-from-code-symbols pass does, exactly and only where it should.
+   create-functions-from-code-symbols pass does, exactly and only where it should,
+   on symbol-bearing binaries. A stripped control shows kuna finds the same
+   functions with no symbols at all: it sweeps the code section, Ghidra follows
+   references.
 6. The win_x64 kuna panic is an un-ported opcode in a kuna shim table
    (`CPUI_INT_SRIGHT`), fixable in one line, with the correct line already present
    three times elsewhere in the same repo.
@@ -146,8 +149,33 @@ so nothing references them. The COFF symbol becomes a *label*, not a function. T
 code is disassembled correctly and sits between two `RET`s at a real boundary
 (`bubble_sort` ends at exactly `0x401788`) — Ghidra just never promotes it.
 
-kuna finds them because its target list is symbol-driven. That is also why it
-"finds" 53 IAT slots: every `__imp_*` symbol becomes a decompile target.
+kuna finds them by **sweeping executable bytes**, not by reading symbols — see the
+stripped-binary control below. Its extra coverage is genuine code discovery.
+
+### Control: the same binary, stripped
+
+`strip`ped `v01_win_x32.exe` (245737 → 47118 bytes, COFF symbol table gone,
+import table necessarily retained):
+
+| | unstripped | stripped |
+|---|---|---|
+| ghidra `nostub` | 126 | 106 |
+| kuna unique | 212 | 201 |
+| all 8 uncalled test functions found by kuna | yes | **yes** |
+| same 8 found by ghidra | no | no |
+| kuna addresses in `.idata` | 53 | 53 |
+
+kuna finds `linear_search`, `matrix_add`, `is_palindrome`, `calculate_std_dev`,
+`dot_product`, `manual_pow`, `selection_sort` and `matrix_transpose` at the same
+addresses with **zero symbols present**. Only `_WinMainCRTStartup` @ `0x4013d0`
+drops out when stripped — it is the one entry that was reachable from a symbol
+alone (Ghidra had left it as undefined bytes).
+
+So the mechanism is not symbol lookup on either side: Ghidra is
+**reference-driven** and skips code nothing calls; kuna **sweeps the code section**
+and picks up unreferenced function bodies. The 53 `.idata` false positives are
+likewise not symbol-driven — kuna treats import-table pointer slots as entry
+points whether or not `__imp_*` names exist.
 
 ### No analyzer fixes this
 
@@ -186,6 +214,12 @@ the pass as written.
 Suggested placement: `GhidraService.run_profile_analysis`, after
 `mgr.waitForAnalysis`, guarded so it only creates functions at non-`LAB_`,
 non-section-named code labels. Not implemented here.
+
+**Limit of this fix:** it keys on symbols, so it only closes the gap on binaries
+that still carry them. On the stripped control it would recover nothing, while
+kuna still finds all 8 (see above). Matching kuna on stripped input needs a
+gap-sweep — promote runs of disassembled-but-unclaimed code between function
+bodies — which is a bigger change and not evaluated here.
 
 ## 4. The win_x64 kuna panic
 
@@ -231,9 +265,11 @@ Side finding while confirming: `p3_dataflow/ruleaction_7.rs:78` has
   miss confined to win_x32.
 - The one actionable BsimVis improvement is the create-functions-from-code-symbols
   pass: +24 real functions per win_x32 binary, including eight of the corpus's own
-  test functions, zero false positives elsewhere.
-- kuna is genuinely better at *uncalled symbol'd code* and genuinely worse at
-  *distinguishing import slots from code*. Neither is a signature-algorithm
+  test functions, zero false positives elsewhere. It closes the gap only on
+  symbol-bearing binaries.
+- kuna is genuinely better at *unreferenced code*, symbols or not — the stripped
+  control proves it sweeps rather than reads symbols — and genuinely worse at
+  *distinguishing import-table slots from code*. Neither is a signature-algorithm
   difference.
 - NOTES confounder #1 is resolved; steps 2 and 3 there (audit
   `collect_block_sigs`/`initialize_blocks` for the DUAL_FLOW 94.3% miss, and p-code
@@ -247,4 +283,6 @@ Scripts used (headless Ghidra, `-scriptPath` alongside the binary list):
 (classify kuna-only addresses), `AggrOpts.java` (prescript forcing analyzers on),
 `FuncsFromSyms.java` (the proposed fix), `Refs.java` (references to missed
 entries). kuna side: `kuna signatures <binary>` from
-`~/github/kuna/decompiler/target/release/kuna`.
+`~/github/kuna/decompiler/target/release/kuna`. Stripped control:
+`cp v01_win_x32.exe strip32.exe && strip strip32.exe`, then the same
+`CountFuncs.java` / `DumpEntries.java` / `kuna signatures` pair.

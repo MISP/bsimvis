@@ -225,7 +225,8 @@ class BinSimService:
 
         # Load cluster metadata (uuid/name/cohesion) for every cluster seen, so matched
         # function pairs can be tagged with their best-matching function cluster.
-        # ponytail: assumes clustering ran with the same algo as bin_sim (both default unweighted_cosine)
+        # `algo` names the function similarity these clusters were built from, so
+        # bin_sim reads and writes inside that same namespace.
         cluster_meta = {}
         all_labels = list(cluster_binary_count_job.keys())
         if all_labels:
@@ -561,10 +562,11 @@ class BinSimService:
             }
 
             pipe.set(sid, json.dumps(doc))
-            # ponytail: Use the unweighted score for sorting when unweighted_cosine is active
-            final_bin_score = score_collection_weighted
-            if algo == "unweighted_cosine":
-                final_bin_score = score_unweighted
+            # `algo` is a provenance tag (which function similarity the clusters came
+            # from), not a choice of file score. The sort score is always the
+            # unweighted cohesion mean so it means the same thing in every namespace
+            # and matches the pool-level score. The other aggregates stay in `doc`.
+            final_bin_score = score_unweighted
 
             pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: final_bin_score})
             pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)

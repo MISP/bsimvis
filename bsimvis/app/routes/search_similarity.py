@@ -1127,12 +1127,8 @@ def similarity_search():
             if unique_cluster_ids:
                 c_pipe = r.pipeline(transaction=False)
                 c_list = list(unique_cluster_ids)
-                # Use the requested algo for clusters if it matches a known clustering algo
-                c_algo = (
-                    algo
-                    if algo in ["unweighted_cosine", "weighted_cosine"]
-                    else "unweighted_cosine"
-                )
+                # Clusters live in the namespace of the algo they were built from.
+                c_algo = algo
                 for c_coll, cid in c_list:
                     c_pipe.get(f"{c_coll}:cluster:{c_algo}:{cid}:meta")
                 c_results = c_pipe.execute()
@@ -1152,11 +1148,7 @@ def similarity_search():
             # ({col}:sim:best_cluster:{algo}, written during cluster propagation). No
             # runtime per-function resolution — one best-matched cluster per edge.
             best_cluster_by_sid = {}
-            bc_algo = (
-                algo
-                if algo in ["unweighted_cosine", "weighted_cosine"]
-                else "unweighted_cosine"
-            )
+            bc_algo = algo
             page_sids = list(sim_data_map.keys())
             if page_sids:
                 raw = r.hmget(f"{col}:sim:best_cluster:{bc_algo}", page_sids)

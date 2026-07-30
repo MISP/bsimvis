@@ -4289,7 +4289,6 @@ async function renderPoolCreationForm() {
     const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
     const funcClusterMethod = clustering.selection_method || 'eom';
 
-    const fileAlgo = similarity.algo || 'unweighted_cosine';
     const fileTopK = 100; // default for file-level similarity
     const fileMinScore = 0.5; // default for file-level similarity
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
@@ -4369,9 +4368,8 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-func-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${funcAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
                                             </div>
@@ -4431,11 +4429,7 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                    <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${fileAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
-                                                    <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                                </select>
+                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
@@ -4555,7 +4549,6 @@ async function submitCreatePool(btn) {
     
     // File settings
     const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
-    const fileAlgo = document.getElementById('pool-file-algo')?.value ?? 'unweighted_cosine';
     const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
     const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
     const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
@@ -4604,9 +4597,8 @@ async function submitCreatePool(btn) {
                         epsilon: funcClusterEpsilon,
                         selection_method: funcClusterMethod
                     },
-                    file_sim_params: { 
+                    file_sim_params: {
                         enabled: enableFiles,
-                        algo: fileAlgo,
                         top_k: fileTopK,
                         min_score: fileMinScore
                     },

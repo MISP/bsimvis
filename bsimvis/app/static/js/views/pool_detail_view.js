@@ -312,7 +312,7 @@ window.PoolDetailView = {
                         <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:${fileSimEnabled ? '#60a5fa' : 'var(--dim)'}; margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;">
                             <i class="fa-solid fa-file-code"></i> File Similarity ${fileSimEnabled ? '' : '<span style="font-size:0.65rem; margin-left:4px; color:var(--dim);">(disabled)</span>'}
                         </div>
-                        ${this._configRow('Algorithm', fis.algo)}
+                        ${this._configRow('Algorithm', pool.algo)}
                         ${this._configRow('Top K', fis.top_k)}
                         ${this._configRow('Min Score', fis.min_score)}
                         ${this._configRow('Min Cluster Size', fic.min_cluster_size)}

@@ -2600,11 +2600,9 @@ class SimilarityService:
                 else 0.0
             )
 
-            final_score = sim_score
-            if algo == "unweighted_cosine":
-                final_score = unweighted_score
-            elif algo == "weighted_cosine":
-                final_score = col_weighted_score
+            # `algo` is a provenance tag, not a choice of file score. Always sort on
+            # the unweighted cohesion mean, matching the collection-level score.
+            final_score = unweighted_score
 
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"

@@ -41,6 +41,7 @@ class JobType(Enum):
     FINALIZE_POOL_BUILD = "finalize_pool_build"
     BUILD_POOL_BIN_SIM = "build_pool_bin_sim"
     CLUSTER_POOL_BINARIES = "cluster_pool_binaries"
+    LLM_BATCH = "llm_batch"
 
 
 def safe_int(val, default=0):
@@ -309,6 +310,9 @@ class JobService:
             JobType.CLEAR_CLUSTER.value,
             JobType.CLEAR_BIN_SIM.value,
             JobType.SYNC_MILVUS.value,
+            # User-initiated LLM batches are interactive work: they must not sit
+            # behind a Ghidra analysis or a sim build for hours.
+            JobType.LLM_BATCH.value,
         ]
 
         if jtype in high_priority_types:
@@ -604,6 +608,10 @@ class JobService:
                 self.cancel_job(tid)
 
         return True
+
+    def is_cancelled(self, job_id):
+        """True if the job was cancelled -- for long jobs to poll mid-run."""
+        return self.r.hget(f"job:{job_id}", "status") == JobStatus.CANCELLED.value
 
     def cancel_all_jobs(self):
         """Cancels all pending/running jobs and pipelines."""

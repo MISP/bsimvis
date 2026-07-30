@@ -35,6 +35,94 @@ class LLMService:
             logging.error(f"LLMService error: {e}")
             return f"Error: Could not get summary from LLM. {e}"
 
+    def summarize_and_tag(self, function_name, code, vocabulary=None, custom_prompt=None):
+        """One LLM call returning both a summary and tags.
+
+        Halves the token cost versus two calls. Tags come back on a single
+        `TAGS:` line; if that line is missing or unparseable the summary is
+        still returned with an empty tag list -- a note without tags beats
+        failing the whole function.
+        """
+        self._load_config()
+        prompt = custom_prompt or self.default_prompt
+
+        if vocabulary:
+            tag_rule = (
+                "Then, on a final line starting with 'TAGS:', list the tags from "
+                "this list that apply to the function, comma separated. Use ONLY "
+                f"tags from this list, and no others: {', '.join(vocabulary)}. "
+                "If none apply, write 'TAGS: none'."
+            )
+        else:
+            tag_rule = (
+                "Then, on a final line starting with 'TAGS:', list 1-5 short "
+                "lowercase keyword tags describing what the function does "
+                "(e.g. crypto, network, parser), comma separated. "
+                "If none apply, write 'TAGS: none'."
+            )
+
+        full_prompt = (
+            f"{prompt}\n\n{tag_rule}\n\n"
+            f"Function Name: {function_name}\n\nCode:\n{code}"
+        )
+
+        try:
+            client = Client(host=self.ollama_url)
+            response = client.chat(
+                model=self.model,
+                messages=[{"role": "user", "content": full_prompt}],
+                stream=False,
+                think=False,
+                options={"num_predict": -1, "temperature": 0.3},
+            )
+            msg = response.get("message", {})
+            text = msg.get("content", "") or msg.get("thinking", "")
+        except Exception as e:
+            logging.error(f"LLMService summarize_and_tag error: {e}")
+            return None, [], str(e)
+
+        summary, tags = self._split_summary_tags(text, vocabulary)
+        return summary, tags, None
+
+    @staticmethod
+    def _split_summary_tags(text, vocabulary=None):
+        """Splits an LLM response into (summary, tags) on the last TAGS: line."""
+        if not text:
+            return "", []
+
+        lines = text.strip().splitlines()
+        tag_idx = None
+        for i in range(len(lines) - 1, -1, -1):
+            # Models decorate the label: `TAGS:`, `**TAGS**:`, `## TAGS:` ...
+            stripped = lines[i].strip().lstrip("#*- ").upper()
+            if stripped.startswith("TAGS"):
+                tag_idx = i
+                break
+
+        if tag_idx is None:
+            return text.strip(), []
+
+        label, _, raw_tags = lines[tag_idx].partition(":")
+        if not raw_tags:
+            raw_tags = ""
+        summary = "\n".join(lines[:tag_idx]).strip()
+
+        tags = []
+        for t in raw_tags.replace("*", "").split(","):
+            t = t.strip().strip("[]`\"'").lower()
+            if not t or t in ("none", "n/a"):
+                continue
+            tags.append(t)
+
+        if vocabulary:
+            allowed = {v.lower(): v for v in vocabulary}
+            tags = [allowed[t] for t in tags if t in allowed]
+
+        # Dedupe, preserve order.
+        seen = set()
+        tags = [t for t in tags if not (t in seen or seen.add(t))]
+        return summary, tags
+
     def stream_summarize_function(self, function_name, code, custom_prompt=None):
         self._load_config()
         prompt = custom_prompt or self.default_prompt
@@ -233,3 +321,33 @@ class LLMService:
 
 
 llm_service = LLMService()
+
+
+def _selfcheck():
+    split = LLMService._split_summary_tags
+
+    # Tags line parsed off the end, summary kept intact.
+    s, t = split("**SUMMARY**: does aes\nmore text\nTAGS: crypto, network")
+    assert s == "**SUMMARY**: does aes\nmore text", s
+    assert t == ["crypto", "network"], t
+
+    # No TAGS line: whole text is the summary, no tags.
+    s, t = split("just a summary")
+    assert (s, t) == ("just a summary", [])
+
+    # 'none' and decorations are dropped; duplicates collapse.
+    assert split("x\nTAGS: none")[1] == []
+    assert split("x\n**TAGS:** `Crypto`, crypto, [parser]")[1] == ["crypto", "parser"]
+
+    # Vocabulary constrains output and restores the canonical casing.
+    s, t = split("x\nTAGS: Crypto, invented", ["crypto", "network"])
+    assert t == ["crypto"], t
+
+    # Only the last TAGS line counts (models sometimes echo the instruction).
+    assert split("TAGS: ignored\nbody\nTAGS: net")[1] == ["net"]
+
+    print("ok")
+
+
+if __name__ == "__main__":
+    _selfcheck()

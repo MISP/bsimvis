@@ -394,6 +394,111 @@ class TagService:
 
         return results
 
+    # --- Tag vocabulary management (create / delete / llm flag) ---
+
+    LVL_TO_ETYPE = {"func": "function", "file": "file", "sim": "similarity"}
+
+    def create_tag(self, collection, tag, color=None, priority=0, llm=False):
+        """Registers a tag in the collection vocabulary without tagging anything.
+
+        The `tags_metadata` hash already holds tag -> {color, priority}
+        independently of membership, so a vocabulary entry is just a metadata
+        row with no indexed entities.
+        """
+        collection = _normalize_collection(collection)
+        tag = (tag or "").strip()
+        if not tag:
+            return False
+
+        self._ensure_tag_metadata(collection, tag)
+        if color:
+            self.set_tag_color(collection, tag, color)
+        if priority:
+            self.set_tag_priority(collection, tag, priority)
+        if llm:
+            self.set_tag_llm(collection, tag, True)
+        return True
+
+    def set_tag_llm(self, collection, tag, enabled):
+        """Flags a tag as part of the LLM tagging vocabulary."""
+        collection = _normalize_collection(collection)
+        meta_key = f"{collection}:tags_metadata"
+        raw = self.r.hget(meta_key, tag)
+        meta = json.loads(raw) if raw else {"color": "#66d9ef", "priority": 0}
+        meta["llm"] = bool(enabled)
+        self.r.hset(meta_key, tag, json.dumps(meta))
+
+        # Propagate to pools, same as color/priority.
+        for p_id in self.r.smembers(f"{collection}:pools"):
+            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+            self.r.hset(
+                f"global:pool:{p_id}:tags_metadata", tag, json.dumps(meta)
+            )
+        return True
+
+    def get_llm_vocabulary(self, collection):
+        """Tags flagged for LLM use, sorted by descending priority then name."""
+        tags = self.get_collection_tags(collection)
+        flagged = [(t, m) for t, m in tags.items() if m.get("llm")]
+        flagged.sort(key=lambda kv: (-int(kv[1].get("priority") or 0), kv[0]))
+        return [t for t, _ in flagged]
+
+    def _tagged_ids(self, collection, lvl, field, tag):
+        """Entity ids (index form, no `:meta`) carrying `tag` at `lvl`.`field`."""
+        raw = self.r.smembers(f"{collection}:idx:{lvl}:{field}:{tag.lower()}")
+        return [i.decode() if isinstance(i, bytes) else i for i in (raw or [])]
+
+    def _strip_static_tag(self, collection, lvl, ids, tag):
+        """Removes an analysis tag from docs and its index (no user_tags path)."""
+        r = self.r
+        index_key = f"{collection}:idx:{lvl}:tags:{tag.lower()}"
+        for eid in ids:
+            doc_id = eid if eid.endswith(":meta") else f"{eid}:meta"
+            data = self._get_doc(doc_id)
+            if data:
+                tags = data.get("tags")
+                if isinstance(tags, list) and tag in tags:
+                    data["tags"] = [t for t in tags if t != tag]
+                    self._set_doc(doc_id, data)
+            r.srem(index_key, eid)
+            for p_id in r.smembers(f"{collection}:pools"):
+                p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+                mapped = to_pool_indexed_id(eid, lvl, p_id)
+                if mapped:
+                    r.srem(
+                        f"global:pool:{p_id}:idx:{lvl}:tags:{tag.lower()}", mapped
+                    )
+
+    def delete_tag(self, collection, tag):
+        """Deletes a tag: strips it from every entity, then drops its metadata.
+
+        Destructive and irreversible -- callers must confirm with the user
+        first. Returns the per-level removal counts.
+        """
+        collection = _normalize_collection(collection)
+        tag = (tag or "").strip()
+        if not tag:
+            return None
+
+        removed = {"function": 0, "file": 0, "similarity": 0}
+        for lvl, etype in self.LVL_TO_ETYPE.items():
+            user_ids = self._tagged_ids(collection, lvl, "user_tags", tag)
+            if user_ids:
+                self.bulk_remove_user_tag(collection, etype, user_ids, tag)
+                removed[etype] += len(user_ids)
+
+            static_ids = self._tagged_ids(collection, lvl, "tags", tag)
+            if static_ids:
+                self._strip_static_tag(collection, lvl, static_ids, tag)
+                removed[etype] += len(static_ids)
+
+        self.r.hdel(f"{collection}:tags_metadata", tag)
+        for p_id in self.r.smembers(f"{collection}:pools"):
+            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
+            self.r.hdel(f"global:pool:{p_id}:tags_metadata", tag)
+
+        return removed
+
     def get_tag_stats(self, collection, tag):
         """Returns count breakdown by entity type for a given tag."""
         collection = _normalize_collection(collection)

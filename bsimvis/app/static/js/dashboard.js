@@ -223,6 +223,21 @@ const routes = {
         headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Actions'],
         renderer: renderBatches
     },
+    'tags': {
+        title: 'Tags',
+        api: '/api/tags/list',
+        headers: [
+            { label: 'Tag', sort: 'tag', width: '30%' },
+            { label: 'Color', width: '8%' },
+            { label: 'Priority', sort: 'priority', width: '10%' },
+            { label: 'LLM', width: '6%' },
+            { label: 'Functions', sort: 'function_count', width: '12%' },
+            { label: 'Files', sort: 'file_count', width: '12%' },
+            { label: 'Similarities', width: '12%' },
+            { label: 'Actions', width: '10%' }
+        ],
+        renderer: renderTagVocabulary
+    },
     'files': {
         title: 'Files',
         api: '/api/file/search',
@@ -555,6 +570,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     lastPathName = currentUrlPath;
     if (viewKey === 'pools') {
         if (!skipHeader) renderPoolCreationForm();
+    } else if (viewKey === 'tags') {
+        if (!skipHeader) renderTagCreationForm();
     } else if (viewKey === 'jobs') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -3683,7 +3700,8 @@ const viewMetaData = {
     'features-global': { name: 'Features', icon: 'fa-fingerprint' },
     'function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     'clusters': { name: 'Clusters', icon: 'fa-bullseye' },
-    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' }
+    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' },
+    'tags': { name: 'Tags', icon: 'fa-tags' }
 };
 
 function getFilterSummary(path, params) {

@@ -2064,6 +2064,184 @@ def _wait_all(job_ids, what):
     print(" done." if not pending else _color(" TIMEOUT", RED))
 
 
+def test_tag_vocabulary_and_llm_batch():
+    """Tag vocabulary CRUD (/api/tags/list|create|delete|llm) and LLM batch jobs.
+
+    The LLM itself (Ollama) may not be reachable in a test environment, so the
+    batch checks cover job acceptance, selection resolution, the size cap and
+    cancellation — not the generated content.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3d – Tag vocabulary + LLM batch", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not func_id1:
+        print(_color("\n[SKIP] No uploaded file – tag/LLM batch checks skipped.", YELLOW))
+        return
+
+    vocab_tag = f"vocab_{uuid.uuid4().hex[:6]}"
+
+    # --- vocabulary entry with no members ---
+    test_endpoint(
+        "POST",
+        "/api/tags/create",
+        data={"collection": COLLECTION, "tag": vocab_tag, "color": "#ff00ff", "llm": True},
+        label="POST /api/tags/create",
+    )
+    listing = test_endpoint(
+        "GET", "/api/tags/list", params={"collection": COLLECTION, "q": vocab_tag}
+    )
+    row = next(
+        (i for i in (listing or {}).get("items", []) if i.get("tag") == vocab_tag), None
+    )
+    check("tags/list returns the created tag", row is not None, str(row))
+    if row:
+        check("created tag is flagged for LLM", row.get("llm") is True, str(row.get("llm")))
+        check("created tag has no members", row.get("total_count") == 0, str(row.get("total_count")))
+
+    # Duplicate creation is refused rather than silently resetting the metadata.
+    dup = test_endpoint(
+        "POST",
+        "/api/tags/create",
+        data={"collection": COLLECTION, "tag": vocab_tag},
+        expected_ok=False,
+        label="POST /api/tags/create (duplicate)",
+    )
+    check("duplicate tag creation refused", "error" in (dup or {}), str(dup))
+
+    # --- llm flag toggle ---
+    test_endpoint(
+        "POST",
+        "/api/tags/llm",
+        data={"collection": COLLECTION, "tag": vocab_tag, "llm": False},
+        label="POST /api/tags/llm",
+    )
+    listing = test_endpoint(
+        "GET",
+        "/api/tags/list",
+        params={"collection": COLLECTION, "q": vocab_tag},
+        label="GET /api/tags/list (after llm toggle)",
+    )
+    row = next(
+        (i for i in (listing or {}).get("items", []) if i.get("tag") == vocab_tag), None
+    )
+    check("llm flag cleared", row is not None and row.get("llm") is False, str(row))
+
+    # --- delete strips the tag from entities, not just the vocabulary ---
+    test_endpoint(
+        "POST",
+        "/api/tags/add",
+        data={
+            "collection": COLLECTION,
+            "entity_type": "function",
+            "entity_id": func_id1,
+            "tag": vocab_tag,
+        },
+        label="POST /api/tags/add (before delete)",
+    )
+    deleted = test_endpoint(
+        "POST",
+        "/api/tags/delete",
+        data={"collection": COLLECTION, "tag": vocab_tag},
+        label="POST /api/tags/delete",
+    )
+    check(
+        "delete reports the function it was stripped from",
+        (deleted or {}).get("removed", {}).get("function", 0) >= 1,
+        str((deleted or {}).get("removed")),
+    )
+    listing = test_endpoint(
+        "GET",
+        "/api/tags/list",
+        params={"collection": COLLECTION, "q": vocab_tag},
+        label="GET /api/tags/list (after delete)",
+    )
+    check(
+        "deleted tag gone from vocabulary",
+        not [i for i in (listing or {}).get("items", []) if i.get("tag") == vocab_tag],
+        str(listing),
+    )
+    resp = requests.get(
+        f"{BASE_URL}/api/function/search",
+        params={"collection": COLLECTION, "user_tag": vocab_tag, "limit": 5},
+        timeout=30,
+    )
+    remaining = resp.json().get("functions", []) if resp.status_code == 200 else []
+    check("deleted tag stripped from functions", not remaining, str(len(remaining)))
+
+    # --- batch: explicit ids ---
+    started = test_endpoint(
+        "POST",
+        "/api/llm/batch",
+        data={
+            "collection": COLLECTION,
+            "func_ids": [func_id1],
+            "actions": ["notes", "tags"],
+        },
+        label="POST /api/llm/batch (func_ids)",
+    )
+    job_id = (started or {}).get("job_id")
+    check("batch job created", bool(job_id), str(started))
+    check("batch total matches selection", (started or {}).get("total") == 1, str(started))
+
+    if job_id:
+        status = test_endpoint("GET", f"/api/llm/batch/{job_id}")
+        check(
+            "batch status exposes counts and errors",
+            isinstance(status, dict) and "counts" in status and "errors" in status,
+            str(status)[:200],
+        )
+        cancelled = test_endpoint(
+            "POST", f"/api/llm/batch/{job_id}/cancel", label="POST /api/llm/batch/<id>/cancel"
+        )
+        check("batch cancel accepted", (cancelled or {}).get("status") == "cancelled", str(cancelled))
+
+    # --- batch: filter-based selection resolves server-side ---
+    filtered = test_endpoint(
+        "POST",
+        "/api/llm/batch",
+        data={
+            "collection": COLLECTION,
+            "filters": f"file_md5={file_md5}",
+            "actions": ["notes"],
+        },
+        label="POST /api/llm/batch (filters)",
+    )
+    check("filter selection resolved to functions", (filtered or {}).get("total", 0) > 0, str(filtered))
+    if (filtered or {}).get("job_id"):
+        test_endpoint(
+            "POST",
+            f"/api/llm/batch/{filtered['job_id']}/cancel",
+            label="POST /api/llm/batch/<id>/cancel (filters)",
+        )
+
+    # --- batch: size cap refuses oversized selections up front ---
+    from bsimvis.app.services.llm_batch_service import max_batch_size
+
+    oversized = test_endpoint(
+        "POST",
+        "/api/llm/batch",
+        data={
+            "collection": COLLECTION,
+            "func_ids": [f"{COLLECTION}:func:{file_md5}:{i:08x}" for i in range(max_batch_size() + 1)],
+            "actions": ["notes"],
+        },
+        expected_ok=False,
+        label="POST /api/llm/batch (over cap)",
+    )
+    check("oversized batch refused", "error" in (oversized or {}), str(oversized)[:200])
+
+    # --- invalid action is rejected ---
+    bad = test_endpoint(
+        "POST",
+        "/api/llm/batch",
+        data={"collection": COLLECTION, "func_ids": [func_id1], "actions": ["bogus"]},
+        expected_ok=False,
+        label="POST /api/llm/batch (invalid action)",
+    )
+    check("invalid action refused", "error" in (bad or {}), str(bad))
+
+
 def test_pool_collection_equivalence():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3d – Pool vs collection equivalence", BOLD))
@@ -2409,6 +2587,7 @@ if __name__ == "__main__":
     # Before run_all_tests(): that step deletes the collection on its way out.
     test_pool_annotation_propagation()
     test_search_filters_and_sorting()
+    test_tag_vocabulary_and_llm_batch()
     test_pool_collection_equivalence()
     run_all_tests()
     print_summary()

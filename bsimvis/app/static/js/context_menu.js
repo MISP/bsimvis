@@ -340,6 +340,16 @@
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Code</span>
             </div>`;
+
+            // LLM batch: the selected rows, or this function alone when nothing
+            // is selected, so the default action needs no dialog.
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds().length ? window.getSelectedTableIds() : ['${norm.id}'])`;
+            actionsSubmenuHtml += renderLLMSubmenu([
+                { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${llmIds} }` },
+                { label: 'Tags', icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${llmIds} }` },
+                { label: 'Summary + tags', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ funcIds: ${llmIds} }` },
+                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ funcIds: ${llmIds}, askPrompt: true }` }
+            ]);
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
@@ -361,7 +371,16 @@
             <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${simUrl}', event, { title: 'Function Similarities', type: 'function-similarity' })">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
-            </div>`;
+            </div>
+            `;
+            // Whole-binary enrichment: same LLM entries, resolved from the file
+            // filter instead of a row selection.
+            actionsSubmenuHtml += renderLLMSubmenu([
+                { label: 'Summary (all functions)', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ filters: 'file_md5=${norm.md5}' }` },
+                { label: 'Tags (all functions)', icon: 'fa-tags', actions: "['tags']", opts: `{ filters: 'file_md5=${norm.md5}' }` },
+                { label: 'Summary + tags (all functions)', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ filters: 'file_md5=${norm.md5}' }` },
+                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ filters: 'file_md5=${norm.md5}', askPrompt: true }` }
+            ]);
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${norm.id1}', '${String(norm.name1 || '').replace(/'/g, "\\'")}', '${norm.id2}', '${String(norm.name2 || '').replace(/'/g, "\\'")}', event)">
@@ -420,7 +439,9 @@
         // Add hover flipping listener to prevent submenus from going offscreen
         menu.querySelectorAll('.submenu-trigger').forEach(trigger => {
             trigger.addEventListener('mouseenter', () => {
-                const submenu = trigger.querySelector('.submenu');
+                // Direct child only: a nested trigger (Actions > LLM) must not
+                // let the parent grab the child's submenu.
+                const submenu = trigger.querySelector(':scope > .submenu');
                 if (!submenu) return;
                 
                 submenu.style.display = 'block';
@@ -440,7 +461,7 @@
                 }
             });
             trigger.addEventListener('mouseleave', () => {
-                const submenu = trigger.querySelector('.submenu');
+                const submenu = trigger.querySelector(':scope > .submenu');
                 if (!submenu) return;
                 submenu.style.display = 'none';
             });
@@ -623,6 +644,26 @@
         }
 
         return [];
+    }
+
+    /** Renders the "LLM ▸" entry nested inside the Actions submenu. */
+    function renderLLMSubmenu(items) {
+        const entries = items.map(i => `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${i.opts})">
+                <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>${i.label}</span>
+            </div>`).join('');
+
+        return `
+            <div class="context-menu-item submenu-trigger" style="position: relative;">
+                <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>LLM</span>
+                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20006;">
+                    ${entries}
+                </div>
+            </div>`;
     }
 
     function renderCopyItem(label, text, icon = 'fa-copy') {

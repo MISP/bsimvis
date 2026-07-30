@@ -815,6 +815,20 @@ class Worker:
                 collection, self.job_service, job_id
             )
 
+        elif jtype == JobType.LLM_BATCH.value:
+            from bsimvis.app.services.llm_batch_service import llm_batch_service
+
+            return llm_batch_service.run_batch(
+                collection,
+                payload.get("func_ids") or [],
+                payload.get("actions") or ["notes"],
+                overwrite=payload.get("overwrite", False),
+                custom_prompt=payload.get("custom_prompt"),
+                vocabulary=payload.get("tag_vocabulary"),
+                job_service=self.job_service,
+                job_id=job_id,
+            )
+
         elif jtype == JobType.DELETE_COLLECTION.value:
             return self.processing_service.delete_collection(
                 collection, self.job_service, job_id

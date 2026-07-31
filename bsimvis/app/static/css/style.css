@@ -31,6 +31,15 @@
     --token-label: #a6e22e;
     --token-operand: #f8f8f2;
     --token-warning: #fd971f;
+
+    /* Dynamic Graph/Tag Colors */
+    --color-s-high: 100%;
+    --color-l-high: 65%;
+    --color-s-med: 80%;
+    --color-l-med: 60%;
+    --color-s-low: 85%;
+    --color-l-low: 60%;
+    --color-l-dim: 50%;
 }
 
 html.light-theme {
@@ -66,6 +75,15 @@ html.light-theme {
     --token-label: #2e7d32;
     --token-operand: #1a1a1a;
     --token-warning: #c25e00;
+
+    /* Dynamic Graph/Tag Colors */
+    --color-s-high: 80%;
+    --color-l-high: 40%;
+    --color-s-med: 70%;
+    --color-l-med: 45%;
+    --color-s-low: 75%;
+    --color-l-low: 45%;
+    --color-l-dim: 35%;
 }
 
 /* ── Breadcrumb ───────────────────────────────────────────── */

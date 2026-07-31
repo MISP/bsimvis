@@ -659,7 +659,7 @@ class ClusterHierarchy extends D3BaseLayout {
 
         const getCohesionColor = (cohesion) => {
             const hue = Math.max(0, Math.min(120, (cohesion || 0) * 120));
-            return `hsl(${hue}, 100%, 65%)`;
+            return `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
         };
 
         nodeEnter.append("circle")
@@ -1887,7 +1887,7 @@ class ClusterPacking {
             const cohesion = d.data.cohesion || 0;
             const hue = Math.max(0, Math.min(120, cohesion * 120));
             const opacity = d.children ? 0.03 : 0.15;
-            return `hsla(${hue}, 80%, 50%, ${opacity})`;
+            return `hsla(${hue}, var(--color-s-med), var(--color-l-dim), ${opacity})`;
         };
 
         const getCohesionStroke = (d) => {
@@ -1900,7 +1900,7 @@ class ClusterPacking {
             }
             const cohesion = d.data.cohesion || 0;
             const hue = Math.max(0, Math.min(120, cohesion * 120));
-            return `hsl(${hue}, 85%, 60%)`;
+            return `hsl(${hue}, var(--color-s-low), var(--color-l-low))`;
         };
 
         const node = g.selectAll("circle")

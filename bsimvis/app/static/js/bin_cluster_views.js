@@ -509,7 +509,7 @@ class BinClusterHierarchy {
 
         const getCohesionColor = (cohesion) => {
             const hue = Math.max(0, Math.min(120, (cohesion || 0) * 120));
-            return `hsl(${hue}, 100%, 65%)`;
+            return `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
         };
 
         const link = this.g.selectAll("path.link").data(dLinks, d => d.target.data.id);
@@ -1354,7 +1354,7 @@ class BinClusterPacking {
                 return "color-mix(in srgb, var(--token-register) 15%, transparent)";
             }
             const hue = Math.max(0, Math.min(120, (d.data.cohesion || 0) * 120));
-            return `hsla(${hue}, 80%, 50%, ${d.children ? 0.03 : 0.15})`;
+            return `hsla(${hue}, var(--color-s-med), var(--color-l-dim), ${d.children ? 0.03 : 0.15})`;
         };
         const getCohesionStroke = (d) => {
             if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.15)";
@@ -1365,7 +1365,7 @@ class BinClusterPacking {
                 return "var(--accent, #66d9ef)";
             }
             const hue = Math.max(0, Math.min(120, (d.data.cohesion || 0) * 120));
-            return `hsl(${hue}, 85%, 60%)`;
+            return `hsl(${hue}, var(--color-s-low), var(--color-l-low))`;
         };
 
         const node = g.selectAll("circle")

@@ -577,7 +577,7 @@ async function renderBinaryDiffSankey(data) {
             if (b.clusters.length === 0) return;
 
             const binAvgCohesion = b.sumWeights > 0 ? (b.sumCohesion / b.sumWeights) : (b.binIdx * (step / 100) + (step / 200));
-            const binColor = `hsl(${binAvgCohesion * 120}, 70%, 55%)`;
+            const binColor = `hsl(${binAvgCohesion * 120}, var(--color-s-med), var(--color-l-dim))`;
 
             let binNodeA = null;
             if (b.totalA > 0) {
@@ -631,7 +631,7 @@ async function renderBinaryDiffSankey(data) {
         // 1. Matched Clusters
         sortedMatched.forEach(m => {
             const similarity = m.similarity || 0;
-            const cColor = `hsl(${similarity * 120}, 70%, 55%)`;
+            const cColor = `hsl(${similarity * 120}, var(--color-s-med), var(--color-l-dim))`;
             const cNode = getNode('cluster_' + m.cluster_uuid, m.cluster_name, cColor);
             cNode.cohesion = m.cohesion || 0;
             cNode.cluster_uuid = m.cluster_uuid;

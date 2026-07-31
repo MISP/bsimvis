@@ -587,7 +587,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
         const score = (c.cohesion_score || 0).toFixed(2);
         const uuid = c.cluster_uuid;
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
-        const color = `hsl(${hue}, 100%, 65%)`;
+        const color = `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
         
         let displayName = name;
         if (isBinary) {

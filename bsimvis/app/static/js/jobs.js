@@ -605,7 +605,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                 } else if (typeof value === 'string' && value.length > 30) {
                     displayValue = `<code title="${value}" style="font-size: 0.75rem;">${value.substring(0, 12)}...${value.substring(value.length - 8)}</code>`;
                 } else {
-                    displayValue = `<code style="font-size: 0.85rem; color: #eee;">${value}</code>`;
+                    displayValue = `<code style="font-size: 0.85rem; color: var(--meta-text);">${value}</code>`;
                 }
 
                 payloadHtml += `

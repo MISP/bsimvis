@@ -494,7 +494,7 @@ function showNullContextWarning(collection, pool, viewKey) {
     }
     banner = document.createElement('div');
     banner.id = 'null-context-warning';
-    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:#fff;text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;box-shadow:0 2px 8px rgba(249,38,114,0.4);cursor:pointer;';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:var(--text);text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;box-shadow:0 2px 8px rgba(249,38,114,0.4);cursor:pointer;';
     banner.textContent = `⚠️ Navigation error: Invalid collection or pool context. Please navigate directly to a valid collection or pool.`;
     banner.onclick = () => banner.remove();
     document.body.prepend(banner);
@@ -543,3 +543,10 @@ function showToast(message, type = 'info') {
     }, 4000);
 }
 window.showToast = showToast;
+
+// Apply theme across all pages that include utils.js (like iframes)
+if (localStorage.getItem('lightTheme') === 'true') {
+    document.documentElement.classList.add('light-theme');
+} else {
+    document.documentElement.classList.remove('light-theme');
+}

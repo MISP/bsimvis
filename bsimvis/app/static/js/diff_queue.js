@@ -263,17 +263,17 @@ function updateDiffQueueUI() {
             status.innerHTML = '';
         } else if (queue.length === 1) {
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:#fd971f; color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
                     <span>±</span> 1/2 Selected: ${queue[0].name}
-                    <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
+                    <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
                 </span>`;
         } else {
-            const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff(event)" style="background:#000; color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
+            const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff(event)" style="background:var(--window-tray); color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:var(--success); color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(166,226,46,0.4);">
+                <span class="badge diff-queue-badge" style="background:var(--success); color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(166,226,46,0.4);">
                     <span>±</span> 2/2 Ready: ${queue[0].name} vs ${queue[1].name}
                     ${compareBtnHtml}
-                    <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
+                    <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
                 </span>`;
         }
     });
@@ -302,7 +302,7 @@ function updateDiffQueueUI() {
             if (standaloneBtn) {
                 standaloneBtn.style.display = 'block';
                 standaloneBtn.style.background = '#fd971f';
-                standaloneBtn.style.color = '#000';
+                standaloneBtn.style.color = 'var(--window-tray)';
             }
         }
     }
@@ -349,9 +349,9 @@ function updateFileDiffQueueUI() {
             status.innerHTML = '';
         } else if (queue.length === 1) {
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:#fd971f; color:#000; display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
                     <i class="fa-solid fa-file-code"></i> 1/2 Selected: ${queue[0].name}
-                    <button onclick="clearFileDiffSelection()" style="background:none; border:none; cursor:pointer; color:#000; font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear File Diff Selection">&times;</button>
+                    <button onclick="clearFileDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear File Diff Selection">&times;</button>
                 </span>`;
         }
     });
@@ -576,16 +576,16 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
                             </div>`).join('')}
                     </div>
                 </div>
-                <div style="color:#444; margin-top:8px; font-size:0.65rem;">💡 Use scroll wheel to cycle</div>
+                <div style="color:var(--border); margin-top:8px; font-size:0.65rem;">💡 Use scroll wheel to cycle</div>
             </div>` : ''}
 
             <div class="diff-right-col">
                 <div class="diff-preview-header" style="background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.05); padding:12px 15px; flex-shrink:0;">
                     <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
                         <div style="display:flex; align-items:center; gap:8px; font-size:0.9rem;">
-                            <span style="color:#FFF; font-weight:bold;">${name1}</span>
+                            <span style="color:var(--text); font-weight:bold;">${name1}</span>
                             <span style="color:var(--subtle); font-size:0.7rem;">vs</span>
-                            <span style="color:#FFF; font-weight:bold;">${name2}</span>
+                            <span style="color:var(--text); font-weight:bold;">${name2}</span>
                         </div>
                         <div style="font-size:0.75rem; color:var(--success); display:flex; justify-content:space-between; align-items:center;">
                             <span>Match: <b style="font-size:0.9rem;">${score >= 0 ? (score * 100).toFixed(2) + '%' : '....%'}</b></span>
@@ -603,7 +603,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
                             ${rows.map(r => renderPreviewSide(r.r, 'r')).join('')}
                         </div>
                     ` : `
-                        <div style="flex:1; display:flex; align-items:center; justify-content:center; height:200px; color:#555;">
+                        <div style="flex:1; display:flex; align-items:center; justify-content:center; height:200px; color:var(--subtle);">
                             <div style="text-align:center;">
                                 <i class="fas fa-spinner fa-spin" style="font-size:1.5rem; margin-bottom:10px;"></i>
                                 <div>Loading Diff...</div>

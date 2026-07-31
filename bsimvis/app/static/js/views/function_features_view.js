@@ -48,7 +48,7 @@ window.FunctionFeaturesView = {
                 }
 
                 .feat-table-container th {
-                    background: #000;
+                    background: var(--window-tray);
                     color: var(--accent);
                     text-transform: uppercase;
                     font-size: 0.65rem;
@@ -83,7 +83,7 @@ window.FunctionFeaturesView = {
                 .hash-badge:hover {
                     background: rgba(174, 129, 255, 0.3);
                     border: 1px solid #ae81ff;
-                    color: #fff;
+                    color: var(--text);
                 }
 
                 .type-badge {
@@ -94,7 +94,7 @@ window.FunctionFeaturesView = {
 
                 .pcode-badge {
                     background: #f92672;
-                    color: #000;
+                    color: var(--window-tray);
                     padding: 2px 6px;
                     border-radius: 4px;
                     font-weight: bold;
@@ -112,11 +112,11 @@ window.FunctionFeaturesView = {
                     display: none;
                     position: fixed;
                     z-index: 20000;
-                    background: rgba(0,0,0,0.95);
+                    background: var(--window-bg);
                     padding: 10px;
                     border-radius: 4px;
                     border: 1px solid var(--accent);
-                    color: #fff;
+                    color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
                     box-shadow: 0 4px 15px rgba(0,0,0,0.5);
@@ -312,7 +312,7 @@ window.FunctionFeaturesView = {
         const data = this.globalTips[idx];
         if (!data) return;
 
-        let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+        let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
 
         data[2].forEach(f => {
             const color = f[8] || 'var(--accent)';

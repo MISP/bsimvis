@@ -48,7 +48,7 @@ window.FunctionView = {
                         </button>
                     </div>
                 </div>
-                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:rgba(0,0,0,0.85); padding:10px; border-radius:4px; border:1px solid var(--accent); color:#fff; font-size:0.8rem; pointer-events:none;"></div>
+                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
         `;
 

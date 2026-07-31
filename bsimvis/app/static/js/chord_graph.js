@@ -157,7 +157,7 @@ class ChordGraph {
 
         group.append("path")
             .attr("fill", d => getMd5Color(nodes[d.index].md5))
-            .attr("stroke", "#fff")
+            .attr("stroke", "var(--text)")
             .attr("stroke-width", 0.5)
             .attr("d", arc)
             .style("cursor", "pointer")
@@ -187,7 +187,7 @@ class ChordGraph {
                 ${d.angle > Math.PI ? "rotate(180)" : ""}
             `)
             .attr("text-anchor", d => d.angle > Math.PI ? "end" : "start")
-            .attr("fill", "#fff")
+            .attr("fill", "var(--text)")
             .style("font-size", "10px")
             .style("font-weight", "bold")
             .text(d => nodes[d.index].name || nodes[d.index].md5.substring(0, 8));

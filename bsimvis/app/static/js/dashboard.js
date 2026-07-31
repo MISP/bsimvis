@@ -1290,18 +1290,18 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     if (path === 'function-similarity') {
                         headHtml += `
                             <th style="font-size: 0.65rem;">
-                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.65rem; border-radius:2px;">
                                     <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
                                     <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                     <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
                                 </select>
                                 <div style="margin-top:4px;">
-                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px;">
                                         <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
                                         <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
                                         <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
                                     </select>
-                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
+                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px; margin-top:4px;">
                                         <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
                                         <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
                                     </select>
@@ -1342,10 +1342,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
                 const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
                 headHtml += `<tr class="filter-row">
-                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
+                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
                     <th></th>
                     <th></th>
-                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
+                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
                     <th></th><th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1408,7 +1408,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th></th>
                     <th></th>
                     <th></th>
-                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
+                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${msToDate(p.get('min_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${msToDate(p.get('max_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
                     <th></th>
                 </tr>`;
@@ -3099,7 +3099,7 @@ function renderClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.avg_stability).toFixed(2)}</span>
@@ -3108,7 +3108,7 @@ function renderClusters(items) {
             <td class="mono dim">${(c.avg_features || 0).toFixed(1)}</td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
@@ -3272,7 +3272,7 @@ function renderBinClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.avg_stability).toFixed(2)}</span>
@@ -3280,7 +3280,7 @@ function renderBinClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>

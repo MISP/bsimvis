@@ -50,7 +50,7 @@ function getBinHierarchyTooltip() {
     if (!el) {
         el = document.createElement('div');
         el.id = 'bin-hierarchy-tooltip';
-        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px var(--window-bg); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
         
         el.addEventListener('click', (event) => {
@@ -168,14 +168,14 @@ class BinClusterHierarchy {
         this.params.q = params.get('q') || '';
 
         const hierControls = `
-            <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
-                <div style="font-size:0.85rem; color:#fff; font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Tree Filters</div>
+            <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
+                <div style="font-size:0.85rem; color:var(--text); font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Tree Filters</div>
                 
                 <!-- Search -->
                 <div style="margin-bottom:15px;">
-                    <div class="search-input-wrapper" style="width:100%; background:rgba(255,255,255,0.05); border:1px solid #444;">
+                    <div class="search-input-wrapper" style="width:100%; background:rgba(255,255,255,0.05); border:1px solid var(--border);">
                         <i class="fa-solid fa-search" style="font-size:0.7rem; color:#666;"></i>
-                        <input type="text" id="hier-search-input" placeholder="Search clusters..." value="${this.params.q}" style="color:#fff !important; font-size:0.75rem !important; padding:4px 8px !important;">
+                        <input type="text" id="hier-search-input" placeholder="Search clusters..." value="${this.params.q}" style="color:var(--text) !important; font-size:0.75rem !important; padding:4px 8px !important;">
                     </div>
                 </div>
 
@@ -513,7 +513,7 @@ class BinClusterHierarchy {
         };
 
         const link = this.g.selectAll("path.link").data(dLinks, d => d.target.data.id);
-        link.enter().insert("path", "g").attr("class", "link").attr("fill", "none").attr("stroke", "#333").attr("stroke-width", 1.5)
+        link.enter().insert("path", "g").attr("class", "link").attr("fill", "none").attr("stroke", "var(--border)").attr("stroke-width", 1.5)
             .merge(link).attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
 
         const node = this.g.selectAll("g.node").data(dNodes, d => d.data.id);
@@ -582,11 +582,11 @@ class BinClusterHierarchy {
                 return getCohesionColor(d.data.cohesion);
             });
         nodeEnter.append("text").attr("dy", ".35em").attr("x", d => d.children ? -15 : 15).attr("text-anchor", d => d.children ? "end" : "start")
-            .style("fill", d => d.data.is_member ? "#aaa" : "#fff")
+            .style("fill", d => d.data.is_member ? "#aaa" : "var(--text)")
             .style("font-size", d => d.data.is_member ? "10px" : "12px")
             .style("font-style", d => d.data.is_member ? "italic" : "normal")
             .style("pointer-events", "none")
-            .text(d => d.data.name).clone(true).lower().attr("stroke", "#000").attr("stroke-width", 3);
+            .text(d => d.data.name).clone(true).lower().attr("stroke", "var(--window-tray)").attr("stroke-width", 3);
 
         const dragDendro = d3.drag()
             .on("drag", function(event, d) {
@@ -719,14 +719,14 @@ class BinClusterHierarchy {
             this._renderedNodeUuid = d.data.uuid;
             tooltip.innerHTML = `
                 <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:#0d0f14;">
-                    <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid #333; display:flex; flex-direction:column;">
+                    <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid var(--border); display:flex; flex-direction:column;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
                         <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #555;">
+                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                <div style="color:#eee; font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">bins</span></div>
+                                <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">bins</span></div>
                             </div>
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
@@ -738,21 +738,21 @@ class BinClusterHierarchy {
                             </div>
                         </div>
 
-                        <div style="border-top:1px solid #333; padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-                            <div class="hier-samples-title" style="font-size:0.6rem; color:#555; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
+                        <div style="border-top:1px solid var(--border); padding-top:10px; flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+                            <div class="hier-samples-title" style="font-size:0.6rem; color:var(--subtle); margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">
                                 ${isLoading ? '<i class="fas fa-spinner fa-spin"></i> Fetching Live Samples...' : `Samples (${members.length}):`}
                             </div>
                             <div class="hier-function-list" style="flex:1; position:relative; overflow:hidden;">
                                 <div class="hier-function-list-scroll" style="transition: transform 0.1s cubic-bezier(0.17, 0.67, 0.83, 0.67);">
                                     ${members.map((m, i) => `
                                         <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-                                            <span class="file-name-span" style="color:#eee; font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
+                                            <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
                                             <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
                                         </div>
                                     `).join('')}
                                 </div>
                             </div>
-                            ${d.data.size > members.length ? `<div style="color:#444; margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
+                            ${d.data.size > members.length ? `<div style="color:var(--border); margin-top:6px; font-size:0.65rem;">... and ${d.data.size - members.length} more</div>` : ''}
                         </div>
                     </div>
                     <div class="hier-right-col" id="bin-hier-snippet-container" style="width:200px; padding:15px; background:rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:10px; overflow-y:auto;">
@@ -772,7 +772,7 @@ class BinClusterHierarchy {
             if (listScroll && listScroll.children.length === 0 && members.length > 0) {
                 listScroll.innerHTML = members.map((m, i) => `
                     <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-                        <span class="file-name-span" style="color:#eee; font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
+                        <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
                         <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
                     </div>
                 `).join('');
@@ -787,7 +787,7 @@ class BinClusterHierarchy {
                 itemEl.classList.toggle('selected', isSelected);
                 const nameSpan = itemEl.querySelector('.file-name-span');
                 if (nameSpan) {
-                    nameSpan.style.color = isSelected ? 'var(--accent)' : '#eee';
+                    nameSpan.style.color = isSelected ? 'var(--accent)' : 'var(--meta-text)';
                 }
                 itemEl.style.background = isSelected ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.02)';
             });
@@ -806,7 +806,7 @@ class BinClusterHierarchy {
         if (file.yara_matches && file.yara_matches.length > 0) {
             yaraHtml = `
                 <div style="margin-top: 8px;">
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Yara Matches</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Yara Matches</div>
                     <div style="display: flex; flex-direction: column; gap: 2px;">
                         ${file.yara_matches.map(y => `<div class="mono" style="font-size: 0.65rem; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${y}">${y}</div>`).join('')}
                     </div>
@@ -815,7 +815,7 @@ class BinClusterHierarchy {
         } else if (file.yara) {
              yaraHtml = `
                 <div style="margin-top: 8px;">
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Yara Match</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Yara Match</div>
                     <div class="mono" style="font-size: 0.65rem; color: var(--accent);">${file.yara}</div>
                 </div>
             `;
@@ -825,7 +825,7 @@ class BinClusterHierarchy {
         if (file.ips && file.ips.length > 0) {
             ipsHtml = `
                 <div style="margin-top: 8px;">
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">CC IPs</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">CC IPs</div>
                     <div style="display: flex; flex-direction: column; gap: 2px;">
                         ${file.ips.map(ip => `<div class="mono" style="font-size: 0.65rem; color: var(--info);">${ip}</div>`).join('')}
                     </div>
@@ -838,7 +838,7 @@ class BinClusterHierarchy {
         if (allTags.length > 0) {
             tagsHtml = `
                 <div style="margin-top: 8px;">
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Tags</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Tags</div>
                     <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                         ${allTags.map(tag => {
                             const isBookmark = tag === 'bookmark';
@@ -858,31 +858,31 @@ class BinClusterHierarchy {
         const formatArray = (arr) => (arr && arr.length > 0) ? arr.join(', ') : 'N/A';
         
         container.innerHTML = `
-            <div style="font-size:0.6rem; color:#555; text-transform:uppercase; margin-bottom:5px;">File Metadata</div>
+            <div style="font-size:0.6rem; color:var(--subtle); text-transform:uppercase; margin-bottom:5px;">File Metadata</div>
             
             <div style="display: flex; flex-direction: column; gap: 6px;">
                 <div>
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">AV Type</div>
-                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${formatArray(file.avtype)}</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">AV Type</div>
+                    <div class="mono" style="font-size: 0.7rem; color: var(--meta-text);">${formatArray(file.avtype)}</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">File Type</div>
-                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${formatArray(file.filetype)}</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">File Type</div>
+                    <div class="mono" style="font-size: 0.7rem; color: var(--meta-text);">${formatArray(file.filetype)}</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Dates</div>
-                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${formatArray(file.first_seen)}</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Dates</div>
+                    <div class="mono" style="font-size: 0.7rem; color: var(--meta-text);">${formatArray(file.first_seen)}</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">MD5</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">MD5</div>
                     <div class="mono" style="font-size: 0.65rem; color: #aaa; word-break: break-all;">${file.file_md5 || file.md5 || 'N/A'}</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Language</div>
-                    <div class="mono" style="font-size: 0.7rem; color: #eee;">${file.language_id || 'N/A'}</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Language</div>
+                    <div class="mono" style="font-size: 0.7rem; color: var(--meta-text);">${file.language_id || 'N/A'}</div>
                 </div>
                 <div>
-                    <div style="font-size: 0.6rem; color: #555; text-transform: uppercase;">Functions</div>
+                    <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Functions</div>
                     <div class="mono" style="font-size: 0.7rem; color: var(--success);">${file.function_count || 0}</div>
                 </div>
                 ${yaraHtml}
@@ -1025,14 +1025,14 @@ class BinClusterPacking {
         this.params.q = params.get('q') || '';
 
         const packControls = `
-            <div style="position:absolute; top:20px; left:20px; z-index:10; background:rgba(0,0,0,0.85); padding:15px; border-radius:8px; border:1px solid #333; width:240px; backdrop-filter:blur(10px);">
-                <div style="font-size:0.85rem; color:#fff; font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Packing Filters</div>
+            <div style="position:absolute; top:20px; left:20px; z-index:10; background:var(--window-bg); padding:15px; border-radius:8px; border:1px solid var(--border); width:240px; backdrop-filter:blur(10px);">
+                <div style="font-size:0.85rem; color:var(--text); font-weight:bold; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:5px;">Packing Filters</div>
 
                 <!-- Search -->
                 <div style="margin-bottom:15px;">
-                    <div class="search-input-wrapper" style="width:100%; background:rgba(255,255,255,0.05); border:1px solid #444;">
+                    <div class="search-input-wrapper" style="width:100%; background:rgba(255,255,255,0.05); border:1px solid var(--border);">
                         <i class="fa-solid fa-search" style="font-size:0.7rem; color:#666;"></i>
-                        <input type="text" id="bin-pack-search-input" placeholder="Search clusters..." value="${this.params.q}" style="color:#fff !important; font-size:0.75rem !important; padding:4px 8px !important;">
+                        <input type="text" id="bin-pack-search-input" placeholder="Search clusters..." value="${this.params.q}" style="color:var(--text) !important; font-size:0.75rem !important; padding:4px 8px !important;">
                     </div>
                 </div>
 
@@ -1415,7 +1415,7 @@ class BinClusterPacking {
             .data(this.root.descendants())
             .join("text")
             .attr("text-anchor", "middle").attr("dy", ".35em")
-            .style("fill", d => d.data.is_member ? "var(--accent)" : "#fff")
+            .style("fill", d => d.data.is_member ? "var(--accent)" : "var(--text)")
             .style("font-family", "sans-serif").style("pointer-events", "none")
             .attr("x", d => d.x).attr("y", d => d.y)
             .text(d => d.data.id === "VIRTUAL_ROOT" ? "" : d.data.name);

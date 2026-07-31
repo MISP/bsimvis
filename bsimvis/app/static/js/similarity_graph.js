@@ -245,10 +245,10 @@ class SimilarityGraph {
             if (typeof getRawTagColor === 'function') {
                 if (mode === 'func_tag') {
                     const tagColor = getRawTagColor(n.tags, n.user_tags);
-                    return tagColor || "#333333";
+                    return tagColor || "var(--border)";
                 } else if (mode === 'file_tag') {
                     const tagColor = getRawTagColor(n.file_tags, n.file_user_tags);
-                    return tagColor || "#333333";
+                    return tagColor || "var(--border)";
                 }
             }
             return defaultColor;
@@ -269,23 +269,23 @@ class SimilarityGraph {
                 color2 = getMd5Color(target.data.md5);
             } else if (colorSimBy === 'sim_tag') {
                 if (typeof getRawTagColor === 'function') {
-                    linkColorOverride = getRawTagColor(p.tags, p.user_tags) || "#333333";
+                    linkColorOverride = getRawTagColor(p.tags, p.user_tags) || "var(--border)";
                 } else {
-                    linkColorOverride = "#333333";
+                    linkColorOverride = "var(--border)";
                 }
             } else if (colorSimBy === 'func_tag') {
                 if (typeof getRawTagColor === 'function') {
-                    color1 = getRawTagColor(source.data.tags, source.data.user_tags) || "#333333";
-                    color2 = getRawTagColor(target.data.tags, target.data.user_tags) || "#333333";
+                    color1 = getRawTagColor(source.data.tags, source.data.user_tags) || "var(--border)";
+                    color2 = getRawTagColor(target.data.tags, target.data.user_tags) || "var(--border)";
                 } else {
-                    color1 = color2 = "#333333";
+                    color1 = color2 = "var(--border)";
                 }
             } else if (colorSimBy === 'file_tag') {
                 if (typeof getRawTagColor === 'function') {
-                    color1 = getRawTagColor(source.data.file_tags, source.data.file_user_tags) || "#333333";
-                    color2 = getRawTagColor(target.data.file_tags, target.data.file_user_tags) || "#333333";
+                    color1 = getRawTagColor(source.data.file_tags, source.data.file_user_tags) || "var(--border)";
+                    color2 = getRawTagColor(target.data.file_tags, target.data.file_user_tags) || "var(--border)";
                 } else {
-                    color1 = color2 = "#333333";
+                    color1 = color2 = "var(--border)";
                 }
             }
 
@@ -407,7 +407,7 @@ class SimilarityGraph {
 
             let color = getMd5Color(md5);
             if (colorBinaryBy === 'file_tag') {
-                color = "#333333";
+                color = "var(--border)";
                 if (typeof getRawTagColor === 'function') {
                     const tagColor = getRawTagColor(nodes[0].file_tags, nodes[0].file_user_tags);
                     if (tagColor) color = tagColor;

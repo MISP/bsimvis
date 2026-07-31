@@ -72,7 +72,7 @@ window.CallGraphView = {
                         const renderRow = (icon, label, value, color, clickable = false, clickHandler = null) => {
                             if (!value) return '';
                             const valStr = Array.isArray(value) ? value.join(', ') : String(value);
-                            const style = clickable ? `color:${color || 'var(--accent)'}; font-family:'JetBrains Mono', monospace; word-break:break-all; cursor:pointer; font-weight:bold;` : `color:${color || '#eee'}; font-family:'JetBrains Mono', monospace; word-break:break-all;`;
+                            const style = clickable ? `color:${color || 'var(--accent)'}; font-family:'JetBrains Mono', monospace; word-break:break-all; cursor:pointer; font-weight:bold;` : `color:${color || 'var(--meta-text)'}; font-family:'JetBrains Mono', monospace; word-break:break-all;`;
                             const clickAttr = clickHandler ? `onclick="${clickHandler}"` : '';
                             return `
                                 <div style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem; border-bottom:1px solid rgba(255,255,255,0.03); padding-bottom:8px;">

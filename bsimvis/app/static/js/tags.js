@@ -279,7 +279,7 @@ window.handleTagContextMenu = (e, tag) => {
                 <input type="range" id="tag-prio-slider" min="0" max="1000" step="10" value="${currentMeta.priority}" style="width:100%; cursor:pointer;">
             </div>
 
-            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
+            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:var(--window-tray); border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
                 Apply Changes
             </button>
         </div>

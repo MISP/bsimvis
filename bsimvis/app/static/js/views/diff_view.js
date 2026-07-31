@@ -134,7 +134,7 @@ window.DiffView = {
                         </div>
                     </div>
                     <div class="compare-btn-container" style="text-align:center; margin-top:20px;">
-                        <button id="compare-btn" class="btn-compare" disabled onclick="startComparison()" style="padding:10px 25px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:1rem;">Start Comparison</button>
+                        <button id="compare-btn" class="btn-compare" disabled onclick="startComparison()" style="padding:10px 25px; background:var(--accent); color:var(--window-tray); border:none; border-radius:4px; font-weight:bold; cursor:pointer; font-size:1rem;">Start Comparison</button>
                     </div>
                 </div>
 
@@ -160,7 +160,7 @@ window.DiffView = {
                     </div>
                 </div>
 
-                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:rgba(0,0,0,0.85); padding:10px; border-radius:4px; border:1px solid var(--accent); color:#fff; font-size:0.8rem; pointer-events:none;"></div>
+                <div id="bsim-tooltip" class="tooltip" style="display:none; position:fixed; z-index:20000; background:var(--window-bg); padding:10px; border-radius:4px; border:1px solid var(--accent); color:var(--text); font-size:0.8rem; pointer-events:none;"></div>
             </div>
         `;
 

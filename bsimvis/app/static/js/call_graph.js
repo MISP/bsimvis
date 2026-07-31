@@ -65,7 +65,7 @@ class FileCallGraph {
                 </div>
                 <div style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.85); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px;">
                     <label for="call-graph-file-select" style="color:var(--accent); font-weight:bold; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Select File</label>
-                    <select id="call-graph-file-select" style="padding: 6px 10px; background: #111; color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
+                    <select id="call-graph-file-select" style="padding: 6px 10px; background: var(--meta-header-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
                         <option value="">-- Loading Files... --</option>
                     </select>
                 </div>
@@ -127,30 +127,30 @@ class FileCallGraph {
         // Clear previous
         this.container.innerHTML = `
             <div id="${this.containerId}-svg-root" style="width:100%; height:100%;"></div>
-            <div style="position:absolute; top:15px; left:15px; z-index:10; background:rgba(0,0,0,0.85); padding:12px; border-radius:6px; border:1px solid #333; pointer-events:none; font-size:0.75rem; color:#eee; backdrop-filter:blur(5px);">
-                <div style="font-weight:bold; color:var(--accent); margin-bottom:10px; border-bottom:1px solid #444; padding-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
+            <div style="position:absolute; top:15px; left:15px; z-index:10; background:var(--window-bg); padding:12px; border-radius:6px; border:1px solid var(--border); pointer-events:none; font-size:0.75rem; color:var(--meta-text); backdrop-filter:blur(5px);">
+                <div style="font-weight:bold; color:var(--accent); margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; display:flex; justify-content:space-between; align-items:center;">
                     <span>Call Graph Legend</span>
                     <span style="font-size:0.6rem; opacity:0.6; font-weight:normal;">${this.nodes.length} nodes</span>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <div style="width:12px; height:12px; border-radius:50%; background:#66d9ef; border:1px solid #fff;"></div>
+                        <div style="width:12px; height:12px; border-radius:50%; background:#66d9ef; border:1px solid var(--text);"></div>
                         <span>Internal (In File)</span>
                     </div>
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <div style="width:12px; height:12px; border-radius:50%; background:#fd971f; border:1px solid #fff;"></div>
+                        <div style="width:12px; height:12px; border-radius:50%; background:#fd971f; border:1px solid var(--text);"></div>
                         <span>Unindexed / Filtered</span>
                     </div>
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <div style="width:12px; height:12px; border-radius:50%; background:#f92672; border:1px solid #fff;"></div>
+                        <div style="width:12px; height:12px; border-radius:50%; background:#f92672; border:1px solid var(--text);"></div>
                         <span>External Function</span>
                     </div>
                     <div style="display:flex; align-items:center; gap:10px; opacity:0.8;">
-                        <div style="width:12px; height:12px; border-radius:50%; background:none; border:2px dashed #fff;"></div>
+                        <div style="width:12px; height:12px; border-radius:50%; background:none; border:2px dashed var(--text);"></div>
                         <span>Orphan (No Calls)</span>
                     </div>
                 </div>
-                <div style="margin-top:12px; border-top:1px solid #444; padding-top:8px; color:var(--subtle); font-size:0.65rem; line-height:1.4;">
+                <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:8px; color:var(--subtle); font-size:0.65rem; line-height:1.4;">
                     • <b>Drag</b> nodes to move<br>
                     • <b>Hover</b> for code preview<br>
                     • <b>Click</b> to open full code<br>
@@ -159,14 +159,14 @@ class FileCallGraph {
             </div>
             <div style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.85); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px; pointer-events: auto;">
                 <label for="call-graph-file-select" style="color:var(--accent); font-weight:bold; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Select File</label>
-                <select id="call-graph-file-select" style="padding: 6px 10px; background: #111; color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
+                <select id="call-graph-file-select" style="padding: 6px 10px; background: var(--meta-header-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
                     <option value="">-- Loading Files... --</option>
                 </select>
             </div>
             <div style="position:absolute; bottom:15px; right:15px; z-index:10; display:flex; gap:10px; pointer-events: auto;">
-                <button id="${this.containerId}-btn-size" title="Toggle Size by Operations" style="background:#1e1e1e; border:1px solid #444; color:var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">Size: Uniform</button>
-                <button id="${this.containerId}-btn-physics" title="Toggle Physics Simulation" style="background:#1e1e1e; border:1px solid #444; color:var(--success); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:bold;">Physics: ON</button>
-                <button id="${this.containerId}-btn-hierarchy" title="Arrange Topologically" style="background:#1e1e1e; border:1px solid #444; color:var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">Hierarchical Layout</button>
+                <button id="${this.containerId}-btn-size" title="Toggle Size by Operations" style="background:var(--card-bg); border:1px solid var(--border); color:var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">Size: Uniform</button>
+                <button id="${this.containerId}-btn-physics" title="Toggle Physics Simulation" style="background:var(--card-bg); border:1px solid var(--border); color:var(--success); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:bold;">Physics: ON</button>
+                <button id="${this.containerId}-btn-hierarchy" title="Arrange Topologically" style="background:var(--card-bg); border:1px solid var(--border); color:var(--accent); padding:6px 12px; border-radius:4px; cursor:pointer; font-size:0.8rem;">Hierarchical Layout</button>
             </div>
         `;
 
@@ -223,7 +223,7 @@ class FileCallGraph {
         this.physicsEnabled = true;
 
         const link = g.append("g")
-            .attr("stroke", "#555")
+            .attr("stroke", "var(--subtle)")
             .attr("stroke-opacity", 0.6)
             .selectAll("line")
             .data(this.links)
@@ -249,10 +249,10 @@ class FileCallGraph {
                 if (d.is_unindexed) return "#fd971f";
                 return "#66d9ef";
             })
-            .attr("stroke", "#fff")
+            .attr("stroke", "var(--text)")
             .attr("stroke-width", d => (degrees[d.id] === 0) ? 0 : 1.5)
             .attr("stroke-dasharray", d => (degrees[d.id] === 0) ? "4,2" : "none")
-            .style("stroke", d => (degrees[d.id] === 0) ? "#fff" : "#fff")
+            .style("stroke", d => (degrees[d.id] === 0) ? "var(--text)" : "var(--text)")
             .style("stroke-width", d => (degrees[d.id] === 0) ? 3 : 1.5);
 
         // For orphans, we add a dashed outer ring
@@ -260,7 +260,7 @@ class FileCallGraph {
             .append("circle")
             .attr("r", 17)
             .attr("fill", "none")
-            .attr("stroke", "#fff")
+            .attr("stroke", "var(--text)")
             .attr("stroke-width", 1.5)
             .attr("stroke-dasharray", "4,2")
             .attr("opacity", 0.6);

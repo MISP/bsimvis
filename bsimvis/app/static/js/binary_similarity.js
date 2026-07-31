@@ -145,7 +145,7 @@ function renderBinarySimilarityView(params) {
 
             <!-- Graph sub-tab -->
             <div class="bsim-subtab-panel" id="bsim-panel-graph" style="flex:1; min-height:0; display:none; flex-direction:column;">
-                <div id="bin-sim-sankey-card" style="position:relative; width:100%; flex:1; min-height:200px; border:1px solid var(--border); background:#121212; border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+                <div id="bin-sim-sankey-card" style="position:relative; width:100%; flex:1; min-height:200px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
                     <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
                         <button class="view-btn ${sankeyMode === 'detailed' ? 'active' : ''}" id="bsim-sankey-btn-detailed" onclick="setSankeyMode('detailed')" title="Show detailed function-level similarities">Detailed</button>
                         <button class="view-btn ${sankeyMode === 'simplified' ? 'active' : ''}" id="bsim-sankey-btn-simplified" onclick="setSankeyMode('simplified')" title="Show simplified cluster-level summary">Simplified</button>
@@ -808,7 +808,7 @@ async function renderBinaryDiffSankey(data) {
         })
         .attr("stroke", "none")
         .attr("stroke-width", 0)
-        .attr("fill", d => d.target.color || '#fff')
+        .attr("fill", d => d.target.color || 'var(--text)')
         .style("fill-opacity", 0.4)
         .style("cursor", d => (d.source.id.startsWith('funcgroup_') || d.target.id.startsWith('funcgroup_')) ? "pointer" : "default")
         .on("mouseenter", function(event, d) { 
@@ -934,7 +934,7 @@ async function renderBinaryDiffSankey(data) {
                     .attr("dy", "0.35em")
                     .attr("text-anchor", d.id.startsWith('funcgroup_b_') ? "end" : "start")
                     .text(name)
-                    .attr("fill", "#fff")
+                    .attr("fill", "var(--text)")
                     .attr("font-size", "8px")
                     .attr("font-weight", "normal")
                     .attr("opacity", 0.7)
@@ -1007,7 +1007,7 @@ async function renderBinaryDiffSankey(data) {
                 .attr("dy", "0.35em")
                 .attr("text-anchor", d.id.startsWith('func_b_') || d.id.startsWith('funcgroup_b_') || d.id.startsWith('simplified_b_') ? "end" : "start")
                 .text(d.name)
-                .attr("fill", "#fff")
+                .attr("fill", "var(--text)")
                 .attr("font-size", "8px")
                 .attr("font-weight", "normal")
                 .attr("opacity", 0.7)

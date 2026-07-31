@@ -111,8 +111,8 @@
             position: 'fixed',
             pointerEvents: 'none',
             zIndex: '20002',
-            background: '#121212',
-            color: '#fff',
+            background: 'var(--bg)',
+            color: 'var(--text)',
             border: '1px solid #a6e22e',
             borderRadius: '4px',
             padding: '10px',
@@ -138,7 +138,7 @@
             display: 'none',
             pointerEvents: 'auto',
             fontSize: '0.8rem',
-            boxShadow: '0 15px 50px rgba(0,0,0,0.9)',
+            boxShadow: '0 15px 50px var(--window-bg)',
             backdropFilter: 'blur(15px)',
             overflow: 'hidden',
             maxWidth: 'calc(100vw - 30px)',
@@ -376,7 +376,7 @@
         let html = '';
         if (idx !== undefined && window.previewTips && window.previewTips[idx]) {
             const data = window.previewTips[idx];
-            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
             data[2].forEach(f => {
                 const color = f[8] || 'var(--accent,#66d9ef)';
                 html += `<div style="margin-bottom:8px;">
@@ -385,7 +385,7 @@
                 </div>`;
             });
         } else {
-            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${hashes.length})</div>`;
+            html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${hashes.length})</div>`;
             hashes.forEach(h => {
                 html += `<div style="margin-bottom:8px;">
                     <div style="font-family:monospace; color:var(--accent,#66d9ef); font-weight:bold;">${h}</div>
@@ -585,13 +585,13 @@
         if (avtype) {
             extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-shield" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>AV Type</span>
-                <span class="mono" style="color: #eee; font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
+                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
             </div>`;
         }
         if (filetype) {
             extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-file-code" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>File Type</span>
-                <span class="mono" style="color: #eee; font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
+                <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
             </div>`;
         }
         if (yara) {
@@ -608,8 +608,8 @@
         }
 
         tooltip.innerHTML = `
-        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px rgba(0,0,0,0.9); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
-            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 8px; color: #fff; display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
+        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px var(--window-bg); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
+            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 8px; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
                 <i class="fa-solid fa-file" style="color: var(--accent);"></i>
                 <span>${fileName}</span>
             </div>

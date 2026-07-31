@@ -751,7 +751,7 @@
                 display: flex;
                 flex-direction: column;
                 gap: 16px;
-                color: #eee;
+                color: var(--meta-text);
             }
             .tag-modal-overlay.active .tag-modal-content {
                 transform: translateY(0);
@@ -780,7 +780,7 @@
                 transition: color 0.15s ease;
             }
             .tag-modal-close:hover {
-                color: #fff;
+                color: var(--text);
             }
             .tag-modal-target-info {
                 font-size: 0.75rem;
@@ -814,7 +814,7 @@
                 padding: 4px 10px;
                 border-radius: 4px;
                 font-size: 0.75rem;
-                color: #000;
+                color: var(--window-tray);
                 font-weight: 600;
             }
             .tag-modal-tag-pill .remove-btn {
@@ -834,10 +834,10 @@
             }
             .tag-modal-input {
                 flex: 1;
-                background: #121212;
+                background: var(--bg);
                 border: 1px solid rgba(255, 255, 255, 0.15);
                 border-radius: 6px;
-                color: #fff;
+                color: var(--text);
                 padding: 8px 12px;
                 font-size: 0.85rem;
                 outline: none;
@@ -848,7 +848,7 @@
             }
             .tag-modal-btn-add {
                 background: var(--accent, #a6e22e);
-                color: #000;
+                color: var(--window-tray);
                 border: none;
                 border-radius: 6px;
                 padding: 0 16px;
@@ -865,7 +865,7 @@
                 overflow-y: auto;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 6px;
-                background: #121212;
+                background: var(--bg);
             }
             .tag-modal-suggestion-item {
                 padding: 8px 12px;
@@ -879,7 +879,7 @@
             }
             .tag-modal-suggestion-item:hover {
                 background: rgba(255, 255, 255, 0.05);
-                color: #fff;
+                color: var(--text);
             }
             .tag-modal-suggestion-item.active-tag {
                 opacity: 0.4;

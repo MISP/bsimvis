@@ -61,9 +61,138 @@ def ghidra_vector_entries(vec):
     return out
 
 
+def extract(binary, factory, settings, monitor):
+    """Open `binary`, return [(name, ghidra LSHVector, our {hash: tf})]."""
+    import pyghidra
+    from ghidra.app.decompiler import DecompInterface, DecompileOptions
+
+    funcs = []
+    with pyghidra.open_program(binary, analyze=True) as flat:
+        program = flat.getCurrentProgram()
+        decomp = DecompInterface()
+        decomp.setOptions(DecompileOptions())
+        decomp.toggleSyntaxTree(False)
+        decomp.setSignatureSettings(settings)
+        if not decomp.openProgram(program):
+            sys.exit(f"decompiler: {decomp.getLastMessage()}")
+
+        for func in program.getFunctionManager().getFunctions(True):
+            if func.isExternal() or func.isThunk():
+                continue
+            name = func.getName()
+            if name.startswith("FUN_"):
+                continue
+            sigres = decomp.generateSignatures(func, False, 10, monitor)
+            if sigres is None or sigres.features is None or len(sigres.features) < MIN_FEATURES:
+                continue
+            gvec = factory.buildVector(sigres.features)
+            ours = our_vector(decomp, func, monitor)
+            if not ours:
+                continue
+            funcs.append((name, gvec, ours))
+
+        decomp.closeProgram()
+        decomp.dispose()
+    return funcs
+
+
+def check_vectors(label, funcs, failures):
+    """Our dict vs the contents of Ghidra's own LSHVector (also proves the
+    LSHVectors are still readable after their program context closed)."""
+    mismatched = []
+    for name, gvec, ours in funcs:
+        theirs = ghidra_vector_entries(gvec)
+        if theirs != ours:
+            only_ours = {k: v for k, v in ours.items() if theirs.get(k) != v}
+            only_theirs = {k: v for k, v in theirs.items() if ours.get(k) != v}
+            mismatched.append((name, len(ours), len(theirs), only_ours, only_theirs))
+    if mismatched:
+        print(f"[{label}] VECTOR MISMATCH in {len(mismatched)}/{len(funcs)} functions:")
+        for name, n_ours, n_theirs, only_ours, only_theirs in mismatched[:5]:
+            print(f"  {name}: ours={n_ours} entries, ghidra={n_theirs} entries")
+            print(f"    ours-differing (first 5): {dict(itertools.islice(only_ours.items(), 5))}")
+            print(f"    ghidra-differing (first 5): {dict(itertools.islice(only_theirs.items(), 5))}")
+        failures.append(f"[{label}] vector contents disagree")
+    else:
+        print(f"[{label}] vectors match: yes ({len(funcs)}/{len(funcs)}, hash+tf identical)")
+
+
+def print_buckets(results):
+    """Bucketed agreement table, keyed on Ghidra's similarity."""
+    edges = [(i / 10, (i + 1) / 10) for i in range(10)]
+    print("\nbucketed agreement (bucket by Ghidra similarity):")
+    print(f"  {'bucket':>12} {'pairs':>8} {'max|dsim|':>12} {'max|dsig|':>12}")
+    rows = [(f"[{lo:.1f},{hi:.1f})", lambda s, lo=lo, hi=hi: lo <= s < hi) for lo, hi in edges]
+    rows.append(("== 1.0", lambda s: s >= 1.0))
+    for label, pred in rows:
+        sel = [r for r in results if pred(r[4])]
+        if not sel:
+            print(f"  {label:>12} {0:>8}            -            -")
+            continue
+        print(
+            f"  {label:>12} {len(sel):>8} {max(r[0] for r in sel):>12.3e} "
+            f"{max(r[1] for r in sel):>12.3e}"
+        )
+
+
+def print_name_summary(results):
+    """Descriptive only: same-name (true cross-arch matches) vs different-name."""
+    import statistics
+
+    same = sorted(r[4] for r in results if r[2] == r[3])
+    diff = [r for r in results if r[2] != r[3]]
+    print("\ncross-binary name summary (descriptive, not part of the verdict):")
+    if same:
+        print(
+            f"  SAME-NAME pairs: n={len(same)} min={same[0]:.4f} "
+            f"median={statistics.median(same):.4f} max={same[-1]:.4f}"
+        )
+    else:
+        print("  SAME-NAME pairs: none")
+    if diff:
+        sims = sorted(r[4] for r in diff)
+        print(
+            f"  DIFF-NAME pairs: n={len(diff)} median={statistics.median(sims):.4f} "
+            f"max={sims[-1]:.4f}"
+        )
+        print("  top 10 different-name scorers (sim / significance):")
+        for r in sorted(diff, key=lambda r: -r[4])[:10]:
+            print(f"    sim={r[4]:.4f} sig={r[6]:8.3f}  {r[2]}  <->  {r[3]}")
+        # Does significance separate what similarity cannot? Compare the weakest
+        # true match against the strongest false one -- if the false pair scores
+        # higher on similarity but lower on significance, significance is the
+        # discriminator the threshold cannot be.
+        same_pairs = [r for r in results if r[2] == r[3]]
+        if same_pairs:
+            worst_true = min(same_pairs, key=lambda r: r[4])
+            best_false = max(diff, key=lambda r: r[4])
+            print("\n  discrimination check:")
+            print(
+                f"    weakest TRUE  match: sim={worst_true[4]:.4f} "
+                f"sig={worst_true[6]:8.3f}  {worst_true[2]}"
+            )
+            print(
+                f"    strongest FALSE pair: sim={best_false[4]:.4f} "
+                f"sig={best_false[6]:8.3f}  {best_false[2]} <-> {best_false[3]}"
+            )
+            sims = [r[4] for r in same_pairs]
+            sigs = [r[6] for r in same_pairs]
+            print(
+                f"    TRUE  sim range [{min(sims):.4f}, {max(sims):.4f}]  "
+                f"sig range [{min(sigs):.3f}, {max(sigs):.3f}]"
+            )
+            dsims = [r[4] for r in diff]
+            dsigs = [r[6] for r in diff]
+            print(
+                f"    FALSE sim range [{min(dsims):.4f}, {max(dsims):.4f}]  "
+                f"sig range [{min(dsigs):.3f}, {max(dsigs):.3f}]"
+            )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("binary", nargs="?", default=DEFAULT_BINARY)
+    ap.add_argument("--binary-b", default=None, help="second binary: compare full A x B")
     ap.add_argument("--weights", default=None, help="lshweights_*.xml (default: nosize)")
     ap.add_argument("--pairs", type=int, default=60)
     args = ap.parse_args()
@@ -97,103 +226,81 @@ def main():
     monitor = ConsoleTaskMonitor()
     failures = []
 
-    with pyghidra.open_program(args.binary, analyze=True) as flat:
-        program = flat.getCurrentProgram()
-        decomp = DecompInterface()
-        decomp.setOptions(DecompileOptions())
-        decomp.toggleSyntaxTree(False)
-        decomp.setSignatureSettings(settings)
-        if not decomp.openProgram(program):
-            sys.exit(f"decompiler: {decomp.getLastMessage()}")
+    funcs = extract(args.binary, factory, settings, monitor)
+    print(f"functions processed [A {os.path.basename(args.binary)}]: {len(funcs)}")
+    funcs_b = None
+    if args.binary_b:
+        funcs_b = extract(args.binary_b, factory, settings, monitor)
+        print(f"functions processed [B {os.path.basename(args.binary_b)}]: {len(funcs_b)}")
 
-        funcs = []
-        for func in program.getFunctionManager().getFunctions(True):
-            if func.isExternal() or func.isThunk():
-                continue
-            name = func.getName()
-            if name.startswith("FUN_"):
-                continue
-            sigres = decomp.generateSignatures(func, False, 10, monitor)
-            if sigres is None or sigres.features is None or len(sigres.features) < MIN_FEATURES:
-                continue
-            gvec = factory.buildVector(sigres.features)
-            ours = our_vector(decomp, func, monitor)
-            if not ours:
-                continue
-            funcs.append((name, gvec, ours))
+    # Also proves the LSHVectors survived their program being closed.
+    check_vectors("A", funcs, failures)
+    if funcs_b is not None:
+        check_vectors("B", funcs_b, failures)
 
-        print(f"functions processed: {len(funcs)}")
-
-        # Cross-check: our dict vs the contents of Ghidra's own LSHVector.
-        mismatched = []
-        for name, gvec, ours in funcs:
-            theirs = ghidra_vector_entries(gvec)
-            if theirs != ours:
-                only_ours = {k: v for k, v in ours.items() if theirs.get(k) != v}
-                only_theirs = {k: v for k, v in theirs.items() if ours.get(k) != v}
-                mismatched.append((name, len(ours), len(theirs), only_ours, only_theirs))
-        if mismatched:
-            print(f"VECTOR MISMATCH in {len(mismatched)}/{len(funcs)} functions:")
-            for name, n_ours, n_theirs, only_ours, only_theirs in mismatched[:5]:
-                print(f"  {name}: ours={n_ours} entries, ghidra={n_theirs} entries")
-                print(f"    ours-differing (first 5): {dict(itertools.islice(only_ours.items(), 5))}")
-                print(f"    ghidra-differing (first 5): {dict(itertools.islice(only_theirs.items(), 5))}")
-            failures.append("vector contents disagree")
-        else:
-            print(f"vectors match: yes ({len(funcs)}/{len(funcs)} functions, hash+tf identical)")
-
-        # Pairs: self-pairs first (identical), then all cross pairs.
-        pairs = [(i, i) for i in range(len(funcs))]
-        cross = list(itertools.combinations(range(len(funcs)), 2))
-        random.Random(0).shuffle(cross)  # spread across the function set, not just func 0
-        pairs += cross
-        pairs = pairs[: max(args.pairs, len(funcs))]
-
-        results = []
-        for i, j in pairs:
-            name_a, gvec_a, ours_a = funcs[i]
-            name_b, gvec_b, ours_b = funcs[j]
+    def compare_pairs(pairs):
+        out = []
+        for (name_a, gvec_a, ours_a), (name_b, gvec_b, ours_b) in pairs:
             vc = VectorCompare()
             g_sim = gvec_a.compare(gvec_b, vc)
             g_sig = factory.calculateSignificance(vc)
             o_sim, o_sig = table.compare(ours_a, ours_b)
-            results.append(
+            out.append(
                 (abs(g_sim - o_sim), abs(g_sig - o_sig), name_a, name_b, g_sim, o_sim, g_sig, o_sig)
             )
+        return out
 
-        # Distinct source functions that share a feature vector are indistinguishable
-        # to ANY weighting scheme -- an information limit of the signature, not an
-        # algorithm error. Measuring this ceiling first keeps it from being counted
-        # as a false positive later.
-        identical = []
-        near = []
-        for i, j in itertools.combinations(range(len(funcs)), 2):
-            name_a, gvec_a, ours_a = funcs[i]
-            name_b, _, ours_b = funcs[j]
-            if ours_a == ours_b:
-                identical.append((name_a, name_b))
-            else:
-                sim, _ = table.compare(ours_a, ours_b)
-                if sim >= COLLISION_SIM:
-                    near.append((sim, name_a, name_b))
-        n_cross = len(funcs) * (len(funcs) - 1) // 2
-        print(
-            f"\nceiling: {len(identical)}/{n_cross} distinct-function pairs have "
-            f"IDENTICAL feature vectors"
+    if funcs_b is None:
+        # Pairs: self-pairs first (identical), then all cross pairs.
+        idx = [(i, i) for i in range(len(funcs))]
+        cross = list(itertools.combinations(range(len(funcs)), 2))
+        random.Random(0).shuffle(cross)  # spread across the function set, not just func 0
+        idx += cross
+        idx = idx[: max(args.pairs, len(funcs))]
+        results = compare_pairs([(funcs[i], funcs[j]) for i, j in idx])
+        cross_results = None
+    else:
+        cross_results = compare_pairs(itertools.product(funcs, funcs_b))
+        internal = compare_pairs(
+            [(funcs[i], funcs[j]) for i, j in itertools.combinations(range(len(funcs)), 2)]
+            + [(funcs_b[i], funcs_b[j]) for i, j in itertools.combinations(range(len(funcs_b)), 2)]
         )
-        for a, b in identical[:10]:
-            print(f"  identical: {a} <-> {b}")
-        print(
-            f"ceiling: {len(near)}/{n_cross} further pairs score >= {COLLISION_SIM} "
-            f"without being identical"
-        )
-        for sim, a, b in sorted(near, reverse=True)[:10]:
-            print(f"  {sim:.4f}: {a} <-> {b}")
+        results = cross_results + internal
+        print(f"A x B pairs: {len(cross_results)}   A/B-internal pairs: {len(internal)}")
 
-        decomp.closeProgram()
-        decomp.dispose()
+    # Distinct source functions that share a feature vector are indistinguishable
+    # to ANY weighting scheme -- an information limit of the signature, not an
+    # algorithm error. Measuring this ceiling first keeps it from being counted
+    # as a false positive later.
+    ceiling_funcs = funcs + (funcs_b or [])
+    identical = []
+    near = []
+    for (name_a, _, ours_a), (name_b, _, ours_b) in itertools.combinations(ceiling_funcs, 2):
+        if ours_a == ours_b:
+            identical.append((name_a, name_b))
+        else:
+            sim, _ = table.compare(ours_a, ours_b)
+            if sim >= COLLISION_SIM:
+                near.append((sim, name_a, name_b))
+    n_cross = len(ceiling_funcs) * (len(ceiling_funcs) - 1) // 2
+    print(
+        f"\nceiling: {len(identical)}/{n_cross} distinct-function pairs have "
+        f"IDENTICAL feature vectors"
+    )
+    for a, b in identical[:10]:
+        print(f"  identical: {a} <-> {b}")
+    print(
+        f"ceiling: {len(near)}/{n_cross} further pairs score >= {COLLISION_SIM} "
+        f"without being identical"
+    )
+    for sim, a, b in sorted(near, reverse=True)[:10]:
+        print(f"  {sim:.4f}: {a} <-> {b}")
 
-    print(f"pairs compared: {len(results)}")
+    print(f"\npairs compared: {len(results)}")
+    print_buckets(results)
+    if cross_results is not None:
+        print_name_summary(cross_results)
+
     max_sim = max(r[0] for r in results)
     max_sig = max(r[1] for r in results)
     print(f"max |sim diff| = {max_sim:.3e}   (tol {SIM_TOL:.0e})")

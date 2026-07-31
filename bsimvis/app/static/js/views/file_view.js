@@ -10,17 +10,20 @@ window.FileView = {
     clusters: {},
     functionsLoaded: false,
     sortState: { col: 'function_name', dir: 1 },
-    filterState: { q: '', featMin: '', featMax: '' },
+    funcClusters: {},
+    funcPage: { total: null, loading: false, reqId: 0 },
+    FUNC_PAGE_SIZE: 100,
 
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
         this.functions = [];
         this.clusters = {};
+        this.funcClusters = {};
+        this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
-        this.filterState = { q: '', featMin: '', featMax: '' };
-        
+
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
@@ -99,8 +102,8 @@ window.FileView = {
                 <!-- Functions Tab Panel -->
                 <div id="file-panel-functions" class="file-view-panel" style="display: none;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border); display: flex; flex-direction: column; gap: 15px;">
-                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
-                            <table class="file-func-table">
+                        <div id="file-func-scroll" style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                            <table class="file-func-table" id="file-func-table">
                                 <thead>
                                     <tr>
                                         <th class="sortable" onclick="FileView.toggleSort('function_name')">Function <span id="sort-icon-function_name">↕</span></th>
@@ -111,18 +114,26 @@ window.FileView = {
                                         <th>Notes</th>
                                     </tr>
                                     <tr class="filter-row">
-                                        <th><input type="text" id="flt-q" placeholder="Search name/tag/addr..." style="width:100%;" oninput="FileView.handleFilterChange()" /></th>
-                                        <th></th>
-                                        <th></th>
-                                        <th></th>
                                         <th>
-                                            <div style="display:flex; align-items:center; gap:2px;">
-                                                <input type="number" id="flt-feat-min" placeholder="Min" style="width:45%;" oninput="FileView.handleFilterChange()" />
-                                                <span class="dim" style="font-size:0.6rem">-</span>
-                                                <input type="number" id="flt-feat-max" placeholder="Max" style="width:45%;" oninput="FileView.handleFilterChange()" />
+                                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                                <input type="text" id="flt-func-name" placeholder="Name..." style="width:100%;" onfocus="FileView.attachFieldAutocomplete(this, 'function_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <div style="display:flex; gap:2px;">
+                                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'namespace')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                    <input type="text" id="flt-func-ret_type" placeholder="Return type..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'return_type')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                </div>
                                             </div>
                                         </th>
-                                        <th></th>
+                                        <th><input type="text" id="flt-func-address" placeholder="Addr..." style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th><input type="text" id="flt-func-tag" placeholder="Tag..." style="width:100%;" onfocus="FileView.attachTagFilterAutocomplete(this)" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th>
+                                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                                <input type="text" id="flt-func-cluster" placeholder="UUID..." style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <input type="text" id="flt-func-cluster-name" placeholder="Cluster name..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'cluster_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="0.95" step="0.05" min="0" max="1" title="Min Cluster Cohesion" style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                            </div>
+                                        </th>
+                                        <th><input type="number" id="flt-func-min-features" placeholder="Min" min="0" title="Min Features" style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th><input type="text" id="flt-func-note-owner" placeholder="Note owner..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'note_owners')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
                                     </tr>
                                 </thead>
                                 <tbody id="file-functions-tbody">
@@ -130,6 +141,7 @@ window.FileView = {
                                 </tbody>
                             </table>
                         </div>
+                        <div id="file-func-status" class="dim" style="font-size:0.7rem; text-align:center;"></div>
                     </div>
                 </div>
 
@@ -427,6 +439,17 @@ window.FileView = {
                 document.getElementById('inferred-meta-card').style.display = 'block';
             }
 
+            // Unique-value counts appended to the filter placeholders
+            if (typeof loadFieldCardinalities === 'function') {
+                loadFieldCardinalities(collection, 'func', {
+                    'function_name': 'flt-func-name',
+                    'namespace': 'flt-func-namespace',
+                    'return_type': 'flt-func-ret_type',
+                    'cluster_name': 'flt-func-cluster-name',
+                    'note_owners': 'flt-func-note-owner'
+                });
+            }
+
             // Silently fetch functions so they're ready when switching tabs
             this.loadFunctionsTable();
 
@@ -476,26 +499,115 @@ window.FileView = {
         this.switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
     },
 
-    async loadFunctionsTable() {
-        if (this.functionsLoaded) return;
+    // Filter inputs -> /api/function/search params. Same names the function
+    // search view uses, so the server-side handling is shared.
+    FUNC_FILTERS: {
+        'flt-func-name': 'function_name',
+        'flt-func-namespace': 'namespace',
+        'flt-func-ret_type': 'return_type',
+        'flt-func-address': 'entrypoint_address',
+        'flt-func-tag': 'func_tag',
+        'flt-func-cluster': 'cluster_uuid',
+        'flt-func-cluster-name': 'cluster_name',
+        'flt-func-min-cohesion': 'min_cohesion',
+        'flt-func-min-features': 'min_features',
+        'flt-func-note-owner': 'note_owner'
+    },
+
+    // attachAutocomplete rebinds focus/click/input on the element, so the inline
+    // onfocus only ever runs once — same wiring as the function search view.
+    attachFieldAutocomplete(input, field) {
+        if (typeof attachAutocomplete !== 'function') return;
+        attachAutocomplete(input, 'func', field, (val) => {
+            input.value = val;
+            this.applyFilters();
+        });
+    },
+
+    attachTagFilterAutocomplete(input) {
+        if (typeof attachTagAutocomplete !== 'function') return;
+        attachTagAutocomplete(input, (val) => {
+            input.value = val;
+            this.applyFilters();
+        });
+    },
+
+    applyFilters() {
+        clearTimeout(this._filterTimer);
+        this.loadFunctionsTable({ reset: true });
+    },
+
+    buildFunctionsQuery(offset) {
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+        const p = new URLSearchParams(apiParams);
+        p.set('file_md5', file_md5);
+        p.set('offset', offset);
+        p.set('limit', this.FUNC_PAGE_SIZE);
+        p.set('sort_by', this.sortState.col);
+        p.set('sort_order', this.sortState.dir === 1 ? 'asc' : 'desc');
+        for (const [id, param] of Object.entries(this.FUNC_FILTERS)) {
+            const v = (document.getElementById(id)?.value || '').trim();
+            if (v) p.set(param, v);
+        }
+        return p.toString();
+    },
+
+    async loadFunctionsTable({ reset = false } = {}) {
+        if (this.funcPage.loading && !reset) return;
+        if (!reset && this.functionsLoaded) return;
+        if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
+
         const tbody = document.getElementById('file-functions-tbody');
-        
+        if (reset) {
+            this.functions = [];
+            this.funcPage.total = null;
+        }
+        this.funcPage.loading = true;
+        this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
+
+        // Bump on every request so a slow earlier page can't overwrite a newer filter's result
+        const reqId = ++this.funcPage.reqId;
+
         try {
-            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
-            const res = await fetch(`/api/function/search?file_md5=${file_md5}&limit=1000&${apiParams}`);
+            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(this.functions.length)}`);
             if (!res.ok) throw new Error("Functions load failed");
             const data = await res.json();
-            
-            this.functions = data.functions || [];
-            document.getElementById('functions-count').innerText = this.functions.length;
+            if (reqId !== this.funcPage.reqId) return;
+            if (data.error) throw new Error(data.error);
+
+            this.functions = this.functions.concat(data.functions || []);
+            this.funcPage.total = data.total || 0;
+            this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
+            document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
             this.functionsLoaded = true;
         } catch (e) {
             console.error(e);
+            if (reqId !== this.funcPage.reqId) return;
             if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading functions: ${e.message}</td></tr>`;
+            this.setFunctionsStatus('');
+        } finally {
+            if (reqId === this.funcPage.reqId) this.funcPage.loading = false;
         }
+    },
+
+    setFunctionsStatus(html) {
+        const el = document.getElementById('file-func-status');
+        if (el) el.innerHTML = html;
+    },
+
+    // Loads the next page whenever the table is scrolled near the bottom.
+    bindFunctionsScroll() {
+        const scroller = document.getElementById('file-func-scroll');
+        if (!scroller || scroller._funcScrollBound) return;
+        scroller._funcScrollBound = true;
+        scroller.addEventListener('scroll', () => {
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+                this.loadFunctionsTable();
+            }
+        });
     },
 
     toggleSort(col) {
@@ -505,85 +617,51 @@ window.FileView = {
             this.sortState.col = col;
             this.sortState.dir = 1;
         }
-        
+
         ['function_name', 'entrypoint_address', 'bsim_features_count'].forEach(c => {
             const el = document.getElementById(`sort-icon-${c}`);
             if (el) {
                 el.innerText = this.sortState.col === c ? (this.sortState.dir === 1 ? '▲' : '▼') : '↕';
             }
         });
-        
-        this.renderFunctionsTable();
+
+        this.loadFunctionsTable({ reset: true });
     },
 
     handleFilterChange() {
-        this.filterState.q = document.getElementById('flt-q').value;
-        this.filterState.featMin = document.getElementById('flt-feat-min').value;
-        this.filterState.featMax = document.getElementById('flt-feat-max').value;
-        this.renderFunctionsTable();
+        clearTimeout(this._filterTimer);
+        this._filterTimer = setTimeout(() => this.loadFunctionsTable({ reset: true }), 350);
+    },
+
+    handleFilterKey(e) {
+        if (e.key === 'Enter') this.applyFilters();
     },
 
     renderFunctionsTable() {
         const tbody = document.getElementById('file-functions-tbody');
         if (!tbody) return;
 
-        // Apply filters
-        let filtered = this.functions.slice();
-        
-        const q = this.filterState.q.toLowerCase().trim();
-        if (q) {
-            filtered = filtered.filter(f => {
-                const name = (f.function_name || '').toLowerCase();
-                const addr = (f.entrypoint_address || '').toLowerCase();
-                const tags = (f.tags || []).join(' ').toLowerCase() + ' ' + (f.user_tags || []).join(' ').toLowerCase();
-                return name.includes(q) || addr.includes(q) || tags.includes(q);
-            });
-        }
-        
-        const minFeat = parseInt(this.filterState.featMin);
-        const maxFeat = parseInt(this.filterState.featMax);
-        if (!isNaN(minFeat)) {
-            filtered = filtered.filter(f => (f.bsim_features_count || 0) >= minFeat);
-        }
-        if (!isNaN(maxFeat)) {
-            filtered = filtered.filter(f => (f.bsim_features_count || 0) <= maxFeat);
-        }
-
-        // Apply sort
-        const col = this.sortState.col;
-        const dir = this.sortState.dir;
-        filtered.sort((a, b) => {
-            let valA = a[col];
-            let valB = b[col];
-            
-            if (col === 'bsim_features_count') {
-                valA = Number(valA || 0);
-                valB = Number(valB || 0);
-            } else {
-                valA = String(valA || '').toLowerCase();
-                valB = String(valB || '').toLowerCase();
-            }
-            
-            if (valA < valB) return -dir;
-            if (valA > valB) return dir;
-            return 0;
-        });
-
-        if (filtered.length === 0) {
+        // Filtering, sorting and paging all happen server-side; render what we hold.
+        if (this.functions.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No functions found.</td></tr>';
+            this.setFunctionsStatus('');
             return;
         }
 
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
 
-        tbody.innerHTML = filtered.map(f => {
+        tbody.innerHTML = this.functions.map(f => {
             const entry = f.entrypoint_address || '';
             const funcName = f.function_name || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
             const funcId = f.function_id || `${fColl}:func:${file_md5}:${entry}`;
-            
+            // renderFunction/context menu read these off the object; the search API may omit them
+            f.collection = fColl;
+            f.file_md5 = f.file_md5 || file_md5;
+            f.function_id = funcId;
+
             // Notes
             const noteBtn = window.EntityRenderer ? window.EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f }) : '';
             
@@ -591,7 +669,7 @@ window.FileView = {
             const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', funcId, f.tags || [], f.user_tags || []) : '';
             
             // Clusters
-            const cls = (f.clusters || []).map(uuid => this.clusters[uuid]).filter(Boolean);
+            const cls = (f.clusters || []).map(uuid => (this.funcClusters || {})[uuid] || this.clusters[uuid]).filter(Boolean);
             const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
 
             // Clickable details URL
@@ -608,12 +686,12 @@ window.FileView = {
                 <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
                     data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
-                    <td>
-                        <a href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath('${detailUrl}', event);" style="color:var(--accent); font-weight:bold; text-decoration:none;">
-                            ${funcName}
-                        </a>
+                    <td class="sim-cell" style="min-width:300px;">
+                        ${window.EntityRenderer ? window.EntityRenderer.renderFunction(f, { hideNote: true }) : funcName}
                     </td>
-                    <td class="mono" style="color:var(--accent);">@ ${entry}</td>
+                    <td>
+                        <a class="mono" href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath('${detailUrl}', event);" style="color:var(--accent); text-decoration:none;">@ ${entry}</a>
+                    </td>
                     <td>${tagsHtml}</td>
                     <td>${clusterCardHtml}</td>
                     <td>
@@ -627,8 +705,14 @@ window.FileView = {
             `;
         }).join('');
 
+        const shown = this.functions.length;
+        const total = this.funcPage.total ?? shown;
+        this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        this.bindFunctionsScroll();
+
+        // TableSelection takes an element id, not an element (constructor is idempotent per table)
         if (window.TableSelection) {
-            new window.TableSelection(tbody.closest('table'));
+            new window.TableSelection('file-func-table');
         }
     },
 
@@ -660,10 +744,14 @@ window.FileView = {
             window.removeEventListener('hashchange', this._onHashChange);
             this._hashBound = false;
         }
+        clearTimeout(this._filterTimer);
+        this.funcPage.reqId++;   // orphan any request still in flight
         this.container = null;
         this.params = null;
         this.functions = [];
         this.clusters = {};
+        this.funcClusters = {};
+        this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
     }
 };

@@ -44,6 +44,20 @@ function formatDate(iso) {
 }
 window.formatDate = formatDate;
 
+// Returns the <iframe> in the parent document that hosts this window, or null
+// when we are not framed. windowManager assigns random ids, so frames can only
+// be matched by contentWindow identity.
+function getHostFrame() {
+    if (!window.parent || window.parent === window) return null;
+    try {
+        return Array.from(window.parent.document.querySelectorAll('iframe'))
+            .find(f => f.contentWindow === window) || null;
+    } catch (e) {
+        return null; // cross-origin parent
+    }
+}
+window.getHostFrame = getHostFrame;
+
 function formatDuration(createdAt, updatedAt, status) {
     if (!createdAt) return '<span class="dim">-</span>';
     let end = updatedAt;

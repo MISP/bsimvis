@@ -326,9 +326,8 @@ function updateDiffQueueUI() {
 
     // 4. If in parent window, broadcast to child iframes
     if (window.parent === window) {
-        ['code-frame', 'feature-frame', 'global-feature-frame', 'diff-frame'].forEach(frameId => {
-            const frame = document.getElementById(frameId);
-            if (frame && frame.contentWindow && typeof frame.contentWindow.updateDiffQueueUI === 'function') {
+        document.querySelectorAll('iframe').forEach(frame => {
+            if (frame.contentWindow && typeof frame.contentWindow.updateDiffQueueUI === 'function') {
                 try { frame.contentWindow.updateDiffQueueUI(); } catch (e) {}
             }
         });

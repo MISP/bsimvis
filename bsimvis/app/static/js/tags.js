@@ -481,9 +481,7 @@ window.showClusterCardTooltip = function(event, uuid, name, size, stability, coh
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     let adjustedEvent = event;
     if (targetWindow !== window) {
-        let iframeId = 'code-frame';
-        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-        const iframe = targetWindow.document.getElementById(iframeId);
+        const iframe = window.getHostFrame();
         if (iframe) {
             const rect = iframe.getBoundingClientRect();
             adjustedEvent = {
@@ -530,9 +528,7 @@ window.moveClusterCardTooltip = function(e) {
     if (!activeTooltip) return;
     
     if (targetWindow !== window) {
-        let iframeId = 'code-frame';
-        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-        const iframe = targetWindow.document.getElementById(iframeId);
+        const iframe = window.getHostFrame();
         if (iframe) {
             const rect = iframe.getBoundingClientRect();
             const adjustedEvent = {

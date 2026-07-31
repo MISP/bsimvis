@@ -26,6 +26,13 @@ start_tmux() {
     fi
 }
 
+# Print a terminal-clickable hyperlink (OSC 8; plain URL fallback in dumb terms)
+hyperlink() {
+    local url=$1
+    local label=${2:-$1}
+    printf '\033]8;;%s\033\\%s\033]8;;\033\\' "$url" "$label"
+}
+
 # Wait until a TCP port is accepting connections (max 30s)
 wait_for_port() {
     local port=$1
@@ -89,11 +96,17 @@ if [ -f .env ]; then
 fi
 
 # Defaults & Config
+APP_HOST=${APP_HOST:-0.0.0.0}
+APP_PORT=${APP_PORT:-5000}
 REDIS_PORT=${REDIS_PORT:-6379}
 KVROCKS_PORT=${KVROCKS_PORT:-6666}
-# Each worker holds a Ghidra JVM (ghidra.max_heap_mb). Cap the fleet by RAM as
-# well as cores: ~3 GB of host RAM per worker.
-WORKERS_MAX_BY_RAM=$(awk '/MemTotal/ {print int($2/1024/1024/3)}' /proc/meminfo)
+# Each worker holds a Ghidra JVM. Budget ~2.5 GB RSS per worker (1536 MB heap
+# plus JVM native overhead, measured 2.4 GB peak) and reserve 8 GB for kvrocks,
+# redis and the desktop. The old MemTotal/3 gave the whole host to the fleet and
+# the kernel OOM-killed kvrocks instead.
+# ponytail: heuristic, one big binary can still blow past 2.5 GB. A hard
+# guarantee needs a per-worker cgroup MemoryMax.
+WORKERS_MAX_BY_RAM=$(awk '/MemTotal/ {m=$2/1024/1024; n=int((m-8)/2.5); print (n>1?n:1)}' /proc/meminfo)
 WORKERS_COUNT=${WORKERS_COUNT:-5}
 if [ "$WORKERS_COUNT" -gt "$WORKERS_MAX_BY_RAM" ]; then
     echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM)"
@@ -221,6 +234,9 @@ for i in $(seq 1 $WORKERS_COUNT); do
 done
 
 echo "--------------------------"
+wait_for_port "${APP_PORT}" "App"
+APP_URL="http://localhost:${APP_PORT}"
+echo -n "Dashboard: "; hyperlink "${APP_URL}"; echo
 echo "All services started in tmux session '${PROJECT_NAME}'."
 echo "Use 'tmux attach -t ${PROJECT_NAME}' to view the session."
 echo "Inside tmux, use Ctrl+b then n/p to switch between windows (services)."

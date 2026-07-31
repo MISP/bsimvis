@@ -766,6 +766,9 @@ class TableSelection {
     }
 }
 
+// `class` declarations live in script scope, not on window — export explicitly
+window.TableSelection = TableSelection;
+
 window.getSelectedTableIds = () => {
     const allIds = new Set();
     if (window.tableSelections) {

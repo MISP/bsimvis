@@ -195,6 +195,10 @@ def main():
     ap.add_argument("--binary-b", default=None, help="second binary: compare full A x B")
     ap.add_argument("--weights", default=None, help="lshweights_*.xml (default: nosize)")
     ap.add_argument("--pairs", type=int, default=60)
+    ap.add_argument(
+        "--dump-vectors", default=None,
+        help="write the extracted {name: {hash: tf}} vectors to JSON (for offline benchmarks)",
+    )
     args = ap.parse_args()
 
     ghidra_dir = os.environ.get("GHIDRA_INSTALL_DIR")
@@ -234,6 +238,16 @@ def main():
         print(f"functions processed [B {os.path.basename(args.binary_b)}]: {len(funcs_b)}")
 
     # Also proves the LSHVectors survived their program being closed.
+    if args.dump_vectors:
+        import json
+
+        dump = {"A": {name: ours for name, _, ours in funcs}}
+        if funcs_b:
+            dump["B"] = {name: ours for name, _, ours in funcs_b}
+        with open(args.dump_vectors, "w") as fh:
+            json.dump(dump, fh)
+        print(f"wrote vectors to {args.dump_vectors}")
+
     check_vectors("A", funcs, failures)
     if funcs_b is not None:
         check_vectors("B", funcs_b, failures)

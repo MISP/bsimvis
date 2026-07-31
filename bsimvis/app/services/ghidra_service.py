@@ -614,6 +614,20 @@ class GhidraService:
             bsim_meta, bsim_raw, bsim_tf = [], [], []
 
             if decomp_results.decompileCompleted():
+                # The listing signature above is the program DB one, which stays
+                # "undefined FUN_xxx()" for every function with a DEFAULT signature
+                # source. The decompiler's own prototype is what the C body was
+                # printed from, so prefer it and keep the DB values as fallback.
+                try:
+                    proto = decomp_results.getHighFunction().getFunctionPrototype()
+                    return_type = proto.getReturnType().getName()
+                    parameters = [
+                        proto.getParam(i).getDataType().getName()
+                        for i in range(proto.getNumParams())
+                    ]
+                except Exception:
+                    pass
+
                 markup = decomp_results.getCCodeMarkup()
                 (
                     c_lines,

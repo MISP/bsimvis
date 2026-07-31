@@ -4,6 +4,8 @@ import math
 import time
 import logging
 import hashlib
+from bsimvis.app.services import bsim_profiles, bsim_weights
+from bsimvis.app.services.collection_config import assert_signature_settings_match
 from bsimvis.app.services.index_service import save_similarity
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.index_config import get_propagated_fields
@@ -1371,19 +1373,42 @@ class SimilarityService:
             logging.error(f"SimilarityService: Error getting pair score: {e}")
             return None
 
-    def calculate_exact_score(self, id1, id2, algo="unweighted_cosine"):
-        """Fetches feature vectors and calculates similarity directly in Python."""
+    def calculate_exact_score(self, id1, id2, algo="unweighted_cosine",
+                              with_significance=False):
+        """Fetches feature vectors and calculates similarity directly in Python.
+
+        With `with_significance`, returns `(similarity, significance)` instead of a
+        bare score. Only `weighted_cosine` defines a significance; the other algos
+        return `None` for it.
+        """
         try:
             vec1_raw = self.r.zrange(f"{id1}:vec:tf", 0, -1, withscores=True)
             vec2_raw = self.r.zrange(f"{id2}:vec:tf", 0, -1, withscores=True)
 
+            def _out(sim, sig=None):
+                return (sim, sig) if with_significance else sim
+
             if not vec1_raw or not vec2_raw:
-                return None
+                return _out(None) if with_significance else None
 
             d1 = {h: float(s) for h, s in vec1_raw}
             d2 = {h: float(s) for h, s in vec2_raw}
 
             common = set(d1.keys()).intersection(set(d2.keys()))
+
+            base_algo, profile_name = bsim_profiles.parse_algo(algo)
+            if base_algo == "weighted_cosine":
+                # Feature weights are static files, so the coefficients here never
+                # go stale as the collection grows. See doc/bsim_signature_settings.md.
+                profile = bsim_profiles.get_profile(profile_name)
+                # Vectors extracted under different masks are not comparable.
+                for fid in (id1, id2):
+                    assert_signature_settings_match(
+                        fid.split(":")[0], profile.settings
+                    )
+                table = bsim_weights.load(profile.weights_path)
+                sim, sig = table.compare(d1, d2)
+                return _out(float(sim), float(sig))
 
             if algo == "jaccard":
                 # Generalized Jaccard (Tanimoto): sum(min(a,b)) / sum(max(a,b))

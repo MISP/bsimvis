@@ -44,3 +44,43 @@ def resolve_and_lock(collection, name, requested):
     value = requested if requested is not None else default
     get_redis().hsetnx(_META.format(coll=collection), name, value)
     return get_collection_param(collection, name, default)
+
+
+SIGNATURE_SETTINGS_FIELD = "signature_settings"
+
+
+def lock_signature_settings(collection, settings):
+    """Record the signature-settings mask on first ingest; return the locked value."""
+    get_redis().hsetnx(
+        _META.format(coll=collection), SIGNATURE_SETTINGS_FIELD, int(settings)
+    )
+    return get_collection_param(collection, SIGNATURE_SETTINGS_FIELD, int(settings))
+
+
+def get_signature_settings(collection):
+    """The mask this collection's features were extracted with, or None if unrecorded."""
+    return get_collection_param(collection, SIGNATURE_SETTINGS_FIELD, None)
+
+
+def assert_signature_settings_match(collection, settings=None):
+    """Raise ValueError if `collection` was extracted under a different mask.
+
+    `settings` defaults to the active configured mask. A collection with no
+    recorded mask is treated as compatible (legacy data, nothing to check).
+    """
+    if settings is None:
+        # imported here: bsim_profiles imports config_service, module-level would cycle
+        from bsimvis.app.services import bsim_profiles
+
+        settings = bsim_profiles.get_signature_settings()
+
+    recorded = get_signature_settings(collection)
+    if recorded is None:
+        return
+    recorded = int(recorded)
+    if recorded != int(settings):
+        raise ValueError(
+            f"Collection '{collection}' was extracted with signature settings "
+            f"{recorded:#x}, but {int(settings):#x} is active. Feature hashes from "
+            f"different masks are not comparable; re-decompile one of them to compare."
+        )

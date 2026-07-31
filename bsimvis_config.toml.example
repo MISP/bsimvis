@@ -43,6 +43,37 @@
     # filters. Slowest phase of a clustering run; set false to skip it.
     propagate_sim_indexes = true
 
+[bsim]
+    # Which signature/weights profile to use. See doc/bsim_signature_settings.md.
+    #
+    # `settings` is the Ghidra decompiler signature-settings mask. It controls how
+    # feature hashes are generated, so CHANGING IT REQUIRES FULL RE-DECOMPILATION
+    # of a collection -- existing feature vectors become incomparable.
+    #
+    # `weights` is the BSim weight table paired with that mask. The mask alone does
+    # not identify a table (four of Ghidra's five declare 0x49), so the pairing is
+    # explicit here. A bare filename resolves against Ghidra's BSim data dir; a path
+    # with a separator is treated as repo-relative, for custom tables.
+    profile = "nosize"
+
+    [bsim.profiles.nosize]
+        # 0x4D = SIG_COLLAPSE_SIZE | SIG_COLLAPSE_INDNOISE | SIG_DONOTUSE_CONST
+        settings = 0x4D
+        weights = "lshweights_nosize.xml"
+    [bsim.profiles.sized_32]
+        # 0x49 = nosize minus SIG_COLLAPSE_SIZE
+        settings = 0x49
+        weights = "lshweights_32.xml"
+    [bsim.profiles.sized_64]
+        settings = 0x49
+        weights = "lshweights_64.xml"
+    [bsim.profiles.sized_64_32]
+        settings = 0x49
+        weights = "lshweights_64_32.xml"
+    [bsim.profiles.cpool]
+        settings = 0x49
+        weights = "lshweights_cpool.xml"
+
 [similarity]
     top_k = 1000
     min_score = 0.9

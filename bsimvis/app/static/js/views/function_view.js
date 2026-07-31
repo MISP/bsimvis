@@ -40,7 +40,7 @@ window.FunctionView = {
                 </div>
                 <div id="function-content" style="display:none; flex:1; flex-direction:column; overflow:hidden; height:100%;">
                     <div id="meta-container"></div>
-                    <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: #272822;">
+                    <div id="code-scroll" style="flex: 1; position: relative; overflow-y: auto; background: var(--card-bg);">
                         <div id="v-height" style="position: absolute; width: 1px; top: 0; left: 0; z-index: -1;"></div>
                         <div id="v-content" class="c-code-container" style="position: sticky; top: 0; width: 100%;"></div>
                         <button id="copy-code-btn" class="floating-copy-btn" title="Copy code with colors" onclick="FunctionView.copyFunctionCode(this)">

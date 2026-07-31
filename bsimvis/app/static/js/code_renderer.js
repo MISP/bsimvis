@@ -89,7 +89,7 @@ window.TOKEN_COLORS = {
 
 window.renderRichHtml = function (rows, options = {}) {
     const noBg = options.noBg === true;
-    const bg = noBg ? 'transparent' : (options.bg || '#272822');
+    const bg = noBg ? 'transparent' : (options.bg || 'var(--card-bg)');
     const fg = noBg ? 'var(--meta-header-bg)' : (options.fg || '#f8f8f2');
     const font = options.font || "Consolas, 'Courier New', monospace";
     const showGutter = options.showGutter === true; // Default to false

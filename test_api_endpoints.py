@@ -1449,8 +1449,6 @@ SEARCH_SPECS = [
         "pool": True,
         "sorts": {
             "score": "score",
-            "score_sim_weighted": "score_sim_weighted",
-            "score_collection_weighted": "score_collection_weighted",
             "coverage": "coverage_a",
             "shared_clusters": "shared_clusters",
             "functions_count": "functions_count_a",
@@ -1458,8 +1456,8 @@ SEARCH_SPECS = [
             "architecture": "architecture_a",
         },
         "ranges": [
-            ("min_score", "score_collection_weighted", "min"),
-            ("max_score", "score_collection_weighted", "max"),
+            ("min_score", "score", "min"),
+            ("max_score", "score", "max"),
             ("min_shared", "shared_clusters", "min"),
             ("max_shared", "shared_clusters", "max"),
         ],
@@ -2403,19 +2401,23 @@ def test_pool_collection_equivalence():
         if not s_doc or not p_doc:
             check("equivalence: bin_sim doc exists on both sides", False, f"single={bool(s_doc)} pool={bool(p_doc)}")
         else:
-            keep = ("score", "md5_a", "md5_b", "diff")
+            # Pool and collection bin_sim docs use the same field names, so every
+            # shared field has to agree — not just the score and the diff.
+            floats = (
+                "score",
+                "coverage_a",
+                "coverage_b",
+            )
+            keep = ("md5_a", "md5_b", "algo", "diff", "shared_clusters",
+                    "unique_clusters_a", "unique_clusters_b") + floats
             n_s = {k: v for k, v in s_doc.items() if k in keep}
             n_p = {k: v for k, v in p_doc.items() if k in keep}
-            # Pool docs name the endpoints md5_1/md5_2.
-            if "md5_1" in p_doc:
-                n_p["md5_a"] = p_doc["md5_1"]
-            if "md5_2" in p_doc:
-                n_p["md5_b"] = p_doc["md5_2"]
             n_s["diff"] = norm_diff(s_doc.get("diff"))
             n_p["diff"] = norm_diff(p_doc.get("diff"))
             for d in (n_s, n_p):
-                if d.get("score") is not None:
-                    d["score"] = round(d["score"], 3)
+                for f in floats:
+                    if d.get(f) is not None:
+                        d[f] = round(d[f], 3)
             check(
                 "equivalence: bin_sim docs match (matched/unique cluster diff)",
                 n_s == n_p,

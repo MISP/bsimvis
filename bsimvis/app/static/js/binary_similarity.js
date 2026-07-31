@@ -331,7 +331,6 @@ function initResizableCards() {
         const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
         binSimDataCache = {
             score: data.score,
-            score_sim_weighted: data.score_sim_weighted,
             file_metadata_a: data.file_metadata_a,
             file_metadata_b: data.file_metadata_b,
             sankey: data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] },

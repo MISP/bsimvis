@@ -48,8 +48,6 @@ def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_
 
     # Numeric indexes
     num_index("score", doc.get("score"))
-    num_index("score_sim_weighted", doc.get("score_sim_weighted"))
-    num_index("score_collection_weighted", doc.get("score_collection_weighted"))
     num_index("coverage_a", doc.get("coverage_a"))
     num_index("coverage_b", doc.get("coverage_b"))
     num_index("shared_clusters", doc.get("shared_clusters"))
@@ -91,8 +89,6 @@ def _unindex_bin_sim_pair(
 
     for num_field in [
         "score",
-        "score_sim_weighted",
-        "score_collection_weighted",
         "coverage_a",
         "coverage_b",
         "shared_clusters",
@@ -225,7 +221,8 @@ class BinSimService:
 
         # Load cluster metadata (uuid/name/cohesion) for every cluster seen, so matched
         # function pairs can be tagged with their best-matching function cluster.
-        # ponytail: assumes clustering ran with the same algo as bin_sim (both default unweighted_cosine)
+        # `algo` names the function similarity these clusters were built from, so
+        # bin_sim reads and writes inside that same namespace.
         cluster_meta = {}
         all_labels = list(cluster_binary_count_job.keys())
         if all_labels:
@@ -418,14 +415,8 @@ class BinSimService:
             assigned_b = set()
             diff_matched = []
 
-            sum_weighted_cohesion_sim = 0.0
-            sum_weights_sim = 0.0
-
-            sum_weighted_cohesion_col = 0.0
-            sum_weights_col = 0.0
-
-            sum_weighted_cohesion_unweighted = 0.0
-            sum_weights_unweighted = 0.0
+            sum_weighted_cohesion = 0.0
+            sum_weights = 0.0
 
             # Match greedily
             for fid_a, fid_b, score in edges:
@@ -453,14 +444,8 @@ class BinSimService:
                         }
                     )
 
-                    sum_weighted_cohesion_sim += score * f_features
-                    sum_weights_sim += f_features
-
-                    sum_weighted_cohesion_col += score * f_features
-                    sum_weights_col += f_features
-
-                    sum_weighted_cohesion_unweighted += score * f_features
-                    sum_weights_unweighted += f_features
+                    sum_weighted_cohesion += score * f_features
+                    sum_weights += f_features
 
             all_funcs_a_total = binary_fids[m_a]
             all_funcs_b_total = binary_fids[m_b]
@@ -483,9 +468,7 @@ class BinSimService:
                         "avg_features": f_features,
                     }
                 )
-                sum_weights_sim += f_features
-                sum_weights_col += f_features
-                sum_weights_unweighted += f_features
+                sum_weights += f_features
 
             unique_to_b = []
             for fid in sorted(list(unassigned_b)):
@@ -502,24 +485,10 @@ class BinSimService:
                         "avg_features": f_features,
                     }
                 )
-                sum_weights_sim += f_features
-                sum_weights_col += f_features
-                sum_weights_unweighted += f_features
+                sum_weights += f_features
 
-            score_sim_weighted = (
-                sum_weighted_cohesion_sim / sum_weights_sim
-                if sum_weights_sim > 0
-                else 0.0
-            )
-            score_collection_weighted = (
-                sum_weighted_cohesion_col / sum_weights_col
-                if sum_weights_col > 0
-                else 0.0
-            )
             score_unweighted = (
-                sum_weighted_cohesion_unweighted / sum_weights_unweighted
-                if sum_weights_unweighted > 0
-                else 0.0
+                sum_weighted_cohesion / sum_weights if sum_weights > 0 else 0.0
             )
 
             cov_a = (
@@ -530,7 +499,7 @@ class BinSimService:
             )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
-            pair_scores[(m_a, m_b)] = score_collection_weighted
+            pair_scores[(m_a, m_b)] = score_unweighted
 
             doc = {
                 "md5_a": m_a,
@@ -541,8 +510,6 @@ class BinSimService:
                 "functions_count_a": binary_func_counts.get(m_a, 0),
                 "functions_count_b": binary_func_counts.get(m_b, 0),
                 "score": score_unweighted,
-                "score_sim_weighted": score_sim_weighted,
-                "score_collection_weighted": score_collection_weighted,
                 "coverage_a": cov_a,
                 "coverage_b": cov_b,
                 "shared_clusters": len(diff_matched),
@@ -561,10 +528,11 @@ class BinSimService:
             }
 
             pipe.set(sid, json.dumps(doc))
-            # ponytail: Use the unweighted score for sorting when unweighted_cosine is active
-            final_bin_score = score_collection_weighted
-            if algo == "unweighted_cosine":
-                final_bin_score = score_unweighted
+            # `algo` is a provenance tag (which function similarity the clusters came
+            # from), not a choice of file score. The sort score is always the
+            # unweighted cohesion mean so it means the same thing in every namespace
+            # and matches the pool-level score. The other aggregates stay in `doc`.
+            final_bin_score = score_unweighted
 
             pipe.zadd(f"{collection}:bin_sim:score:{algo}", {sid: final_bin_score})
             pipe.sadd(f"{collection}:bin_sim:involves:{m_a}", sid)

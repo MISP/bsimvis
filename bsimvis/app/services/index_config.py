@@ -103,8 +103,6 @@ INDEX_CONFIG = {
         "file_user_tags_a": ["bin_sim"],
         "file_user_tags_b": ["bin_sim"],
         "score": ["bin_sim"],  # numeric
-        "score_sim_weighted": ["bin_sim"],  # numeric
-        "score_collection_weighted": ["bin_sim"],  # numeric
         "coverage_a": ["bin_sim"],  # numeric
         "coverage_b": ["bin_sim"],  # numeric
         "shared_clusters": ["bin_sim"],  # numeric
@@ -163,8 +161,6 @@ NUM_FIELDS = {
     "tf_score",
     # bin_sim numeric fields
     "score",
-    "score_sim_weighted",
-    "score_collection_weighted",
     "coverage_a",
     "coverage_b",
     "shared_clusters",

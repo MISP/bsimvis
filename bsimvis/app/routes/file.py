@@ -339,23 +339,11 @@ def upload_chunk():
                     for task in pipeline_tasks
                 ]
 
-                pipe_data = r_queue.hgetall(f"job:{parent_pipeline_id}")
-                if pipe_data and "task_ids" in pipe_data:
-                    existing_tids = json.loads(pipe_data["task_ids"])
-                    try:
-                        idx = existing_tids.index(parent_job_id)
-                        updated_tids = (
-                            existing_tids[: idx + 1]
-                            + new_tids
-                            + existing_tids[idx + 1 :]
-                        )
-                    except ValueError:
-                        updated_tids = existing_tids + new_tids
-                    r_queue.hset(
-                        f"job:{parent_pipeline_id}",
-                        "task_ids",
-                        json.dumps(updated_tids),
-                    )
+                # Atomic: chunks arrive in parallel, and a plain read-modify-write
+                # of the task_ids blob silently drops one of two concurrent splices.
+                if job_service.splice_tasks(
+                    parent_pipeline_id, parent_job_id, new_tids
+                ):
                     job_service.add_log(
                         parent_pipeline_id,
                         f"Spliced {len(new_tids)} ordered indexing tasks into pipeline.",

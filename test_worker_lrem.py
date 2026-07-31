@@ -37,14 +37,47 @@ class FakeQueue:
         self.processing = [j for j in self.processing if j != job_id]
 
 
-def drain(jobs, execute=lambda job_id, job_data: None):
-    """Run the real Worker.run over `jobs`; return claims still held afterwards."""
+class FakeJobService:
+    """Lease bookkeeping only: claiming, releasing, and a reaper that does nothing."""
+
+    def __init__(self, queue):
+        self.queue = queue
+        self.leases = {}
+
+    def claim_lease(self, job_id, owner, ttl=None):
+        self.leases[job_id] = owner
+
+    def refresh_lease(self, job_id, ttl=None):
+        pass
+
+    def release_lease(self, job_id):
+        self.leases.pop(job_id, None)
+        self.queue.lrem("jobs:processing", 0, job_id)
+
+    def reap_expired(self, now=None):
+        return (0, 0, 0)
+
+    def is_paused(self):
+        return False
+
+
+def make_worker(jobs, execute=lambda job_id, job_data: None):
     w = object.__new__(Worker)
     w.name = "test"
     w.running = True
+    w.current_job_id = None
+    w._last_reap = 0.0
     w.r_queue = FakeQueue(w, jobs)
+    w.job_service = FakeJobService(w.r_queue)
     w._execute_job = execute
+    return w
+
+
+def drain(jobs, execute=lambda job_id, job_data: None):
+    """Run the real Worker.run over `jobs`; return claims still held afterwards."""
+    w = make_worker(jobs, execute)
     w.run()
+    assert w.job_service.leases == {}, f"lease leaked: {w.job_service.leases}"
     return w.r_queue.processing
 
 
@@ -68,12 +101,8 @@ def test_cancelled_releases_claim():
 
 def test_missing_metadata_releases_claim():
     # Claimed id has no job:{id} hash -> loop skips it, must still release.
-    w = object.__new__(Worker)
-    w.name = "test"
-    w.running = True
-    w.r_queue = FakeQueue(w, {})
+    w = make_worker({})
     w.r_queue._pending = ["ghost"]
-    w._execute_job = lambda job_id, job_data: None
     w.run()
     assert w.r_queue.processing == [], "claim leaked when metadata was missing"
 

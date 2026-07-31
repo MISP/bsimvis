@@ -37,6 +37,14 @@ never hardcode a string. Pipelines and groups are jobs too (`type` = `pipeline` 
 `group`, children in `task_ids`).
 
 - `enqueue_job` is idempotent via a `queued` latch field; do not bypass it.
+- A claimed job holds a **lease** (`jobs:leased` ZSET, `LEASE_TTL` seconds), refreshed
+  by a worker heartbeat thread. A worker that dies by SIGKILL/OOM stops refreshing,
+  the lease expires, and `reap_expired()` requeues the job (up to `MAX_ATTEMPTS`,
+  then fails it). Never sweep `jobs:processing` wholesale — that requeues jobs live
+  workers are still running.
+- `splice_tasks()` is the only correct way to add tasks to a running pipeline's
+  `task_ids`; a plain read-modify-write loses concurrent splices.
+- `jobs:paused` is the pause flag, read between claims. In-flight jobs finish.
 - Chunked work re-enqueues itself as a *continuation* (`rpush` to the tail) so batches
   from different jobs interleave instead of one job starving the fleet.
 - Clear jobs (`clear_sim`, `clear_features`, `clear_cluster`, `clear_bin_sim`,
@@ -97,6 +105,8 @@ Since its only for jobs, the jobs are in :
 | `job:{id}` | **Hash** | Status, payload and metadata for a job, pipeline or group. |
 | `jobs:pending` / `jobs:pending:high` | **List** | Work queues; workers pop from the tail. |
 | `jobs:processing` | **List** | In-flight job IDs; a worker `LMOVE`s here when it claims a job. |
+| `jobs:leased` | **ZSET** | Claimed job ID -> lease expiry (unix seconds). Expired = its worker died. |
+| `jobs:paused` | **String** | Present while the fleet is paused. |
 | `jobs:global` / `jobs:collection:{c}` | **List** | Recent job IDs, trimmed to 1000. |
 
 ## Worktree testing

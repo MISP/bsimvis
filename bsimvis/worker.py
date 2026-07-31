@@ -5,6 +5,7 @@ import signal
 import sys
 import os
 import tempfile
+import threading
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis, get_raw_redis
-from bsimvis.app.services.job_service import JobService, JobStatus, JobType
+from bsimvis.app.services.job_service import JobService, JobStatus, JobType, LEASE_TTL
 from bsimvis.app.services.processing_service import ProcessingService
 from bsimvis.app.services.feature_service import FeatureService
 from bsimvis.app.services.similarity_service import SimilarityService
@@ -54,16 +55,63 @@ class Worker:
         self.similarity_service = SimilarityService(self.r_data)
         self.metadata_service = MetadataService(self.r_data)
         self.running = True
+        self.current_job_id = None
+        self._last_reap = 0.0
+
+    def _reap(self, interval=30):
+        """Runs the lease reaper, at most once per `interval` per worker."""
+        now = time.time()
+        if now - self._last_reap < interval:
+            return
+        self._last_reap = now
+        try:
+            requeued, failed, cleaned = self.job_service.reap_expired()
+            if requeued or failed or cleaned:
+                logging.info(
+                    f"[*] Reaper: {requeued} requeued, {failed} failed, {cleaned} stale entries cleared."
+                )
+        except Exception as e:
+            logging.warning(f"[!] Reaper error: {e}")
 
     def stop(self, signum, frame):
         logging.info(f"[*] Worker {self.name} received stop signal...")
         self.running = False
 
+    def _heartbeat_loop(self):
+        """Refreshes the lease of the job this worker currently holds.
+
+        A dead process stops refreshing, its lease expires, and the reaper
+        requeues the job -- which is the whole point: a `finally` block cannot
+        run after SIGKILL or an OOM kill.
+        """
+        while self.running:
+            job_id = self.current_job_id
+            if job_id:
+                try:
+                    self.job_service.refresh_lease(job_id)
+                except Exception as e:
+                    logging.warning(f"[!] Lease refresh failed for {job_id}: {e}")
+            time.sleep(LEASE_TTL / 3)
+
     def run(self):
         logging.info(f"[*] Worker {self.name} started. Waiting for jobs...")
 
+        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
+
+        # Recover anything stranded by a previous crash before taking new work.
+        self._reap()
+
         while self.running:
             try:
+                self._reap()
+
+                if self.job_service.is_paused():
+                    # Pause is a flag read between claims: the current job always
+                    # finishes, nothing new is claimed. With leases in place this
+                    # makes stop/restart safe by construction.
+                    time.sleep(1)
+                    continue
+
                 # Reliable Priority Queue Pattern
                 # 1. First check High-Priority Queue (Non-blocking)
                 job_id = self.r_queue.execute_command(
@@ -82,10 +130,11 @@ class Worker:
                 # Fetch job metadata
                 job_id = job_id.decode() if isinstance(job_id, bytes) else job_id
 
-                # The claim is now held. Release it on every exit path, or the entry
-                # leaks in jobs:processing forever (nothing expires or sweeps it).
-                # Count 0 removes every copy: a job enqueued twice would otherwise
-                # leave a permanent orphan behind after one successful completion.
+                # The claim is now held. The lease is what makes it recoverable:
+                # the finally below covers a clean exit, the lease expiring covers
+                # SIGKILL / OOM / power loss, where no finally ever runs.
+                self.job_service.claim_lease(job_id, self.name)
+                self.current_job_id = job_id
                 try:
                     job_data = self.r_queue.hgetall(f"job:{job_id}")
 
@@ -100,7 +149,8 @@ class Worker:
                     # Execute Job
                     self._execute_job(job_id, job_data)
                 finally:
-                    self.r_queue.lrem("jobs:processing", 0, job_id)
+                    self.current_job_id = None
+                    self.job_service.release_lease(job_id)
 
             except Exception as e:
                 logging.error(f"[!] Worker loop error: {e}")
@@ -235,6 +285,11 @@ class Worker:
         idx = 0
         prev_chunk = None
         for chunk in generator:
+            # Cancellation was only ever checked before a job started; a long
+            # decompilation ignored it entirely. Chunk boundaries are the natural
+            # place to notice.
+            if self.job_service.is_cancelled(job_id):
+                raise RuntimeError(f"Job {job_id} cancelled during streaming")
             if prev_chunk is not None:
                 self._post_chunk(
                     prev_chunk,
@@ -410,25 +465,9 @@ class Worker:
                                     if isinstance(parent_pipeline_id, bytes)
                                     else parent_pipeline_id
                                 )
-                                pipe_data = self.r_queue.hgetall(
-                                    f"job:{parent_pipeline_id}"
-                                )
-                                if pipe_data and "task_ids" in pipe_data:
-                                    existing_tids = json.loads(pipe_data["task_ids"])
-                                    try:
-                                        idx = existing_tids.index(job_id)
-                                        updated_tids = (
-                                            existing_tids[: idx + 1]
-                                            + [group_id]
-                                            + existing_tids[idx + 1 :]
-                                        )
-                                    except ValueError:
-                                        updated_tids = existing_tids + [group_id]
-                                    self.r_queue.hset(
-                                        f"job:{parent_pipeline_id}",
-                                        "task_ids",
-                                        json.dumps(updated_tids),
-                                    )
+                                if self.job_service.splice_tasks(
+                                    parent_pipeline_id, job_id, [group_id]
+                                ):
                                     self.job_service.add_log(
                                         parent_pipeline_id,
                                         f"Spliced child pipelines group {group_id} into pipeline.",

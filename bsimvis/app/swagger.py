@@ -414,6 +414,27 @@ class JobDetail(Resource):
         return get_job(job_id)
 
 
+@ns_jobs.route("/pause")
+class JobPause(Resource):
+    def get(self):
+        """Returns whether workers are currently paused."""
+        from bsimvis.app.routes.jobs import get_pause_state
+
+        return get_pause_state()
+
+    def post(self):
+        """Pauses the fleet: workers finish their current job and claim no more."""
+        from bsimvis.app.routes.jobs import pause_jobs
+
+        return pause_jobs()
+
+    def delete(self):
+        """Resumes the fleet."""
+        from bsimvis.app.routes.jobs import resume_jobs
+
+        return resume_jobs()
+
+
 @ns_jobs.route("/all/cancel")
 class JobCancelAll(Resource):
     def post(self):
@@ -2364,7 +2385,9 @@ class PoolList(Resource):
                 "example": "mirai",
             },
             "name": {"description": "Substring filter on pool name"},
-            "sync_status": {"description": "Exact sync status: current | outdated | created"},
+            "sync_status": {
+                "description": "Exact sync status: current | outdated | created"
+            },
             "sort_by": {
                 "description": "name | id | created_at | last_built_at | sync_status | count fields",
                 "example": "created_at",
@@ -2410,7 +2433,11 @@ class PoolDetail(Resource):
 
         return delete_pool(pool_id)
 
-    @ns_pool.expect(api.model("PoolUpdate", {"name": fields.String(required=True, example="New Name")}))
+    @ns_pool.expect(
+        api.model(
+            "PoolUpdate", {"name": fields.String(required=True, example="New Name")}
+        )
+    )
     def put(self, pool_id):
         """Updates the pool's name."""
         from bsimvis.app.routes.pools import edit_pool

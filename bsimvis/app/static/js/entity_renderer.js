@@ -53,7 +53,7 @@ window.EntityRenderer = {
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
                    onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById('${funcId}', '${safeName}', '', event)">
-                    ${fInfo.ret ? `<span style="color:#ae81ff">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="color:white; opacity:0.8">${fInfo.ns}::</span>` : ''}${name}<span style="color:white">(</span>${fInfo.params.map(t => `<span style="color:#ae81ff">${t}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span>
+                    ${fInfo.ret ? `<span style="color:var(--token-address)">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${fInfo.ns}::</span>` : ''}${name}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${t}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
                 </b>
                 ${actionsHtml}
             </div>

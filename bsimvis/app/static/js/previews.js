@@ -293,7 +293,7 @@
 
         let html = `
             <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-                <div style="flex-shrink:0; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:8px; margin-bottom:8px;">
+                <div style="flex-shrink:0; border-bottom: 1px solid var(--border); padding-bottom:8px; margin-bottom:8px;">
                     <div class="preview-header" style="border:none; margin-bottom:4px; padding:0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${displayName}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
                     <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px;">
                         Addr: ${displayAddr} | Bin: ${displayBin} | Feat: ${displayFeat}
@@ -317,7 +317,7 @@
         html += '</div>';
 
         if (rows.length > 18) {
-            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top:1px solid rgba(255,255,255,0.05); flex-shrink:0;">💡 Use scroll wheel to view all ${rows.length} lines</div>`;
+            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Use scroll wheel to view all ${rows.length} lines</div>`;
         }
 
         html += '</div>';
@@ -561,7 +561,7 @@
             }).join('');
             
             tagsHtml = `
-            <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px;">
+            <div style="margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px;">
                 <div style="font-size: 0.65rem; color: #777; text-transform: uppercase; margin-bottom: 4px;"><i class="fa-solid fa-tags" style="margin-right: 6px; opacity: 0.5;"></i>Tags</div>
                 <div style="display: flex; flex-wrap: wrap;">${tagBadges}</div>
             </div>`;
@@ -583,25 +583,25 @@
         
         let extraFieldsHtml = '';
         if (avtype) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-shield" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>AV Type</span>
                 <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${avtype}">${avtype}</span>
             </div>`;
         }
         if (filetype) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-file-code" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>File Type</span>
                 <span class="mono" style="color: var(--meta-text); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${filetype}">${filetype}</span>
             </div>`;
         }
         if (yara) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-biohazard" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Yara</span>
                 <span class="mono" style="color: var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${yara}">${yara}</span>
             </div>`;
         }
         if (cc_ip) {
-            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+            extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-network-wired" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>CC IPs</span>
                 <span class="mono" style="color: var(--info, #60a5fa); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cc_ip}">${cc_ip}</span>
             </div>`;
@@ -609,21 +609,21 @@
 
         tooltip.innerHTML = `
         <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px var(--window-bg); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
-            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; margin-bottom: 8px; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
+            <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
                 <i class="fa-solid fa-file" style="color: var(--accent);"></i>
                 <span>${fileName}</span>
             </div>
             
             <div style="display: flex; flex-direction: column; gap: 4px; font-family: 'Inter', sans-serif;">
-                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-hashtag" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>MD5</span>
                     <span class="mono" style="color: var(--accent); font-weight: bold; font-family: 'JetBrains Mono', 'Consolas', monospace;">${md5}</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-list-ol" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Functions</span>
                     <span class="mono" style="color: #a6e22e; font-family: 'JetBrains Mono', 'Consolas', monospace;">${count}</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); padding: 2px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                     <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-globe" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>Language</span>
                     <span class="mono" style="color: #ae81ff; font-family: 'JetBrains Mono', 'Consolas', monospace;">${language}</span>
                 </div>

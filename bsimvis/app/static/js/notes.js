@@ -300,7 +300,7 @@ function injectNotesStyles() {
             height: 100vh;
             background: var(--card-bg);
             border-left: 1px solid var(--border);
-            box-shadow: -5px 0 20px rgba(0,0,0,0.4);
+            box-shadow: -5px 0 20px var(--border);
             z-index: 10000;
             display: flex;
             flex-direction: column;
@@ -334,7 +334,7 @@ function injectNotesStyles() {
             font-weight: bold;
             letter-spacing: 1px;
             transition: all 0.2s;
-            box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+            box-shadow: -2px 0 10px var(--border);
         }
         .panel-handle:hover { color: var(--text); background: var(--border); }
         .panel-handle.user.active { color: #ffd700; border-color: #ffd700; background: var(--meta-bg); }

@@ -293,7 +293,7 @@ class ChordGraph {
         const tags = [...(node.tags || []), ...(node.user_tags || [])];
 
         tip.innerHTML = `
-            <div style="border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px; margin-bottom:8px; min-width:250px;">
+            <div style="border-bottom: 1px solid var(--border); padding-bottom:8px; margin-bottom:8px; min-width:250px;">
                 <div style="font-weight:bold; color:var(--accent); font-size:0.95rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${node.name}</div>
                 <div class="dim mono" style="font-size:0.7rem; margin-top:2px; opacity:0.7;"># ${node.md5}</div>
             </div>
@@ -303,7 +303,7 @@ class ChordGraph {
             ${renderRow('fa-list-ol', 'Functions', node.functions_count)}
             ${renderRow('fa-calendar-day', 'Entry Date', typeof formatDate === 'function' ? formatDate(node.entry_date) : node.entry_date)}
             
-            <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">
+            <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:4px; border-top: 1px solid var(--border); padding-top:8px;">
                 ${tags.length > 0 ? tags.map(t => `<span class="tag-pill" style="font-size:0.65rem; padding:1px 6px;">${t}</span>`).join('') : '<span class="dim" style="font-size:0.7rem;">No tags</span>'}
             </div>
         `;

@@ -338,7 +338,7 @@ tr:nth-child(even) {
     position: relative;
     height: 6px;
     margin: 12px 0 16px 0;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--meta-header-bg);
     border-radius: 3px;
 }
 
@@ -372,7 +372,7 @@ tr:nth-child(even) {
     border: 2px solid var(--accent);
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 2px 4px var(--border);
     transition: transform 0.1s ease;
 }
 
@@ -416,7 +416,7 @@ tr:nth-child(even) {
     font-size: 0.8em;
     line-height: 1.2;
     max-width: 320px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 10px var(--border);
     display: none;
 }
 
@@ -429,7 +429,7 @@ tr:nth-child(even) {
     font-size: 0.65rem;
     text-transform: uppercase;
     margin-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--border);
     padding-bottom: 4px;
 }
 
@@ -572,7 +572,7 @@ tr:nth-child(even) {
     border-radius: 10px;
     min-width: 12px;
     text-align: center;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+    box-shadow: 0 2px 5px var(--border);
     z-index: 10;
     line-height: 1;
     writing-mode: horizontal-tb;
@@ -706,7 +706,7 @@ tr:nth-child(even) {
     align-items: center;
     cursor: grab;
     user-select: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid var(--border);
 }
 
 .win-dragging .window-header {
@@ -743,9 +743,9 @@ tr:nth-child(even) {
 }
 
 .win-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--meta-header-bg);
     color: var(--text);
-    border-color: rgba(255, 255, 255, 0.2);
+    border-color: var(--border);
 }
 
 .win-close:hover {
@@ -868,18 +868,18 @@ body.resizing {
 
 .code-preview-scroll::-webkit-scrollbar-track,
 .diff-preview-scroll::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--border);
 }
 
 .code-preview-scroll::-webkit-scrollbar-thumb,
 .diff-preview-scroll::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--meta-header-bg);
     border-radius: 3px;
 }
 
 .code-preview-scroll::-webkit-scrollbar-thumb:hover,
 .diff-preview-scroll::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.4);
+    background: var(--meta-header-bg);
 }
 
 /* View Toggle Switch */
@@ -936,7 +936,7 @@ body.resizing {
     cursor: pointer;
     text-transform: uppercase;
     transition: all 0.2s;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 10px var(--border);
 }
 
 .btn-graph:hover {
@@ -1004,7 +1004,7 @@ select {
     color: var(--text);
     font-family: "Segoe UI", 'Inter', sans-serif;
     pointer-events: none;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 15px var(--border);
 }
 
 .graph-loading-content {
@@ -1040,7 +1040,7 @@ select {
 }
 
 .spinner-graph {
-    border: 2px solid rgba(255, 255, 255, 0.1);
+    border: 2px solid var(--border);
     border-top: 2px solid var(--info);
     border-radius: 50%;
     width: 16px;
@@ -1115,9 +1115,9 @@ select {
     font-weight: bold;
     font-size: 0.6rem;
     padding: 0 4px;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--hover);
     border-radius: 2px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border);
 }
 
 .tag-filter-card.exclude .btn-card-ex {
@@ -1275,7 +1275,7 @@ body.filters-collapsed .filter-row {
     justify-content: center;
     border-radius: 0 8px 8px 0;
     transition: all 0.3s ease;
-    box-shadow: 4px 0 10px rgba(0, 0, 0, 0.3);
+    box-shadow: 4px 0 10px var(--border);
     font-size: 1.2rem;
     padding: 0;
 }
@@ -1341,7 +1341,7 @@ body.sidebar-collapsed #sidebar-toggle {
     background: var(--accent) !important;
     color: var(--window-tray) !important;
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 8px var(--border);
 }
 
 .toggle-btn {
@@ -1440,12 +1440,12 @@ body.sidebar-collapsed #sidebar-toggle {
     color: var(--accent);
     letter-spacing: 1px;
     padding: 10px 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--border);
     font-weight: bold;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--border);
 }
 
 .view-history-dropdown .history-dropdown-title {
@@ -1471,7 +1471,7 @@ body.sidebar-collapsed #sidebar-toggle {
 
 .history-item {
     padding: 10px 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid var(--border);
     cursor: pointer;
     transition: background 0.2s, border-left-color 0.2s;
     border-left: 3px solid transparent;
@@ -1482,7 +1482,7 @@ body.sidebar-collapsed #sidebar-toggle {
 }
 
 .history-item:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--hover);
     border-left-color: var(--accent);
 }
 
@@ -1590,7 +1590,7 @@ body.sidebar-collapsed .sidebar-nav #nav-history-chevron {
 }
 
 .job-row:hover {
-    background: rgba(255, 255, 255, 0.03) !important;
+    background: var(--hover) !important;
 }
 
 tr.pipeline-row td:first-child {
@@ -1666,7 +1666,7 @@ tr.child-row td:first-child {
     font-family: var(--mono);
     font-size: 0.72rem;
     color: var(--subtle);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--hover);
     padding: 2px 6px;
     border-radius: 4px;
     margin-left: 8px;
@@ -1674,7 +1674,7 @@ tr.child-row td:first-child {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    border: 1px solid rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
 }
 
 .job-collection-cell {
@@ -1702,7 +1702,7 @@ tr.child-row td:first-child {
     font-family: var(--mono);
     font-size: 0.78rem;
     color: var(--subtle);
-    background: rgba(255,255,255,0.03);
+    background: var(--hover);
     padding: 2px 5px;
     border-radius: 3px;
 }
@@ -1736,7 +1736,7 @@ tr.child-row td:first-child {
 .job-progress-track {
     flex: 1;
     height: 6px;
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--hover);
     border-radius: 3px;
     overflow: hidden;
 }
@@ -1784,7 +1784,7 @@ tr.child-row td:first-child {
 }
 
 .job-btn-action {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--hover);
     border: 1px solid var(--border);
     color: var(--subtle);
     width: 28px;
@@ -1815,9 +1815,9 @@ tr.child-row td:first-child {
 }
 
 /* Depth-based row background tinting */
-tr.child-depth-1 td { background: rgba(255,255,255,0.015) !important; }
-tr.child-depth-2 td { background: rgba(255,255,255,0.03) !important; }
-tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
+tr.child-depth-1 td { background: var(--hover) !important; }
+tr.child-depth-2 td { background: var(--hover) !important; }
+tr.child-depth-3 td { background: var(--hover) !important; }
 
 /* Job Target Link */
 .job-target-link {
@@ -1854,7 +1854,7 @@ tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 40px var(--border);
     display: flex;
     flex-direction: column;
     max-height: 90vh;
@@ -1901,7 +1901,7 @@ tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
     transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     flex-direction: column;
-    box-shadow: -10px 0 50px rgba(0,0,0,0.5);
+    box-shadow: -10px 0 50px var(--border);
 }
 
 .side-panel.open {
@@ -1953,7 +1953,7 @@ tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
     display: flex;
     align-items: center;
     gap: 12px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    box-shadow: 0 10px 30px var(--border);
     animation: toastSlideIn 0.3s ease-out;
     transition: all 0.3s;
     pointer-events: auto;
@@ -1997,7 +1997,7 @@ tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
 }
 
 .toast-btn-cancel:hover {
-    background: rgba(255,255,255,0.05);
+    background: var(--hover);
     color: var(--text);
 }
 
@@ -2064,17 +2064,17 @@ tr.child-depth-3 td { background: rgba(255,255,255,0.045) !important; }
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid var(--border);
     font-size: 0.8rem;
     transition: background 0.2s;
 }
 
 .upload-file-item:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--hover);
 }
 
 .upload-progress-item {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--hover);
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 12px;
@@ -2100,12 +2100,12 @@ body.in-iframe main {
     background: color-mix(in srgb, var(--token-register) 10%, transparent);
     padding: 15px;
     border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 15px var(--border);
     border: 1px solid color-mix(in srgb, var(--token-register) 20%, transparent);
 }
 
 .quick-action-btn {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--hover);
     border: 1px solid var(--border);
     color: var(--text);
     padding: 8px 15px;
@@ -2126,8 +2126,8 @@ body.in-iframe main {
 }
 
 .cluster-item {
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: var(--border);
+    border: 1px solid var(--border);
     border-radius: 6px;
     padding: 12px;
     display: flex;
@@ -2151,8 +2151,8 @@ body.in-iframe main {
 }
 
 .stat-badge {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--hover);
+    border: 1px solid var(--border);
     padding: 4px 8px;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -2233,7 +2233,7 @@ body.in-iframe main {
     justify-content: center;
     transition: all 0.2s;
     backdrop-filter: blur(4px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 12px var(--border);
 }
 
 .floating-copy-btn:hover {

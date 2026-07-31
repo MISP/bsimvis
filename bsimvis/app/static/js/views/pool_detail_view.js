@@ -104,7 +104,7 @@ window.PoolDetailView = {
 
     _configRow(label, value) {
         if (value === undefined || value === null || value === '') return '';
-        return `<div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.04); font-size:0.8rem;">
+        return `<div style="display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom: 1px solid var(--border); font-size:0.8rem;">
             <span style="color:var(--dim);">${label}</span>
             <span style="color:var(--accent); font-weight:600; font-family:monospace;">${value}</span>
         </div>`;
@@ -141,7 +141,7 @@ window.PoolDetailView = {
         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
                 <thead>
-                    <tr style="border-bottom:1px solid var(--border); background:rgba(255,255,255,0.02); color:var(--dim);">
+                    <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                         <th style="padding:10px 15px;">Collection</th>
                         <th style="padding:10px 15px; text-align:right;">Batches</th>
                         <th style="padding:10px 15px; text-align:right;">Files</th>
@@ -159,7 +159,7 @@ window.PoolDetailView = {
                         const funcsUrl = `/collections/${encodeURIComponent(cname)}/functions`;
                         const batchesUrl = `/collections/${encodeURIComponent(cname)}/batches`;
                         return `
-                        <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                        <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                             <td style="padding:10px 15px;"><a href="${collUrl}" onclick="Nav.openPath('${collUrl}', event)" style="font-weight:bold; color:var(--text); text-decoration:none;">${cname}</a></td>
                             <td style="padding:10px 15px; text-align:right;"><a href="${batchesUrl}" onclick="Nav.openPath('${batchesUrl}', event)" class="clickable-count" style="color:var(--accent); font-weight:700; text-decoration:none;">${batches}</a></td>
                             <td style="padding:10px 15px; text-align:right;"><a href="${filesUrl}" onclick="Nav.openPath('${filesUrl}', event)" class="clickable-count" style="color:#60a5fa; font-weight:700; text-decoration:none;">${files}</a></td>
@@ -192,7 +192,7 @@ window.PoolDetailView = {
                         ${crossOnly ? `<span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); color:#f59e0b; padding:3px 10px; border-radius:20px; font-size:0.72rem; font-weight:700; display:inline-flex; align-items:center; gap:5px;"><i class="fa-solid fa-arrow-right-arrow-left"></i> Cross-Only</span>` : ''}
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                        <code style="font-size:0.8rem; color:var(--dim); background:rgba(255,255,255,0.04); padding:3px 10px; border-radius:4px; border:1px solid var(--border);">${poolId}</code>
+                        <code style="font-size:0.8rem; color:var(--dim); background: var(--hover); padding:3px 10px; border-radius:4px; border:1px solid var(--border);">${poolId}</code>
                         <button onclick="copyToClipboard('${poolId}', this)" class="btn-copy" title="Copy Pool ID" style="padding:4px 8px; font-size:0.75rem;">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
@@ -236,37 +236,37 @@ window.PoolDetailView = {
                         <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
                             <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
                                 <thead>
-                                    <tr style="border-bottom:1px solid var(--border); background:rgba(255,255,255,0.02); color:var(--dim);">
+                                    <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                                         <th style="padding:10px 15px;">Entity Type</th>
                                         <th style="padding:10px 15px; text-align:right;">Count / Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-layer-group" style="margin-right:8px; width:16px;"></i>Collections</td>
                                         <td style="padding:10px 15px; text-align:right; color:var(--accent); font-weight:700;">${collectionCount}</td>
                                     </tr>
-                                    <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-file-code" style="margin-right:8px; width:16px;"></i>Files</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${totalPoolFiles}</a></td>
                                     </tr>
-                                    <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code" style="margin-right:8px; width:16px;"></i>Functions</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${totalPoolFunctions}</a></td>
                                     </tr>
-                                    <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcSims}</a></td>
                                     </tr>
-                                    <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcClusts}</a></td>
                                     </tr>
-                                    <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>File Similarities</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileSims}</a></td>
                                     </tr>
-                                    <tr style="transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>File Clusters</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileClusts}</a></td>
                                     </tr>
@@ -294,7 +294,7 @@ window.PoolDetailView = {
 
                     <!-- Func Sim -->
                     <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:18px;">
-                        <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--accent); margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;">
+                        <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--accent); margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom: 1px solid var(--border); padding-bottom:10px;">
                             <i class="fa-solid fa-microchip"></i> Function Similarity
                         </div>
                         ${this._configRow('Algorithm', fs.algo)}
@@ -309,7 +309,7 @@ window.PoolDetailView = {
 
                     <!-- File Sim -->
                     <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:18px; ${fileSimEnabled ? '' : 'opacity:0.5;'}">
-                        <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:${fileSimEnabled ? '#60a5fa' : 'var(--dim)'}; margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;">
+                        <div style="font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:${fileSimEnabled ? '#60a5fa' : 'var(--dim)'}; margin-bottom:12px; display:flex; align-items:center; gap:7px; border-bottom: 1px solid var(--border); padding-bottom:10px;">
                             <i class="fa-solid fa-file-code"></i> File Similarity ${fileSimEnabled ? '' : '<span style="font-size:0.65rem; margin-left:4px; color:var(--dim);">(disabled)</span>'}
                         </div>
                         ${this._configRow('Algorithm', pool.algo)}
@@ -337,13 +337,13 @@ window.PoolDetailView = {
                     <div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--dim); display:flex; align-items:center; gap:7px;">
                         <i class="fa-solid fa-server"></i> Active Jobs
                     </div>
-                    <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(255,255,255,0.03); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.07)'" onmouseout="this.style.background='rgba(255,255,255,0.03)'"><i class="fa-solid fa-server"></i> See All Jobs</button>
+                    <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background: var(--hover); border:1px solid var(--border); color:var(--text); padding:5px 12px; border-radius:4px; font-size:0.75rem; font-weight:600; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='var(--border)'"><i class="fa-solid fa-server"></i> See All Jobs</button>
                 </div>
                 ${poolActiveJobs.length > 0 ? `
                 <div class="table-container" style="border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--card-bg);">
                     <table style="width:100%; border-collapse:collapse; text-align:left; font-size:0.85rem;">
                         <thead>
-                            <tr style="border-bottom:1px solid var(--border); background:rgba(255,255,255,0.02); color:var(--dim);">
+                            <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                                 <th style="padding:10px 15px;">Job ID</th>
                                 <th style="padding:10px 15px;">Type</th>
                                 <th style="padding:10px 15px;">Status</th>
@@ -391,7 +391,7 @@ window.PoolDetailView = {
                                 const durationHtml = window.formatDuration ? window.formatDuration(job.created_at, job.updated_at, status) : '-';
 
                                 return `
-                                <tr style="border-bottom:1px solid rgba(255,255,255,0.03); transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.01)'" onmouseout="this.style.background='transparent'">
+                                <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                     <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath('${jobUrl}', event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
                                     <td style="padding:10px 15px; font-weight:600; text-transform:capitalize;">${job.type}</td>
                                     <td style="padding:10px 15px;">${statusBadge}</td>

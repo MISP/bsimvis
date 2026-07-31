@@ -39,22 +39,22 @@ window.FileView = {
                     color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
                     transition:color 0.15s, border-color 0.15s, background 0.15s;
                 }
-                .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+                .bsim-tab:hover { color:var(--text); background: var(--hover); }
                 .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
                 
                 .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
-                .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
-                .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+                .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }
+                .file-func-table tr:hover { background: var(--hover); }
                 
                 .file-func-table th.sortable { cursor: pointer; user-select: none; }
                 .file-func-table th.sortable:hover { color: var(--text); }
-                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.1); }
+                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--border); }
                 .file-func-table tr.filter-row input { background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
 
                 .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
                 .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
-                .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+                .bin-sim-mc-table td { padding:6px 12px; border-bottom: 1px solid var(--border); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
                 .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
                 .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
                 
@@ -81,14 +81,14 @@ window.FileView = {
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                     <div style="display: flex; flex-direction: column; gap: 20px;">
-                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
                             <div id="file-meta-container">
                                 <!-- Reused comparison table layout here -->
                             </div>
                         </div>
 
-                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
                                 <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
                             </div>
                             <div class="meta-grid" id="inferred-meta" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;"></div>
@@ -98,7 +98,7 @@ window.FileView = {
 
                 <!-- Functions Tab Panel -->
                 <div id="file-panel-functions" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border); display: flex; flex-direction: column; gap: 15px;">
                         <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
                             <table class="file-func-table">
                                 <thead>
@@ -135,7 +135,7 @@ window.FileView = {
 
                 <!-- Clusters Tab Panel -->
                 <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
                         <div class="cluster-list" id="cluster-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                     </div>
                 </div>
@@ -304,7 +304,7 @@ window.FileView = {
                 });
                 
                 if (totalPercent < 100) {
-                    pieData.push({value: 100 - totalPercent, color: 'rgba(255,255,255,0.05)', isDummy: true});
+                    pieData.push({value: 100 - totalPercent, color: 'var(--border)', isDummy: true});
                 }
                 
                 const width = 50;
@@ -318,7 +318,7 @@ window.FileView = {
                     .attr("width", width)
                     .attr("height", height)
                     .attr("viewBox", `0 0 ${width} ${height}`)
-                    .style("box-shadow", "0 2px 10px rgba(0,0,0,0.5)")
+                    .style("box-shadow", "0 2px 10px var(--border)")
                     .style("border-radius", "50%");
                     
                 svg.append("g")
@@ -334,7 +334,7 @@ window.FileView = {
                 const svgHtml = svg.node().outerHTML;
                 
                 return `
-                    <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px;">
+                    <div style="margin-top: 15px; padding: 10px; background: var(--border); border: 1px solid var(--border); border-radius: 6px;">
                         <div style="font-size: 0.75rem; color: var(--dim); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
                             <i class="${icon}"></i> ${title}
                         </div>
@@ -381,14 +381,14 @@ window.FileView = {
                     distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
 
                     clustersHtml += `
-                        <div class="cluster-item" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                        <div class="cluster-item" style="background: var(--border); border: 1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
                             <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:var(--text);">
                                 <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
                                 <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="FileView.openClusterFiles(event, '${cm.cluster_uuid}')">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
                             </div>
                             <div class="cluster-stat-badges" style="margin-bottom: 5px; display:flex; gap:10px; flex-wrap:wrap;">
-                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
-                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
+                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
+                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
                             </div>
                             ${distBadges}
                         </div>
@@ -406,7 +406,7 @@ window.FileView = {
                     const confScore = confObj.percent;
                     const confColor = d3.interpolateRdYlGn(confScore / 100);
                     const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-                    return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+                    return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');
                 return `
                     <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>

@@ -598,7 +598,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             }
 
             gridHeader.innerHTML = `
-                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.01);">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--hover);">
                     <div style="display: flex; gap: 10px; align-items: center;">
                         ${showContextBtn ? `
                             <button class="top-action-btn ${isContextFiltered ? 'active' : ''}" onclick="window.goToContextJobs()" style="${isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
@@ -1147,7 +1147,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         <div style="position:relative; display:inline-flex; align-items:center;">
                             <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
                                 title="Max candidates to score / filter" 
-                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                                style="width:70px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                                 onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                             <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
                         </div>`;
@@ -1158,7 +1158,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <div style="position:relative; display:inline-flex; align-items:center;">
                         <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
                             title="Max results to display (Output Limit)" 
-                            style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                            style="width:60px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                             onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                         <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
                     </div>
@@ -1210,7 +1210,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                 <input type="text" id="flt-file-yara" placeholder="Yara..." value="${p.get('yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${p.get('avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${p.get('cc_ip') || ''}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                                <hr style="margin: 2px 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);">
+                                <hr style="margin: 2px 0; border: none; border-top: 1px solid var(--border);">
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
                                     <input type="text" id="flt-file-inf-yara" placeholder="Inf.Yara" title="Inferred Yara" value="${p.get('inferred_yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                                     <input type="text" id="flt-file-inf-avtype" placeholder="Inf.AV" title="Inferred AVType" value="${p.get('inferred_avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
@@ -1376,7 +1376,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${p.get('max_count') || ''}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${p.get('max_cohesion') || ''}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
@@ -4331,16 +4331,16 @@ async function renderPoolCreationForm() {
     const fileClusterMethod = clustering.selection_method || 'eom';
 
     const colCheckboxes = collections.map(col => `
-        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom: 1px solid var(--border); transition: background 0.2s;">
             <input type="checkbox" name="pool-collections" value="${col.name}" onchange="updateAutoPoolName()">
             <span>${col.name} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
         </label>
     `).join('');
 
     gridHeader.innerHTML = `
-        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); overflow:hidden;">
+        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px var(--border); overflow:hidden;">
             <!-- COLLAPSIBLE HEADER -->
-            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:rgba(255,255,255,0.02); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background: var(--hover); transition: background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='var(--border)'">
                 <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
                     <i class="fa-solid fa-diagram-project"></i> Create New Pool
                 </h3>
@@ -4350,10 +4350,10 @@ async function renderPoolCreationForm() {
             </div>
 
             <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
-                <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+                <div id="pool-creation-form-container" style="border-top: 1px solid var(--border); padding-top:20px;">
                     <div style="margin-bottom: 25px;">
                         <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
-                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
                     </div>
 
                     <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
@@ -4368,9 +4368,9 @@ async function renderPoolCreationForm() {
                             </div>
                             <div style="position:relative;">
                                 <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:0.8rem; color:var(--dim);"></i>
-                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
+                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
                             </div>
-                            <div id="pool-collections-list" style="background:rgba(0,0,0,0.15); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
+                            <div id="pool-collections-list" style="background:var(--border); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
                                 ${colCheckboxes.length ? colCheckboxes : '<div style="padding:20px; font-size:0.85rem; color:var(--dim); text-align:center;">No collections found.</div>'}
                             </div>
                         </div>
@@ -4378,7 +4378,7 @@ async function renderPoolCreationForm() {
                         <!-- RIGHT COLUMN: CONFIGURATION -->
                         <div style="display:flex; flex-direction:column; gap:15px;">
                             <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
-                                <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.2); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
+                                <div style="display:flex; align-items:center; gap:8px; background:var(--border); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
                                     <input type="checkbox" id="pool-cross-only" style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
                                     <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
                                         <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
@@ -4392,7 +4392,7 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
                                 <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                     <i class="fa-solid fa-microchip"></i> Function-Level
                                 </div>
@@ -4402,7 +4402,7 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
@@ -4410,15 +4410,15 @@ async function renderPoolCreationForm() {
                                             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label>
-                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4426,19 +4426,19 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <select id="pool-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 <option value="eom" ${funcClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
                                                 <option value="leaf" ${funcClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>
@@ -4447,12 +4447,12 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
                                     <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                         <i class="fa-solid fa-file-code"></i> File-Level
                                     </div>
-                                    <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); padding:2px 10px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                                    <div style="display:flex; align-items:center; gap:10px; background: var(--hover); padding:2px 10px; border-radius:20px; border: 1px solid var(--border);">
                                         <input type="checkbox" id="pool-enable-files" checked onchange="document.getElementById('file-params-grid').style.opacity = this.checked ? '1' : '0.4'; document.getElementById('file-params-grid').style.pointerEvents = this.checked ? 'auto' : 'none';" style="cursor:pointer; width:12px; height:12px; accent-color:var(--accent);">
                                         <label for="pool-enable-files" style="font-size:0.7rem; cursor:pointer; font-weight:600; color:var(--text);">Enabled</label>
                                     </div>
@@ -4463,16 +4463,16 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
+                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4480,19 +4480,19 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-file-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
+                                            <select id="pool-file-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
                                                 <option value="eom" ${fileClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
                                                 <option value="leaf" ${fileClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>

@@ -580,7 +580,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
             </div>` : ''}
 
             <div class="diff-right-col">
-                <div class="diff-preview-header" style="background:rgba(255,255,255,0.03); border-bottom:1px solid rgba(255,255,255,0.05); padding:12px 15px; flex-shrink:0;">
+                <div class="diff-preview-header" style="background: var(--hover); border-bottom: 1px solid var(--border); padding:12px 15px; flex-shrink:0;">
                     <div style="display:flex; flex-direction:column; gap:4px; width:100%;">
                         <div style="display:flex; align-items:center; gap:8px; font-size:0.9rem;">
                             <span style="color:var(--text); font-weight:bold;">${name1}</span>
@@ -596,7 +596,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
 
                 <div class="diff-preview-scroll" style="flex:1; overflow-y:auto; overflow-x:hidden; display:flex; align-items:flex-start; background:var(--window-bg); font-family:'JetBrains Mono', monospace; font-size:0.7rem; min-height:0;">
                     ${data ? `
-                        <div style="flex:1; border-right:1px solid rgba(255,255,255,0.05); border-left:4px solid #fd971f; min-width:0;">
+                        <div style="flex:1; border-right: 1px solid var(--border); border-left:4px solid #fd971f; min-width:0;">
                             ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
                         </div>
                         <div style="flex:1; border-left:4px solid var(--success); min-width:0;">
@@ -613,7 +613,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
                 </div>
 
                 ${rows.length > 12 ? `
-                <div style="background:rgba(0,0,0,0.2); text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
+                <div style="background:var(--border); text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top: 1px solid var(--border); flex-shrink:0;">
                     💡 Use Ctrl+Scroll wheel to scroll code
                 </div>` : ''}
             </div>
@@ -632,7 +632,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
 }
 
 function renderPreviewSide(sideData, side) {
-    if (!sideData) return `<div style="height:1.3em; background:rgba(255,255,255,0.02)"></div>`;
+    if (!sideData) return `<div style="height:1.3em; background: var(--hover)"></div>`;
 
     const tokens = sideData.tokens || [];
     let lineHtml = tokens.map(t => {
@@ -645,7 +645,7 @@ function renderPreviewSide(sideData, side) {
     const chunkCls = sideData.chunk_class ? sideData.chunk_class.split(' ')[0] : '';
     const bg = bgMap[chunkCls] || 'transparent';
 
-    return `<div style="white-space:pre; height:1.3em; padding:0 8px; background:${bg}; border-bottom:1px solid rgba(255,255,255,0.02); overflow:hidden;">${lineHtml}</div>`;
+    return `<div style="white-space:pre; height:1.3em; padding:0 8px; background:${bg}; border-bottom: 1px solid var(--border); overflow:hidden;">${lineHtml}</div>`;
 }
 
 window.addEventListener('storage', (e) => {

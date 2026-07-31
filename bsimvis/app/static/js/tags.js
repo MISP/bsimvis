@@ -190,7 +190,7 @@ window.showTooltip = (e, tag, coll) => {
     if (!el) {
         el = document.createElement('div');
         el.id = 'tag-tooltip';
-        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
+        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px var(--border); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
         document.body.appendChild(el);
     }
 
@@ -260,12 +260,12 @@ window.handleTagContextMenu = (e, tag) => {
     if (!menu) {
         menu = document.createElement('div');
         menu.id = 'tag-custom-context-menu';
-        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
+        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px var(--border); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
         document.body.appendChild(menu);
     }
 
     menu.innerHTML = `
-        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center;">
+        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background: var(--hover); display:flex; justify-content:space-between; align-items:center;">
             <span>Tag: ${escapeHtml(tag)}</span>
             <button onclick="document.getElementById('tag-custom-context-menu').style.display='none'" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
         </div>

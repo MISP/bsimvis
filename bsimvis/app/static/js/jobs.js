@@ -508,7 +508,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                     <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Pipeline Sub-tasks</h4>
                     <table class="data-table" style="width:100%; font-size: 0.85rem;">
                         <thead>
-                            <tr style="background: rgba(255,255,255,0.03);">
+                            <tr style="background: var(--hover);">
                                 <th style="padding: 8px;">Type</th>
                                 <th style="padding: 8px;">Status</th>
                                 <th style="padding: 8px;">Progress</th>
@@ -528,7 +528,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                         <td style="padding: 8px;">${st.type}</td>
                         <td style="padding: 8px;"><span style="color: ${sColor}">${(st.status || 'pending').toUpperCase()}</span></td>
                         <td style="padding: 8px;">
-                            <div style="background: rgba(255,255,255,0.05); height: 6px; width: 100%; border-radius:3px; overflow:hidden;">
+                            <div style="background: var(--hover); height: 6px; width: 100%; border-radius:3px; overflow:hidden;">
                                 <div style="background: var(--accent); width: ${st.progress || 0}%; height: 100%;"></div>
                             </div>
                         </td>
@@ -557,7 +557,7 @@ async function refreshJobModal(jobId, isInitial = false) {
                 } else {
                     htmlLine = log.replace(/</g, "&lt;").replace(/>/g, "&gt;");
                 }
-                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${htmlLine}</div>`;
+                logsInnerHtml += `<div style="margin-bottom: 4px; border-bottom: 1px solid var(--border); padding-bottom: 2px;">${htmlLine}</div>`;
             });
         } else {
             logsInnerHtml = '<div style="font-style: italic;">No logs available yet.</div>';
@@ -588,7 +588,7 @@ async function refreshJobModal(jobId, isInitial = false) {
             payloadHtml = `
                 <div style="margin-top: 20px;">
                     <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Job Parameters & Metadata</h4>
-                    <div style="background: rgba(255,255,255,0.03); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
+                    <div style="background: var(--hover); padding: 15px; border-radius: 6px; border: 1px solid var(--border); display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px;">
             `;
 
             for (const [key, value] of Object.entries(job.payload)) {
@@ -625,7 +625,7 @@ async function refreshJobModal(jobId, isInitial = false) {
         const wasAtBottom = oldLogViewer ? (oldLogViewer.scrollHeight - oldLogViewer.scrollTop <= oldLogViewer.clientHeight + 10) : true;
 
         modalBody.innerHTML = `
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: rgba(255,255,255,0.02); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: var(--hover); padding: 15px; border-radius: 6px; border: 1px solid var(--border);">
                 <div>
                     <div style="color: var(--dim); font-size: 0.75rem; text-transform: uppercase;">Job ID</div>
                     <div style="font-family: var(--mono); font-size: 0.85rem;">${job.id || ''}</div>

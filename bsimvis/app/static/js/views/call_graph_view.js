@@ -30,8 +30,8 @@ window.CallGraphView = {
                         <button class="btn-action" onclick="CallGraphView.toggleLabels()"><i class="fa-solid fa-tag"></i> Toggle Labels</button>
                     </div>
                 </div>
-                <div id="cg-meta-sidebar" class="card" style="width:320px; border-left:1px solid var(--border); background:var(--card-bg); display:flex; flex-direction:column; padding:20px; overflow-y:auto; gap:15px; box-shadow:-4px 0 15px rgba(0,0,0,0.3); z-index:5;">
-                    <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 5px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+                <div id="cg-meta-sidebar" class="card" style="width:320px; border-left:1px solid var(--border); background:var(--card-bg); display:flex; flex-direction:column; padding:20px; overflow-y:auto; gap:15px; box-shadow:-4px 0 15px var(--border); z-index:5;">
+                    <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 5px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
                         <i class="fa-solid fa-info-circle"></i> File Metadata
                     </div>
                     <div id="cg-meta-content" style="display:flex; flex-direction:column; gap:12px;">
@@ -75,7 +75,7 @@ window.CallGraphView = {
                             const style = clickable ? `color:${color || 'var(--accent)'}; font-family:'JetBrains Mono', monospace; word-break:break-all; cursor:pointer; font-weight:bold;` : `color:${color || 'var(--meta-text)'}; font-family:'JetBrains Mono', monospace; word-break:break-all;`;
                             const clickAttr = clickHandler ? `onclick="${clickHandler}"` : '';
                             return `
-                                <div style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem; border-bottom:1px solid rgba(255,255,255,0.03); padding-bottom:8px;">
+                                <div style="display:flex; flex-direction:column; gap:4px; font-size:0.85rem; border-bottom: 1px solid var(--border); padding-bottom:8px;">
                                     <span style="color:var(--dim); font-size:0.72rem; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
                                         <i class="${icon}" style="width:14px; text-align:center;"></i> ${label}
                                     </span>

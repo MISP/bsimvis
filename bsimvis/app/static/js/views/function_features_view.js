@@ -119,7 +119,7 @@ window.FunctionFeaturesView = {
                     color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                    box-shadow: 0 4px 15px var(--border);
                     max-width: 320px;
                 }
             </style>
@@ -265,7 +265,7 @@ window.FunctionFeaturesView = {
                         </button>
                     </div>
                 </td>
-                <td><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${f['seq'] || 'N/A'}</span></td>
+                <td><span class="mono" style="font-size:0.75rem; border: 1px solid var(--border); padding:1px 4px; border-radius:3px; background: var(--hover);">${f['seq'] || 'N/A'}</span></td>
                 <td><span class="type-badge">${f.type || 'N/A'}</span></td>
                 <td>
                     <div style="display:inline-flex; flex-direction:column; gap:3px;">

@@ -192,18 +192,18 @@ function renderBinarySimilarityView(params) {
                 color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
                 transition:color 0.15s, border-color 0.15s, background 0.15s;
             }
-            .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+            .bsim-tab:hover { color:var(--text); background: var(--hover); }
             .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
             .bin-sim-strip { border:1px solid var(--border); border-radius:6px; padding:10px 12px; background:var(--card-bg); display:flex; align-items:center; gap:10px; min-height:24px; }
             .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
             .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
-            .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+            .bin-sim-mc-table td { padding:6px 12px; border-bottom: 1px solid var(--border); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
             .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
             .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
             .bin-sim-mc-diff td { background:color-mix(in srgb, var(--token-instruction) 10%, transparent); }
             .bin-sim-mc-same td { background:color-mix(in srgb, var(--token-symbol) 10%, transparent); }
             .drag-handle-v:hover {
-                background: rgba(255,255,255,0.08) !important;
+                background: var(--hover) !important;
             }
             .drag-handle-v:hover div {
                 background: var(--accent) !important;
@@ -923,7 +923,7 @@ async function renderBinaryDiffSankey(data) {
                     .attr("height", h)
                     .attr("width", width)
                     .attr("fill", d.color)
-                    .attr("stroke", "rgba(0,0,0,0.5)")
+                    .attr("stroke", "var(--border)")
                     .attr("stroke-width", "0.5px")
                     .attr("opacity", 0.6);
                     
@@ -995,7 +995,7 @@ async function renderBinaryDiffSankey(data) {
                 .attr("height", height)
                 .attr("width", width)
                 .attr("fill", d.color)
-                .attr("stroke", "rgba(0,0,0,0.5)")
+                .attr("stroke", "var(--border)")
                 .attr("stroke-width", "0.5px")
                 .attr("opacity", 0.6)
                 .append("title")
@@ -1339,7 +1339,7 @@ function renderBinSimTables(isFilterChange = false) {
                 seedBinSimClusterSamples(clusterData[0]);
 
                 return `
-                <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
+                <tr style="border-bottom: 1px solid var(--border);"
                     data-entity-data='${JSON.stringify({
                         cluster_id: m.cluster_id,
                         cluster_uuid: m.cluster_uuid,
@@ -1436,7 +1436,7 @@ function renderBinSimTables(isFilterChange = false) {
             }] : [];
             seedBinSimClusterSamples(clusterData[0]);
             return `
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.05);"
+            <tr style="border-bottom: 1px solid var(--border);"
                 data-entity-data='${JSON.stringify({
                     cluster_id: u.cluster_id,
                     cluster_uuid: u.cluster_uuid,
@@ -2022,7 +2022,7 @@ function buildMetaCompareTable(da, db, colA, colB) {
             const confScore = confObj.percent;
             const confColor = d3.interpolateRdYlGn(confScore / 100);
             const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-            return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+            return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
         }).join('');
         return `
             <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -2072,7 +2072,7 @@ function buildInferredMetaCards(da, db, colA, colB) {
             const confScore = confObj.percent;
             const confColor = d3.interpolateRdYlGn(confScore / 100);
             const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-            return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+            return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
         }).join('');
         return `
             <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -2095,16 +2095,16 @@ function buildInferredMetaCards(da, db, colA, colB) {
     const inferredHtmlB = buildInferredHtml(ib, colB);
 
     return `<div style="display: flex; gap: 20px; flex-wrap: wrap; width: 100%;">
-        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
+        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> ${filenameA}: Clusters
             </div>
             <div class="meta-grid" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;">
                 ${inferredHtmlA}
             </div>
         </div>
-        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
+        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> ${filenameB}: Clusters
             </div>
             <div class="meta-grid" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;">

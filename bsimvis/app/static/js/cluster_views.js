@@ -1064,19 +1064,19 @@ class ClusterHierarchy extends D3BaseLayout {
 
             stats.innerHTML = `
                 <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--subtle);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--subtle);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
                         <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">funcs</span></div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                         <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                         <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                         <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                     </div>
@@ -1186,19 +1186,19 @@ class ClusterHierarchy extends D3BaseLayout {
                         <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
                                 <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                                 <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                                 <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                                 <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                             </div>
@@ -1338,7 +1338,7 @@ class ClusterHierarchy extends D3BaseLayout {
 
         let html = `
             <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
-                <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: rgba(0,0,0,0.3); flex-shrink: 0;">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: var(--border); flex-shrink: 0;">
                     <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
                     </div>
@@ -1871,7 +1871,7 @@ class ClusterPacking {
         const g = this.svg.append("g");
 
         const getCohesionFill = (d) => {
-            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.01)";
+            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "var(--border)";
             if (d.data.is_member) {
                 if (this.params.color_by_md5 && d.data.md5) {
                     const baseColor = window.getMd5Color(d.data.md5);
@@ -1891,7 +1891,7 @@ class ClusterPacking {
         };
 
         const getCohesionStroke = (d) => {
-            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "rgba(255,255,255,0.15)";
+            if (d.data.id === "VIRTUAL_ROOT" || d.data.uuid === "root") return "var(--border)";
             if (d.data.is_member) {
                 if (this.params.color_by_md5 && d.data.md5) {
                     return window.getMd5Color(d.data.md5);
@@ -2083,19 +2083,19 @@ class ClusterPacking {
 
             stats.innerHTML = `
                 <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--subtle);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--subtle);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
                         <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">funcs</span></div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--accent);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                         <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid var(--success);">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                         <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                     </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                    <div style="background: var(--hover); padding:8px; border-radius:4px; border-left:2px solid #ae81ff;">
                         <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                         <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                     </div>
@@ -2220,19 +2220,19 @@ class ClusterPacking {
                         <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
                                 <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">${this.clusterType === 'file' ? 'files' : 'funcs'}</span></div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
                                 <div style="color:var(--accent); font-weight:bold;">${d.data.stability.toFixed(2)}</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid var(--success);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Cohesion</div>
                                 <div style="color:var(--success); font-weight:bold;">${(d.data.cohesion * 100).toFixed(1)}%</div>
                             </div>
-                            <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
+                            <div style="background: var(--hover); padding:4px 8px; border-radius:4px; border-left:2px solid #ae81ff;">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Avg Features</div>
                                 <div style="color:#ae81ff; font-weight:bold;">${(d.data.avg_features || 0).toFixed(1)}</div>
                             </div>
@@ -2372,7 +2372,7 @@ class ClusterPacking {
 
         let html = `
             <div class="hier-code-snippet" style="height: 100%; display: flex; flex-direction: column;">
-                <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: rgba(0,0,0,0.3); flex-shrink: 0;">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--meta-header-bg); background: var(--border); flex-shrink: 0;">
                     <div style="font-size: 0.75rem; color: var(--accent); font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                         ${m.return_type || ''} ${m.namespace ? m.namespace + '::' : ''}${func.function_name}
                     </div>

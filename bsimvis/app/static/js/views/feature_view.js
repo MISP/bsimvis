@@ -188,7 +188,7 @@ window.FeatureView = {
                     color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                    box-shadow: 0 4px 15px var(--border);
                     max-width: 320px;
                 }
             </style>
@@ -412,7 +412,7 @@ window.FeatureView = {
                 tr.innerHTML = `
                     <td class="code-cell" data-entity-data='${originEntityData}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">${originHtml}</td>
                     <td class="code-cell">${metaHtml}</td>
-                    <td class="code-cell"><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${occ['seq'] || 'N/A'}</span></td>
+                    <td class="code-cell"><span class="mono" style="font-size:0.75rem; border: 1px solid var(--border); padding:1px 4px; border-radius:3px; background: var(--hover);">${occ['seq'] || 'N/A'}</span></td>
                     <td class="code-cell">${pcodeHtml}</td>
                     <td class="code-cell">${pcodeBlockHtml}</td>
                     <td class="code-cell">${tfHtml}</td>

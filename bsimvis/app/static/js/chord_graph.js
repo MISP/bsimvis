@@ -231,7 +231,6 @@ class ChordGraph {
             .attr("d", ribbon)
             .attr("fill", d => d.fillColor)
             .attr("stroke", "none")
-            .style("mix-blend-mode", "screen")
             .on("mouseover", (event, d) => {
                 d3.selectAll(".chord").style("opacity", 0.1);
                 d3.select(event.currentTarget).style("opacity", 1);

@@ -32,6 +32,7 @@
                 'code-preview-tooltip',
                 'token-tooltip',
                 'diff-preview-tooltip',
+                'note-preview-tooltip',
                 'hierarchy-tooltip',
                 'bin-hierarchy-tooltip',
                 'binary-preview-tooltip',
@@ -173,6 +174,7 @@
             getCodeTooltip(),
             document.getElementById('token-tooltip'),
             document.getElementById('diff-preview-tooltip'),
+            document.getElementById('note-preview-tooltip'),
             getBinaryTooltip(),
         ];
         els.forEach(el => {
@@ -418,6 +420,18 @@
         const hierTooltip = targetWindow.document.getElementById('hierarchy-tooltip');
         const binHierTooltip = targetWindow.document.getElementById('bin-hierarchy-tooltip');
 
+        const noteTooltip = document.getElementById('note-preview-tooltip');
+        const isNoteActive = noteTooltip && (noteTooltip.style.display === 'flex' || noteTooltip.classList.contains('showing'));
+        if (isNoteActive) {
+            const noteScroll = noteTooltip.querySelector('.note-preview-scroll');
+            if (noteScroll) {
+                e.preventDefault();
+                e.stopPropagation();
+                noteScroll.scrollTop += e.deltaY;
+                return;
+            }
+        }
+
         const isCodeActive = codeTooltip && (codeTooltip.style.display === 'flex' || codeTooltip.classList.contains('showing'));
         const isDiffActive = diffTooltip && (diffTooltip.style.display === 'flex' || diffTooltip.classList.contains('showing'));
         const isHierActive = hierTooltip && hierTooltip.style.display === 'block';
@@ -509,6 +523,39 @@
         if (!e.relatedTarget) {
             window.hideAllTooltips();
         }
+    });
+
+    // Escape key: close panels, tooltips, settings
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+
+        // Don't steal Escape from inputs/textareas that live outside the side panels
+        const tag = document.activeElement && document.activeElement.tagName;
+        const isInSidePanel = document.activeElement &&
+            document.activeElement.closest('#notes-panel-v2, #ai-panel-v2');
+        if ((tag === 'INPUT' || tag === 'TEXTAREA') && !isInSidePanel) return;
+
+        // Hide all hover tooltips
+        window.hideAllTooltips(true);
+
+        // Close Notes panel
+        if (typeof closeNotesPanel === 'function') closeNotesPanel();
+
+        // Close AI/LLM panel
+        if (typeof closeAIPanel === 'function') closeAIPanel();
+
+        // Close UI settings panel
+        const settingsPanel = document.getElementById('ui-settings-panel');
+        if (settingsPanel && settingsPanel.style.display !== 'none') {
+            settingsPanel.style.display = 'none';
+        }
+
+        // Collapse "Show more metadata" if expanded
+        document.querySelectorAll('.meta-col-body-wrapper:not(.collapsed)').forEach(wrapper => {
+            const card = wrapper.closest('.func-meta-card');
+            const btn = card && card.querySelector('.btn-more-toggle');
+            if (btn && typeof toggleSection === 'function') toggleSection(btn);
+        });
     });
 
     // Global MutationObserver to catch element deletions

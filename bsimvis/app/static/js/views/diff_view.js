@@ -435,6 +435,44 @@ window.DiffView = {
             window.setupRichCopyInterceptor(this.rightContent, () => this.bsimRows.map(r => r.r).filter(r => r && r.line_idx !== undefined), { showDiffs: true });
         }
         this.onScroll();
+        
+        // Actually place the cursor in the element so arrow keys work immediately
+        this.leftContent.focus();
+        setTimeout(() => {
+            const sel = window.getSelection();
+            if (!sel.rangeCount || !this.leftContent.contains(sel.focusNode)) {
+                const range = document.createRange();
+                range.selectNodeContents(this.leftContent);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }, 250);
+
+        this._selectionChangeListener = () => {
+            const activeEl = document.activeElement;
+            if (activeEl !== this.leftContent && activeEl !== this.rightContent) {
+                if (this._currentKbdToken) {
+                    const els = this.getHoverElementsForToken(this._currentKbdToken);
+                    this.handleHoverElements(els.token, els.tooltipTarget, els.funcCallToken, false);
+                    this._currentKbdToken = null;
+                }
+                return;
+            }
+            const token = this.findTokenFromSelection();
+            if (token !== this._currentKbdToken) {
+                if (this._currentKbdToken) {
+                    const els = this.getHoverElementsForToken(this._currentKbdToken);
+                    this.handleHoverElements(els.token, els.tooltipTarget, els.funcCallToken, false);
+                }
+                this._currentKbdToken = token;
+                if (this._currentKbdToken) {
+                    const els = this.getHoverElementsForToken(this._currentKbdToken);
+                    this.handleHoverElements(els.token, els.tooltipTarget, els.funcCallToken, true);
+                }
+            }
+        };
+        document.addEventListener('selectionchange', this._selectionChangeListener);
 
         requestAnimationFrame(() => {
             const sample = this.leftContent.querySelector('.code-line, .code-spacer');
@@ -604,6 +642,26 @@ window.DiffView = {
             const isCmd = e.ctrlKey || e.metaKey;
             const key = e.key;
 
+            if (key === 'Enter') {
+                e.preventDefault();
+                const token = this.findTokenFromSelection();
+                if (token) {
+                    const els = this.getHoverElementsForToken(token);
+                    if (els.funcCallToken) {
+                        const calledFuncId = els.funcCallToken.getAttribute('data-called-func-id');
+                        if (calledFuncId) {
+                            this.navigateToFunction(calledFuncId, e);
+                            return;
+                        }
+                    }
+                    if (els.token && els.token.classList.contains('feature-highlight')) {
+                        const hashes = this.getHashesForToken(els.token);
+                        if (hashes) this.toggleLock(hashes, els.token);
+                    }
+                }
+                return;
+            }
+
             if (isCmd && key.toLowerCase() === 'a') return;
             if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
             
@@ -706,6 +764,26 @@ window.DiffView = {
         return null;
     },
 
+    findTokenFromSelection() {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return null;
+        let node = sel.focusNode;
+        while (node && node !== this.leftContent && node !== this.rightContent) {
+            if (node instanceof Element && node.classList.contains('token')) return node;
+            node = node.parentNode;
+        }
+        return null;
+    },
+
+    getHoverElementsForToken(t) {
+        if (!t) return { token: null, tooltipTarget: null, funcCallToken: null };
+        return {
+            token: t.closest('.feature-highlight'),
+            tooltipTarget: t.closest('[data-side]'),
+            funcCallToken: t.closest('[data-called-func-id]')
+        };
+    },
+
     clearAllLocks() {
         document.querySelectorAll('.feature-locked, .bsim-group-active-match, .bsim-group-active-unique').forEach(el => {
             el.classList.remove('feature-locked', 'bsim-group-active-match', 'bsim-group-active-unique');
@@ -764,23 +842,36 @@ window.DiffView = {
         const tooltipTarget = this.findInPath(event, '[data-side]');
         const funcCallToken = this.findInPath(event, '[data-called-func-id]');
 
+        this.handleHoverElements(token, tooltipTarget, funcCallToken, state, event);
+    },
+
+    handleHoverElements(token, tooltipTarget, funcCallToken, state, event) {
         if (funcCallToken) {
             const calledFuncId = funcCallToken.getAttribute('data-called-func-id');
             const isExternal = funcCallToken.getAttribute('data-is-external') === 'true';
             const targetName = funcCallToken.getAttribute('data-target-name') || calledFuncId.split(':').pop();
             
+            let x = event ? event.clientX : undefined;
+            let y = event ? event.clientY : undefined;
+            if (x === undefined || y === undefined) {
+                const rect = funcCallToken.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.bottom;
+            }
+
             if (state) {
                 if (calledFuncId && isExternal) {
                     const extName = targetName || calledFuncId.replace('ext:', '');
                     this.showTooltip(`<div style="display:flex;align-items:center;gap:6px;">
                         <span style="background:color-mix(in srgb, var(--token-instruction) 20%, transparent);color:#f92672;border:1px solid color-mix(in srgb, var(--token-instruction) 40%, transparent);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
                         <span style="color:var(--meta-text-muted);font-family:monospace;font-size:0.8rem;">${extName}</span>
-                    </div>`, event.clientX, event.clientY);
+                    </div>`, x, y);
                 } else if (calledFuncId && !isExternal) {
+                    const fakeEvent = { clientX: x, clientY: y, target: funcCallToken, currentTarget: funcCallToken };
                     if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, event);
+                        window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, fakeEvent);
                     } else if (typeof window.showCodePreview === 'function') {
-                        window.showCodePreview(calledFuncId, targetName, null, null, null, event);
+                        window.showCodePreview(calledFuncId, targetName, null, null, null, fakeEvent);
                     }
                 }
             } else {
@@ -803,15 +894,30 @@ window.DiffView = {
 
         if (tooltipTarget) {
             if (state) {
+                let x = event ? event.clientX : undefined;
+                let y = event ? event.clientY : undefined;
+                if (x === undefined || y === undefined) {
+                    const rect = tooltipTarget.getBoundingClientRect();
+                    x = rect.left + rect.width / 2;
+                    y = rect.bottom;
+                }
                 const html = this.getHtmlForTooltip(tooltipTarget);
-                if (html) this.showTooltip(html, event.clientX, event.clientY);
+                if (html) this.showTooltip(html, x, y);
             } else {
                 this.hideTooltip();
             }
         }
 
-        const chunk = this.findInPath(event, '[data-chunk-id]');
-        if (chunk && chunk.dataset.chunkId !== undefined) {
+        let chunk = null;
+        if (event) {
+            chunk = this.findInPath(event, '[data-chunk-id]');
+        } else if (token) {
+            chunk = token.closest('[data-chunk-id]');
+        } else if (tooltipTarget) {
+            chunk = tooltipTarget.closest('[data-chunk-id]');
+        }
+        
+        if (chunk && chunk.dataset && chunk.dataset.chunkId !== undefined) {
             this.setChunkHighlight(chunk.dataset.chunkId, state, chunk);
         }
     },
@@ -1145,6 +1251,11 @@ window.DiffView = {
         this.container = null;
         this.params = null;
         
+        if (this._selectionChangeListener) {
+            document.removeEventListener('selectionchange', this._selectionChangeListener);
+            delete this._selectionChangeListener;
+        }
+
         // Restore original global handlers
         window.toggleLock = this._originalToggleLock;
         window.clearAllLocks = this._originalClearAllLocks;

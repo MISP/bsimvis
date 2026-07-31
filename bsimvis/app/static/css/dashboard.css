@@ -611,6 +611,66 @@ tr:nth-child(even) {
     border-color: #ffd700;
 }
 
+/* AI-only notes: purple, matching AI insight styling */
+.btn-note-action.has-notes.notes-ai {
+    background: color-mix(in srgb, var(--info) 15%, transparent);
+    border-color: color-mix(in srgb, var(--info) 40%, transparent);
+    color: var(--info);
+}
+
+.btn-note-action.has-notes.notes-ai:hover {
+    background: color-mix(in srgb, var(--info) 25%, transparent);
+    border-color: var(--info);
+}
+
+/* Mixed user + AI notes: yellow card with a purple card stacked behind it */
+.btn-note-action.has-notes.notes-both {
+    background: color-mix(in srgb, #ffd700 15%, var(--bg)) !important;
+    box-shadow: 4px -4px 0 0 color-mix(in srgb, var(--info) 25%, var(--bg)),
+                4px -4px 0 1px var(--info);
+}
+
+.btn-note-action.has-notes.notes-both:hover {
+    background: color-mix(in srgb, #ffd700 25%, var(--bg)) !important;
+    box-shadow: 5px -5px 0 0 color-mix(in srgb, var(--info) 25%, var(--bg)),
+                5px -5px 0 1px var(--info);
+}
+
+/* Light theme: same yellow hue, darkened + stronger fill so the note button stays visible on white */
+html.light-theme .btn-note-action.has-notes {
+    background: rgba(255, 215, 0, 0.55);
+    border-color: #b8860b;
+    color: #6b4e00;
+}
+
+html.light-theme .btn-note-action.has-notes:hover {
+    background: rgba(255, 215, 0, 0.85);
+    border-color: #8a6508;
+}
+
+html.light-theme .btn-note-action.has-notes.notes-ai {
+    background: color-mix(in srgb, var(--info) 20%, transparent);
+    border-color: color-mix(in srgb, var(--info) 60%, transparent);
+    color: var(--info);
+}
+
+html.light-theme .btn-note-action.has-notes.notes-ai:hover {
+    background: color-mix(in srgb, var(--info) 35%, transparent);
+    border-color: var(--info);
+}
+
+html.light-theme .btn-note-action.has-notes.notes-both {
+    background: color-mix(in srgb, rgba(255, 215, 0, 0.8), var(--bg)) !important;
+    box-shadow: 4px -4px 0 0 color-mix(in srgb, var(--info) 20%, var(--bg)),
+                4px -4px 0 1px var(--info);
+}
+
+html.light-theme .btn-note-action.has-notes.notes-both:hover {
+    background: color-mix(in srgb, rgba(255, 215, 0, 1), var(--bg)) !important;
+    box-shadow: 5px -5px 0 0 color-mix(in srgb, var(--info) 20%, var(--bg)),
+                5px -5px 0 1px var(--info);
+}
+
 #loader {
     padding: 20px;
     text-align: center;
@@ -1371,6 +1431,54 @@ body.sidebar-collapsed #sidebar-toggle {
     opacity: 1;
 }
 
+/* Chord graph ribbons: screen blend glows on dark, goes white on light */
+path.chord { mix-blend-mode: screen; }
+html.light-theme path.chord { mix-blend-mode: multiply; }
+
+/* Filter toggle + actions split button */
+.filter-actions-container {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+.filter-actions-container #toggle-filters-btn {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+}
+.filter-actions-chevron {
+    background: transparent;
+    border: 1px solid var(--subtle);
+    border-left: none;
+    color: var(--subtle);
+    cursor: pointer;
+    height: 30px;
+    padding: 0 7px;
+    box-sizing: border-box;
+    border-radius: 0 4px 4px 0;
+    display: inline-flex;
+    align-items: center;
+    transition: all 0.2s;
+    opacity: 0.7;
+}
+.filter-actions-chevron:hover {
+    opacity: 1;
+    background: var(--hover);
+    color: var(--text);
+}
+.filter-actions-container #toggle-filters-btn.active + .filter-actions-chevron {
+    background: var(--hover);
+    border-color: var(--accent);
+    color: var(--accent);
+    opacity: 1;
+}
+#filter-actions-dropdown .history-item {
+    color: var(--text);
+}
+#filter-actions-dropdown .history-item:hover {
+    border-left-color: var(--token-instruction);
+}
+
 /* Excel-like Selection Styles */
 #data-table td.selected-cell {
     background-color: rgba(4, 217, 255, 0.04) !important;
@@ -1413,10 +1521,11 @@ body.sidebar-collapsed #sidebar-toggle {
     position: fixed;
     left: 15px;
     bottom: 100px;
-    background: rgba(20, 20, 20, 0.95);
+    background: var(--card-bg);
+    color: var(--text);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 15px 40px var(--window-bg);
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.35);
     z-index: 10000;
     width: 330px;
     max-height: 400px;

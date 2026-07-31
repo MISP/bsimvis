@@ -179,13 +179,29 @@ class TableSelection {
 
             if (!this.cellModeActive && this.tempFocus && !this.startedOnBlocking) {
                 // If it was just a click or a very small movement with no text selection,
-                // we treat it as focusing the cell.
+                // we treat it as focusing the cell and triggering a redirect if a link exists.
                 if (!selection || dist < 3) {
                     this.clearSelection();
                     this.anchorCell = { r: this.tempFocus.r, c: this.tempFocus.c };
                     this.focusCell = { r: this.tempFocus.r, c: this.tempFocus.c };
                     this.setSelection(this.tempFocus.r, this.tempFocus.c, this.tempFocus.r, this.tempFocus.c);
                     this.updateVisuals();
+
+                    const tr = this.tbody.children[this.tempFocus.r];
+                    if (tr) {
+                        const clickedCell = tr.children[this.tempFocus.c];
+                        const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
+                        let link = clickedCell ? clickedCell.querySelector(selector) : null;
+                        if (!link) {
+                            link = tr.querySelector(selector);
+                        }
+                        
+                        if (link) {
+                            if (e.target !== link && !link.contains(e.target)) {
+                                link.click();
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -195,15 +211,34 @@ class TableSelection {
     }
 
     handleKeyDown(e) {
+        // Bail out if this instance's table is no longer in the live DOM (stale SPA instance)
+        if (!this.tbody || !this.tbody.isConnected) {
+            return;
+        }
+
         if (e.key === 'Escape') {
             this.clearSelection();
             return;
         }
 
-        // Only handle if no input is focused, OR if the table is the intended target
-        if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') {
-            // Allow Ctrl+C even if input is focused? No, usually not.
+        if (document.activeElement.isContentEditable || document.activeElement.tagName === 'TEXTAREA') {
             return;
+        }
+
+        if (document.activeElement.tagName === 'INPUT') {
+            const input = document.activeElement;
+            // Alt+Arrow is reserved for navbar shortcuts — don't intercept it here
+            if (!e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                input.blur();
+                e.preventDefault();
+                // Continue to table selection
+            } else if (!e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && input.value === '') {
+                input.blur();
+                e.preventDefault();
+                // Continue to table selection
+            } else {
+                return;
+            }
         }
 
         if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
@@ -225,15 +260,44 @@ class TableSelection {
             return;
         }
 
-        if (!this.focusCell) return;
-
-        const { r, c } = this.focusCell;
-        let newR = r;
-        let newC = c;
+        if (e.key === 'Enter') {
+            if (this.focusCell) {
+                e.preventDefault();
+                const tr = this.tbody.children[this.focusCell.r];
+                if (tr) {
+                    const clickedCell = tr.children[this.focusCell.c];
+                    const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
+                    let link = clickedCell ? clickedCell.querySelector(selector) : null;
+                    if (!link) {
+                        link = tr.querySelector(selector);
+                    }
+                    if (link) {
+                        link.click();
+                    }
+                }
+            }
+            return;
+        }
 
         const rows = this.tbody.children.length;
         if (rows === 0) return;
         const cols = this.tbody.children[0].children.length;
+
+        if (!this.focusCell) {
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                e.preventDefault();
+                this.anchorCell = { r: 0, c: 0 };
+                this.focusCell = { r: 0, c: 0 };
+                this.setSelection(0, 0, 0, 0);
+                this.updateVisuals();
+                this.scrollIntoView();
+            }
+            return;
+        }
+
+        const { r, c } = this.focusCell;
+        let newR = r;
+        let newC = c;
 
         if (e.key === 'ArrowUp') {
             newR = Math.max(0, r - 1);

@@ -790,3 +790,86 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateLayout();
 });
+
+// --- Hover Tooltip for Notes ---
+window.showNoteTooltip = async function(id, isFile, e) {
+    const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+    if (isMenuOpen) return;
+    if (!id) return;
+    
+    let tooltip = document.getElementById('note-preview-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.id = 'note-preview-tooltip';
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            display: 'none',
+            zIndex: '20000',
+            pointerEvents: 'none',
+            minWidth: '320px',
+            maxWidth: '480px',
+            maxHeight: '450px',
+            overflow: 'hidden',
+            flexDirection: 'column',
+            gap: '10px'
+        });
+        document.body.appendChild(tooltip);
+    }
+
+    tooltip.style.display = 'flex';
+    tooltip.classList.add('showing');
+    if (window.moveCodePreview) window.moveCodePreview(e);
+
+    tooltip.innerHTML = `
+        <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
+            <div class="preview-header">Notes: ${id.split(':').pop()}</div>
+            <div class="note-preview-scroll" style="flex:1; overflow-y:auto; padding: 10px;">
+                <div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">Loading notes...</div>
+            </div>
+        </div>
+    `;
+
+    const collection = (window.getCollectionFromId && window.getCollectionFromId(id)) || id.split(':')[0];
+    const idParam = isFile ? `file_id=${encodeURIComponent(id)}` : `func_id=${encodeURIComponent(id)}`;
+    const endpoint = isFile ? '/api/notes/file/list' : '/api/notes/list';
+    
+    try {
+        const apiParams = (window.getApiParams || (window.parent && window.parent.getApiParams) || (() => ''))(collection);
+        const res = await fetch(`${endpoint}?${apiParams}&${idParam}`);
+        const data = await res.json();
+        if (data.status === 'success') {
+            const notes = data.notes || [];
+            const scrollContainer = tooltip.querySelector('.note-preview-scroll');
+            if (notes.length === 0) {
+                scrollContainer.innerHTML = '<div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">No notes found.</div>';
+            } else {
+                scrollContainer.innerHTML = notes.map(note => {
+                    const isAI = note.owner === 'llm' || note.owner === 'AI';
+                    const renderedText = (typeof marked !== 'undefined') ? marked.parse(note.text) : note.text;
+                    return `
+                        <div style="background: var(--meta-bg); border-radius: 6px; padding: 12px; margin-bottom: 8px; border-left: 4px solid ${isAI ? 'var(--info)' : 'var(--note-accent)'}; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 0.65rem; font-weight: bold; color: ${isAI ? 'var(--info)' : 'var(--note-accent)'}; text-transform: uppercase;">${note.owner}</span>
+                                <span style="font-size: 0.55rem; color: var(--subtle);">${new Date(note.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div class="note-markdown-body" style="font-size: 0.75rem;">${renderedText}</div>
+                        </div>
+                    `;
+                }).join('');
+                if (notes.length > 1) {
+                    scrollContainer.innerHTML += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle); margin-top:8px;">💡 Use scroll wheel to read all notes</div>`;
+                }
+            }
+        }
+    } catch (err) {
+        tooltip.innerHTML = `<div class="preview-header" style="color:#ff5555">Error loading notes</div>`;
+    }
+};
+
+window.hideNoteTooltip = function() {
+    const tooltip = document.getElementById('note-preview-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+        tooltip.classList.remove('showing');
+    }
+};

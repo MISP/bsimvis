@@ -132,10 +132,46 @@ window.FunctionView = {
             this.setupKeyboardSelection();
             this.scrollToLine();
             this.onScroll();
+            
+            // Actually place the cursor in the element so arrow keys work immediately
+            this.vContentEl.focus();
+            setTimeout(() => {
+                const sel = window.getSelection();
+                if (!sel.rangeCount || !this.vContentEl.contains(sel.focusNode)) {
+                    const range = document.createRange();
+                    range.selectNodeContents(this.vContentEl);
+                    range.collapse(true);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+            }, 250);
 
             // Bind hashchange listener
             this._hashChangeListener = () => this.scrollToLine();
             window.addEventListener('hashchange', this._hashChangeListener);
+
+            // Bind selection tracking for keyboard token preview
+            this._selectionChangeListener = () => {
+                if (document.activeElement !== this.vContentEl) {
+                    if (this._currentKbdToken) {
+                        this.handleTokenHover(this._currentKbdToken, false);
+                        this._currentKbdToken = null;
+                    }
+                    return;
+                }
+                const token = this.findTokenFromSelection();
+                if (token !== this._currentKbdToken) {
+                    if (this._currentKbdToken) {
+                        this.handleTokenHover(this._currentKbdToken, false);
+                    }
+                    this._currentKbdToken = token;
+                    if (this._currentKbdToken) {
+                        this.handleTokenHover(this._currentKbdToken, true);
+                    }
+                }
+            };
+            document.addEventListener('selectionchange', this._selectionChangeListener);
+
 
             // Rich copy support
             if (window.setupRichCopyInterceptor) {
@@ -242,6 +278,22 @@ window.FunctionView = {
             const isCmd = e.ctrlKey || e.metaKey;
             const key = e.key;
 
+            if (key === 'Enter') {
+                e.preventDefault();
+                const token = this.findTokenFromSelection();
+                if (token) {
+                    const calledFuncId = token.getAttribute('data-called-func-id');
+                    if (calledFuncId) {
+                        const isExternal = token.getAttribute('data-is-external') === 'true';
+                        this.navigateToFunction(calledFuncId, isExternal, e);
+                        return;
+                    }
+                    const hashes = token.getAttribute('data-hashes');
+                    if (hashes && window.toggleLock) window.toggleLock(hashes, token);
+                }
+                return;
+            }
+
             if (isCmd && key.toLowerCase() === 'a') return; 
             if (isCmd && (key.toLowerCase() === 'c' || key.toLowerCase() === 'v')) return;
             
@@ -286,10 +338,24 @@ window.FunctionView = {
         return null;
     },
 
+    findTokenFromSelection() {
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount) return null;
+        let node = sel.focusNode;
+        while (node && node !== this.vContentEl) {
+            if (node instanceof Element && node.classList.contains('token')) return node;
+            node = node.parentNode;
+        }
+        return null;
+    },
+
     handleHoverMove(e, state) {
         const token = this.findToken(e);
         if (!token) return;
+        this.handleTokenHover(token, state, e);
+    },
 
+    handleTokenHover(token, state, e) {
         const hashes = token.getAttribute('data-hashes');
         if (hashes && window.setHighlight) window.setHighlight(hashes, state, token);
 
@@ -297,6 +363,14 @@ window.FunctionView = {
         const isExternal = token.getAttribute('data-is-external') === 'true';
 
         if (state) {
+            let x = e ? e.clientX : undefined;
+            let y = e ? e.clientY : undefined;
+            if (x === undefined || y === undefined) {
+                const rect = token.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.bottom;
+            }
+
             if (calledFuncId && isExternal) {
                 const extName = token.getAttribute('data-target-name') || calledFuncId.replace('ext:', '');
                 this.tooltipEl.innerHTML = `<div style="display:flex;align-items:center;gap:6px;">
@@ -304,15 +378,18 @@ window.FunctionView = {
                     <span style="color:var(--meta-text-muted);font-family:monospace;font-size:0.8rem;">${extName}</span>
                 </div>`;
                 this.tooltipEl.style.display = 'block';
-                this.tooltipEl.style.left = (e.clientX + 15) + 'px';
-                this.tooltipEl.style.top = (e.clientY + 15) + 'px';
+                this.tooltipEl.style.left = (x + 15) + 'px';
+                this.tooltipEl.style.top = (y + 15) + 'px';
             } else if (calledFuncId && !isExternal) {
                 this.tooltipEl.style.display = 'none';
                 const targetName = token.getAttribute('data-target-name') || calledFuncId.split(':').pop();
+                
+                const fakeEvent = { clientX: x, clientY: y, target: token, currentTarget: token };
+
                 if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {
-                    window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, e);
+                    window.parent.showCodePreviewFromIframe(window.name, calledFuncId, targetName, fakeEvent);
                 } else if (typeof window.showCodePreview === 'function') {
-                    window.showCodePreview(calledFuncId, targetName, null, null, null, e);
+                    window.showCodePreview(calledFuncId, targetName, null, null, null, fakeEvent);
                 }
             } else {
                 const idx = token.getAttribute('data-idx');
@@ -324,8 +401,8 @@ window.FunctionView = {
                     }
                     this.tooltipEl.innerHTML = h;
                     this.tooltipEl.style.display = 'block';
-                    this.tooltipEl.style.left = (e.clientX + 15) + 'px';
-                    this.tooltipEl.style.top = (e.clientY + 15) + 'px';
+                    this.tooltipEl.style.left = (x + 15) + 'px';
+                    this.tooltipEl.style.top = (y + 15) + 'px';
                 }
             }
         } else {
@@ -438,6 +515,11 @@ window.FunctionView = {
         if (this._hashChangeListener) {
             window.removeEventListener('hashchange', this._hashChangeListener);
             delete this._hashChangeListener;
+        }
+
+        if (this._selectionChangeListener) {
+            document.removeEventListener('selectionchange', this._selectionChangeListener);
+            delete this._selectionChangeListener;
         }
     }
 };

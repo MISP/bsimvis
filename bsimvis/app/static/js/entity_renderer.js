@@ -61,6 +61,29 @@ window.EntityRenderer = {
     },
 
     /**
+     * Hover attributes that show the note preview tooltip. Reuses moveCodePreview for positioning.
+     */
+    notePreviewAttrs: function(id, isFile) {
+        return {
+            onmouseenter: `typeof showNoteTooltip === 'function' && showNoteTooltip('${id}', ${isFile}, event)`,
+            onmousemove: `typeof moveCodePreview === 'function' && moveCodePreview(event)`,
+            onmouseleave: `typeof hideNoteTooltip === 'function' && hideNoteTooltip()`
+        };
+    },
+
+    /**
+     * Extra class from note ownership: 'ai' (purple), 'both' (stacked yellow+purple), '' (yellow).
+     */
+    noteOwnerClass: function(noteOwners = []) {
+        const isAI = o => ['llm', 'ai'].includes(String(o).toLowerCase());
+        const hasAI = noteOwners.some(isAI);
+        const hasUser = noteOwners.some(o => !isAI(o));
+        if (hasAI && hasUser) return 'notes-both';
+        if (hasAI) return 'notes-ai';
+        return '';
+    },
+
+    /**
      * Renders a note button with consistent styling.
      */
     renderNoteButton: function(id, noteOwners = [], options = {}) {
@@ -74,11 +97,12 @@ window.EntityRenderer = {
         if (isTable && !hasNotes) return '';
         
         return UI.Button.render({
-            className: `btn-note-action ${hasNotes ? 'has-notes' : ''}`,
+            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
             icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
             tooltip: hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note',
             onClick: `event.stopPropagation(); showNotePanel('${id}', event)`,
-            badge: noteCount > 0 ? `+${noteCount}` : null
+            badge: noteCount > 1 ? `+${noteCount}` : null,
+            attr: hasNotes ? this.notePreviewAttrs(id, false) : {}
         });
     },
 
@@ -95,11 +119,12 @@ window.EntityRenderer = {
         if (isTable && !hasNotes) return '';
 
         return UI.Button.render({
-            className: `btn-note-action ${hasNotes ? 'has-notes' : ''}`,
+            className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
             icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
             tooltip: hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note',
             onClick: `event.stopPropagation(); showFileNotePanel('${id}', event)`,
-            badge: noteCount > 0 ? `+${noteCount}` : null
+            badge: noteCount > 1 ? `+${noteCount}` : null,
+            attr: hasNotes ? this.notePreviewAttrs(id, true) : {}
         });
     },
 

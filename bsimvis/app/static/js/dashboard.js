@@ -472,11 +472,8 @@ window.ModuleLoader = {
 function hideDashboardActions() {
     const toHide = [
         document.getElementById('search-settings-container'),
-        document.getElementById('header-clear-btn'),
-        document.getElementById('header-history-btn-container'),
-        document.getElementById('toggle-filters-btn'),
-        document.getElementById('collapse-header-btn'),
-        document.getElementById('header-settings-btn')
+        document.getElementById('header-clear-btn'), // filter-actions-container
+        document.getElementById('collapse-header-btn')
     ];
     toHide.forEach(el => {
         if (el) el.style.display = 'none';
@@ -487,15 +484,59 @@ function hideDashboardActions() {
 
 function showDashboardActions() {
     const toShow = [
-        document.getElementById('header-clear-btn'),
-        document.getElementById('header-history-btn-container'),
-        document.getElementById('toggle-filters-btn'),
+        document.getElementById('header-clear-btn'), // filter-actions-container
         document.getElementById('collapse-header-btn'),
         document.getElementById('header-settings-btn')
     ];
     toShow.forEach(el => {
         if (el) el.style.display = '';
     });
+}
+
+function toggleFilterActionsDropdown(event) {
+    event.stopPropagation();
+    const dd = document.getElementById('filter-actions-dropdown');
+    if (!dd) return;
+    const isOpen = dd.style.display !== 'none';
+    if (isOpen) {
+        dd.style.display = 'none';
+    } else {
+        dd.style.display = 'block';
+        // Close on outside click
+        const close = (e) => {
+            if (!dd.contains(e.target) && e.target !== event.currentTarget) {
+                dd.style.display = 'none';
+                document.removeEventListener('click', close);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', close), 0);
+    }
+}
+
+function closeFilterActionsDropdown() {
+    const dd = document.getElementById('filter-actions-dropdown');
+    if (dd) dd.style.display = 'none';
+}
+
+// Add a NOT exclude tag card for 'ignore' to all visible tag filter containers
+function addNotIgnoreFilters() {
+    const tagContainerIds = ['sim', 'func', 'file', 'bin-sim'];
+    const typeMap = { 'sim': 'sim_tag', 'func': 'func_tag', 'file': 'file_tag', 'bin-sim': 'file_tag' };
+    let added = 0;
+    tagContainerIds.forEach(key => {
+        const container = document.getElementById(`tag-container-${key}`);
+        if (!container) return;
+        // Only act on visible containers
+        if (container.offsetParent === null) return;
+        // Check if 'ignore' exclude card already exists
+        const already = Array.from(container.querySelectorAll('.tag-filter-card')).find(
+            c => c.dataset.value === 'ignore' && c.dataset.exclude === 'true'
+        );
+        if (already) return;
+        createTagCard(key, typeMap[key], 'ignore', true);
+        added++;
+    });
+    if (added > 0) triggerTagSearch();
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
@@ -2864,8 +2905,8 @@ window.addEventListener('load', () => {
         const algo = params.get('algo') || 'unweighted_cosine';
 
         // Select all possible buttons
-        const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
-        const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+        const btns = document.querySelectorAll('.nav-rebuild-btn');
+        const icons = document.querySelectorAll('.nav-rebuild-icon');
 
         btns.forEach(btn => btn.disabled = true);
         icons.forEach(icon => icon.classList.add('fa-spin'));
@@ -2928,8 +2969,8 @@ window.addEventListener('load', () => {
             }
 
             // Update rebuild buttons
-            const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
-            const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+            const btns = document.querySelectorAll('.nav-rebuild-btn');
+            const icons = document.querySelectorAll('.nav-rebuild-icon');
 
             const { collection: currentCollection, pool: currentPool, viewKey: path } = getRoutingState();
 
@@ -2947,19 +2988,6 @@ window.addEventListener('load', () => {
                 if (showAnimation) icon.classList.add('fa-spin');
                 else icon.classList.remove('fa-spin');
             });
-
-            // Handle Header Rebuild Button Visibility (only if sidebar is collapsed AND view is Clusters/BinSim)
-            const headerRebuildBtn = document.getElementById('header-rebuild-all-btn');
-            if (headerRebuildBtn) {
-                const isCollapsed = document.body.classList.contains('sidebar-collapsed');
-                const isRelevantView = (path === 'clusters' || path === 'binary-similarity');
-
-                if (isCollapsed && isRelevantView) {
-                    headerRebuildBtn.style.display = 'inline-flex';
-                } else {
-                    headerRebuildBtn.style.display = 'none';
-                }
-            }
 
             // Update view-specific job indicator
             const activeJobs = stats.active_jobs || [];
@@ -3076,8 +3104,10 @@ function renderClusters(items) {
             cluster_name: c.cluster_name
         }).replace(/'/g, "&apos;")}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
-            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
-                ${(c.cluster_uuid || '').substring(0, 8)}
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" style="color:var(--accent); text-decoration:none;">
+                    ${(c.cluster_uuid || '').substring(0, 8)}
+                </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
@@ -3246,8 +3276,10 @@ function renderBinClusters(items) {
             cluster_name: displayName
         }).replace(/'/g, "&apos;")}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
-            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
-                ${(c.cluster_uuid || '').substring(0, 8)}
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" style="color:var(--accent); text-decoration:none;">
+                    ${(c.cluster_uuid || '').substring(0, 8)}
+                </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
@@ -3609,6 +3641,9 @@ window.renameCluster = renameCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
 window.resetColumnWidths = resetColumnWidths;
+window.toggleFilterActionsDropdown = toggleFilterActionsDropdown;
+window.closeFilterActionsDropdown = closeFilterActionsDropdown;
+window.addNotIgnoreFilters = addNotIgnoreFilters;
 window.toggleSort = toggleSort;
 window.applySearch = applySearch;
 window.switchSimView = switchSimView;

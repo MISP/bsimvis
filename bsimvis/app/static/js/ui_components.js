@@ -101,6 +101,15 @@ window.UI = {
             const isActive = (view) => {
                 if (viewKey === view) return 'active';
                 if (viewKey === 'dashboard' && view === 'files') return 'active';
+                
+                if (view === 'files' && viewKey === 'file') return 'active';
+                if (view === 'functions' && (viewKey === 'function' || viewKey === 'call_graph' || viewKey === 'function_features')) return 'active';
+                if (view === 'function-similarity' && viewKey === 'diff') return 'active';
+                if (view === 'binary-similarity' && viewKey === 'bin_sim') return 'active';
+                if (view === 'features-global' && viewKey === 'feature') return 'active';
+                if (view === 'collections' && viewKey === 'collection-detail') return 'active';
+                if (view === 'pools' && viewKey === 'pool-detail') return 'active';
+                
                 return '';
             };
 

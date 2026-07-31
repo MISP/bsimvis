@@ -10,6 +10,7 @@
     --border: #3e3d32;
     --hover: #2d2d2d;
     --dim: #75715e;
+    --note-accent: #ffd700;
 
     /* Semantic UI */
     --meta-bg: #1a1a1a;
@@ -54,6 +55,7 @@ html.light-theme {
     --border: #dddddd;
     --hover: #e8e8e8;
     --dim: #777777;
+    --note-accent: #8a6508; /* same yellow hue, darkened for white bg */
 
     /* Semantic UI */
     --meta-bg: #ffffff;
@@ -2167,7 +2169,7 @@ body.in-iframe #module-view-container {
     top: -6px;
     right: -6px;
     background: #ff4444; /* Standard red for badges */
-    color: var(--text);
+    color: #ffffff; /* always white on red, both themes */
     font-size: 10px;
     font-weight: bold;
     padding: 1px 4px;

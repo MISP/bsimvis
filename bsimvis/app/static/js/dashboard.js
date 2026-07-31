@@ -2264,8 +2264,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
                 </div>
             </td>
             <td class="sim-cell">

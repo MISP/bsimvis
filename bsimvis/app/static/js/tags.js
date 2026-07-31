@@ -190,7 +190,7 @@ window.showTooltip = (e, tag, coll) => {
     if (!el) {
         el = document.createElement('div');
         el.id = 'tag-tooltip';
-        el.style.cssText = "position:fixed; z-index:20005; background:rgba(20,22,26,0.95); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
+        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
         document.body.appendChild(el);
     }
 
@@ -633,7 +633,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
     const allHtml = sorted.map(c => renderCard(c, false)).join('');
     const overflowBox = `
         <div class="cluster-overflow-box">
-            <div style="font-size:0.6rem; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
+            <div style="font-size:0.6rem; color:var(--subtle); margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
             ${allHtml}
         </div>`;
 

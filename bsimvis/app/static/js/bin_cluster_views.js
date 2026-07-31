@@ -174,7 +174,7 @@ class BinClusterHierarchy {
                 <!-- Search -->
                 <div style="margin-bottom:15px;">
                     <div class="search-input-wrapper" style="width:100%; background:rgba(255,255,255,0.05); border:1px solid var(--border);">
-                        <i class="fa-solid fa-search" style="font-size:0.7rem; color:#666;"></i>
+                        <i class="fa-solid fa-search" style="font-size:0.7rem; color:var(--subtle);"></i>
                         <input type="text" id="hier-search-input" placeholder="Search clusters..." value="${this.params.q}" style="color:var(--text) !important; font-size:0.75rem !important; padding:4px 8px !important;">
                     </div>
                 </div>
@@ -187,7 +187,7 @@ class BinClusterHierarchy {
                     <!-- Size Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cluster Size</label>
                             <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
                                 <span id="val-min-size">${this.params.min_cluster_size || 2}</span>-<span id="val-max-size">${this.params.max_cluster_size || '∞'}</span>
                             </span>
@@ -202,7 +202,7 @@ class BinClusterHierarchy {
                     <!-- Cohesion Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cohesion %</label>
                             <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
                                 <span id="val-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
                             </span>
@@ -217,7 +217,7 @@ class BinClusterHierarchy {
                     <!-- Stability Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Stability Cut</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Stability Cut</label>
                             <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
                                 <span id="val-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
                             </span>
@@ -238,23 +238,23 @@ class BinClusterHierarchy {
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-parents" ${this.params.show_parents ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                            <label for="input-show-parents" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show parents</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-children" ${this.params.show_children ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
+                            <label for="input-show-children" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show children</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                            <label for="input-path-compression" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Path compression</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                            <label for="input-show-members" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show members</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-color-by-md5" ${this.params.color_by_md5 ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-color-by-md5" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Color by MD5</label>
+                            <label for="input-color-by-md5" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Color by MD5</label>
                         </div>
                     </div>
                 </div>
@@ -262,7 +262,7 @@ class BinClusterHierarchy {
                 <button id="hier-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
             </div>
 
-            <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
+            <div id="hierarchy-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:var(--window-bg);">
                 <div style="text-align:center;">
                     <div class="spinner" style="margin-bottom:15px;"></div>
                     <div style="font-size:0.9rem; letter-spacing:1px;">Rebuilding Dendrogram...</div>
@@ -430,7 +430,7 @@ class BinClusterHierarchy {
             }
 
             if (!nodes || nodes.length === 0) {
-                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#aaa; text-align:center; width:100%;">No binary clusters match these criteria.</div>`;
+                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:var(--meta-text-muted); text-align:center; width:100%;">No binary clusters match these criteria.</div>`;
                 const loader = document.getElementById('hierarchy-loader');
                 if (loader) loader.remove();
                 return;
@@ -476,7 +476,7 @@ class BinClusterHierarchy {
             .attr("viewBox", `0 0 ${width} ${height}`)
             .attr("width", "100%")
             .attr("height", "100%")
-            .attr("style", "background:#0d0f14; cursor:grab;");
+            .attr("style", "background:var(--window-bg); cursor:grab;");
 
         this.g = this.svg.append("g");
         this.zoom = d3.zoom().scaleExtent([0.05, 10]).on("zoom", (e) => this.g.attr("transform", e.transform));
@@ -577,12 +577,12 @@ class BinClusterHierarchy {
                     if (this.params.color_by_md5 && d.data.file_md5) {
                         return window.getMd5Color(d.data.file_md5);
                     }
-                    return "#0d0f14";
+                    return "var(--window-bg)";
                 }
                 return getCohesionColor(d.data.cohesion);
             });
         nodeEnter.append("text").attr("dy", ".35em").attr("x", d => d.children ? -15 : 15).attr("text-anchor", d => d.children ? "end" : "start")
-            .style("fill", d => d.data.is_member ? "#aaa" : "var(--text)")
+            .style("fill", d => d.data.is_member ? "var(--meta-text-muted)" : "var(--text)")
             .style("font-size", d => d.data.is_member ? "10px" : "12px")
             .style("font-style", d => d.data.is_member ? "italic" : "normal")
             .style("pointer-events", "none")
@@ -613,7 +613,7 @@ class BinClusterHierarchy {
                     if (this.params.color_by_md5 && d.data.file_md5) {
                         return window.getMd5Color(d.data.file_md5);
                     }
-                    return "#0d0f14";
+                    return "var(--window-bg)";
                 }
                 return getCohesionColor(d.data.cohesion);
             })
@@ -718,15 +718,15 @@ class BinClusterHierarchy {
         if (!isSameNode) {
             this._renderedNodeUuid = d.data.uuid;
             tooltip.innerHTML = `
-                <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:#0d0f14;">
+                <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:var(--window-bg);">
                     <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid var(--border); display:flex; flex-direction:column;">
                         <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
-                        <div style="color:#666; font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
+                        <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
                         
                         <div style="margin-bottom:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.75rem;">
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--subtle);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Size</div>
-                                <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:#666; font-size:0.65rem;">bins</span></div>
+                                <div style="color:var(--meta-text); font-weight:bold;">${d.data.size} <span style="font-weight:normal; color:var(--subtle); font-size:0.65rem;">bins</span></div>
                             </div>
                             <div style="background:rgba(255,255,255,0.05); padding:4px 8px; border-radius:4px; border-left:2px solid var(--accent);">
                                 <div class="dim" style="font-size:0.6rem; text-transform:uppercase; margin-bottom:2px;">Stability</div>
@@ -747,7 +747,7 @@ class BinClusterHierarchy {
                                     ${members.map((m, i) => `
                                         <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
                                             <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
-                                            <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+                                            <span style="color:var(--subtle); font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -756,7 +756,7 @@ class BinClusterHierarchy {
                         </div>
                     </div>
                     <div class="hier-right-col" id="bin-hier-snippet-container" style="width:200px; padding:15px; background:rgba(0,0,0,0.2); display:flex; flex-direction:column; gap:10px; overflow-y:auto;">
-                        <div class="hier-snippet-placeholder" style="padding: 20px; color: #666; text-align: center; font-size: 0.8rem;">
+                        <div class="hier-snippet-placeholder" style="padding: 20px; color: var(--subtle); text-align: center; font-size: 0.8rem;">
                             ${selectedFile ? '<i class="fas fa-spinner fa-spin"></i> Loading Preview...' : 'Select a file to preview'}
                         </div>
                     </div>
@@ -773,7 +773,7 @@ class BinClusterHierarchy {
                 listScroll.innerHTML = members.map((m, i) => `
                     <div class="hier-binary-item" data-index="${i}" style="padding:4px 8px; border-radius:4px; background:rgba(255,255,255,0.02); display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
                         <span class="file-name-span" style="color:var(--meta-text); font-weight:bold; font-size:0.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.file_name}</span>
-                        <span style="color:#666; font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
+                        <span style="color:var(--subtle); font-size:0.65rem; font-family:monospace;">${(m.file_md5 || '').substring(0, 8)}</span>
                     </div>
                 `).join('');
             }
@@ -875,7 +875,7 @@ class BinClusterHierarchy {
                 </div>
                 <div>
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">MD5</div>
-                    <div class="mono" style="font-size: 0.65rem; color: #aaa; word-break: break-all;">${file.file_md5 || file.md5 || 'N/A'}</div>
+                    <div class="mono" style="font-size: 0.65rem; color: var(--meta-text-muted); word-break: break-all;">${file.file_md5 || file.md5 || 'N/A'}</div>
                 </div>
                 <div>
                     <div style="font-size: 0.6rem; color: var(--subtle); text-transform: uppercase;">Language</div>
@@ -1031,7 +1031,7 @@ class BinClusterPacking {
                 <!-- Search -->
                 <div style="margin-bottom:15px;">
                     <div class="search-input-wrapper" style="width:100%; background:rgba(255,255,255,0.05); border:1px solid var(--border);">
-                        <i class="fa-solid fa-search" style="font-size:0.7rem; color:#666;"></i>
+                        <i class="fa-solid fa-search" style="font-size:0.7rem; color:var(--subtle);"></i>
                         <input type="text" id="bin-pack-search-input" placeholder="Search clusters..." value="${this.params.q}" style="color:var(--text) !important; font-size:0.75rem !important; padding:4px 8px !important;">
                     </div>
                 </div>
@@ -1044,7 +1044,7 @@ class BinClusterPacking {
                     <!-- Size Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cluster Size</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cluster Size</label>
                             <span style="font-size:0.75rem; color:var(--accent); font-family:monospace; font-weight:bold;">
                                 <span id="val-bp-min-size">${this.params.min_cluster_size || 2}</span>-<span id="val-bp-max-size">${this.params.max_cluster_size || '∞'}</span>
                             </span>
@@ -1059,7 +1059,7 @@ class BinClusterPacking {
                     <!-- Cohesion Range -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Cohesion %</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Cohesion %</label>
                             <span style="font-size:0.75rem; color:var(--success); font-family:monospace; font-weight:bold;">
                                 <span id="val-bp-coh-min">${(this.params.cohesion_min * 100).toFixed(0)}</span>-<span id="val-bp-coh-max">${(this.params.cohesion_max > 0 ? (this.params.cohesion_max * 100).toFixed(0) : '100')}</span>%
                             </span>
@@ -1074,7 +1074,7 @@ class BinClusterPacking {
                     <!-- Stability -->
                     <div style="margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                            <label style="font-size:0.75rem; color:#aaa;">Stability Cut</label>
+                            <label style="font-size:0.75rem; color:var(--meta-text-muted);">Stability Cut</label>
                             <span style="font-size:0.75rem; color:#66d9ef; font-family:monospace; font-weight:bold;">
                                 <span id="val-bp-stab-min">${this.params.stability_threshold.toFixed(1)}</span>+
                             </span>
@@ -1095,23 +1095,23 @@ class BinClusterPacking {
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-bp-show-parents" ${this.params.show_parents ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-bp-show-parents" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show parents</label>
+                            <label for="input-bp-show-parents" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show parents</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-bp-show-children" ${this.params.show_children ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-bp-show-children" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show children</label>
+                            <label for="input-bp-show-children" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show children</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-bp-path-compression" ${this.params.path_compression !== false ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-bp-path-compression" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Path compression</label>
+                            <label for="input-bp-path-compression" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Path compression</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-bp-show-members" ${this.params.show_members ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-bp-show-members" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Show members</label>
+                            <label for="input-bp-show-members" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Show members</label>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px;">
                             <input type="checkbox" id="input-bp-color-by-md5" ${this.params.color_by_md5 ? 'checked' : ''} style="cursor:pointer; accent-color:var(--accent);">
-                            <label for="input-bp-color-by-md5" style="font-size:0.75rem; color:#ccc; cursor:pointer; user-select:none;">Color by MD5</label>
+                            <label for="input-bp-color-by-md5" style="font-size:0.75rem; color:var(--meta-text-muted); cursor:pointer; user-select:none;">Color by MD5</label>
                         </div>
                     </div>
                 </div>
@@ -1119,7 +1119,7 @@ class BinClusterPacking {
                 <button id="bin-pack-refresh-btn" class="btn-primary" style="padding:10px; font-size:0.75rem; width:100%; margin-top:5px; text-transform:uppercase; letter-spacing:1.5px; font-weight:bold;">Update Visualization</button>
             </div>
 
-            <div id="packing-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:#0d0f14;">
+            <div id="packing-loader" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--accent); background:var(--window-bg);">
                 <div style="text-align:center;">
                     <div class="spinner" style="margin-bottom:15px;"></div>
                     <div style="font-size:0.9rem; letter-spacing:1px;">Packing Binary Clusters...</div>
@@ -1270,7 +1270,7 @@ class BinClusterPacking {
             }
 
             if (!nodes || nodes.length === 0) {
-                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:#aaa; text-align:center;">No binary clusters match these criteria.</div>`;
+                this.container.innerHTML += `<div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:var(--meta-text-muted); text-align:center;">No binary clusters match these criteria.</div>`;
                 const loader = document.getElementById('packing-loader');
                 if (loader) loader.remove();
                 return;
@@ -1314,7 +1314,7 @@ class BinClusterPacking {
         this.svg = d3.select(this.container).append("svg")
             .attr("viewBox", `0 0 ${width} ${height}`)
             .attr("width", "100%").attr("height", "100%")
-            .attr("style", "background:#0d0f14; cursor:pointer;");
+            .attr("style", "background:var(--window-bg); cursor:pointer;");
 
         const stratify = d3.stratify().id(d => d.id).parentId(d => d.parent);
         nodes.forEach(n => { if (n.parent && !nodes.find(p => p.id === n.parent)) n.parent = null; });
@@ -1351,7 +1351,7 @@ class BinClusterPacking {
                     }
                     return baseColor;
                 }
-                return "rgba(102,217,239,0.15)";
+                return "color-mix(in srgb, var(--token-register) 15%, transparent)";
             }
             const hue = Math.max(0, Math.min(120, (d.data.cohesion || 0) * 120));
             return `hsla(${hue}, 80%, 50%, ${d.children ? 0.03 : 0.15})`;

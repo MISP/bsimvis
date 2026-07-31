@@ -92,7 +92,7 @@ window.CallGraphView = {
                         metaHtml += renderRow('fa-solid fa-file-code', 'File Type', file.filetype);
                         metaHtml += renderRow('fa-solid fa-biohazard', 'Yara', file.yara, 'var(--accent)');
                         if (file.first_seen) {
-                            metaHtml += renderRow('fa-solid fa-clock', 'First Seen', new Date(file.first_seen * 1000).toLocaleString(), '#ccc');
+                            metaHtml += renderRow('fa-solid fa-clock', 'First Seen', new Date(file.first_seen * 1000).toLocaleString(), 'var(--meta-text-muted)');
                         }
 
                         document.getElementById('cg-meta-content').innerHTML = metaHtml || '<div class="dim">No metadata found.</div>';

@@ -224,7 +224,7 @@ function llmBatchPanel() {
 window.trackLLMBatch = function (jobId, total) {
     const card = document.createElement('div');
     card.style.cssText =
-        'background:rgba(30,30,30,0.97); border:1px solid var(--border); border-radius:8px; padding:12px 14px; min-width:260px; font-size:0.8rem; color:var(--fg); box-shadow:0 4px 16px rgba(0,0,0,0.4);';
+        'background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; min-width:260px; font-size:0.8rem; color:var(--fg); box-shadow:0 4px 16px rgba(0,0,0,0.4);';
     card.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
             <span><i class="fa-solid fa-robot"></i> LLM batch</span>

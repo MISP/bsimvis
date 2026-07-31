@@ -74,10 +74,10 @@ window.FeatureView = {
                 .hash-badge {
                     font-family: monospace;
                     color: #ae81ff;
-                    background: rgba(174, 129, 255, 0.1);
+                    background: color-mix(in srgb, var(--token-address) 10%, transparent);
                     padding: 2px 6px;
                     border-radius: 4px;
-                    border: 1px solid rgba(174, 129, 255, 0.2);
+                    border: 1px solid color-mix(in srgb, var(--token-address) 20%, transparent);
                 }
 
                 .op-badge {
@@ -93,18 +93,18 @@ window.FeatureView = {
 
                 .feature-primary {
                     border-bottom: 2px solid #a6e22e;
-                    background: rgba(166, 226, 46, 0.15);
+                    background: color-mix(in srgb, var(--token-symbol) 15%, transparent);
                     border-radius: 2px;
                 }
 
                 .feature-secondary {
                     border-bottom: 2px solid #f92672;
-                    background: rgba(249, 38, 114, 0.1);
+                    background: color-mix(in srgb, var(--token-instruction) 10%, transparent);
                     border-radius: 2px;
                 }
 
                 .bsim-group-active-unique {
-                    background: rgba(166, 226, 46, 0.25) !important;
+                    background: color-mix(in srgb, var(--token-symbol) 25%, transparent) !important;
                     border-bottom: 2px solid #a6e22e !important;
                     border-radius: 2px;
                 }
@@ -119,9 +119,9 @@ window.FeatureView = {
                 }
 
                 .btn-code-action {
-                    background: rgba(102, 217, 239, 0.1);
+                    background: color-mix(in srgb, var(--token-register) 10%, transparent);
                     color: var(--accent);
-                    border: 1px solid rgba(102, 217, 239, 0.3);
+                    border: 1px solid color-mix(in srgb, var(--token-register) 30%, transparent);
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 0.75rem;
@@ -133,13 +133,13 @@ window.FeatureView = {
                 }
 
                 .btn-code-action:hover {
-                    background: rgba(102, 217, 239, 0.2);
+                    background: color-mix(in srgb, var(--token-register) 20%, transparent);
                 }
 
                 .btn-sim-action {
-                    background: rgba(174, 129, 255, 0.1);
+                    background: color-mix(in srgb, var(--token-address) 10%, transparent);
                     color: #ae81ff;
-                    border: 1px solid rgba(174, 129, 255, 0.3);
+                    border: 1px solid color-mix(in srgb, var(--token-address) 30%, transparent);
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 0.75rem;
@@ -151,13 +151,13 @@ window.FeatureView = {
                 }
 
                 .btn-sim-action:hover {
-                    background: rgba(174, 129, 255, 0.2);
+                    background: color-mix(in srgb, var(--token-address) 20%, transparent);
                 }
 
                 .btn-diff-action {
-                    background: rgba(166, 226, 46, 0.1);
+                    background: color-mix(in srgb, var(--token-symbol) 10%, transparent);
                     color: #a6e22e;
-                    border: 1px solid rgba(166, 226, 46, 0.3);
+                    border: 1px solid color-mix(in srgb, var(--token-symbol) 30%, transparent);
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 0.75rem;
@@ -169,7 +169,7 @@ window.FeatureView = {
                 }
 
                 .btn-diff-action:hover {
-                    background: rgba(166, 226, 46, 0.2);
+                    background: color-mix(in srgb, var(--token-symbol) 20%, transparent);
                 }
                 
                 .btn-diff-action.active {

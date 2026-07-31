@@ -198,11 +198,11 @@
 
             html += `
             <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'rgba(102, 217, 239, 0.1)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
+                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'color-mix(in srgb, var(--token-register) 10%, transparent)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
                     Bookmark
                 </button>
-                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'rgba(249, 38, 114, 0.1)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
+                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'color-mix(in srgb, var(--token-instruction) 10%, transparent)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
                     Ignore
                 </button>
@@ -240,7 +240,7 @@
                 <span>Tags</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: var(--card-bg); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
                     ${tagsSubmenuHtml}
                 </div>
             </div>`;
@@ -313,7 +313,7 @@
                 <span>Copy</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
                     ${copySubmenuHtml}
                 </div>
             </div>`;
@@ -427,7 +427,7 @@
                 <span>Actions</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
                     ${actionsSubmenuHtml}
                 </div>
             </div>`;
@@ -660,7 +660,7 @@
                 <span>LLM</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20006;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20006;">
                     ${entries}
                 </div>
             </div>`;
@@ -772,7 +772,7 @@
             .tag-modal-close {
                 background: none;
                 border: none;
-                color: #888;
+                color: var(--subtle);
                 font-size: 1.5rem;
                 cursor: pointer;
                 line-height: 1;
@@ -784,7 +784,7 @@
             }
             .tag-modal-target-info {
                 font-size: 0.75rem;
-                color: #aaa;
+                color: var(--meta-text-muted);
                 word-break: break-all;
                 background: rgba(255, 255, 255, 0.02);
                 padding: 10px 14px;
@@ -798,7 +798,7 @@
                 font-weight: 700;
                 text-transform: uppercase;
                 letter-spacing: 1px;
-                color: #888;
+                color: var(--subtle);
                 margin-bottom: 8px;
             }
             .tag-modal-active-tags {
@@ -875,7 +875,7 @@
                 cursor: pointer;
                 font-size: 0.8rem;
                 transition: background 0.15s ease;
-                color: #ccc;
+                color: var(--meta-text-muted);
             }
             .tag-modal-suggestion-item:hover {
                 background: rgba(255, 255, 255, 0.05);
@@ -974,7 +974,7 @@
             
             if (activeList) {
                 if (activeTags.length === 0) {
-                    activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, #888);">No custom tags applied.</span>`;
+                    activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, var(--subtle));">No custom tags applied.</span>`;
                 } else {
                     activeList.innerHTML = activeTags.map(tag => {
                         const meta = tagMeta[tag] || { color: '#66d9ef' };
@@ -1004,7 +1004,7 @@
                             </div>
                         `;
                     } else {
-                        suggestionsList.innerHTML = `<div style="padding: 12px; font-size: 0.75rem; font-style: italic; color: var(--dim, #888);">No existing tags found. Type above to create one.</div>`;
+                        suggestionsList.innerHTML = `<div style="padding: 12px; font-size: 0.75rem; font-style: italic; color: var(--dim, var(--subtle));">No existing tags found. Type above to create one.</div>`;
                     }
                 } else {
                     suggestionsList.innerHTML = filtered.map(tag => {
@@ -1016,7 +1016,7 @@
                             <div class="tag-modal-suggestion-item ${activeClass}" ${clickAction}>
                                 <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${meta.color}"></span>
                                 <span>${tag}</span>
-                                ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, #888);">Applied</span>' : ''}
+                                ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, var(--subtle));">Applied</span>' : ''}
                             </div>
                         `;
                     }).join('');

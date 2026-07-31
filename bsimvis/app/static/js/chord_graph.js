@@ -25,7 +25,7 @@ class ChordGraph {
             .attr("width", "100%")
             .attr("height", "100%")
             .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
-            .style("background-color", "#0d0f14")
+            .style("background-color", "var(--window-bg)")
             .style("user-select", "none");
 
         this.g = this.svg.append("g");
@@ -83,7 +83,7 @@ class ChordGraph {
         if (!this.data.length) {
             this.g.append("text")
                 .attr("text-anchor", "middle")
-                .attr("fill", "#888")
+                .attr("fill", "var(--subtle)")
                 .text("No binary similarity data found for this collection.");
             return;
         }

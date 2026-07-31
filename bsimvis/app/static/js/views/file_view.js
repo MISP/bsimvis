@@ -296,7 +296,7 @@ window.FileView = {
                     legendHtml += `
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
                             <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
-                            <span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
+                            <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
                             <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
                         </div>
                     `;
@@ -406,7 +406,7 @@ window.FileView = {
                     const confScore = confObj.percent;
                     const confColor = d3.interpolateRdYlGn(confScore / 100);
                     const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-                    return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+                    return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');
                 return `
                     <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>

@@ -103,7 +103,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
     if (options.showCodeLink) {
         headerActionsHtml += `
             <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const f = window.parseFuncId('${fullId}'); const url = '/collection/' + encodeURIComponent(f.collection) + '/function/' + encodeURIComponent(f.md5) + '/' + encodeURIComponent(f.address); Nav.openPath(url, event, { title: 'Code: ' + f.address, type: 'function' });" title="Open Code" 
-               style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: rgba(102, 217, 239, 0.1); color: var(--accent); border: 1px solid rgba(102, 217, 239, 0.3);">
+               style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: color-mix(in srgb, var(--token-register) 10%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--token-register) 30%, transparent);">
                <i class="fa-solid fa-code"></i>
             </a>`;
     }
@@ -263,7 +263,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                 </div>
             </div>
             <div style="display: flex; justify-content: center; padding-top: 4px; padding-bottom: 4px;">
-                <button class="btn-more-toggle" onclick="toggleSection(this)" style="display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); padding: 4px 12px; border-radius: 4px; font-size: 0.75rem; color: #aaa; cursor: pointer; user-select: none; transition: all 0.2s;">
+                <button class="btn-more-toggle" onclick="toggleSection(this)" style="display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); padding: 4px 12px; border-radius: 4px; font-size: 0.75rem; color: var(--meta-text-muted); cursor: pointer; user-select: none; transition: all 0.2s;">
                     <i class="fa-solid ${anglesIconClass} toggle-icon" style="font-size: 0.75rem; opacity: 0.7;"></i>
                     <span class="toggle-text" style="font-weight: 500;">${toggleText}</span>
                     <i class="fa-solid ${chevronClass} toggle-chevron" style="font-size: 0.7rem; opacity: 0.5;"></i>

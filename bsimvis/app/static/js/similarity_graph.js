@@ -744,7 +744,7 @@ class SimilarityGraph {
     }
 
     blendHex(c1, c2, t) {
-        if (!c1 || !c2) return "#888888";
+        if (!c1 || !c2) return "var(--subtle)";
         const rgb1 = [parseInt(c1.slice(1, 3), 16), parseInt(c1.slice(3, 5), 16), parseInt(c1.slice(5, 7), 16)];
         const rgb2 = [parseInt(c2.slice(1, 3), 16), parseInt(c2.slice(3, 5), 16), parseInt(c2.slice(5, 7), 16)];
         const res = rgb1.map((v, i) => Math.round(v * (1 - t) + rgb2[i] * t));

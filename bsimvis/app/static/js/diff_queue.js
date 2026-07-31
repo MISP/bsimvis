@@ -263,14 +263,14 @@ function updateDiffQueueUI() {
             status.innerHTML = '';
         } else if (queue.length === 1) {
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px color-mix(in srgb, var(--token-warning) 40%, transparent);">
                     <span>±</span> 1/2 Selected: ${queue[0].name}
                     <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
                 </span>`;
         } else {
             const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff(event)" style="background:var(--window-tray); color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:var(--success); color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(166,226,46,0.4);">
+                <span class="badge diff-queue-badge" style="background:var(--success); color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px color-mix(in srgb, var(--token-symbol) 40%, transparent);">
                     <span>±</span> 2/2 Ready: ${queue[0].name} vs ${queue[1].name}
                     ${compareBtnHtml}
                     <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
@@ -349,7 +349,7 @@ function updateFileDiffQueueUI() {
             status.innerHTML = '';
         } else if (queue.length === 1) {
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px rgba(253,151,31,0.4);">
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px color-mix(in srgb, var(--token-warning) 40%, transparent);">
                     <i class="fa-solid fa-file-code"></i> 1/2 Selected: ${queue[0].name}
                     <button onclick="clearFileDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear File Diff Selection">&times;</button>
                 </span>`;
@@ -561,7 +561,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
             ${showList ? `
             <div class="diff-left-col">
                 <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">Similarity Pairs</div>
-                <div style="color:#666; font-size:0.65rem; margin-bottom:10px; text-transform:uppercase; letter-spacing:0.5px;">
+                <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:10px; text-transform:uppercase; letter-spacing:0.5px;">
                     ${diffPairs.length} matches hovered
                 </div>
                 
@@ -594,7 +594,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
                     </div>
                 </div>
 
-                <div class="diff-preview-scroll" style="flex:1; overflow-y:auto; overflow-x:hidden; display:flex; align-items:flex-start; background:#0d0f14; font-family:'JetBrains Mono', monospace; font-size:0.7rem; min-height:0;">
+                <div class="diff-preview-scroll" style="flex:1; overflow-y:auto; overflow-x:hidden; display:flex; align-items:flex-start; background:var(--window-bg); font-family:'JetBrains Mono', monospace; font-size:0.7rem; min-height:0;">
                     ${data ? `
                         <div style="flex:1; border-right:1px solid rgba(255,255,255,0.05); border-left:4px solid #fd971f; min-width:0;">
                             ${rows.map(r => renderPreviewSide(r.l, 'l')).join('')}
@@ -641,7 +641,7 @@ function renderPreviewSide(sideData, side) {
         return `<span class="token ${typeClass} ${cls}">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</span>`;
     }).join('');
 
-    const bgMap = { 'diff-match': 'rgba(166,226,46,0.05)', 'diff-unique': 'rgba(249,38,114,0.05)', 'tag-replace': 'rgba(102,217,239,0.05)' };
+    const bgMap = { 'diff-match': 'color-mix(in srgb, var(--token-symbol) 5%, transparent)', 'diff-unique': 'color-mix(in srgb, var(--token-instruction) 5%, transparent)', 'tag-replace': 'color-mix(in srgb, var(--token-register) 5%, transparent)' };
     const chunkCls = sideData.chunk_class ? sideData.chunk_class.split(' ')[0] : '';
     const bg = bgMap[chunkCls] || 'transparent';
 

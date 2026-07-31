@@ -59,11 +59,11 @@ class FileCallGraph {
 
         if (!col || !file_md5) {
             this.container.innerHTML = `
-                <div style="display:flex; justify-content:center; align-items:center; height:100%; color:var(--subtle); font-size:1.2rem; flex-direction:column; gap:15px; background:#0d0f14;">
+                <div style="display:flex; justify-content:center; align-items:center; height:100%; color:var(--subtle); font-size:1.2rem; flex-direction:column; gap:15px; background:var(--window-bg);">
                     <i class="fa-solid fa-sitemap" style="font-size:3.5rem; color:var(--border); opacity:0.3; margin-bottom:10px;"></i>
                     <span>Please select a file from the dropdown to view its call graph.</span>
                 </div>
-                <div style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.85); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px;">
+                <div style="position:absolute; top:15px; right:15px; z-index:100; background:var(--window-bg); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px;">
                     <label for="call-graph-file-select" style="color:var(--accent); font-weight:bold; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Select File</label>
                     <select id="call-graph-file-select" style="padding: 6px 10px; background: var(--meta-header-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
                         <option value="">-- Loading Files... --</option>
@@ -157,7 +157,7 @@ class FileCallGraph {
                     • <b>Scroll</b> to zoom/pan
                 </div>
             </div>
-            <div style="position:absolute; top:15px; right:15px; z-index:100; background:rgba(18,18,18,0.85); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px; pointer-events: auto;">
+            <div style="position:absolute; top:15px; right:15px; z-index:100; background:var(--window-bg); padding:10px 15px; border-radius:8px; border:1px solid var(--border); display:flex; flex-direction:column; gap:6px; backdrop-filter:blur(5px); max-width: 320px; pointer-events: auto;">
                 <label for="call-graph-file-select" style="color:var(--accent); font-weight:bold; font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px;">Select File</label>
                 <select id="call-graph-file-select" style="padding: 6px 10px; background: var(--meta-header-bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 0.8rem; width: 100%; min-width: 220px; cursor: pointer; outline: none; border-color: var(--border);">
                     <option value="">-- Loading Files... --</option>
@@ -210,7 +210,7 @@ class FileCallGraph {
             .attr("markerHeight", 6)
             .attr("orient", "auto")
             .append("path")
-            .attr("fill", "#666")
+            .attr("fill", "var(--subtle)")
             .attr("d", "M0,-5L10,0L0,5");
 
         const simulation = d3.forceSimulation(this.nodes)

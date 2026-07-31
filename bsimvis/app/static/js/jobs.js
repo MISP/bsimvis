@@ -566,7 +566,7 @@ async function refreshJobModal(jobId, isInitial = false) {
         let logsHtml = `
             <div style="margin-top: 20px;">
                 <h4 style="margin-bottom: 10px; font-size: 0.9rem; color: var(--accent);">Execution Logs</h4>
-                <div id="${logContainerId}" style="background: #0a0a0a; color: #888; font-family: var(--mono); font-size: 0.75rem; padding: 15px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; line-height: 1.5;">
+                <div id="${logContainerId}" style="background: var(--bg); color: var(--subtle); font-family: var(--mono); font-size: 0.75rem; padding: 15px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; line-height: 1.5;">
                     ${logsInnerHtml}
                 </div>
             </div>`;

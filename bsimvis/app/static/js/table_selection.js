@@ -627,7 +627,7 @@ class TableSelection {
                                    .replace(/</g, '&lt;')
                                    .replace(/>/g, '&gt;')
                                    .replace(/"/g, '&quot;');
-                htmlContent += `<th style="border: 1px solid #ccc; padding: 4px; text-align: left;">${escaped}</th>`;
+                htmlContent += `<th style="border: 1px solid var(--meta-text-muted); padding: 4px; text-align: left;">${escaped}</th>`;
             });
             htmlContent += '</tr>';
         }
@@ -638,7 +638,7 @@ class TableSelection {
                                    .replace(/</g, '&lt;')
                                    .replace(/>/g, '&gt;')
                                    .replace(/"/g, '&quot;');
-                htmlContent += `<td style="border: 1px solid #ccc; padding: 4px;">${escaped}</td>`;
+                htmlContent += `<td style="border: 1px solid var(--meta-text-muted); padding: 4px;">${escaped}</td>`;
             });
             htmlContent += '</tr>';
         });

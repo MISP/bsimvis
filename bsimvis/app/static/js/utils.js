@@ -494,7 +494,7 @@ function showNullContextWarning(collection, pool, viewKey) {
     }
     banner = document.createElement('div');
     banner.id = 'null-context-warning';
-    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:var(--text);text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;box-shadow:0 2px 8px rgba(249,38,114,0.4);cursor:pointer;';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#f92672;color:var(--text);text-align:center;padding:8px;font-size:0.85rem;font-weight:bold;box-shadow:0 2px 8px color-mix(in srgb, var(--token-instruction) 40%, transparent);cursor:pointer;';
     banner.textContent = `⚠️ Navigation error: Invalid collection or pool context. Please navigate directly to a valid collection or pool.`;
     banner.onclick = () => banner.remove();
     document.body.prepend(banner);

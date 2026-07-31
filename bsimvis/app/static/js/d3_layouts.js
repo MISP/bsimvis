@@ -19,7 +19,7 @@ class D3BaseLayout {
         if (this.abortController) this.abortController.abort();
     }
 
-    initSvg(background = "#0d0f14") {
+    initSvg(background = "var(--window-bg)") {
         if (!this.container) return;
         d3.select(this.container).selectAll("svg").remove();
         this.svg = d3.select(this.container).append("svg")

@@ -773,8 +773,8 @@ window.DiffView = {
                 if (calledFuncId && isExternal) {
                     const extName = targetName || calledFuncId.replace('ext:', '');
                     this.showTooltip(`<div style="display:flex;align-items:center;gap:6px;">
-                        <span style="background:rgba(249,38,114,0.2);color:#f92672;border:1px solid rgba(249,38,114,0.4);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
-                        <span style="color:#ccc;font-family:monospace;font-size:0.8rem;">${extName}</span>
+                        <span style="background:color-mix(in srgb, var(--token-instruction) 20%, transparent);color:#f92672;border:1px solid color-mix(in srgb, var(--token-instruction) 40%, transparent);border-radius:4px;padding:2px 7px;font-size:0.7rem;font-weight:600;letter-spacing:0.04em;">EXTERNAL</span>
+                        <span style="color:var(--meta-text-muted);font-family:monospace;font-size:0.8rem;">${extName}</span>
                     </div>`, event.clientX, event.clientY);
                 } else if (calledFuncId && !isExternal) {
                     if (window.parent && window.parent !== window && typeof window.parent.showCodePreviewFromIframe === 'function') {

@@ -74,14 +74,14 @@ window.FunctionFeaturesView = {
                 .hash-badge {
                     font-family: 'Consolas', monospace;
                     color: #ae81ff;
-                    background: rgba(174, 129, 255, 0.1);
+                    background: color-mix(in srgb, var(--token-address) 10%, transparent);
                     padding: 1px 4px;
                     border-radius: 3px;
                     font-size: 0.75rem;
                 }
 
                 .hash-badge:hover {
-                    background: rgba(174, 129, 255, 0.3);
+                    background: color-mix(in srgb, var(--token-address) 30%, transparent);
                     border: 1px solid #ae81ff;
                     color: var(--text);
                 }
@@ -129,8 +129,8 @@ window.FunctionFeaturesView = {
                     <div>
                         <h1 style="color:var(--accent); margin:0; font-size:1.2rem;">Function Features Browser</h1>
                         <div style="margin-top:8px; font-size:0.85rem;">
-                            <span class="dim">Function:</span> <span id="ff-func-id" style="font-family:monospace; color:#ccc;">---</span> 
-                            | <span id="ff-feature-count" class="badge" style="background:rgba(102,217,239,0.1); color:var(--accent); margin-left:10px;">0 features</span>
+                            <span class="dim">Function:</span> <span id="ff-func-id" style="font-family:monospace; color:var(--meta-text-muted);">---</span> 
+                            | <span id="ff-feature-count" class="badge" style="background:color-mix(in srgb, var(--token-register) 10%, transparent); color:var(--accent); margin-left:10px;">0 features</span>
                         </div>
                     </div>
                 </div>

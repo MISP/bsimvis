@@ -12,6 +12,29 @@ from bsimvis.app.services.index_config import get_propagated_fields
 
 # --- Shared Lua Scripts ---
 
+# Algorithms the build path can actually compute. The candidate walk in
+# _select_candidates branches only on these; anything else falls through every
+# branch and yields unfiltered, meaningless results instead of an error.
+# `weighted_cosine` is deliberately absent: it is implemented on the exact-score
+# path only (calculate_exact_score) until the weighted pruning bounds land.
+BUILDABLE_ALGOS = ("jaccard", "unweighted_cosine", "milvus_sparse")
+
+
+def assert_buildable_algo(algo):
+    """Raise ValueError for an algorithm the build path cannot compute."""
+    if algo is None:
+        return
+    base, _ = bsim_profiles.parse_algo(algo)
+    if base in BUILDABLE_ALGOS:
+        return
+    if base == "weighted_cosine":
+        raise ValueError(
+            "weighted_cosine is not supported by the similarity build path yet "
+            "(only per-pair scoring via calculate_exact_score). Building with it "
+            "would silently produce unfiltered results. See doc/bsim_signature_settings.md."
+        )
+    raise ValueError(f"Unknown similarity algorithm {algo!r}; expected one of {BUILDABLE_ALGOS}")
+
 
 class SimilarityService:
     def __init__(self, r=None):
@@ -127,6 +150,7 @@ class SimilarityService:
         Builds similarities for all functions in a batch or for a specific file.
         Uses chunked pipelining for O(N/100) performance and throttling.
         """
+        assert_buildable_algo(algo)
         self._reset_read_caches()
         self._func_meta_cache = {}
         self._file_meta_cache = {}

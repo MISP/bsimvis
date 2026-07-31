@@ -2,7 +2,10 @@ import json
 
 from flask import request
 from bsimvis.app.services.job_service import JobService, JobType
-from bsimvis.app.services.similarity_service import SimilarityService
+from bsimvis.app.services.similarity_service import (
+    SimilarityService,
+    assert_buildable_algo,
+)
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags
@@ -100,6 +103,12 @@ def build_similarity():
     if algo is None:
         algo = config_service.get("similarity.algo", "unweighted_cosine")
 
+    # Reject before queueing: the build path cannot compute every algorithm.
+    try:
+        assert_buildable_algo(algo)
+    except ValueError as e:
+        return {"error": str(e)}, 400
+
     if not md5 and not batch_uuid and not data.get("all"):
         return {"error": "md5, batch, or all required"}, 400
 
@@ -164,6 +173,12 @@ def rebuild_similarity():
     algo = data.get("algo")
     if algo is None:
         algo = config_service.get("similarity.algo", "unweighted_cosine")
+
+    # Reject before queueing: the build path cannot compute every algorithm.
+    try:
+        assert_buildable_algo(algo)
+    except ValueError as e:
+        return {"error": str(e)}, 400
 
     if not md5 and not batch_uuid and not data.get("all"):
         return {"error": "md5, batch, or all required"}, 400

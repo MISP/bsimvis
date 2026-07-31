@@ -280,6 +280,32 @@ def test_signature_settings_falls_back_when_table_is_missing():
     assert settings == 0x4D
 
 
+# --- build-path guard -------------------------------------------------------
+
+
+def test_build_path_rejects_weighted_cosine():
+    """The build path branches only on jaccard/unweighted_cosine.
+
+    Letting weighted_cosine through would not raise -- it would fall past every
+    branch and emit unfiltered, meaningless pairs. Fail loudly instead.
+    """
+    from bsimvis.app.services.similarity_service import (
+        assert_buildable_algo,
+        BUILDABLE_ALGOS,
+    )
+
+    for algo in BUILDABLE_ALGOS:
+        assert_buildable_algo(algo)
+    assert_buildable_algo(None)  # None means "use the configured default"
+
+    msg = _raises(ValueError, assert_buildable_algo, "weighted_cosine")
+    assert "not supported by the similarity build path" in msg
+    # Profile-qualified form must be rejected too.
+    msg = _raises(ValueError, assert_buildable_algo, "weighted_cosine:nosize")
+    assert "not supported by the similarity build path" in msg
+    _raises(ValueError, assert_buildable_algo, "nonsense_algo")
+
+
 if __name__ == "__main__":
     passed = skipped = 0
     for name, fn in sorted(globals().items()):

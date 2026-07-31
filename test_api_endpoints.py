@@ -712,6 +712,86 @@ def run_all_tests():
             "GET", "/api/similarity", params={"id1": func_id1, "id2": func_id2}
         )
 
+        # weighted_cosine is opt-in via ?algo= and is the only algorithm that
+        # also reports a significance value.
+        weighted = test_endpoint(
+            "GET",
+            "/api/similarity",
+            params={
+                "id1": func_id1,
+                "id2": func_id2,
+                "algo": "unweighted_cosine,weighted_cosine",
+            },
+            label="GET /api/similarity?algo=weighted_cosine",
+        )
+        if weighted:
+            scores = weighted.get("scores", {})
+            sig = weighted.get("significance", {})
+            check(
+                "weighted_cosine score returned",
+                isinstance(scores.get("weighted_cosine"), (int, float)),
+                f"scores={scores}",
+            )
+            check(
+                "weighted_cosine reports significance",
+                "weighted_cosine" in sig,
+                f"significance={sig}",
+            )
+            check(
+                "unweighted_cosine carries no significance",
+                "unweighted_cosine" not in sig,
+                f"significance={sig}",
+            )
+
+        # A profile-qualified algorithm must resolve to the same score.
+        qualified = test_endpoint(
+            "GET",
+            "/api/similarity",
+            params={
+                "id1": func_id1,
+                "id2": func_id2,
+                "algo": "weighted_cosine:nosize",
+            },
+            label="GET /api/similarity?algo=weighted_cosine:nosize",
+        )
+        if qualified and weighted:
+            a = (weighted.get("scores") or {}).get("weighted_cosine")
+            b = (qualified.get("scores") or {}).get("weighted_cosine:nosize")
+            check(
+                "profile-qualified weighted score matches the default profile",
+                a is not None and b is not None and abs(a - b) < 1e-12,
+                f"{a} vs {b}",
+            )
+
+        # An unknown profile must report an error, not 500 or a silent null.
+        bad = test_endpoint(
+            "GET",
+            "/api/similarity",
+            params={
+                "id1": func_id1,
+                "id2": func_id2,
+                "algo": "weighted_cosine:no_such_profile",
+            },
+            label="GET /api/similarity?algo=weighted_cosine:<unknown>",
+        )
+        if bad:
+            check(
+                "unknown weights profile reported as an error",
+                "Unknown BSim profile"
+                in str((bad.get("errors") or {}).get("weighted_cosine:no_such_profile")),
+                f"errors={bad.get('errors')}",
+            )
+
+    # The build path cannot compute weighted_cosine; it must refuse rather than
+    # emit unfiltered pairs.
+    test_endpoint(
+        "POST",
+        "/api/similarity/build",
+        data={"collection": COLLECTION, "all": True, "algo": "weighted_cosine"},
+        expected_ok=False,
+        label="POST /api/similarity/build?algo=weighted_cosine (expect 400)",
+    )
+
     # ── Tags ───────────────────────────────────────────────────────────────
     print(_color("\n  [Tags]", BOLD))
     test_endpoint("GET", "/api/tags", params={"collection": COLLECTION})

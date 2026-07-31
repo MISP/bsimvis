@@ -106,6 +106,35 @@ def run_sim(host, port, args):
         except Exception as e:
             print(f"[!] Error listing similarity scores: {e}")
 
+    elif args.action == "score":
+        params = {"id1": args.id1, "id2": args.id2, "algo": args.algo}
+        if coll:
+            params["collection"] = coll
+        try:
+            resp = requests.get(api_url, params=params)
+            data = resp.json()
+            if resp.status_code != 200:
+                print(f"[!] {data.get('detail') or data}")
+                return
+            scores = data.get("scores", {})
+            sigs = data.get("significance", {})
+            errors = data.get("errors", {})
+            print(f"[*] {data.get('id1')}")
+            print(f"    {data.get('id2')}   (source: {data.get('source')})")
+            for algo in [a.strip() for a in args.algo.split(",") if a.strip()]:
+                if algo in errors:
+                    print(f"  {algo:24s} ERROR: {errors[algo]}")
+                    continue
+                score = scores.get(algo)
+                line = f"  {algo:24s} {score:.6f}" if score is not None else f"  {algo:24s} n/a"
+                if algo in sigs:
+                    # Significance is unbounded: it scales with the total weight
+                    # matched, so a high score on trivial features stays low here.
+                    line += f"   significance={sigs[algo]:.4f}"
+                print(line)
+        except Exception as e:
+            print(f"[!] Error scoring pair: {e}")
+
     elif args.action == "build":
         targets = []
         if args.md5:

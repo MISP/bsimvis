@@ -918,7 +918,7 @@ body {
     position: fixed;
     pointer-events: none;
     z-index: 9999;
-    background: #121212;
+    background: var(--card-bg);
     color: var(--text);
     border: 1px solid #00ff00;
     border-radius: 4px;
@@ -1165,7 +1165,7 @@ body {
     min-width: 0;
 }
 .code-card {
-    background: #272822 !important;
+    background: var(--card-bg) !important;
     /* Monokai background */
     border: 1px solid var(--meta-border) !important;
     border-radius: 6px !important;
@@ -1968,7 +1968,7 @@ body {
     position: fixed;
     pointer-events: none;
     z-index: 20002;
-    background: #121212;
+    background: var(--card-bg);
     color: var(--text);
     border: 1px solid var(--token-symbol);
     border-radius: 4px;

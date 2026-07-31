@@ -368,7 +368,7 @@ tr:nth-child(even) {
     appearance: none;
     width: 12px;
     height: 12px;
-    background: var(--text);
+    background: var(--bg);
     border: 2px solid var(--accent);
     border-radius: 50%;
     cursor: pointer;
@@ -384,7 +384,7 @@ tr:nth-child(even) {
     pointer-events: auto;
     width: 12px;
     height: 12px;
-    background: var(--text);
+    background: var(--bg);
     border: 2px solid var(--accent);
     border-radius: 50%;
     cursor: pointer;
@@ -464,7 +464,7 @@ tr:nth-child(even) {
 .search-input-wrapper {
     display: flex;
     align-items: center;
-    background: var(--text);
+    background: var(--bg);
     border-radius: 4px;
     padding: 0 12px;
     flex: 1;
@@ -2176,7 +2176,7 @@ body.in-iframe main {
     width: 100%;
     padding: 10px 20px;
     box-sizing: border-box;
-    background: #121212;
+    background: var(--card-bg);
     flex-shrink: 0;
 }
 

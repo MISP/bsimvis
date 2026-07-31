@@ -223,13 +223,18 @@ def upload_chunk():
                 "file_md5": file_md5,
                 "batch_uuid": batch_uuid,
             }
-            chunk_job_id = job_service.create_job(JobType.INDEX_FUNCTIONS, job_payload)
-
-            if parent_job_id:
-                job_service.r.hset(f"job:{chunk_job_id}", "parent_id", parent_job_id)
-                job_service.r.lrem("jobs:global", 0, chunk_job_id)
-
-            job_service.enqueue_job(chunk_job_id)
+            # is_subtask defers enqueueing so we can push as a continuation:
+            # chunk indexing lands on the tail of jobs:pending, which workers pop
+            # first. Without this the chunk jobs queue up behind every
+            # already-pending GHIDRA_ANALYZE, so a 30-file batch finishes all
+            # analysis before a single function is navigable.
+            chunk_job_id = job_service.create_job(
+                JobType.INDEX_FUNCTIONS,
+                job_payload,
+                parent_id=parent_job_id,
+                is_subtask=bool(parent_job_id),
+            )
+            job_service.enqueue_job(chunk_job_id, is_continuation=True)
 
             r_data.sadd(chunk_jobs_key, chunk_job_id)
 
@@ -385,6 +390,16 @@ def upload_raw_binary():
 
         logging.info(f"[*] Received {len(raw_bytes)} bytes for raw upload")
 
+        # Reject a bad language/cspec pair here: otherwise it only fails deep
+        # inside the Ghidra import, after the job has been queued.
+        from bsimvis.app.services.ghidra_lang_service import validate as validate_lang
+
+        lang_error = validate_lang(
+            request.args.get("processor"), request.args.get("cspec")
+        )
+        if lang_error:
+            return {"error": lang_error}, 400
+
         # Get metadata from headers or query params
         collection = request.args.get("collection", "main")
         file_name = request.args.get("file_name", "unknown")
@@ -417,6 +432,7 @@ def upload_raw_binary():
             "batch_uuid": batch_uuid,
             "batch_name": batch_name,
             "tags": request.args.getlist("tags"),
+            "related_md5": request.args.getlist("related_md5"),
             "profile": request.args.get("profile", "fast"),
             "min_func_len": int(request.args.get("min_func_len", 10)),
         }

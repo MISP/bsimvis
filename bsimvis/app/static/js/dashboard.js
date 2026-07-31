@@ -223,6 +223,21 @@ const routes = {
         headers: ['Batch Name', 'UUID', 'Files', 'Functions', 'Timestamp', 'Actions'],
         renderer: renderBatches
     },
+    'tags': {
+        title: 'Tags',
+        api: '/api/tags/list',
+        headers: [
+            { label: 'Tag', sort: 'tag', width: '30%' },
+            { label: 'Color', width: '8%' },
+            { label: 'Priority', sort: 'priority', width: '10%' },
+            { label: 'LLM', width: '6%' },
+            { label: 'Functions', sort: 'function_count', width: '12%' },
+            { label: 'Files', sort: 'file_count', width: '12%' },
+            { label: 'Similarities', width: '12%' },
+            { label: 'Actions', width: '10%' }
+        ],
+        renderer: renderTagVocabulary
+    },
     'files': {
         title: 'Files',
         api: '/api/file/search',
@@ -484,6 +499,7 @@ function showDashboardActions() {
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
     const { viewKey, collection, pool, params } = getRoutingState();
 
@@ -517,7 +533,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     // Set default parameters for search views if not present
     if (viewKey === 'files') {
         if (!params.has('min_cohesion')) {
-            params.set('min_cohesion', '0.95');
+            params.set('min_cohesion', '0.5');
         }
     } else if (viewKey === 'functions') {
         if (!params.has('min_cohesion')) {
@@ -554,6 +570,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     lastPathName = currentUrlPath;
     if (viewKey === 'pools') {
         if (!skipHeader) renderPoolCreationForm();
+    } else if (viewKey === 'tags') {
+        if (!skipHeader) renderTagCreationForm();
     } else if (viewKey === 'jobs') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -1217,7 +1235,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                 <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${p.get('bin_cluster_uuid') || ''}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${p.get('bin_cluster_name') || ''}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
-                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.95'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
+                                    <input type="number" id="flt-file-min-cohesion" placeholder="Min coh..." value="${p.get('min_cohesion') || '0.5'}" step="0.05" min="0" max="1" title="Min Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                     <span class="dim" style="font-size:0.6rem">-</span>
                                     <input type="number" id="flt-file-max-cohesion" placeholder="Max coh..." value="${p.get('max_cohesion') || ''}" step="0.05" min="0" max="1" title="Max Cluster Cohesion" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 </div>
@@ -1337,8 +1355,6 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         <div style="display:flex; flex-direction:column; gap:2px;">
                             <select id="bsim-score-type" onchange="debouncedSearch(applyBinSimSearch)" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px;">
                                 <option value="score" ${p.get('sort') === 'score' || !p.get('sort') ? 'selected' : ''}>Unweighted</option>
-                                <option value="score_sim_weighted" ${p.get('sort') === 'score_sim_weighted' ? 'selected' : ''}>Sim Weighted</option>
-                                <option value="score_collection_weighted" ${p.get('sort') === 'score_collection_weighted' ? 'selected' : ''}>Col Weighted</option>
                             </select>
                             <div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="bsim-min-score" placeholder="Min..." step="0.05" min="0" max="1" value="${p.get('min_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-score" placeholder="Max..." step="0.05" min="0" max="1" value="${p.get('max_score') || ''}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;">
@@ -1918,7 +1934,7 @@ function applyAdvancedFileSearch() {
     if (maxFuncsFlt) params.set('max_function_count', maxFuncsFlt); else params.delete('max_function_count');
     if (clusterUuidFlt) params.set('bin_cluster_uuid', clusterUuidFlt); else params.delete('bin_cluster_uuid');
     if (clusterNameFlt) params.set('bin_cluster_name', clusterNameFlt); else params.delete('bin_cluster_name');
-    params.set('min_cohesion', minCohesionFlt || '0.95');
+    params.set('min_cohesion', minCohesionFlt || '0.5');
     if (maxCohesionFlt) params.set('max_cohesion', maxCohesionFlt); else params.delete('max_cohesion');
     if (yaraFlt) params.set('yara', yaraFlt); else params.delete('yara');
     if (avtypeFlt) params.set('avtype', avtypeFlt); else params.delete('avtype');
@@ -2067,6 +2083,19 @@ function renderPagination(path) {
 
 function copyToClipboard(text, btn) {
     let success = false;
+    let tableSel = null;
+    if (window.tableSelections) {
+        tableSel = window.tableSelections.find(ts => ts.selectedCells && ts.selectedCells.size > 0);
+    }
+    if (tableSel) {
+        tableSel.copySelection();
+        if (btn) {
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span style="color:var(--success)">✓</span>';
+            setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+        }
+        return;
+    }
     if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
         navigator.clipboard.writeText(text).then(() => {
             if (btn) {
@@ -2168,8 +2197,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             collection: col
         };
 
-        const clusters1 = (p.meta1?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
-        const clusters2 = (p.meta2?.clusters || []).map(uuid => clustersMap[uuid]).filter(Boolean);
+        // Single best-shared cluster for the pair (empty when the two share none).
+        const sharedClusters = (p.shared_clusters || []).map(cid => clustersMap[cid]).filter(Boolean);
 
         return `
         <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${pairId}" data-id1="${p.id1}" data-id2="${p.id2}" data-algo="${p.algo}" data-sid="${p.sid || ''}"
@@ -2177,16 +2206,12 @@ function renderTopCorrelations(items, clustersMap = {}) {
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success);">${(p.score * 100).toFixed(1)}%</div>
-                    <button class="btn-diff-action" 
-                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)" 
+                    <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                        onmouseenter="showDiffPreview('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', ${p.score}, event)"
                         onmousemove="moveCodePreview(event)"
                         onmouseleave="hideDiffPreview(event)"
-                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)" 
-                        title="Run Aligned Diff" 
-                        style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;">
-                        <span>±</span>
-                    </button>
+                        onclick="openDiffDirectly('${p.id1}', '${(p.name1 || '').replace(/'/g, "\\'")}', '${p.id2}', '${(p.name2 || '').replace(/'/g, "\\'")}', event)"
+                        title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
                 </div>
                 ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
             </td>
@@ -2213,10 +2238,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
                 </div>
             </td>
             <td>
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters1).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters1)}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(clusters2).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(clusters2)}</div>
-                </div>
+                <div style="min-height:24px; display:flex; align-items:center;" class="cluster-cards-cell" data-clusters='${JSON.stringify(sharedClusters).replace(/'/g, "&apos;")}'>${EntityRenderer.renderClusterCard(sharedClusters)}</div>
             </td>
             <td class="sim-cell" style="text-align:center; vertical-align:middle;">
                 <div style="display:flex; flex-direction:column; gap:8px;">
@@ -2242,8 +2264,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m1}', '${(p.meta1?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta1?.file_name || ''}</b></div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${col}', '${m2}', '${(p.meta2?.file_name || '').replace(/'/g, "\\'")}', event); }">${p.meta2?.file_name || ''}</b></div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
+                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2582,15 +2604,28 @@ window.addEventListener('popstate', (e) => {
 
 // Deprecated hashchange listener for compatibility during transition
 window.addEventListener('hashchange', (e) => {
+    // Only handle legacy hash routing if we're on the root path
+    if (window.location.pathname !== '/' && window.location.pathname !== '') {
+        return;
+    }
+    
     // If we have a hash, convert it to a restful path and navigate
     if (window.location.hash) {
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || null;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
 
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col);
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col);
+        }
     }
 });
 
@@ -2693,15 +2728,23 @@ window.addEventListener('load', () => {
         history.replaceState(null, '', '/collections');
     }
     
-    if (window.location.hash) {
+    if (window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
         // Migration for users with bookmarks
         const [hashPath, queryString] = window.location.hash.split('?');
         const viewKey = hashPath.substring(1);
-        const params = new URLSearchParams(queryString);
-        const col = params.get('collection') || null;
-        window.location.hash = ''; // Clear hash
-        navigate(viewKey, params, col, true);
-        return;
+        const validViewKeys = [
+            'collections', 'pools', 'batches', 'files', 'functions', 'features-global',
+            'function-similarity', 'clusters', 'upload', 'binary-similarity', 'bin-clusters', 'jobs',
+            'function', 'file', 'diff', 'call_graph', 'feature', 'function_features', 'pool-detail',
+            'collection-detail', 'bin_sim'
+        ];
+        if (validViewKeys.includes(viewKey)) {
+            const params = new URLSearchParams(queryString);
+            const col = params.get('collection') || null;
+            window.location.hash = ''; // Clear hash
+            navigate(viewKey, params, col, true);
+            return;
+        }
     }
 
     // Attach graph settings listeners
@@ -2856,7 +2899,12 @@ window.addEventListener('load', () => {
         }
     };
 
+    let jobStatusInFlight = false;
     window.updateJobStatusIcon = async () => {
+        // ponytail: one poll at a time. Without this, a slow /api/jobs/stats lets
+        // polls overlap and orphan intervals, which snowballs into more polls.
+        if (jobStatusInFlight) return;
+        jobStatusInFlight = true;
         try {
             const res = await fetch('/api/jobs/stats');
             if (!res.ok) return;
@@ -2967,16 +3015,31 @@ window.addEventListener('load', () => {
                     const progressText = matchingJob.status === 'running' ? ` (${matchingJob.progress}%)` : '';
                     statusBadge.innerHTML = `<i class="fa-solid ${iconClass}"></i> ${formatJobType(matchingJob.type)}${progressText}`;
                     statusBadge.title = `Job ID: ${matchingJob.id} is ${matchingJob.status}`;
+                    statusBadge.style.cursor = 'pointer';
+                    statusBadge.onclick = () => {
+                        if (window.showJobDetails) window.showJobDetails(matchingJob.id);
+                    };
                 } else {
                     statusBadge.style.display = 'none';
                 }
             }
+
+            window.jobsActive = isActive;
         } catch (e) {
             // Silently fail for navbar polling
+        } finally {
+            jobStatusInFlight = false;
         }
     };
+    // ponytail: one fixed interval, no self-rescheduling. Ticks at 3s but only
+    // hits the API when jobs are active or every 3rd tick otherwise.
+    let jobPollTick = 0;
     window.updateJobStatusIcon();
-    setInterval(window.updateJobStatusIcon, 10000); // Check every 10s
+    window.jobPollInterval = setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        jobPollTick++;
+        if (window.jobsActive || jobPollTick % 3 === 0) window.updateJobStatusIcon();
+    }, 3000);
 });
 
 function updateNavVisibility(collection) {
@@ -3501,6 +3564,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
+// Forward wheel/scroll events on the main content background to the active scrollable table/container inside it
+document.addEventListener('wheel', (e) => {
+    let element = e.target;
+    let isScrollableTarget = false;
+    while (element && element !== document.body) {
+        const style = window.getComputedStyle(element);
+        const overflowY = style.overflowY || style.overflow || '';
+        if ((overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight) {
+            isScrollableTarget = true;
+            break;
+        }
+        element = element.parentElement;
+    }
+    
+    if (!isScrollableTarget) {
+        const mainContent = document.getElementById('main-content');
+        if (!mainContent) return;
+        
+        const scrollables = Array.from(mainContent.querySelectorAll('.table-body-wrap, .bsim-subtab-panel, div')).filter(el => {
+            if (el.offsetWidth === 0 || el.offsetHeight === 0) return false;
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY || style.overflow || '';
+            return (overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight;
+        });
+        
+        if (scrollables.length > 0) {
+            scrollables[0].scrollTop += e.deltaY;
+            e.preventDefault();
+        }
+    }
+}, { passive: false });
+
+
 // Expose dashboard controllers/globals explicitly on window
 window.applyAdvancedFuncSearch = applyAdvancedFuncSearch;
 window.applySimSearch = applySimSearch;
@@ -3620,7 +3716,8 @@ const viewMetaData = {
     'features-global': { name: 'Features', icon: 'fa-fingerprint' },
     'function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     'clusters': { name: 'Clusters', icon: 'fa-bullseye' },
-    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' }
+    'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' },
+    'tags': { name: 'Tags', icon: 'fa-tags' }
 };
 
 function getFilterSummary(path, params) {
@@ -4226,7 +4323,6 @@ async function renderPoolCreationForm() {
     const funcClusterEpsilon = clustering.epsilon !== undefined ? clustering.epsilon : 0.1;
     const funcClusterMethod = clustering.selection_method || 'eom';
 
-    const fileAlgo = similarity.algo || 'unweighted_cosine';
     const fileTopK = 100; // default for file-level similarity
     const fileMinScore = 0.5; // default for file-level similarity
     const fileClusterMinSize = clustering.min_cluster_size !== undefined ? clustering.min_cluster_size : 2;
@@ -4306,9 +4402,8 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-func-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${funcAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
                                             </div>
@@ -4368,11 +4463,7 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-file-algo" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
-                                                    <option value="unweighted_cosine" ${fileAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
-                                                    <option value="weighted_cosine" ${fileAlgo === 'weighted_cosine' ? 'selected' : ''}>Weighted Cosine</option>
-                                                    <option value="jaccard" ${fileAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
-                                                </select>
+                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
@@ -4492,7 +4583,6 @@ async function submitCreatePool(btn) {
     
     // File settings
     const enableFiles = document.getElementById('pool-enable-files')?.checked ?? false;
-    const fileAlgo = document.getElementById('pool-file-algo')?.value ?? 'unweighted_cosine';
     const fileTopK = parseInt(document.getElementById('pool-file-topk')?.value || '100');
     const fileMinScore = parseFloat(document.getElementById('pool-file-minscore')?.value || '0.5');
     const fileClusterMinSize = parseInt(document.getElementById('pool-file-cluster-min-size')?.value || '2');
@@ -4541,9 +4631,8 @@ async function submitCreatePool(btn) {
                         epsilon: funcClusterEpsilon,
                         selection_method: funcClusterMethod
                     },
-                    file_sim_params: { 
+                    file_sim_params: {
                         enabled: enableFiles,
-                        algo: fileAlgo,
                         top_k: fileTopK,
                         min_score: fileMinScore
                     },

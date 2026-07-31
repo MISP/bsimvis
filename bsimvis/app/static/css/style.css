@@ -1609,29 +1609,42 @@ body {
     gap: 0;
     min-height: 400px;
     max-height: 600px;
+    max-width: 100%;
 }
 
 .hier-left-col, .diff-left-col {
     width: 350px;
+    min-width: 0;
+    flex-shrink: 1;
     display: flex;
     flex-direction: column;
     padding: 12px;
     border-right: 1px solid rgba(255, 255, 255, 0.1);
+    box-sizing: border-box;
 }
 
 .diff-left-col {
     width: 250px; /* Diff list can be narrower */
+    min-width: 0;
+    flex-shrink: 1;
+    box-sizing: border-box;
 }
 
 .hier-right-col, .diff-right-col {
     width: 600px;
+    min-width: 0;
+    flex-shrink: 1;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
 .diff-right-col {
     width: 700px; /* Diffs need more horizontal space */
+    min-width: 0;
+    flex-shrink: 1;
+    box-sizing: border-box;
 }
 
 .hier-function-list, .diff-pair-list {
@@ -2175,5 +2188,64 @@ body.in-iframe #module-view-container {
     text-decoration: underline;
     cursor: pointer;
 }
+
+/* Floating Status Panel (bottom right of the view) */
+.floating-status-panel {
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-end;
+    pointer-events: none;
+}
+
+.floating-status-panel > * {
+    pointer-events: auto;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    background: rgba(30, 30, 30, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.floating-status-panel > *:empty {
+    display: none !important;
+}
+
+.floating-status-panel > *:hover {
+    background: rgba(40, 40, 40, 0.95);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+/* Specific styling overrides for floating view-job-status */
+#floating-status-panel #view-job-status {
+    background: rgba(30, 30, 30, 0.85);
+    color: #60a5fa !important;
+    border: 1px solid rgba(96, 165, 250, 0.3) !important;
+    padding: 10px 14px !important;
+    border-radius: 8px !important;
+    font-size: 0.8rem !important;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+#floating-status-panel #view-job-status:hover {
+    background: rgba(40, 40, 40, 0.95);
+    border-color: rgba(96, 165, 250, 0.6) !important;
+}
+
+/* Formatting for diff queue items inside the panel */
+#floating-status-panel .diff-queue-badge {
+    padding: 10px 14px !important;
+    border-radius: 8px !important;
+    font-size: 0.8rem !important;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 
 

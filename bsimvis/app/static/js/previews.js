@@ -141,6 +141,7 @@
             boxShadow: '0 15px 50px rgba(0,0,0,0.9)',
             backdropFilter: 'blur(15px)',
             overflow: 'hidden',
+            maxWidth: 'calc(100vw - 30px)',
         });
     }
 
@@ -428,7 +429,7 @@
             
             if (isHierActive || isBinHierActive) {
                 const activeTooltip = isHierActive ? hierTooltip : binHierTooltip;
-                if (e.ctrlKey) {
+                if (!e.ctrlKey) {
                     const codeScrollEl = activeTooltip.querySelector(isHierActive ? '#hier-snippet-container .c-code-container' : '#bin-hier-snippet-container');
                     if (codeScrollEl) {
                         codeScrollEl.scrollTop += e.deltaY;
@@ -467,7 +468,7 @@
             const scrollContainer = activeTooltip.querySelector('.code-preview-scroll, .diff-preview-scroll');
             
             if (isDiffActive) {
-                if (e.ctrlKey) {
+                if (!e.ctrlKey) {
                     if (scrollContainer) {
                         scrollContainer.scrollTop += e.deltaY;
                         if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;

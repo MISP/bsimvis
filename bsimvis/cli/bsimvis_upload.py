@@ -472,8 +472,11 @@ def process_target(target, args, config, batch_order) -> tuple[int, list]:
                                     )
                                     resp.raise_for_status()
                     finally:
-                        if "program" in locals() and program:
-                            program.release(project)
+                        # close() releases every program importProgram() registered and
+                        # disposes the project's LocalFileSystem, stopping its
+                        # "File System Listener" thread. Releasing the program first
+                        # would make close() throw "unknown consumer". See worker.py.
+                        project.close()
 
             t_total = time.time() - t0
             logging.info(

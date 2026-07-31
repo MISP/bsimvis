@@ -217,3 +217,108 @@ def set_priority():
 
     tag_service.set_tag_priority(collection, tag, priority)
     return {"status": "success"}
+
+
+def _collection_of(source):
+    """Collection from a request payload/args, applying the pool prefix rule."""
+    collection = source.get("collection")
+    pool = source.get("pool") or source.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+    return collection
+
+
+def list_tags():
+    """Tag vocabulary for a collection, with usage counts, as a sortable list."""
+    collection = _collection_of(request.args)
+    if not collection:
+        return {"error": "Missing collection"}, 400
+
+    meta = tag_service.get_collection_tags(collection)
+    q = (request.args.get("q") or "").lower().strip()
+
+    items = []
+    for tag, m in meta.items():
+        if q and q not in tag.lower():
+            continue
+        stats = tag_service.get_tag_stats(collection, tag)
+        items.append(
+            {
+                "tag": tag,
+                "color": m.get("color"),
+                "priority": m.get("priority", 0),
+                "llm": bool(m.get("llm")),
+                "function_count": stats.get("function", 0),
+                "file_count": stats.get("file", 0),
+                "similarity_count": stats.get("similarity", 0),
+                "total_count": sum(stats.values()),
+            }
+        )
+
+    sort_by = request.args.get("sort_by") or "tag"
+    reverse = (request.args.get("sort_order") or "asc").lower() == "desc"
+    keyfn = {
+        "tag": lambda i: i["tag"].lower(),
+        "priority": lambda i: i["priority"],
+        "total_count": lambda i: i["total_count"],
+        "function_count": lambda i: i["function_count"],
+        "file_count": lambda i: i["file_count"],
+    }.get(sort_by, lambda i: i["tag"].lower())
+    items.sort(key=keyfn, reverse=reverse)
+
+    return {"total": len(items), "items": items, "collection": collection}
+
+
+def create_tag():
+    """Creates a vocabulary entry for a tag without tagging any entity."""
+    data = request.json or {}
+    collection = _collection_of(data)
+    tag = (data.get("tag") or "").strip()
+
+    if not collection or not tag:
+        return {"error": "Missing parameters"}, 400
+
+    existing = tag_service.get_collection_tags(collection)
+    if tag in existing:
+        return {"error": f"Tag '{tag}' already exists"}, 409
+
+    tag_service.create_tag(
+        collection,
+        tag,
+        color=data.get("color"),
+        priority=data.get("priority") or 0,
+        llm=bool(data.get("llm")),
+    )
+    return {"status": "success", "tag": tag}
+
+
+def delete_tag():
+    """Deletes a tag from the vocabulary AND from every entity carrying it."""
+    data = request.json or {}
+    collection = _collection_of(data)
+    tag = (data.get("tag") or "").strip()
+
+    if not collection or not tag:
+        return {"error": "Missing parameters"}, 400
+
+    removed = tag_service.delete_tag(collection, tag)
+    if removed is None:
+        return {"status": "failed", "message": "Could not delete tag"}, 500
+    return {"status": "success", "tag": tag, "removed": removed}
+
+
+def set_llm_flag():
+    """Includes/excludes a tag from the LLM tagging vocabulary."""
+    data = request.json or {}
+    collection = _collection_of(data)
+    tag = data.get("tag")
+    enabled = data.get("llm")
+
+    if not collection or not tag or enabled is None:
+        return {"error": "Missing parameters"}, 400
+
+    tag_service.set_tag_llm(collection, tag, bool(enabled))
+    return {"status": "success", "tag": tag, "llm": bool(enabled)}

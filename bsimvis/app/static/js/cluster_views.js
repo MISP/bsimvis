@@ -31,7 +31,7 @@ function getHierarchyTooltip() {
     if (!el) {
         el = document.createElement('div');
         el.id = 'hierarchy-tooltip';
-        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:none; backdrop-filter:blur(15px); overflow:hidden;";
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px rgba(0,0,0,0.9); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
         
         el.addEventListener('click', (event) => {
@@ -1133,6 +1133,8 @@ class ClusterHierarchy extends D3BaseLayout {
         const rect = tooltip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
         if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         tooltip.style.left = x + 'px';
         tooltip.style.top = y + 'px';
 
@@ -1212,7 +1214,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                         if (this.clusterType === 'file') {
                                             return `
                                                 <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
-                                                    <b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(getCurrentCollection(), '${m.file_md5}', '${(m.file_name || '').replace(/'/g, "\\'")}', event); }">${m.file_name || 'Unknown'}</b> ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                    ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
                                         }
@@ -2174,6 +2176,8 @@ class ClusterPacking {
             const rect = tooltip.getBoundingClientRect();
             if (x + rect.width > window.innerWidth) x = event.clientX - rect.width - 20;
             if (y + rect.height > window.innerHeight) y = event.clientY - rect.height - 20;
+            x = Math.max(5, x);
+            y = Math.max(5, y);
             tooltip.style.left = x + 'px';
             tooltip.style.top = y + 'px';
 
@@ -2244,7 +2248,7 @@ class ClusterPacking {
                                         if (this.clusterType === 'file') {
                                             return `
                                                 <div style="font-size: 0.7rem; padding: 2px; color: #eee; font-family: monospace;">
-                                                    <b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(getCurrentCollection(), '${m.file_md5}', '${(m.file_name || '').replace(/'/g, "\\'")}', event); }">${m.file_name || 'Unknown'}</b> ${m.avtype ? `| AV: ${m.avtype}` : ''}
+                                                    ${EntityRenderer.renderFileName(m.file_name, m.file_md5, getCurrentCollection())} ${m.avtype ? `| AV: ${m.avtype}` : ''}
                                                 </div>
                                             `;
                                         }
@@ -2412,6 +2416,7 @@ class ClusterPacking {
 }
 
 const clusterTooltipMockCache = new Map();
+window.clusterTooltipMockCache = clusterTooltipMockCache;
 
 function showClusterTableTooltip(event, uuid, name, size, stability, cohesion, avg_features, customMembers = null, clusterType = 'function') {
     const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
@@ -2448,6 +2453,8 @@ function moveClusterTableTooltip(e) {
         const rect = tooltip.getBoundingClientRect();
         if (x + rect.width > window.innerWidth) x = e.clientX - rect.width - 20;
         if (y + rect.height > window.innerHeight) y = e.clientY - rect.height - 20;
+        x = Math.max(5, x);
+        y = Math.max(5, y);
         tooltip.style.left = x + 'px';
         tooltip.style.top = y + 'px';
     }

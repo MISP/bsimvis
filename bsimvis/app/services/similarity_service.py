@@ -157,7 +157,14 @@ class SimilarityService:
                 keys = r.scan_iter(pattern)
                 function_ids = [k.replace(":vec:tf", "") for k in keys]
         else:
-            # Build for ALL functions in the collection
+            # Build for ALL functions in the collection.
+            # Force a complete rebuild by clearing the per-function skip-set first:
+            # concurrent per-file ingestion can mark a binary's functions "built"
+            # against a partially-populated collection (before the other binaries'
+            # functions are visible), so their cross-binary similarities are never
+            # computed. An all-build must be authoritative, so recompute every
+            # function's candidates (idempotent for already-correct pairs).
+            r.delete(f"{collection}:built:functions:{algo}")
             function_ids = list(r.smembers(f"{collection}:indexed:functions"))
 
         total = len(function_ids)
@@ -2405,39 +2412,61 @@ class SimilarityService:
         involves_file_prefix = f"global:pool:{pool_id}:sim:involves:file:"
 
         log(f"[*] {num_binaries} binaries -> {len(pairs)} pairs to compare")
-        prefetch_t = time.time()
 
-        # ponytail: batch prefetch instead of per-pair SINTER+GET.
-        # Old path did N^2/2 blocking SINTER round trips plus a GET pipeline per pair.
-        # Now: one smembers per binary, then MGET every referenced sim doc once,
-        # and intersect in Python per pair. All docs held in RAM for the build
-        # (that's the pool's function-pair sim payload; chunk MGET to bound command size).
-        binary_sim_sids = {}
-        pipe_inv = r.pipeline(transaction=False)
-        for coll, md5 in binaries:
-            pipe_inv.smembers(f"{involves_file_prefix}{coll}:{md5}")
-        all_sim_sids = set()
-        for (coll, md5), members in zip(binaries, pipe_inv.execute()):
-            sids = {m.decode() if isinstance(m, bytes) else str(m) for m in members}
-            binary_sim_sids[(coll, md5)] = sids
-            all_sim_sids.update(sids)
+        # (coll, md5.lower()) -> canonical binary tuple. Pools are multi-collection and
+        # the SAME md5 can appear in two collections, so partner MUST be resolved by
+        # (collection, md5), never md5 alone. Pool sim docs carry both endpoints
+        # (coll_1/md5_1, coll_2/md5_2), so read them straight from the doc.
+        bin_by_norm = {(coll, md5.lower()): (coll, md5) for coll, md5 in binaries}
 
-        sim_doc_cache = {}
-        sim_sids_list = list(all_sim_sids)
-        for i in range(0, len(sim_sids_list), 10000):
-            chunk = sim_sids_list[i : i + 10000]
-            for sid, res in zip(chunk, r.mget(chunk)):
-                if res:
-                    try:
-                        sim_doc_cache[sid] = json.loads(
-                            res.decode() if isinstance(res, bytes) else res
+        # ponytail: stream one source-binary at a time instead of loading all ~26M
+        # edges up front. For binary b_src we SMEMBERS+MGET only ITS sim docs (bounded
+        # by a single binary), bucket them by partner, and yield each pair (b_src,
+        # b_par) with b_par > b_src so every pair is emitted exactly once (at its lower
+        # binary). Peak RAM = one binary's docs, not the whole pool. Cost: each doc is
+        # read ~twice (once per endpoint) -- the RAM/IO trade that keeps big pools off
+        # swap. Edges are pre-oriented fid_a -> b_src (== b1), so the consumer is O(1).
+        def stream_pair_edges():
+            for b_src in binaries:
+                coll_i, md5_i = b_src
+                member_sids = [
+                    s.decode() if isinstance(s, bytes) else str(s)
+                    for s in r.smembers(f"{involves_file_prefix}{coll_i}:{md5_i}")
+                ]
+                buckets = defaultdict(list)
+                for k in range(0, len(member_sids), 10000):
+                    chunk = member_sids[k : k + 10000]
+                    for res in r.mget(chunk):
+                        if not res:
+                            continue
+                        try:
+                            doc = json.loads(res.decode() if isinstance(res, bytes) else res)
+                        except Exception:
+                            continue
+                        f1, f2 = doc.get("id1"), doc.get("id2")
+                        if not f1 or not f2:
+                            continue
+                        e1 = bin_by_norm.get(
+                            (doc.get("coll_1"), (doc.get("md5_1") or "").lower())
                         )
-                    except Exception:
-                        pass
-
-        log(
-            f"[*] Prefetched {len(sim_doc_cache)} sim docs in {time.time() - prefetch_t:.1f}s"
-        )
+                        e2 = bin_by_norm.get(
+                            (doc.get("coll_2"), (doc.get("md5_2") or "").lower())
+                        )
+                        score = doc.get("score", 0.0)
+                        if e1 == b_src:
+                            b_par, edge = e2, (f1, f2, score)
+                        elif e2 == b_src:
+                            b_par, edge = e1, (f2, f1, score)
+                        else:
+                            continue
+                        # only partners above b_src -> pair emitted once, and this
+                        # also drops intra-binary docs (partner resolves to b_src).
+                        if not b_par or b_par <= b_src:
+                            continue
+                        buckets[b_par].append(edge)
+                for b_par, edges in buckets.items():
+                    yield b_src, b_par, edges
+                # buckets dropped here -> one binary's edges reclaimed before the next
 
         # ponytail: precompute per-function "unique" entry + weight once.
         # An unmatched function's diff entry + cluster scan depend only on (coll, fid),
@@ -2459,67 +2488,31 @@ class SimilarityService:
                 full_fid = (
                     fid if fid.startswith(f"{coll}:func:") else f"{coll}:func:{fid}"
                 )
-                best_cluster = None
-                if full_fid in fid_to_cids:
-                    best = None
-                    best_coh = -1.0
-                    for cid in fid_to_cids[full_fid]:
-                        meta = cluster_meta.get(cid)
-                        if meta and float(meta.get("cohesion_score", 0.0)) > best_coh:
-                            best_coh = float(meta.get("cohesion_score", 0.0))
-                            best = meta
-                    best_cluster = best
+                # Slim doc (matches collection path); cluster tag derived at read.
                 unique_entry[key] = {
                     "func_id": fid,
-                    "funcs": [fid],
-                    "is_clustered": best_cluster is not None,
-                    "cluster_id": best_cluster.get("cluster_id", "") if best_cluster else "",
-                    "cluster_uuid": best_cluster.get("cluster_uuid", "") if best_cluster else "",
-                    "cluster_name": best_cluster.get("cluster_name", "Unclustered") if best_cluster else "Unclustered",
-                    "cohesion": 0.0,
-                    "sim_rarity": 1.0,
-                    "collection_rarity": 1.0,
                     "avg_features": f_features,
                 }
                 unique_feat[key] = f_features
 
         loop_t = time.time()
         total_pairs = len(pairs)
+        log(f"[*] Streaming {total_pairs} pairs (computed + saved incrementally)...")
 
-        for pair_idx, (b1, b2) in enumerate(pairs):
+        for pair_idx, (b1, b2, edges) in enumerate(stream_pair_edges()):
             if pair_idx and pair_idx % 2000 == 0:
                 elapsed = time.time() - loop_t
                 rate = pair_idx / elapsed if elapsed else 0
                 eta = (total_pairs - pair_idx) / rate if rate else 0
                 log(
-                    f"[*] {pair_idx}/{total_pairs} pairs ({rate:.0f}/s, ETA {eta:.0f}s)"
+                    f"[*] {pair_idx}/{total_pairs} pairs computed + saved "
+                    f"({rate:.0f}/s, ETA {eta:.0f}s)"
                 )
             coll_a, md5_a = b1
             coll_b, md5_b = b2
 
-            sim_keys = binary_sim_sids.get(b1, set()) & binary_sim_sids.get(b2, set())
-            sim_docs = [sim_doc_cache[k] for k in sim_keys if k in sim_doc_cache]
-
-            # Filter/extract edges
-            edges = []
-            for doc in sim_docs:
-                fid1 = doc.get("id1")
-                fid2 = doc.get("id2")
-                score = doc.get("score", 0.0)
-                if fid1 and fid2:
-                    # ponytail: Extract exact MD5 out of function IDs (casing-insensitive)
-                    parts1 = fid1.split(":")
-                    parts2 = fid2.split(":")
-                    if len(parts1) >= 2 and len(parts2) >= 2:
-                        m1 = parts1[-2].lower()
-                        m2 = parts2[-2].lower()
-                        m_a_clean = md5_a.lower()
-                        m_b_clean = md5_b.lower()
-                        if m1 == m_a_clean and m2 == m_b_clean:
-                            edges.append((fid1, fid2, score))
-                        elif m1 == m_b_clean and m2 == m_a_clean:
-                            edges.append((fid2, fid1, score))
-
+            # Edges streamed pre-oriented (fid_a -> b1) for this source binary; b1 < b2
+            # holds (generator only emits partners above the source).
             # Sort edges by score descending (greedy match prioritizes best matches), using function IDs as deterministic tie-breakers
             edges.sort(key=lambda x: (-x[2], x[0], x[1]))
 
@@ -2527,14 +2520,8 @@ class SimilarityService:
             assigned_b = set()
             diff_matched = []
 
-            sum_weighted_cohesion_sim = 0.0
-            sum_weights_sim = 0.0
-
-            sum_weighted_cohesion_col = 0.0
-            sum_weights_col = 0.0
-
-            sum_weighted_cohesion_unweighted = 0.0
-            sum_weights_unweighted = 0.0
+            sum_weighted_cohesion = 0.0
+            sum_weights = 0.0
 
             for fid_a, fid_b, score in edges:
                 if fid_a not in assigned_a and fid_b not in assigned_b:
@@ -2549,56 +2536,22 @@ class SimilarityService:
                     )
                     f_features = max(f_features_a, f_features_b)
 
-                    # Tag the matched pair with its best-matching function cluster so the
-                    # API/UI cluster column resolves to a real cluster (matches collection path).
-                    full_a = (
-                        fid_a
-                        if fid_a.startswith(f"{coll_a}:func:")
-                        else f"{coll_a}:func:{fid_a}"
-                    )
-                    full_b = (
-                        fid_b
-                        if fid_b.startswith(f"{coll_b}:func:")
-                        else f"{coll_b}:func:{fid_b}"
-                    )
-                    best_cluster = pick_cluster(full_a, full_b)
+                    # Slim doc: persist only the stable triple (+ avg_features),
+                    # matching the collection bin_sim path. Cluster tag / cohesion /
+                    # rarity are derived live at read (get_bin_sim ->
+                    # _enrich_diff_clusters, which handles pools) so a cluster
+                    # rebuild can't leave them stale.
                     diff_matched.append(
                         {
-                            "cluster_id": (
-                                best_cluster.get("cluster_id", "")
-                                if best_cluster
-                                else ""
-                            ),
-                            "cluster_uuid": (
-                                best_cluster.get("cluster_uuid", "")
-                                if best_cluster
-                                else ""
-                            ),
-                            "cluster_name": (
-                                best_cluster.get("cluster_name", "Matched Functions")
-                                if best_cluster
-                                else "Matched Functions"
-                            ),
-                            "cohesion": score,
-                            "sim_rarity": 1.0,
-                            "collection_rarity": 1.0,
+                            "similarity": score,
                             "avg_features": f_features,
-                            "funcs_a": [fid_a],
-                            "funcs_b": [fid_b],
-                            "count_a": 1,
-                            "count_b": 1,
-                            "match_ratio": 1.0,
+                            "func_a": fid_a,
+                            "func_b": fid_b,
                         }
                     )
 
-                    sum_weighted_cohesion_sim += score * f_features
-                    sum_weights_sim += f_features
-
-                    sum_weighted_cohesion_col += score * f_features
-                    sum_weights_col += f_features
-
-                    sum_weighted_cohesion_unweighted += score * f_features
-                    sum_weights_unweighted += f_features
+                    sum_weighted_cohesion += score * f_features
+                    sum_weights += f_features
 
             # Unique/Unmatched functions logic
             all_funcs_a_total = binary_fids[b1]
@@ -2608,56 +2561,48 @@ class SimilarityService:
             unassigned_b = all_funcs_b_total - assigned_b
 
             unique_to_a = [unique_entry[(coll_a, fid)] for fid in sorted(unassigned_a)]
-            uw_a = sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
-            sum_weights_sim += uw_a
-            sum_weights_col += uw_a
-            sum_weights_unweighted += uw_a
+            sum_weights += sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
 
             unique_to_b = [unique_entry[(coll_b, fid)] for fid in sorted(unassigned_b)]
-            uw_b = sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
-            sum_weights_sim += uw_b
-            sum_weights_col += uw_b
-            sum_weights_unweighted += uw_b
+            sum_weights += sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
 
-            sim_score = (
-                (sum_weighted_cohesion_sim / sum_weights_sim)
-                if sum_weights_sim > 0
-                else 0.0
+            # `algo` is a provenance tag, not a choice of file score: the score is
+            # always the feature-weighted cohesion mean, as at collection level.
+            final_score = (
+                (sum_weighted_cohesion / sum_weights) if sum_weights > 0 else 0.0
             )
-            col_weighted_score = (
-                (sum_weighted_cohesion_col / sum_weights_col)
-                if sum_weights_col > 0
-                else 0.0
-            )
-            unweighted_score = (
-                (sum_weighted_cohesion_unweighted / sum_weights_unweighted)
-                if sum_weights_unweighted > 0
-                else 0.0
-            )
-
-            final_score = sim_score
-            if algo == "unweighted_cosine":
-                final_score = unweighted_score
-            elif algo == "weighted_cosine":
-                final_score = col_weighted_score
 
             # Persist pool bin_sim
             sid = f"global:pool:{pool_id}:bin_sim:{algo}:{coll_a}:{md5_a}::{coll_b}:{md5_b}"
+            # Same field names as the collection bin_sim doc, plus the pool-only
+            # endpoints (coll_a/coll_b), so readers need no translation layer.
             doc = {
                 "type": "bin_sim",
                 "pool_id": pool_id,
+                "md5_a": md5_a,
+                "md5_b": md5_b,
+                "coll_a": coll_a,
+                "coll_b": coll_b,
                 "algo": algo,
+                "functions_count_a": len(all_funcs_a_total),
+                "functions_count_b": len(all_funcs_b_total),
                 "score": final_score,
-                "md5_1": md5_a,
-                "md5_2": md5_b,
-                "coll_1": coll_a,
-                "coll_2": coll_b,
-                "sim_weighted_score": sim_score,
-                "collection_weighted_score": col_weighted_score,
-                "unweighted_score": unweighted_score,
-                "matched_clusters_count": len(diff_matched),
-                "matched_clusters": diff_matched,
-                "entry_date": now,
+                "coverage_a": (
+                    len(assigned_a) / len(all_funcs_a_total)
+                    if all_funcs_a_total
+                    else 0.0
+                ),
+                "coverage_b": (
+                    len(assigned_b) / len(all_funcs_b_total)
+                    if all_funcs_b_total
+                    else 0.0
+                ),
+                "shared_clusters": len(diff_matched),
+                "unique_clusters_a": len(unique_to_a),
+                "unique_clusters_b": len(unique_to_b),
+                "unclustered_a": len(unique_to_a),
+                "unclustered_b": len(unique_to_b),
+                "computed_at": now,
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,
@@ -2679,7 +2624,14 @@ class SimilarityService:
             )
             persist_pipe.sadd(f"global:pool:{pool_id}:bin_sim:built:{algo}", sid)
 
-        log(f"[*] Pairs processed in {time.time() - loop_t:.1f}s; persisting...")
+            # ponytail: flush periodically so fat docs save over time and the client
+            # buffer stays bounded, instead of holding all ~45k docs to one final
+            # execute (re-held the whole pool in RAM + all-or-nothing on crash).
+            if (pair_idx + 1) % 500 == 0:
+                persist_pipe.execute()
+                persist_pipe = r.pipeline(transaction=False)
+
+        log(f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch...")
         persist_pipe.execute()
         log(
             f"Pool binary similarity build finished. Found {len(pairs)} comparisons in {time.time() - start_time:.1f}s."
@@ -2717,20 +2669,42 @@ class SimilarityService:
                 job_id, f"[*] Reindexing {total} pool bin_sim pairs for pool {pool_id}"
             )
 
-        pipe = r.pipeline(transaction=False)
-        for sid in sids:
-            pipe.get(sid)
+        # Stream docs in chunks, keeping ONLY the scalar fields indexing needs.
+        # Pool bin_sim docs carry the full per-pair diff blob (diff.matched +
+        # unique lists) which can be hundreds of KB-MB each. GETting all of them
+        # at once and retaining every parsed dict held ~2x the whole payload
+        # resident (raw strings + dicts) -> swap thrash. Drop the fat fields as we
+        # go so memory stays bounded to one chunk.
+        # ponytail: 5000/chunk bounds transient RAM; lower it if docs are huge.
         docs = []
         md5set = set()
-        for sid, raw in zip(sids, pipe.execute()):
-            if not raw:
-                continue
-            d = json.loads(raw) if not isinstance(raw, dict) else raw
-            if isinstance(d, str):
-                d = json.loads(d)
-            docs.append((sid, d))
-            md5set.add((d.get("coll_1", ""), d.get("md5_1", "")))
-            md5set.add((d.get("coll_2", ""), d.get("md5_2", "")))
+        for i in range(0, total, 5000):
+            chunk = sids[i : i + 5000]
+            for sid, raw in zip(chunk, r.mget(chunk)):
+                if not raw:
+                    continue
+                d = json.loads(raw) if not isinstance(raw, dict) else raw
+                if isinstance(d, str):
+                    d = json.loads(d)
+                c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
+                c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
+                slim = {
+                    k: d.get(k)
+                    for k in (
+                        "coll_a",
+                        "md5_a",
+                        "coll_b",
+                        "md5_b",
+                        "score",
+                        "coverage_a",
+                        "coverage_b",
+                        "shared_clusters",
+                        "computed_at",
+                    )
+                }
+                docs.append((sid, slim))
+                md5set.add((c1, m1))
+                md5set.add((c2, m2))
 
         # File meta (arch/tags/name) + function counts for every referenced binary.
         md5list = list(md5set)
@@ -2752,27 +2726,18 @@ class SimilarityService:
 
         pipe = r.pipeline(transaction=False)
         for i, (sid, d) in enumerate(docs):
-            c1, m1 = d.get("coll_1", ""), d.get("md5_1", "")
-            c2, m2 = d.get("coll_2", ""), d.get("md5_2", "")
-            matched = d.get("matched_clusters_count", 0)
-            # Normalize pool doc field names to the collection shape _index_bin_sim_pair expects.
-            norm = {
-                "md5_a": m1,
-                "md5_b": m2,
-                "algo": algo,
-                "architecture_a": meta_map.get((c1, m1), {}).get("language_id", ""),
-                "architecture_b": meta_map.get((c2, m2), {}).get("language_id", ""),
-                "functions_count_a": func_map.get((c1, m1), 0),
-                "functions_count_b": func_map.get((c2, m2), 0),
-                "score": d.get("unweighted_score", d.get("score", 0.0)),
-                "score_sim_weighted": d.get("sim_weighted_score", 0.0),
-                "score_collection_weighted": d.get("collection_weighted_score", 0.0),
-                # pool build doesn't persist coverage; approximate as legacy search did
-                "coverage_a": 1.0 if matched > 0 else 0.0,
-                "coverage_b": 1.0 if matched > 0 else 0.0,
-                "shared_clusters": matched,
-                "computed_at": d.get("entry_date", 0),
-            }
+            c1, m1 = d.get("coll_a", ""), d.get("md5_a", "")
+            c2, m2 = d.get("coll_b", ""), d.get("md5_b", "")
+            # Pool docs already carry the collection field names; only the
+            # denormalized file metadata has to be filled in here.
+            norm = dict(
+                d,
+                algo=algo,
+                architecture_a=meta_map.get((c1, m1), {}).get("language_id", ""),
+                architecture_b=meta_map.get((c2, m2), {}).get("language_id", ""),
+                functions_count_a=func_map.get((c1, m1), 0),
+                functions_count_b=func_map.get((c2, m2), 0),
+            )
             _index_bin_sim_pair(
                 pipe, prefix, sid, norm, meta_map.get((c1, m1)), meta_map.get((c2, m2))
             )

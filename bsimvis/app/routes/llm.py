@@ -1,6 +1,7 @@
 from flask import request, Response, stream_with_context
 from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.function_service import fetch_function_data
+import json
 import logging
 
 
@@ -97,6 +98,168 @@ def chat():
     resp = Response(generate(), mimetype="text/plain")
     resp.headers["X-Accel-Buffering"] = "no"
     return resp
+
+
+def _resolve_filters_to_ids(collection, filters, cap):
+    """Resolves function-search filters to a list of function ids.
+
+    `filters` is the same query string the function search page uses, so any
+    filtered result set is directly batchable without duplicating the ~600
+    lines of filter parsing in search_function.py.
+    """
+    from flask import current_app
+    from werkzeug.datastructures import MultiDict
+    from bsimvis.app.routes.search_function import search_functions
+
+    if isinstance(filters, str):
+        args = MultiDict(url_decode(filters))
+    else:
+        args = MultiDict()
+        for k, v in (filters or {}).items():
+            if isinstance(v, (list, tuple)):
+                for item in v:
+                    args.add(k, item)
+            else:
+                args.add(k, v)
+
+    args.setlist("collection", [collection])
+    # One page, capped: a filter matching 200k functions must be refused up
+    # front, so ask for cap+1 and let the caller detect the overflow.
+    args.setlist("limit", [str(cap + 1)])
+    args.setlist("offset", ["0"])
+    args.setlist("format", [""])
+
+    with current_app.test_request_context(
+        "/api/function/search", query_string=args.to_dict(flat=False)
+    ):
+        result = search_functions()
+
+    if isinstance(result, tuple):
+        return None, result[0].get("error", "Function search failed")
+    if not isinstance(result, dict) or "functions" not in result:
+        return None, "Function search returned no result set"
+
+    ids = []
+    for f in result["functions"]:
+        fid = f.get("function_id") or f.get("id")
+        if fid:
+            ids.append(fid)
+    return ids, None
+
+
+def url_decode(qs):
+    from urllib.parse import parse_qs
+
+    return parse_qs(qs, keep_blank_values=True)
+
+
+def batch():
+    """Starts a background LLM enrichment job over a set of functions."""
+    from bsimvis.app.services.job_service import JobService, JobType
+    from bsimvis.app.services.llm_batch_service import max_batch_size
+
+    data = request.json or {}
+    collection = data.get("collection")
+    pool = data.get("pool") or data.get("pool_id")
+    if pool and not (
+        collection
+        and (collection.startswith("pool:") or collection.startswith("global:pool:"))
+    ):
+        collection = f"global:pool:{pool}"
+
+    if not collection:
+        return {"error": "Missing collection"}, 400
+
+    actions = data.get("actions") or ["notes"]
+    invalid = [a for a in actions if a not in ("notes", "tags")]
+    if invalid:
+        return {"error": f"Invalid actions: {', '.join(invalid)}"}, 400
+
+    cap = max_batch_size()
+    func_ids = data.get("func_ids")
+
+    if not func_ids:
+        filters = data.get("filters")
+        if not filters:
+            return {"error": "Provide either func_ids or filters"}, 400
+        func_ids, error = _resolve_filters_to_ids(collection, filters, cap)
+        if error:
+            return {"error": error}, 400
+
+    func_ids = [f for f in dict.fromkeys(func_ids) if f]
+    if not func_ids:
+        return {"error": "Selection resolved to zero functions"}, 400
+
+    if len(func_ids) > cap:
+        return {
+            "error": (
+                f"Selection of {len(func_ids)} functions exceeds the batch cap "
+                f"of {cap}. Narrow the filter or raise llm.batch_max."
+            ),
+            "count": len(func_ids),
+            "cap": cap,
+        }, 413
+
+    job_service = JobService()
+    job_id = job_service.create_job(
+        JobType.LLM_BATCH,
+        {
+            "collection": collection,
+            "func_ids": func_ids,
+            "actions": actions,
+            "overwrite": bool(data.get("overwrite")),
+            "custom_prompt": data.get("custom_prompt") or data.get("prompt_template"),
+            "tag_vocabulary": data.get("tag_vocabulary"),
+        },
+    )
+
+    return {"job_id": job_id, "total": len(func_ids), "actions": actions}
+
+
+def batch_status(job_id):
+    """Progress, per-function state and errors for an LLM batch job."""
+    from bsimvis.app.services.job_service import JobService
+    from bsimvis.app.services.llm_batch_service import llm_batch_service
+
+    job_service = JobService()
+    job = job_service.r.hgetall(f"job:{job_id}")
+    if not job:
+        return {"error": "Job not found"}, 404
+
+    results = llm_batch_service.get_results(job_id)
+    counts = {"done": 0, "skipped": 0, "failed": 0}
+    errors = []
+    for fid, res in results.items():
+        state = res.get("state")
+        counts[state] = counts.get(state, 0) + 1
+        if state == "failed":
+            errors.append({"func_id": fid, "error": res.get("detail")})
+
+    payload = {}
+    try:
+        payload = json.loads(job.get("payload") or "{}")
+    except Exception:
+        pass
+
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "progress": int(job.get("progress") or 0),
+        "total": len(payload.get("func_ids") or []),
+        "processed": sum(counts.values()),
+        "counts": counts,
+        "errors": errors,
+        "results": results,
+    }
+
+
+def batch_cancel(job_id):
+    """Cancels a running or pending LLM batch job."""
+    from bsimvis.app.services.job_service import JobService
+
+    if not JobService().cancel_job(job_id):
+        return {"error": "Job not found"}, 404
+    return {"status": "cancelled", "job_id": job_id}
 
 
 def summarize_file():

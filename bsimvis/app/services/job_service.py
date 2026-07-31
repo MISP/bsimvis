@@ -41,6 +41,7 @@ class JobType(Enum):
     FINALIZE_POOL_BUILD = "finalize_pool_build"
     BUILD_POOL_BIN_SIM = "build_pool_bin_sim"
     CLUSTER_POOL_BINARIES = "cluster_pool_binaries"
+    LLM_BATCH = "llm_batch"
 
 
 def safe_int(val, default=0):
@@ -282,9 +283,26 @@ class JobService:
         return group_id
 
     def enqueue_job(self, job_id, is_continuation=False):
-        """Pushes a job ID onto the appropriate priority queue."""
+        """Pushes a job ID onto the appropriate priority queue.
+
+        Idempotent: a job can be enqueued from several paths (create_job, an
+        explicit enqueue, and start_job re-visiting a group member). Without a
+        guard the same pending job lands on the queue twice and two workers run
+        it concurrently -- one indexes while the other sees the chunk data
+        already consumed and returns early, releasing the pipeline barrier
+        before indexing finished. The `queued` latch (cleared by the worker when
+        it pops the job) ensures each pending job is enqueued at most once.
+        """
         job = self.r.hgetall(f"job:{job_id}")
         jtype = job.get("type") if job else None
+
+        # Atomic latch: hset returns 1 only when it creates the field. If it was
+        # already set, skip when the job is still pending or running (already
+        # queued / executing); only fall through for a terminal job being retried.
+        if self.r.hset(f"job:{job_id}", "queued", "1") == 0:
+            status = job.get("status")
+            if status in (JobStatus.PENDING.value, JobStatus.RUNNING.value):
+                return
 
         high_priority_types = [
             JobType.CLEAR_SIM.value,
@@ -292,6 +310,9 @@ class JobService:
             JobType.CLEAR_CLUSTER.value,
             JobType.CLEAR_BIN_SIM.value,
             JobType.SYNC_MILVUS.value,
+            # User-initiated LLM batches are interactive work: they must not sit
+            # behind a Ghidra analysis or a sim build for hours.
+            JobType.LLM_BATCH.value,
         ]
 
         if jtype in high_priority_types:
@@ -413,6 +434,14 @@ class JobService:
                     any_failed = True
 
             if all_done:
+                # Atomic one-shot latch: multiple workers can finish the last
+                # group members concurrently and each observe all_done. HSET
+                # returns 1 only for the first caller that creates the field, so
+                # exactly one advances the parent. Without this the pipeline is
+                # advanced twice and downstream steps (e.g. CLUSTER_POOL then
+                # BUILD_POOL_BIN_SIM) run concurrently and race each other.
+                if self.r.hset(f"job:{parent_id}", "barrier_fired", "1") != 1:
+                    return
                 if any_failed:
                     self.add_log(
                         parent_id, "All tasks in group finished, but some failed."
@@ -580,6 +609,10 @@ class JobService:
 
         return True
 
+    def is_cancelled(self, job_id):
+        """True if the job was cancelled -- for long jobs to poll mid-run."""
+        return self.r.hget(f"job:{job_id}", "status") == JobStatus.CANCELLED.value
+
     def cancel_all_jobs(self):
         """Cancels all pending/running jobs and pipelines."""
         cancelled = 0
@@ -636,12 +669,29 @@ class JobService:
         processing_ids = self.r.lrange("jobs:processing", 0, -1)
         pending_count = self.r.llen("jobs:pending") + self.r.llen("jobs:pending:high")
 
+        # ponytail: the UI polls this every 3s; fetch each job hash once, pipelined.
+        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
+            "jobs:pending:high", 0, 100
+        )
+        wanted_ids = list(dict.fromkeys(list(processing_ids) + list(pending_ids)))
+        pipe = self.r.pipeline(transaction=False)
+        for jid in wanted_ids:
+            pipe.hgetall(f"job:{jid}")
+        job_hashes = {}
+        for jid, job in zip(wanted_ids, pipe.execute()):
+            job_hashes[jid] = {
+                (k.decode() if isinstance(k, bytes) else k): (
+                    v.decode() if isinstance(v, bytes) else v
+                )
+                for k, v in (job or {}).items()
+            }
+
         total_speed = 0.0
         active_jobs_count = 0
         remaining_items = 0
 
         for jid in processing_ids:
-            job = self.r.hgetall(f"job:{jid}")
+            job = job_hashes.get(jid)
             if not job:
                 continue
 
@@ -671,26 +721,12 @@ class JobService:
 
         # Collect active collections
         active_collections = set()
-        # Check processing jobs
-        all_processing_ids = self.r.lrange("jobs:processing", 0, -1)
-        # Also check pending jobs (last 100 for efficiency)
-        pending_ids = self.r.lrange("jobs:pending", 0, 100) + self.r.lrange(
-            "jobs:pending:high", 0, 100
-        )
 
         active_jobs = []
-        for jid in set(all_processing_ids + pending_ids):
-            job = self.r.hgetall(f"job:{jid}")
+        for jid in wanted_ids:
+            job = job_hashes.get(jid)
             if not job:
                 continue
-
-            # Decode key-value pairs of job if they are bytes
-            job_decoded = {}
-            for k, v in job.items():
-                k_str = k.decode() if isinstance(k, bytes) else k
-                v_str = v.decode() if isinstance(v, bytes) else v
-                job_decoded[k_str] = v_str
-            job = job_decoded
 
             status = job.get("status")
             if status in [

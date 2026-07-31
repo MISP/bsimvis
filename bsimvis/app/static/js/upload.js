@@ -55,9 +55,32 @@ function renderUploadView(params) {
                             </div>
                         </div>
 
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                            <div class="form-group">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Processor</label>
+                                <div style="position: relative;">
+                                    <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                    <input type="hidden" id="upload-processor" value="">
+                                    <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: #000; border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; box-shadow: 0 6px 18px rgba(0,0,0,0.6);"></div>
+                                </div>
+                                <div id="upload-processor-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                            </div>
+                            <div class="form-group">
+                                <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Compiler Spec</label>
+                                <select id="upload-cspec" disabled style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                    <option value="">Default</option>
+                                </select>
+                                <div id="upload-cspec-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
+                            </div>
+                        </div>
+
                         <div class="form-group" style="margin-bottom: 20px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
                             <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
+                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
 
                         <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
@@ -109,6 +132,133 @@ function renderUploadView(params) {
     setupUploadEvents();
     updateFileList();
     populateUploadCollectionDropdown(collection);
+    populateUploadLanguageDropdowns();
+}
+
+// ~170 languages, so the processor picker is a filterable combobox: the full
+// list is visible on click and narrows as you type. Compiler specs are valid
+// per-language, so the cspec <select> is rebuilt from the chosen processor.
+let uploadLanguages = [];
+
+async function populateUploadLanguageDropdowns() {
+    const search = document.getElementById('upload-processor-search');
+    const hidden = document.getElementById('upload-processor');
+    if (!search || !hidden) return;
+
+    try {
+        const res = await fetch('/api/index/languages');
+        if (res.ok) uploadLanguages = (await res.json()).languages || [];
+    } catch (e) {
+        console.warn('Failed to load Ghidra languages', e);
+    }
+
+    if (!uploadLanguages.length) {
+        search.disabled = true;
+        search.placeholder = 'Auto-detect';
+        search.title = 'Ghidra install not reachable from the API';
+        return;
+    }
+
+    search.placeholder = `Auto-detect \u2014 click to browse (${uploadLanguages.length})`;
+    search.onfocus = () => renderProcessorOptions();
+    search.oninput = () => {
+        // Typing invalidates the previous pick until a row is chosen again.
+        hidden.value = '';
+        refreshUploadCspecs();
+        renderProcessorOptions();
+    };
+    search.onkeydown = (e) => {
+        if (e.key === 'Escape') document.getElementById('upload-processor-list').style.display = 'none';
+    };
+
+    // Clicking outside closes the panel; mousedown on a row fires first.
+    document.addEventListener('click', (e) => {
+        const panel = document.getElementById('upload-processor-list');
+        if (!panel) return;
+        if (e.target !== search && !panel.contains(e.target)) panel.style.display = 'none';
+    });
+
+    renderProcessorOptions();
+}
+
+function escapeHtmlAttr(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function renderProcessorOptions() {
+    const search = document.getElementById('upload-processor-search');
+    const panel = document.getElementById('upload-processor-list');
+    if (!search || !panel) return;
+
+    const q = search.value.trim().toLowerCase();
+    // Match id and description, so "arm" and "Intel" both find their languages.
+    const matches = uploadLanguages.filter(
+        l => !q || l.id.toLowerCase().includes(q) || (l.description || '').toLowerCase().includes(q)
+    );
+
+    panel.style.display = 'block';
+    if (!matches.length) {
+        panel.innerHTML = '<div style="padding: 8px; font-size: 0.8rem; color: var(--subtle);">No matching language</div>';
+        return;
+    }
+
+    panel.innerHTML =
+        '<div data-lang-id="" style="padding: 7px 9px; font-size: 0.8rem; color: var(--subtle); cursor: pointer; border-bottom: 1px solid var(--border);">Auto-detect</div>' +
+        matches
+            .map(
+                l => `<div data-lang-id="${escapeHtmlAttr(l.id)}" style="padding: 7px 9px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.04);">
+                        <div style="color: #fff;">${escapeHtmlAttr(l.id)}</div>
+                        <div style="color: var(--subtle); font-size: 0.7rem;">${escapeHtmlAttr(l.description || '')}</div>
+                      </div>`
+            )
+            .join('');
+
+    for (const row of panel.querySelectorAll('[data-lang-id]')) {
+        row.onmouseenter = () => (row.style.background = 'rgba(255,255,255,0.06)');
+        row.onmouseleave = () => (row.style.background = 'transparent');
+        row.onmousedown = () => {
+            selectUploadProcessor(row.getAttribute('data-lang-id'));
+            panel.style.display = 'none';
+        };
+    }
+}
+
+function selectUploadProcessor(langId) {
+    const search = document.getElementById('upload-processor-search');
+    const hidden = document.getElementById('upload-processor');
+    hidden.value = langId || '';
+    search.value = langId || '';
+    refreshUploadCspecs();
+}
+
+function refreshUploadCspecs() {
+    const hidden = document.getElementById('upload-processor');
+    const cspecSelect = document.getElementById('upload-cspec');
+    const procHint = document.getElementById('upload-processor-hint');
+    const cspecHint = document.getElementById('upload-cspec-hint');
+    if (!hidden || !cspecSelect) return;
+
+    const lang = uploadLanguages.find(l => l.id === hidden.value);
+
+    procHint.innerText = lang ? lang.description || '' : '';
+
+    // Changing or clearing the processor invalidates the selected cspec.
+    cspecSelect.innerHTML = '<option value="">Default</option>';
+    cspecSelect.disabled = !lang;
+    if (!lang) {
+        cspecHint.innerText = '';
+        return;
+    }
+
+    for (const c of lang.compilers) {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.innerText = c.name && c.name !== c.id ? `${c.id} (${c.name})` : c.id;
+        cspecSelect.appendChild(opt);
+    }
+    cspecHint.innerText = lang.compilers.length
+        ? `${lang.compilers.length} spec(s) available`
+        : 'No compiler specs for this language';
 }
 
 function setupUploadEvents() {
@@ -225,15 +375,29 @@ async function startBatchUpload() {
     let collection = document.getElementById('upload-collection').value || '';
     if (collection === '__NEW__') {
         collection = document.getElementById('upload-new-collection').value.trim();
-        if (!collection) {
-            if (typeof showToast === 'function') showToast('Please enter a new collection name', 'warning');
-            return;
-        }
+    }
+    if (!collection) {
+        if (typeof showToast === 'function') showToast('Please select or enter a collection name', 'warning');
+        return;
     }
     const batchName = document.getElementById('upload-batch-name').value || 'Manual Upload';
     const profile = document.getElementById('upload-profile').value;
     const minFuncLen = document.getElementById('upload-min-func-len').value;
+    const processor = document.getElementById('upload-processor').value.trim();
+    const cspec = document.getElementById('upload-cspec').value.trim();
+
+    // The API validates the pair too; this just avoids a round-trip per file.
+    const lang = uploadLanguages.find(l => l.id === processor);
+    if (processor && !lang) {
+        if (typeof showToast === 'function') showToast(`Unknown processor '${processor}'`, 'warning');
+        return;
+    }
+    if (cspec && lang && !lang.compilers.some(c => c.id === cspec)) {
+        if (typeof showToast === 'function') showToast(`'${cspec}' is not a valid compiler spec for ${processor}`, 'warning');
+        return;
+    }
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
+    const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
     
     let currentBatchUuid = null;
 
@@ -278,7 +442,10 @@ async function startBatchUpload() {
             url.searchParams.set('batch_name', batchName);
             url.searchParams.set('profile', profile);
             url.searchParams.set('min_func_len', minFuncLen);
+            if (processor) url.searchParams.set('processor', processor);
+            if (processor && cspec) url.searchParams.set('cspec', cspec);
             tags.forEach(t => url.searchParams.append('tags', t));
+            relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
 
             const response = await fetch(url, {
                 method: 'POST',
@@ -413,7 +580,7 @@ async function populateUploadCollectionDropdown(currentCollection) {
         const newOpt = document.createElement('option');
         newOpt.value = '__NEW__';
         newOpt.textContent = '+ Create New Collection...';
-        select.appendChild(newOpt);
+        select.insertBefore(newOpt, select.firstChild);
     } catch (e) {
         console.error("Failed to populate upload collection dropdown", e);
     }

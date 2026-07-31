@@ -630,10 +630,12 @@ def similarity_search():
                     # We handle both the target name (e.g. func_tags) and common aliases
                     val = request.args.get(target_field)
 
+                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                        continue
+
                     # Alias handling
                     if not val:
                         aliases = {
-                            "file_md5": ["md5"],
                             "entrypoint_address": ["address"],
                             "function_name": ["name"],
                             "language_id": ["language"],
@@ -651,7 +653,19 @@ def similarity_search():
                             filter_configs.append((val, target_field, paths))
 
             # 2. Tag-specific logic (for unions)
-            tag_filter_configs = [
+            md5_val = request.args.get("md5") or request.args.get("file_md5")
+            md5_configs = []
+            if md5_val:
+                md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+                md5_configs = [([md5_val], "any_md5", md5_paths)]
+
+            file_name_val = request.args.get("file_name")
+            file_name_configs = []
+            if file_name_val:
+                file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+                file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+
+            tag_filter_configs = md5_configs + file_name_configs + [
                 (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
                 (static_tag_filters, "static_tag", _paths("tags")),
                 (user_tag_filters, "user_tag", _paths("user_tags")),
@@ -1113,12 +1127,8 @@ def similarity_search():
             if unique_cluster_ids:
                 c_pipe = r.pipeline(transaction=False)
                 c_list = list(unique_cluster_ids)
-                # Use the requested algo for clusters if it matches a known clustering algo
-                c_algo = (
-                    algo
-                    if algo in ["unweighted_cosine", "weighted_cosine"]
-                    else "unweighted_cosine"
-                )
+                # Clusters live in the namespace of the algo they were built from.
+                c_algo = algo
                 for c_coll, cid in c_list:
                     c_pipe.get(f"{c_coll}:cluster:{c_algo}:{cid}:meta")
                 c_results = c_pipe.execute()
@@ -1133,6 +1143,20 @@ def similarity_search():
                     # Apply cohesion threshold server-side
                     if (cm.get("cohesion_score") or 0) >= min_cohesion:
                         cluster_meta_map[cid] = cm
+
+            # Phase 4b: best-shared cluster per pair, read from the prebuilt index
+            # ({col}:sim:best_cluster:{algo}, written during cluster propagation). No
+            # runtime per-function resolution — one best-matched cluster per edge.
+            best_cluster_by_sid = {}
+            bc_algo = algo
+            page_sids = list(sim_data_map.keys())
+            if page_sids:
+                raw = r.hmget(f"{col}:sim:best_cluster:{bc_algo}", page_sids)
+                for sid, cid in zip(page_sids, raw):
+                    if cid is not None:
+                        best_cluster_by_sid[sid] = (
+                            cid.decode() if isinstance(cid, bytes) else str(cid)
+                        )
 
             # Phase 5: Reconstruct Enriched Pairs
             for sid, sort_sc in page_results:
@@ -1178,9 +1202,12 @@ def similarity_search():
                     else float(s_data["other_metric"] or 0)
                 )
 
-                # Cluster references — plain list of UUIDs (metadata is in top-level map)
-                clusters1 = [cid for cid in s1 if cid in cluster_meta_map]
-                clusters2 = [cid for cid in s2 if cid in cluster_meta_map]
+                # Single best-shared cluster for the pair (metadata in top-level map).
+                # None when the two functions share no cluster passing min_cohesion.
+                shared_cid = best_cluster_by_sid.get(sid)
+                if shared_cid is not None and shared_cid not in cluster_meta_map:
+                    shared_cid = None  # dropped by min_cohesion filter
+                shared_clusters = [shared_cid] if shared_cid else []
 
                 # Cleanup function meta before embedding
                 for field in [
@@ -1212,7 +1239,11 @@ def similarity_search():
                     "entry_date": parse_timestamp(s_data["sim_doc"].get("entry_date")),
                     "meta1": {
                         "file_md5": m1.get("file_md5"),
+                        "parent_md5": m1.get("parent_md5"),
+                        "related_md5": m1.get("related_md5"),
                         "file_name": m1.get("file_name"),
+                        "parent_file_name": m1.get("parent_file_name"),
+                        "related_file_name": m1.get("related_file_name"),
                         "entrypoint_address": m1.get("entrypoint_address"),
                         "tags": m1.get("tags"),
                         "user_tags": m1.get("user_tags"),
@@ -1222,7 +1253,7 @@ def similarity_search():
                         "namespace": m1.get("namespace", ""),
                         "parameters": m1.get("parameters", []),
                         "bsim_features_count": m1.get("bsim_features_count"),
-                        "clusters": clusters1,
+                        "clusters": [],
                         "file_tags": m1.get("file_tags"),
                         "file_user_tags": m1.get("file_user_tags"),
                         "entry_date": parse_timestamp(
@@ -1231,7 +1262,11 @@ def similarity_search():
                     },
                     "meta2": {
                         "file_md5": m2.get("file_md5"),
+                        "parent_md5": m2.get("parent_md5"),
+                        "related_md5": m2.get("related_md5"),
                         "file_name": m2.get("file_name"),
+                        "parent_file_name": m2.get("parent_file_name"),
+                        "related_file_name": m2.get("related_file_name"),
                         "entrypoint_address": m2.get("entrypoint_address"),
                         "tags": m2.get("tags"),
                         "user_tags": m2.get("user_tags"),
@@ -1241,13 +1276,14 @@ def similarity_search():
                         "namespace": m2.get("namespace", ""),
                         "parameters": m2.get("parameters", []),
                         "bsim_features_count": m2.get("bsim_features_count"),
-                        "clusters": clusters2,
+                        "clusters": [],
                         "file_tags": m2.get("file_tags"),
                         "file_user_tags": m2.get("file_user_tags"),
                         "entry_date": parse_timestamp(
                             m2.get("entry_date") or m2.get("file_date")
                         ),
                     },
+                    "shared_clusters": shared_clusters,
                     "tags": s_data["sim_doc"].get("tags", []),
                     "user_tags": s_data["sim_doc"].get("user_tags", []),
                     "algo": algo,

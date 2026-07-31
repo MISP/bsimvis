@@ -67,7 +67,7 @@ def _reset_job_recursive(job_id):
     if not job:
         return
 
-    # Reset this job
+    # Reset this job.
     job_service.r.hset(
         f"job:{job_id}",
         mapping={
@@ -76,6 +76,9 @@ def _reset_job_recursive(job_id):
             "progress": 0,
         },
     )
+    # Delete (not zero) the enqueue + barrier latches: both use field-existence
+    # semantics (hset return value), so they must be absent to re-arm on retry.
+    job_service.r.hdel(f"job:{job_id}", "queued", "barrier_fired")
 
     # Check for children
     task_ids_raw = job.get(b"task_ids") or job.get("task_ids")

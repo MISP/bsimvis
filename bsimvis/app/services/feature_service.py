@@ -1,13 +1,58 @@
 import math
+from collections import defaultdict
 import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.milvus_service import milvus_service
 
 
+class _WriteBuffer:
+    """Merges one window of index_functions writes, keyed by feature hash."""
+
+    def __init__(self):
+        self.norms = {}  # norm key -> value
+        self.zadds = defaultdict(dict)  # f_hash -> {func_id: tf}
+        self.incrs = defaultdict(float)  # f_hash -> summed tf
+        self.metas = defaultdict(dict)  # f_hash -> {func_id: json}
+        self.indexed = []  # func_ids
+
+    def flush(self, pipe, collection):
+        if self.norms:
+            pipe.mset(self.norms)
+        for f_hash, members in self.zadds.items():
+            pipe.zadd(f"{collection}:feature:{f_hash}:functions", members)
+        for f_hash, amount in self.incrs.items():
+            pipe.zincrby(f"{collection}:features:by_tf", amount, f_hash)
+        for f_hash, fields in self.metas.items():
+            pipe.hset(f"{collection}:feature:{f_hash}:meta", mapping=fields)
+        if self.indexed:
+            pipe.sadd(f"{collection}:indexed:functions", *self.indexed)
+        self.__init__()
+
+
 class FeatureService:
     def __init__(self, r=None):
         self.r = r or get_redis()
+
+    READ_BATCH = 100
+
+    def _fetch_vec_batch(self, func_ids):
+        """GET :vec:meta + ZRANGE :vec:tf for a batch of functions in one round-trip."""
+        pipe = self.r.pipeline(transaction=False)
+        for fid in func_ids:
+            pipe.get(f"{fid}:vec:meta")
+            pipe.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        res = pipe.execute()
+
+        out = {}
+        for idx, fid in enumerate(func_ids):
+            raw_meta = res[idx * 2]
+            if raw_meta:
+                raw_meta = json.loads(raw_meta)
+                if isinstance(raw_meta, list) and len(raw_meta) == 1:
+                    raw_meta = raw_meta[0]
+            out[fid] = (raw_meta, res[idx * 2 + 1])
+        return out
 
     def index_functions(self, collection, function_ids, job_service=None, job_id=None):
         """
@@ -22,27 +67,34 @@ class FeatureService:
         indexed_features = set()
 
         pipe = self.r.pipeline(transaction=False)
+        batch = {}  # func_id -> (raw_meta, tf_data), refilled every READ_BATCH funcs
+        last_pct = -1
+        # The write fan-out (one ZADD/ZINCRBY/HSET per function *per feature*) is
+        # what actually dominates this job. Features repeat heavily across the
+        # functions of one file, so merge a window's writes per feature hash:
+        # ~40 commands per function collapse to ~1 per distinct feature.
+        acc = _WriteBuffer()
 
         for i, func_id in enumerate(function_ids):
-            # Update job progress if applicable
-            if job_service and job_id and (i % 10 == 0 or i == total - 1):
+            # Update job progress if applicable. update_progress is expensive (it
+            # re-aggregates the parent pipeline with one HGET per sibling task), so
+            # only fire it when the whole percent actually moves.
+            if job_service and job_id:
                 pct = int((i + 1) / total * 100)
-                job_service.update_progress(
-                    job_id, pct, f"Indexing features: {i+1}/{total}"
+                if pct != last_pct or i == total - 1:
+                    last_pct = pct
+                    job_service.update_progress(
+                        job_id, pct, f"Indexing features: {i+1}/{total}"
+                    )
+
+            # 1. Fetch metadata and vector data, one round-trip per READ_BATCH
+            # functions instead of two per function.
+            if func_id not in batch:
+                batch = self._fetch_vec_batch(
+                    function_ids[i : i + self.READ_BATCH]
                 )
 
-            meta_key = f"{func_id}:vec:meta"
-            tf_key = f"{func_id}:vec:tf"
-
-            # 1. Fetch metadata and vector data
-            # NOTE: Getting data can't be pipelined easily since it is needed inside loop
-            raw_meta = self.r.get(meta_key)
-            if raw_meta:
-                raw_meta = json.loads(raw_meta)
-                if isinstance(raw_meta, list) and len(raw_meta) == 1:
-                    raw_meta = raw_meta[0]
-
-            new_tf_data = self.r.zrange(tf_key, 0, -1, withscores=True)
+            raw_meta, new_tf_data = batch.pop(func_id)
             if not raw_meta or not new_tf_data:
                 logging.warning(
                     f"  [!] Skipping {func_id}: Missing metadata or vector data."
@@ -51,7 +103,7 @@ class FeatureService:
 
             # A. Recalculate L2 Norm
             sum_sq = sum(float(tf) ** 2 for _, tf in new_tf_data)
-            pipe.set(f"{func_id}:vec:norm", math.sqrt(sum_sq))
+            acc.norms[f"{func_id}:vec:norm"] = math.sqrt(sum_sq)
 
             # B. Build Reverse Index (ZSETs)
             tf_dict = {
@@ -62,9 +114,9 @@ class FeatureService:
             for f_hash, new_tf in tf_dict.items():
                 indexed_features.add(f_hash)
                 # Update function mapping for this feature
-                pipe.zadd(f"{collection}:feature:{f_hash}:functions", {func_id: new_tf})
+                acc.zadds[f_hash][func_id] = new_tf
                 # Update global TF counter for this feature
-                pipe.zincrby(f"{collection}:features:by_tf", float(new_tf), f_hash)
+                acc.incrs[f_hash] += float(new_tf)
 
             # Store feature metadata as a JSON string in a HASH keyed by function_id
             for feat_item in raw_meta:
@@ -74,17 +126,14 @@ class FeatureService:
                 meta_entry = dict(feat_item)
                 meta_entry["function_id"] = func_id
                 # Convention: {coll}:feature:{hash}:meta -> HASH (field=func_id, value=JSON)
-                pipe.hset(
-                    f"{collection}:feature:{f_hash}:meta",
-                    func_id,
-                    json.dumps(meta_entry),
-                )
+                acc.metas[f_hash][func_id] = json.dumps(meta_entry)
 
             # Mark as indexed (Base ID)
-            pipe.sadd(f"{collection}:indexed:functions", func_id)
+            acc.indexed.append(func_id)
 
             # Execute pipeline in chunks to reduce memory footprint and network overhead
             if (i + 1) % 100 == 0:
+                acc.flush(pipe, collection)
                 pipe.execute()
                 pipe = self.r.pipeline(transaction=False)
 
@@ -98,6 +147,7 @@ class FeatureService:
                         )
                     milvus_data = []
 
+        acc.flush(pipe, collection)
         pipe.execute()
 
         # Final Milvus Flush
@@ -395,6 +445,18 @@ class FeatureService:
             results = []
             pending_funcs = {}  # func_id → {func_id, line_idxs list}
 
+            # Features with < 100 occurrences need a full HGETALL (HRANDFIELD may
+            # dedup). That is the common case, so batch them into one round-trip.
+            small_pipe = self.r.pipeline(transaction=False)
+            small_hashes = [
+                fh
+                for idx, fh in enumerate(chunk)
+                if 0 < res1[idx * 3 + 1] <= 100
+            ]
+            for fh in small_hashes:
+                small_pipe.hgetall(f"{collection}:feature:{fh}:meta")
+            small_full = dict(zip(small_hashes, small_pipe.execute()))
+
             for idx, fh in enumerate(chunk):
                 hr = res1[idx * 3]
                 # HRANDFIELD withvalues returns flat list [key1, val1, key2, val2, ...]
@@ -402,9 +464,8 @@ class FeatureService:
                 total_freq = res1[idx * 3 + 1]
                 tf_score_val = res1[idx * 3 + 2]
 
-                # If full hash < 100 entries, re-fetch all (HRANDFIELD may dedup)
-                if total_freq <= 100 and total_freq > 0:
-                    data_batch = self.r.hgetall(f"{collection}:feature:{fh}:meta")
+                if fh in small_full:
+                    data_batch = small_full[fh]
 
                 # parse each occ, include function_id from the hash field
                 parsed = {}

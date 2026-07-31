@@ -19,6 +19,23 @@ DEFAULT_POOL_LIMIT = 1000000
 MAX_POOL_LIMIT = 1000000
 
 
+def _id_sorted_page(r, key, offset, limit):
+    """Id-sorted page of an unordered set, matching the Lua tiebreak.
+
+    Same shape as the unfiltered paths in search_file/search_feature: load the
+    set, sort in Python, slice. SSCAN can't replace this — it gives no stable
+    ordering, so paging off it makes pages overlap and skip.
+
+    ponytail: O(N) full-set load only on the unfiltered path, as in the sibling
+    routes. all_functions is the biggest of the three sets, so if any of them
+    needs a maintained id index, this one goes first.
+    """
+    doc_ids = sorted(
+        d.decode() if isinstance(d, bytes) else str(d) for d in r.smembers(key)
+    )
+    return doc_ids[offset : offset + limit]
+
+
 def search_functions():
     try:
         t_req_start = time.perf_counter()
@@ -216,10 +233,12 @@ def search_functions():
                     # We handle both the target name (e.g. file_tags) and common aliases (md5 -> file_md5)
                     val = request.args.get(target_field)
 
+                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                        continue
+
                     # Alias handling (for backward compat or convenience)
                     if not val:
                         aliases = {
-                            "file_md5": ["md5"],
                             "entrypoint_address": ["address"],
                             "function_name": ["name"],
                             "language_id": ["language"],
@@ -240,7 +259,19 @@ def search_functions():
         # 2. Tag-specific logic (already handled above if they are in INDEX_CONFIG, but sometimes we want union)
         # The existing code had some manual additions for unions, keeping them for now if not redundant.
         # Actually, the logic below handles tag lists which are distinct from single request.args.get()
-        tag_filter_configs = [
+        md5_val = request.args.get("md5") or request.args.get("file_md5")
+        md5_configs = []
+        if md5_val:
+            md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+            md5_configs = [([md5_val], "any_md5", md5_paths)]
+            
+        file_name_val = request.args.get("file_name")
+        file_name_configs = []
+        if file_name_val:
+            file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
+            file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+
+        tag_filter_configs = md5_configs + file_name_configs + [
             (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
             (static_tag_filters, "static_tag", _paths("tags")),
             (user_tag_filters, "user_tag", _paths("user_tags")),
@@ -414,31 +445,51 @@ def search_functions():
                 }
             )
 
-        # Lua Exec
-        search_script = lua_manager.get_script("search_function")
-        if not search_script:
-            # Fallback to manual reload if script not found (first time)
-            lua_manager.register_all()
+        if not groups_raw:
+            all_key = f"{col}:all_functions"
+            total = r.scard(all_key)
+            pool_truncated = False
+
+            if sort_by != "id":
+                sort_key = f"{col}:idx:func:{sort_by}"
+                sorted_total = r.zcard(sort_key)
+                if sorted_total:
+                    total = sorted_total
+                    doc_ids = (
+                        r.zrevrange(sort_key, offset, offset + limit - 1)
+                        if sort_order == "desc"
+                        else r.zrange(sort_key, offset, offset + limit - 1)
+                    )
+                else:
+                    doc_ids = _id_sorted_page(r, all_key, offset, limit)
+            else:
+                doc_ids = _id_sorted_page(r, all_key, offset, limit)
+        else:
+            # Lua Exec
             search_script = lua_manager.get_script("search_function")
+            if not search_script:
+                # Fallback to manual reload if script not found (first time)
+                lua_manager.register_all()
+                search_script = lua_manager.get_script("search_function")
 
-        lua_config = {
-            "collection": col,
-            "pool_limit": pool_limit,
-            "groups": sorted(groups_raw, key=lambda x: x["weight"]),
-            "offset": offset,
-            "limit": limit,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-        }
+            lua_config = {
+                "collection": col,
+                "pool_limit": pool_limit,
+                "groups": sorted(groups_raw, key=lambda x: x["weight"]),
+                "offset": offset,
+                "limit": limit,
+                "sort_by": sort_by,
+                "sort_order": sort_order,
+            }
 
-        try:
-            res = search_script(keys=[], args=[json.dumps(lua_config)])
-            total = res[0]
-            pool_truncated = bool(res[1])
-            doc_ids = res[2]
-        except Exception as e:
-            logging.error(f"FUNC LUA SEARCH CRASH: {e}")
-            return {"error": str(e)}, 500
+            try:
+                res = search_script(keys=[], args=[json.dumps(lua_config)])
+                total = res[0]
+                pool_truncated = bool(res[1])
+                doc_ids = res[2]
+            except Exception as e:
+                logging.error(f"FUNC LUA SEARCH CRASH: {e}")
+                return {"error": str(e)}, 500
 
         # --- ENRICHMENT (Optimized & Deduplicated) ---
         t_enrich_start = time.perf_counter()
@@ -478,17 +529,19 @@ def search_functions():
 
             f_meta_list.append({"doc_id": doc_id, "meta": meta, "scores": scores})
             if meta.get("file_md5"):
-                unique_md5s.add(meta["file_md5"])
+                # File docs live in the origin collection; a pool owns none, so
+                # key the map by (collection, md5) taken from the function id.
+                unique_md5s.add((doc_id.split(":")[0], meta["file_md5"]))
 
         # Phase 2: Fetch File Metadata (DEDUPLICATED)
         file_meta_map = {}
         if unique_md5s:
             file_pipe = r.pipeline(transaction=False)
             md5_list = list(unique_md5s)
-            for md5 in md5_list:
-                file_pipe.get(f"{col}:file:{md5}:meta")
+            for f_coll, md5 in md5_list:
+                file_pipe.get(f"{f_coll}:file:{md5}:meta")
             file_results = file_pipe.execute()
-            for md5, res in zip(md5_list, file_results):
+            for (f_coll, md5), res in zip(md5_list, file_results):
                 fm = (
                     json.loads(res)
                     if res and not isinstance(res, dict)
@@ -496,7 +549,7 @@ def search_functions():
                 )
                 if isinstance(fm, str):
                     fm = json.loads(fm)
-                file_meta_map[md5] = fm
+                file_meta_map[f"{f_coll}:{md5}"] = fm
 
         # Phase 3: Fetch Cluster Metadata (DEDUPLICATED), filtered by min_cohesion
         cluster_meta_map = {}
@@ -531,7 +584,7 @@ def search_functions():
 
             # File tags enrichment
             md5 = meta.get("file_md5")
-            file_meta = file_meta_map.get(md5, {})
+            file_meta = file_meta_map.get(f"{doc_id.split(':')[0]}:{md5}", {})
             if pool_id:
                 enrich_pool_data(file_meta, pool_id)
             meta["file_tags"] = file_meta.get("tags", [])

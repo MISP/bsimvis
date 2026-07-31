@@ -441,31 +441,27 @@ def run_single_file_for_pool(
     size_mb, lines = get_file_stats(path)
 
     try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
-        params = {
-            "collection": collection,
-            "file_name": os.path.basename(path),
-            "batch_name": "Benchmark Pool",
-            "profile": "fast",
-            "min_func_len": 10,
-            "skip_sim": "true",  # pool handles it
-        }
+        # Files are already-analyzed Ghidra JSON, so ingest via upload_file_data
+        # (pre-analyzed path). Posting raw bytes to /file/upload triggers a Ghidra
+        # analyze job that fails with "No load spec found".
+        with open(path, "r") as fh:
+            data = json.load(fh)
+
+        data["collection"] = collection
+        data["skip_sim"] = True  # pool handles similarity
         if top_k is not None:
-            params["top_k"] = top_k
+            data["top_k"] = top_k
         if min_score is not None:
-            params["min_score"] = min_score
+            data["min_score"] = min_score
         if min_features is not None:
-            params["min_features"] = min_features
+            data["min_features"] = min_features
 
         print(f"\n[*] Processing {filename} -> Collection: {collection}")
         print(f"    - Size: {size_mb:.2f} MB | Lines: {lines:,}")
 
         resp = requests.post(
-            f"{API_BASE}/file/upload",
-            params=params,
-            data=raw,
-            headers={"Content-Type": "application/octet-stream"},
+            f"{API_BASE}/file/upload_file_data",
+            json=data,
             timeout=60,
         )
         resp.raise_for_status()

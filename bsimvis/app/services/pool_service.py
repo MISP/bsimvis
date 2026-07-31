@@ -134,7 +134,9 @@ class PoolService:
             meta["total_func_clusters"] = int(meta["total_func_clusters"])
 
         # File similarities
-        file_algo = meta.get("file_sim_params", {}).get("algo", "unweighted_cosine")
+        # File bin_sim lives in the namespace of the function algo its clusters came
+        # from; there is no separate file algo.
+        file_algo = meta.get("algo", "unweighted_cosine")
         if "total_file_similarities" not in meta:
             total_file_sim = r.zcard(f"global:pool:{pool_id}:bin_sim:score:{file_algo}")
             meta["total_file_similarities"] = total_file_sim
@@ -358,8 +360,12 @@ class PoolService:
             FUNC_TAG_FIELDS,
             FILE_NUM_FIELDS,
             FUNC_NUM_FIELDS,
+            to_pool_indexed_id,
         )
-        from bsimvis.app.services.index_config import get_fields_targeting_level
+        from bsimvis.app.services.index_config import (
+            get_fields_targeting_level,
+            POOL_LOCAL_FIELDS,
+        )
 
         SIM_TAG_FIELDS = get_fields_targeting_level("sim", is_num=False)
         SIM_NUM_FIELDS = get_fields_targeting_level("sim", is_num=True)
@@ -373,13 +379,8 @@ class PoolService:
             ("sim", SIM_TAG_FIELDS),
         ]:
             for field in fields:
-                # Skip pool-specific user annotations and their propagations
-                if field in [
-                    "user_tags",
-                    "file_user_tags",
-                    "func_user_tags",
-                    "note_owners",
-                ]:
+                # Cluster artifacts belong to the namespace that computed them.
+                if field in POOL_LOCAL_FIELDS:
                     continue
 
                 # Get all buckets from member collections
@@ -403,7 +404,8 @@ class PoolService:
                     for val in bucket_values:
                         pool_bucket_key = f"{pool_coll}:idx:{level}:{field}:{val}"
                         if level == "sim":
-                            # Fetch and translate SIDs
+                            # A pool owns its own sim docs, so member sids must be
+                            # rewritten into the pool namespace before indexing.
                             all_sids = set()
                             for coll in collections:
                                 sb = f"{coll}:idx:{level}:{field}:{val}"
@@ -413,17 +415,11 @@ class PoolService:
                                         if isinstance(sid, bytes)
                                         else str(sid)
                                     )
-                                    # Translate to pool SID format
-                                    parts = sid_str.split(":")
-                                    if len(parts) >= 4:
-                                        coll_name = parts[0]
-                                        rest = ":".join(parts[3:])
-                                        pivot = rest.find("::")
-                                        if pivot != -1:
-                                            clean_id1 = rest[:pivot]
-                                            clean_id2 = rest[pivot + 2 :]
-                                            pool_sid = f"global:pool:{pool_id}:sim:{coll_name}:func:{clean_id1}::{coll_name}:func:{clean_id2}"
-                                            all_sids.add(pool_sid)
+                                    pool_sid = to_pool_indexed_id(
+                                        sid_str, "sim", pool_id
+                                    )
+                                    if pool_sid:
+                                        all_sids.add(pool_sid)
                             if all_sids:
                                 pipe.delete(pool_bucket_key)
                                 pipe.sadd(pool_bucket_key, *all_sids)
@@ -449,6 +445,8 @@ class PoolService:
             ("sim", SIM_NUM_FIELDS),
         ]:
             for field in fields:
+                if field in POOL_LOCAL_FIELDS:
+                    continue
                 source_zsets = [f"{coll}:idx:{level}:{field}" for coll in collections]
                 existing_zsets = [sz for sz in source_zsets if r.exists(sz)]
                 if existing_zsets:
@@ -534,6 +532,7 @@ class PoolService:
             FILE_NUM_FIELDS,
             FUNC_NUM_FIELDS,
         )
+        from bsimvis.app.services.index_config import POOL_LOCAL_FIELDS
 
         pool_coll = f"global:pool:{pool_id}"
 
@@ -543,13 +542,8 @@ class PoolService:
             ("func", FUNC_TAG_FIELDS),
         ]:
             for field in fields:
-                # Skip pool-specific user annotations and their propagations
-                if field in [
-                    "user_tags",
-                    "file_user_tags",
-                    "func_user_tags",
-                    "note_owners",
-                ]:
+                # Cluster artifacts belong to the namespace that computed them.
+                if field in POOL_LOCAL_FIELDS:
                     continue
 
                 bucket_values = set()
@@ -603,6 +597,8 @@ class PoolService:
             ("func", FUNC_NUM_FIELDS),
         ]:
             for field in fields:
+                if field in POOL_LOCAL_FIELDS:
+                    continue
                 source_zsets = [f"{coll}:idx:{level}:{field}" for coll in collections]
                 # Check existences in a single pipeline
                 exists_pipe = r.pipeline(transaction=False)
@@ -715,6 +711,7 @@ class PoolService:
             return True
 
         from bsimvis.app.services.index_config import get_fields_targeting_level
+        from bsimvis.app.services.index_service import to_pool_indexed_id
 
         SIM_TAG_FIELDS = get_fields_targeting_level("sim", is_num=False)
         SIM_NUM_FIELDS = get_fields_targeting_level("sim", is_num=True)
@@ -783,16 +780,9 @@ class PoolService:
                             sid_str = (
                                 sid.decode() if isinstance(sid, bytes) else str(sid)
                             )
-                            parts = sid_str.split(":")
-                            if len(parts) >= 4:
-                                coll_name = parts[0]
-                                rest = ":".join(parts[3:])
-                                pivot = rest.find("::")
-                                if pivot != -1:
-                                    clean_id1 = rest[:pivot]
-                                    clean_id2 = rest[pivot + 2 :]
-                                    pool_sid = f"global:pool:{pool_id}:sim:{coll_name}:func:{clean_id1}::{coll_name}:func:{clean_id2}"
-                                    val_to_sids[val].add(pool_sid)
+                            pool_sid = to_pool_indexed_id(sid_str, "sim", pool_id)
+                            if pool_sid:
+                                val_to_sids[val].add(pool_sid)
 
                     # Phase 2: Pipeline write results back
                     if val_to_sids:

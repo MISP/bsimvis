@@ -341,6 +341,15 @@ class IndexStatus(Resource):
         return get_index_status()
 
 
+@ns_index.route("/languages")
+class IndexLanguages(Resource):
+    def get(self):
+        """Lists Ghidra language IDs and the compiler specs valid for each."""
+        from bsimvis.app.routes.index import get_languages
+
+        return get_languages()
+
+
 @ns_index.route("/config")
 class IndexConfig(Resource):
     def get(self):
@@ -1489,6 +1498,81 @@ class TagSetPriority(Resource):
         return set_priority()
 
 
+@ns_tags.route("/list")
+class TagVocabularyList(Resource):
+    @ns_tags.doc(
+        params={
+            "collection": {"description": "Collection name", "required": True},
+            "q": {"description": "Substring filter on the tag name"},
+            "sort_by": {"description": "tag | priority | total_count | function_count"},
+            "sort_order": {"description": "asc | desc"},
+        }
+    )
+    def get(self):
+        """Lists the tag vocabulary with usage counts and the LLM flag."""
+        from bsimvis.app.routes.tags import list_tags
+
+        return list_tags()
+
+
+@ns_tags.route("/create")
+class TagCreate(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagCreate",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True, example="crypto"),
+                "color": fields.String(example="#ff0000"),
+                "priority": fields.Integer(example=0),
+                "llm": fields.Boolean(example=True),
+            },
+        )
+    )
+    def post(self):
+        """Creates a tag in the vocabulary without tagging any entity."""
+        from bsimvis.app.routes.tags import create_tag
+
+        return create_tag()
+
+
+@ns_tags.route("/delete")
+class TagDelete(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagDelete",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Deletes a tag AND strips it from every entity carrying it."""
+        from bsimvis.app.routes.tags import delete_tag
+
+        return delete_tag()
+
+
+@ns_tags.route("/llm")
+class TagSetLLM(Resource):
+    @ns_tags.expect(
+        api.model(
+            "TagSetLLM",
+            {
+                "collection": fields.String(required=True),
+                "tag": fields.String(required=True),
+                "llm": fields.Boolean(required=True),
+            },
+        )
+    )
+    def post(self):
+        """Includes or excludes a tag from the LLM tagging vocabulary."""
+        from bsimvis.app.routes.tags import set_llm_flag
+
+        return set_llm_flag()
+
+
 # --- Cluster Namespace ---
 @ns_cluster.route("/build")
 class ClusterBuild(Resource):
@@ -2153,6 +2237,55 @@ class LLMSummarizeFile(Resource):
         from bsimvis.app.routes.llm import summarize_file
 
         return summarize_file()
+
+
+@ns_llm.route("/batch")
+class LLMBatch(Resource):
+    @ns_llm.expect(
+        api.model(
+            "LLMBatchRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "func_ids": fields.List(
+                    fields.String, description="Explicit function ids"
+                ),
+                "filters": fields.String(
+                    description="Function-search query string, resolved server-side "
+                    "(alternative to func_ids)",
+                    example="file_md5=16c2addf...&min_features=10",
+                ),
+                "actions": fields.List(
+                    fields.String, enum=["notes", "tags"], example=["notes", "tags"]
+                ),
+                "overwrite": fields.Boolean(default=False),
+                "custom_prompt": fields.String,
+                "tag_vocabulary": fields.List(fields.String),
+            },
+        )
+    )
+    def post(self):
+        """Starts a background LLM enrichment job (notes and/or tags) over functions."""
+        from bsimvis.app.routes.llm import batch
+
+        return batch()
+
+
+@ns_llm.route("/batch/<string:job_id>")
+class LLMBatchStatus(Resource):
+    def get(self, job_id):
+        """Returns progress, per-function state and errors for an LLM batch job."""
+        from bsimvis.app.routes.llm import batch_status
+
+        return batch_status(job_id)
+
+
+@ns_llm.route("/batch/<string:job_id>/cancel")
+class LLMBatchCancel(Resource):
+    def post(self, job_id):
+        """Cancels an LLM batch job."""
+        from bsimvis.app.routes.llm import batch_cancel
+
+        return batch_cancel(job_id)
 
 
 # --- Pool Namespace ---

@@ -12,8 +12,6 @@ DEFAULT_LIMIT = 50
 # Mirrors the numeric indexes written by _index_bin_sim_pair.
 SORT_ZSET_MAP = {
     "score": "score",
-    "score_sim_weighted": "score_sim_weighted",
-    "score_collection_weighted": "score_collection_weighted",
     "coverage": "coverage_a",
     "shared_clusters": "shared_clusters",
     "functions_count": "functions_count_a",
@@ -52,6 +50,63 @@ def _bucket_union(r, collection, fields, val):
     return out
 
 
+def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=False):
+    """SIDs whose A or B binary carries a file tag matching `val` (substring).
+
+    The bin_sim file_tags_* buckets are a build-time snapshot of the file doc, so
+    they go stale the moment a tag is added or removed. Tag filters therefore
+    resolve through the file-level tag index — which the tag service keeps current
+    in collections and mirrors into every pool — and map file -> pairs through
+    bin_sim:involves. The denormalized fields stay, but for display only.
+    """
+    val_l = val.lower()
+    buckets = []
+    for field in fields:
+        reg = f"{collection}:reg:file:{field}"
+        try:
+            for b in r.sscan_iter(reg, match=f"*{val_l}*", count=1000):
+                bs = _dec(b)
+                # bucket key is {ns}:idx:file:{field}:{tag} — match the tag only,
+                # so a value colliding with the prefix can't drag in every bucket.
+                if val_l in bs.rsplit(":", 1)[-1].lower():
+                    buckets.append(bs)
+        except Exception as e:
+            logging.warning(f"file tag registry SSCAN failed for {reg}: {e}")
+    if not buckets:
+        return set()
+
+    file_ids = set()
+    pipe = r.pipeline(transaction=False)
+    for b in buckets:
+        pipe.smembers(b)
+    for res in pipe.execute():
+        if res:
+            file_ids.update(_dec(x) for x in res)
+
+    pipe = r.pipeline(transaction=False)
+    queried = False
+    for fid in file_ids:
+        parts = fid.split(":")
+        if len(parts) < 3 or parts[1] != "file":
+            continue
+        f_coll, md5 = parts[0], parts[2]
+        # Pool involves keys are qualified by origin collection; the same md5 can
+        # appear in two member collections.
+        pipe.smembers(
+            f"{collection}:bin_sim:involves:{f_coll}:{md5}"
+            if is_pool
+            else f"{collection}:bin_sim:involves:{md5}"
+        )
+        queried = True
+    if not queried:
+        return set()
+    out = set()
+    for res in pipe.execute():
+        if res:
+            out.update(_dec(x) for x in res)
+    return out
+
+
 def _znum(r, collection, field, lo, hi):
     """SIDs in the numeric ZSET index for `field` within [lo, hi] (None = open)."""
     key = f"{collection}:idx:bin_sim:{field}"
@@ -72,14 +127,6 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     sort_zset_field = SORT_ZSET_MAP.get(f["sort_by"], "score")
     reverse = f["sort_order"] != "asc"
 
-    # score filter uses the score variant matching the chosen sort, else col-weighted
-    score_field = (
-        f["sort_by"]
-        if f["sort_by"]
-        in ("score", "score_sim_weighted", "score_collection_weighted")
-        else "score_collection_weighted"
-    )
-
     candidates = None  # None == unconstrained (all sims for this algo)
 
     def restrict(s):
@@ -88,55 +135,30 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Set-bucket (substring) filters, a/b unioned ---
     if f["file_name"]:
-        restrict(_bucket_union(r, collection, ["file_name_a", "file_name_b"], f["file_name"]))
+        restrict(_bucket_union(r, collection, ["file_name_a", "file_name_b", "file_parent_file_name_a", "file_parent_file_name_b", "file_related_file_name_a", "file_related_file_name_b"], f["file_name"]))
     if f["arch"]:
         restrict(_bucket_union(r, collection, ["architecture_a", "architecture_b"], f["arch"]))
     if f["md5"]:
-        # md5 lives in the involves:* keyspace (partial match via SCAN).
-        # Pool involves keys embed the source collection: involves:{coll}:{md5}.
-        md5_match = (
-            f"{collection}:bin_sim:involves:*:{f['md5']}*"
-            if is_pool
-            else f"{collection}:bin_sim:involves:*{f['md5']}*"
-        )
-        sids = set()
-        cursor = 0
-        matching = []
-        while True:
-            cursor, keys = r.scan(
-                cursor=cursor,
-                match=md5_match,
-                count=1000,
-            )
-            matching.extend(keys)
-            if cursor == 0:
-                break
-        if matching:
-            pipe = r.pipeline(transaction=False)
-            for k in matching:
-                pipe.smembers(k)
-            for res in pipe.execute():
-                sids.update(_dec(x) for x in res)
-        restrict(sids)
-    tag_fields = ["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"]
+        restrict(_bucket_union(r, collection, ["md5_a", "md5_b", "file_parent_md5_a", "file_parent_md5_b", "file_related_md5_a", "file_related_md5_b"], f["md5"]))
     for tf in f["file_tag"]:
-        restrict(_bucket_union(r, collection, tag_fields, tf))
+        restrict(_file_tag_union(r, collection, tf, is_pool=is_pool))
     for word in f["q"].split():
         if word:
             restrict(
                 _bucket_union(
                     r,
                     collection,
-                    ["file_name_a", "file_name_b", "md5_a", "md5_b"] + tag_fields,
+                    ["file_name_a", "file_name_b", "md5_a", "md5_b"],
                     word,
                 )
+                | _file_tag_union(r, collection, word, is_pool=is_pool)
             )
 
     # --- Numeric range filters via ZSET indexes (a/b union semantics) ---
     if f["min_score"] is not None:
-        restrict(_znum(r, collection, score_field, f["min_score"], None))
+        restrict(_znum(r, collection, "score", f["min_score"], None))
     if f["max_score"] is not None:
-        restrict(_znum(r, collection, score_field, None, f["max_score"]))
+        restrict(_znum(r, collection, "score", None, f["max_score"]))
     # coverage: min keeps if max(a,b)>=min (union); max keeps if min(a,b)<=max (union)
     if f["min_cov"] is not None:
         restrict(
@@ -166,11 +188,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     # --- Exclusions (subtract) ---
     excl = []
     if f["exclude_file_tag"]:
-        excl.append((["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"], f["exclude_file_tag"]))
+        excl.append((("tags", "user_tags"), f["exclude_file_tag"]))
     if f["exclude_file_static_tag"]:
-        excl.append((["file_tags_a", "file_tags_b"], f["exclude_file_static_tag"]))
+        excl.append((("tags",), f["exclude_file_static_tag"]))
     if f["exclude_file_user_tag"]:
-        excl.append((["file_user_tags_a", "file_user_tags_b"], f["exclude_file_user_tag"]))
+        excl.append((("user_tags",), f["exclude_file_user_tag"]))
     if excl:
         if candidates is None:
             # exclusion-only query: base is the full built set (SIDs, not docs)
@@ -180,7 +202,9 @@ def _collection_page(r, collection, algo, f, is_pool=False):
             )
         for fields, vals in excl:
             for v in vals:
-                candidates -= _bucket_union(r, collection, fields, v)
+                candidates -= _file_tag_union(
+                    r, collection, v, fields=fields, is_pool=is_pool
+                )
 
     # --- Sort + paginate. The sort ZSET already holds SIDs in sorted order, so we
     # never fetch per-candidate scores or sort in Python. ---
@@ -354,8 +378,6 @@ def _pool_page(r, pool_id, algo, f):
                 "coll_a": coll_a,
                 "coll_b": coll_b,
                 "score": 0.0,
-                "score_sim_weighted": 0.0,
-                "score_collection_weighted": 0.0,
                 "coverage_a": 0.0,
                 "coverage_b": 0.0,
                 "shared_clusters": 0,
@@ -375,20 +397,12 @@ def _pool_page(r, pool_id, algo, f):
         doc = json.loads(raw) if not isinstance(raw, dict) else raw
         if isinstance(doc, str):
             doc = json.loads(doc)
-        matched_cnt = doc.get("matched_clusters_count", 0)
         ld["score"] = float(doc.get("score", 0.0))
-        ld["score_sim_weighted"] = float(doc.get("sim_weighted_score") or doc.get("score", 0.0))
-        ld["score_collection_weighted"] = float(doc.get("collection_weighted_score") or doc.get("score", 0.0))
-        ld["coverage_a"] = float(doc.get("coverage_a") or (1.0 if matched_cnt > 0 else 0.0))
-        ld["coverage_b"] = float(doc.get("coverage_b") or (1.0 if matched_cnt > 0 else 0.0))
-        ld["shared_clusters"] = int(doc.get("shared_clusters") or matched_cnt)
+        ld["coverage_a"] = float(doc.get("coverage_a", 0.0))
+        ld["coverage_b"] = float(doc.get("coverage_b", 0.0))
+        ld["shared_clusters"] = int(doc.get("shared_clusters", 0))
         ld["doc"] = doc
 
-    score_field = (
-        f["sort_by"]
-        if f["sort_by"] in ("score", "score_sim_weighted", "score_collection_weighted")
-        else "score_collection_weighted"
-    )
     filtered = []
     for ld in light_docs:
         coll_a, m_a = ld["coll_a"], ld["m_a"]
@@ -419,9 +433,9 @@ def _pool_page(r, pool_id, algo, f):
             hay = " ".join([name_a, name_b, m_a, m_b] + tags_a + tags_b).lower()
             if not all(w in hay for w in f["q"].split()):
                 continue
-        if f["min_score"] is not None and ld.get(score_field, 0) < f["min_score"]:
+        if f["min_score"] is not None and ld.get("score", 0) < f["min_score"]:
             continue
-        if f["max_score"] is not None and ld.get(score_field, 0) > f["max_score"]:
+        if f["max_score"] is not None and ld.get("score", 0) > f["max_score"]:
             continue
         if f["min_cov"] is not None and max(ld["coverage_a"], ld["coverage_b"]) < f["min_cov"]:
             continue
@@ -569,19 +583,14 @@ def search_bin_sims():
             doc["_id"] = sid
             doc.pop("diff", None)
 
-            m_a = doc.get("md5_a") or doc.get("md5_1") or ld["m_a"]
-            m_b = doc.get("md5_b") or doc.get("md5_2") or ld["m_b"]
+            m_a = doc.get("md5_a") or ld["m_a"]
+            m_b = doc.get("md5_b") or ld["m_b"]
             coll_a = ld["coll_a"]
             coll_b = ld["coll_b"]
             doc["md5_a"] = m_a
             doc["md5_b"] = m_b
             doc["coll_a"] = coll_a
             doc["coll_b"] = coll_b
-            # Pool docs carry matched_clusters_count instead of coverage/shared_clusters.
-            matched = doc.get("matched_clusters_count", 0)
-            doc["coverage_a"] = doc.get("coverage_a") or ld.get("coverage_a") or (1.0 if matched > 0 else 0.0)
-            doc["coverage_b"] = doc.get("coverage_b") or ld.get("coverage_b") or (1.0 if matched > 0 else 0.0)
-            doc["shared_clusters"] = doc.get("shared_clusters") or ld.get("shared_clusters") or matched
 
             meta_a = file_meta_cache.get((coll_a, m_a), {})
             meta_b = file_meta_cache.get((coll_b, m_b), {})
@@ -592,6 +601,14 @@ def search_bin_sims():
 
             doc["file_name_a"] = meta_a.get("file_name", m_a)
             doc["file_name_b"] = meta_b.get("file_name", m_b)
+            doc["file_parent_file_name_a"] = meta_a.get("parent_file_name")
+            doc["file_parent_file_name_b"] = meta_b.get("parent_file_name")
+            doc["file_related_file_name_a"] = meta_a.get("related_file_name")
+            doc["file_related_file_name_b"] = meta_b.get("related_file_name")
+            doc["file_parent_md5_a"] = meta_a.get("parent_md5")
+            doc["file_parent_md5_b"] = meta_b.get("parent_md5")
+            doc["file_related_md5_a"] = meta_a.get("related_md5")
+            doc["file_related_md5_b"] = meta_b.get("related_md5")
             doc["file_tags_a"] = meta_a.get("tags", [])
             doc["file_tags_b"] = meta_b.get("tags", [])
             doc["file_user_tags_a"] = meta_a.get("user_tags", [])

@@ -13,6 +13,8 @@ To change which fields are indexed and at which levels, edit index_config.py.
 import json
 import datetime
 
+from bsimvis.app.services.redis_client import get_redis
+
 
 def normalize_tags(data, tag_fields=None):
     """
@@ -47,37 +49,85 @@ def get_pool_id(collection):
     return None
 
 
+def resolve_origin_collection(collection, entity_id=None, r=None):
+    """
+    Maps a pool namespace back to the origin collection that owns the entity.
+
+    Tags and notes live on the origin collection, never on the pool, so every
+    write path must resolve `global:pool:{id}` down to a real collection name.
+    Prefers the pool's declared member collections over parsing the entity id.
+    """
+    if not collection:
+        return collection
+    if ":col:" in collection:
+        return collection.split(":col:")[-1]
+
+    pool_id = get_pool_id(collection)
+    if not pool_id or not entity_id:
+        return collection
+
+    if ":col:" in entity_id:
+        return entity_id.split(":col:")[-1].split(":")[0]
+
+    # An entity id is "{collection}:{file|func|sim}:..." — match its leading
+    # segment against the collections this pool actually contains.
+    if r is None:
+        r = get_redis()
+    members = {
+        c.decode() if isinstance(c, bytes) else c
+        for c in r.smembers(f"global:pool:{pool_id}:collections_list")
+    }
+    for part in entity_id.split(":"):
+        if part in members:
+            return part
+
+    return collection
+
+
+def to_pool_indexed_id(indexed_id, lvl, pool_id):
+    """
+    Rewrites a collection-scoped doc id into its pool-scoped equivalent.
+
+    File and function docs are shared, so a pool index stores the same id the
+    collection does. Similarity docs are not: a pool builds its own sim docs
+    under `global:pool:{id}:sim:{a}::{b}`, keyed by full function ids, while a
+    collection stores `{coll}:sim:{algo}:{a}::{b}` with the collection prefix
+    stripped from both sides. Mirroring a collection sid into a pool index
+    without this rewrite indexes an id the pool has no document for.
+
+    Returns None when the id is not a sid this mapping applies to, so callers
+    skip it rather than index a bad key.
+    """
+    if lvl != "sim":
+        return indexed_id
+    parts = indexed_id.split(":")
+    if len(parts) < 4 or parts[1] != "sim":
+        return None
+    coll_name = parts[0]
+    rest = ":".join(parts[3:])
+    pivot = rest.find("::")
+    if pivot == -1:
+        return None
+    id1, id2 = rest[:pivot], rest[pivot + 2 :]
+    return f"global:pool:{pool_id}:sim:{coll_name}:func:{id1}::{coll_name}:func:{id2}"
+
+
 def enrich_pool_data(data, pool_id):
     """
-    Enriches a dictionary of metadata (representing a file, function, or similarity)
-    with pool-specific tags and notes if pool_id is active.
+    Ensures tag/note keys are present on a metadata dict (file, function, or
+    similarity) so callers can rely on them.
     """
     if not pool_id or not isinstance(data, dict):
         return data
 
-    # Keep standard keys if populated, otherwise fallback to pool-specific ones
-    if not data.get("user_tags"):
-        pool_tags_field = f"pool_tags_{pool_id}"
-        if pool_tags_field in data:
-            data["user_tags"] = data[pool_tags_field]
-        elif "user_tags" not in data:
-            data["user_tags"] = []
-
-    if not data.get("notes"):
-        pool_notes_field = f"pool_notes_{pool_id}"
-        if pool_notes_field in data:
-            data["notes"] = data[pool_notes_field]
-            data["note_owners"] = data.get(f"pool_note_owners_{pool_id}", [])
-            data["note_count"] = data.get(
-                f"pool_note_count_{pool_id}", len(data["notes"])
-            )
-        else:
-            if "notes" not in data:
-                data["notes"] = []
-            if "note_owners" not in data:
-                data["note_owners"] = []
-            if "note_count" not in data:
-                data["note_count"] = len(data["notes"])
+    if "user_tags" not in data:
+        data["user_tags"] = []
+    if "notes" not in data:
+        data["notes"] = []
+    if "note_owners" not in data:
+        data["note_owners"] = []
+    if "note_count" not in data:
+        data["note_count"] = len(data["notes"])
 
     return data
 

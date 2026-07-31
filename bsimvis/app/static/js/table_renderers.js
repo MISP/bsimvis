@@ -264,16 +264,7 @@ window.TableRenderers = {
                 </td>
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
-                        <a ${createNav('functions', targetCol, { file_md5: f['file_md5'] })} class="clickable-count" style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</a>
-                        <button class="btn-file-diff-action ${fileDiffSelection.some(item => item.id === fileId) ? 'active' : ''}"
-                                data-file-id="${fileId}"
-                                onclick="addToFileDiff('${fileId}', '${f['file_name'].replace(/'/g, "'")}', event)"
-                                title="Add to File Diff">
-                            <span>±</span>
-                        </button>
-                        <a class="btn-action" onclick="Nav.openPath('${Nav.buildUIUrl(targetCol, ['call_graph', f['file_md5']])}', event, { title: 'Call Graph: ${f['file_md5']}', type: 'call_graph' })" title="Call Graph" style="color: var(--accent); cursor: pointer;">
-                            <i class="fa-solid fa-network-wired"></i>
-                        </a>
+                        <span style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</span>
                     </div>
                 </td>
                 <td class="sim-cell file-note-cell" style="text-align:center;">

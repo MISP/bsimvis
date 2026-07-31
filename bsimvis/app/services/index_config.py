@@ -18,7 +18,11 @@ File metadata is denormalized directly into the bin_sim index at build time.
 INDEX_CONFIG = {
     "file": {
         "file_name": ["file", "func", "sim"],  # propagated to sim for fast lookup
+        "parent_file_name": ["file", "func", "sim"],
+        "related_file_name": ["file", "func", "sim"],
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
+        "parent_md5": ["file", "func", "sim"],
+        "related_md5": ["file", "func", "sim"],
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
         "user_tags": ["file", "func", "sim"],  # not propagated
         "language_id": ["file", "func", "sim"],
@@ -83,16 +87,22 @@ INDEX_CONFIG = {
     "bin_sim": {
         "md5_a": ["bin_sim"],
         "md5_b": ["bin_sim"],
+        "file_parent_md5_a": ["bin_sim"],
+        "file_parent_md5_b": ["bin_sim"],
+        "file_related_md5_a": ["bin_sim"],
+        "file_related_md5_b": ["bin_sim"],
         "algo": ["bin_sim"],
         "file_name_a": ["bin_sim"],  # denormalized from file meta at build time
         "file_name_b": ["bin_sim"],
+        "file_parent_file_name_a": ["bin_sim"],
+        "file_parent_file_name_b": ["bin_sim"],
+        "file_related_file_name_a": ["bin_sim"],
+        "file_related_file_name_b": ["bin_sim"],
         "file_tags_a": ["bin_sim"],  # denormalized tags for binary A
         "file_tags_b": ["bin_sim"],
         "file_user_tags_a": ["bin_sim"],
         "file_user_tags_b": ["bin_sim"],
         "score": ["bin_sim"],  # numeric
-        "score_sim_weighted": ["bin_sim"],  # numeric
-        "score_collection_weighted": ["bin_sim"],  # numeric
         "coverage_a": ["bin_sim"],  # numeric
         "coverage_b": ["bin_sim"],  # numeric
         "shared_clusters": ["bin_sim"],  # numeric
@@ -151,8 +161,6 @@ NUM_FIELDS = {
     "tf_score",
     # bin_sim numeric fields
     "score",
-    "score_sim_weighted",
-    "score_collection_weighted",
     "coverage_a",
     "coverage_b",
     "shared_clusters",
@@ -166,6 +174,29 @@ EXACT_FIELDS = {
     # "cluster_uuid",
     # "file_md5",
     # "batch_uuid",
+}
+
+# Fields that are auto-analysis artifacts of clustering. Clustering runs per
+# namespace (a collection OR a pool), so these indexes belong to whichever
+# namespace produced them and must never be merged from member collections into
+# a pool — the labels would describe a different member set than the pool's own
+# similarity graph. Tags and notes are the opposite: they live on the origin
+# collection and ARE mirrored into every pool containing that collection.
+POOL_LOCAL_FIELDS = {
+    "bin_cluster_id",
+    "bin_cluster_uuid",
+    "bin_cluster_name",
+    "bin_cluster_stability",
+    "cluster_id",
+    "cluster_uuid",
+    "cluster_name",
+    "cluster_stability",
+    "inferred_yara",
+    "inferred_avtype",
+    "inferred_filetype",
+    "inferred_ccip",
+    "inferred_filename",
+    "inferred_md5",
 }
 
 

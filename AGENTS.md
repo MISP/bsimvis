@@ -104,12 +104,21 @@ Since its only for jobs, the jobs are in :
 Never read `data/kvrocks/` or `hs_err_pid*.log` — confidential (real binary md5s /
 function data). Tests use only the git-tracked `data/test/` fixtures.
 
-In a linked worktree, run `./scripts/wt-test.sh` before committing. It symlinks
-`bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an
-isolated `.env` (own `PROJECT_NAME` + offset ports + fresh local data dir, so it can
-run alongside the main stack without touching its confidential DB), launches the full
-stack via `launch_tmux.sh`, runs `test_api_endpoints.py`, and tears
-down. Do NOT commit if it prints `RESULT: FAIL` or the run was skipped. Show the output.
+In a linked worktree, run `./scripts/wt-test.sh` before committing. Do NOT commit if
+it prints `RESULT: FAIL` or the run was skipped. Show the output.
+
+Three scripts, all refusing to run outside a linked worktree so they can never touch
+the main stack's `.env`, ports or confidential DB:
+
+| Script | Does |
+|:--- |:--- |
+| `scripts/wt-setup.sh` | Brings the isolated stack up and leaves it running. Symlinks `bin/` from the main repo (never recompiled — 1.4G of downloaded tools), writes an isolated `.env` if missing (own `PROJECT_NAME` + offset ports + fresh local data dir), aborts if any of its ports is already held, launches via `launch_tmux.sh --clear`, waits for the app port. Idempotent — tears down an existing session of its own first. |
+| `scripts/wt-teardown.sh` | Shuts redis + kvrocks down and kills the worktree's tmux session. Reads the worktree's own `.env` for ports; no-ops if there is none. |
+| `scripts/wt-test.sh` | `wt-setup.sh` → `test_api_endpoints.py` (with `API_URL` pointed at the worktree's app port) → `wt-teardown.sh`, then `RESULT: PASS`/`FAIL`. |
+
+Use `wt-setup.sh` directly when you want a live stack to poke at by hand, and
+`wt-teardown.sh` when done — the dashboard URL is printed as a clickable link at the
+end of launch. Ports come from the worktree name, so two worktrees can run at once.
 
 Test files live at the repo root: `test_api_endpoints.py` (the broad suite — endpoints,
 pools, filtering and sorting sweeps; the old `test_pools.py` was absorbed into it),

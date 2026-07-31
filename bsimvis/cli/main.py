@@ -331,6 +331,22 @@ def main():
     bs_diff.add_argument("--md5-b", required=True, help="Second binary MD5")
 
     # sim list
+    # Pair scoring is separate from the build actions on purpose: it can run
+    # algorithms the build path cannot compute (weighted_cosine), so it must not
+    # share their --algo choices.
+    sim_score = sim_actions.add_parser(
+        "score", help="Score one function pair on demand (supports weighted_cosine)"
+    )
+    sim_score.add_argument("-c", "--collection", help="Collection name")
+    sim_score.add_argument("--id1", required=True, help="First function ID")
+    sim_score.add_argument("--id2", required=True, help="Second function ID")
+    sim_score.add_argument(
+        "--algo",
+        default="jaccard,unweighted_cosine,weighted_cosine",
+        help="Comma-separated algorithms. weighted_cosine may be profile-qualified "
+        "(weighted_cosine:nosize) and also reports significance.",
+    )
+
     sim_list = sim_actions.add_parser("list", help="List similarity builds")
     sim_list.add_argument("-c", "--collection", required=True, help="Collection name")
     sim_list.add_argument("--batch", help="Target specific batch UUID")

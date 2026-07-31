@@ -1405,15 +1405,15 @@ class SimilarityService:
         bare score. Only `weighted_cosine` defines a significance; the other algos
         return `None` for it.
         """
+        def _out(sim, sig=None):
+            return (sim, sig) if with_significance else sim
+
         try:
             vec1_raw = self.r.zrange(f"{id1}:vec:tf", 0, -1, withscores=True)
             vec2_raw = self.r.zrange(f"{id2}:vec:tf", 0, -1, withscores=True)
 
-            def _out(sim, sig=None):
-                return (sim, sig) if with_significance else sim
-
             if not vec1_raw or not vec2_raw:
-                return _out(None) if with_significance else None
+                return _out(None)
 
             d1 = {h: float(s) for h, s in vec1_raw}
             d2 = {h: float(s) for h, s in vec2_raw}
@@ -1465,12 +1465,18 @@ class SimilarityService:
                     else 0.0
                 )
 
-            return None
+            return _out(None)
+        except ValueError:
+            # Misconfiguration, not a missing score: an unknown profile, a weights
+            # table that disagrees with the mask, or a collection extracted under
+            # different signature settings. Callers must be able to tell the user
+            # what is wrong rather than see a silent None.
+            raise
         except Exception as e:
             logging.error(
                 f"SimilarityService: Error calculating exact score for {id1}, {id2}: {e}"
             )
-            return None
+            return _out(None)
 
     def check_cache(self, id1, id2, collection, algo):
         """Checks if a similarity pair is already built."""

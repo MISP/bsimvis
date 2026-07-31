@@ -1,5 +1,6 @@
 import json
 from flask import request
+from bsimvis.app.services import bsim_profiles
 from bsimvis.app.services.similarity_service import SimilarityService
 
 
@@ -42,11 +43,21 @@ def similarity_api():
         from bsimvis.app.services.milvus_service import milvus_service
 
         service = SimilarityService()
-        algorithms = ["jaccard", "unweighted_cosine"]
-        if milvus_service.enabled:
-            algorithms.append("milvus_sparse")
+        # `algo` opts in to extra algorithms (comma-separated). weighted_cosine is
+        # not returned by default: it is unbuilt, so every request would score it
+        # on demand, and it raises on a collection whose features were extracted
+        # under different signature settings.
+        requested = request.args.get("algo") or request.args.get("algos")
+        if requested:
+            algorithms = [a.strip() for a in requested.split(",") if a.strip()]
+        else:
+            algorithms = ["jaccard", "unweighted_cosine"]
+            if milvus_service.enabled:
+                algorithms.append("milvus_sparse")
 
         scores = {}
+        significance = {}
+        errors = {}
 
         if pool_id:
             pass  # keep collection as f"global:pool:{pool_id}:col:{collection}"
@@ -70,6 +81,22 @@ def similarity_api():
         user_tags = []
 
         for algo in algorithms:
+            base_algo, _ = bsim_profiles.parse_algo(algo)
+            if base_algo == "weighted_cosine":
+                # Never cached (weighted builds do not exist yet), so compute the
+                # pair directly and report significance alongside the score.
+                try:
+                    sim, sig = service.calculate_exact_score(
+                        id1, id2, algo=algo, with_significance=True
+                    )
+                    scores[algo] = sim
+                    significance[algo] = sig
+                except (ValueError, OSError) as e:
+                    # Mask mismatch, unknown profile, or a missing weights table.
+                    errors[algo] = str(e)
+                    scores[algo] = None
+                continue
+
             # Use service to get score, passing the resolved collection namespace
             score = service.get_pair_score(id1, id2, algo=algo, collection=collection)
             scores[algo] = score
@@ -99,7 +126,7 @@ def similarity_api():
                 source = "on-demand"
                 break
 
-        return {
+        result = {
             "id1": id1,
             "id2": id2,
             "scores": scores,
@@ -107,6 +134,13 @@ def similarity_api():
             "user_tags": user_tags,
             "source": source,
         }
+        # Only weighted_cosine defines a significance; omit the keys entirely
+        # rather than padding every response with nulls.
+        if significance:
+            result["significance"] = significance
+        if errors:
+            result["errors"] = errors
+        return result
 
     except Exception as e:
         return {"detail": f"Error retrieving similarity: {str(e)}"}, 500

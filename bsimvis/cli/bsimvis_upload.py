@@ -1,4 +1,4 @@
-import tomllib, json, uuid, csv, hashlib
+import tomllib, json, uuid, csv, hashlib, ast
 
 import time, logging, argparse, os, tempfile, zipfile
 from pathlib import Path
@@ -320,6 +320,99 @@ def _perform_raw_upload(raw_bytes, file_name, args):
     return (1 if success else 0), pipeline_details
 
 
+def save_local_dump(file_meta, all_chunks, args, collection):
+    """Write a `--save-json` dump from the locally analyzed chunks.
+
+    The chunked local-analysis path streams straight to the API, so without this
+    `--save-json` silently did nothing there. Benchmarks need the dump on disk:
+    it is what lets an ingest be replayed byte-identically for a second scoring
+    algorithm without paying for Ghidra again (scripts/bench/corpus/extract.py).
+    """
+    save_path = getattr(args, "save_json", None)
+    if not save_path:
+        return None
+
+    file_md5 = file_meta.get("file_md5", "unknown_md5")
+    functions = [fn for chunk in all_chunks for fn in chunk]
+    target_file = save_path
+    if os.path.isdir(save_path) or save_path.endswith(os.sep) or not save_path.endswith(".json"):
+        os.makedirs(save_path, exist_ok=True)
+        target_file = os.path.join(save_path, f"{file_md5}.json")
+
+    try:
+        with open(target_file, "w") as f:
+            json.dump({
+                "collection": collection,
+                "file_md5": file_md5,
+                "file_metadata": file_meta,
+                "functions": functions,
+            }, f)
+        logging.info(f"[+] Data saved to {target_file}")
+        return target_file
+    except Exception as e:
+        logging.error(f"[!] Failed to save JSON to {target_file}: {e}")
+        return None
+
+
+def save_local_vectors(file_meta, all_chunks, args):
+    """Write `{function_name: {feature_hash: tf}}` for the analyzed program.
+
+    The full `--save-json` dump of a statically linked binary runs to several GB
+    because every feature carries its pcode block. Anything that only needs the
+    feature vectors -- retrieval benchmarks, offline scoring -- would then have to
+    load that back to throw ~99.9% of it away, which does not fit in memory.
+    Emitting the vectors here keeps it to about a megabyte.
+    """
+    save_path = getattr(args, "save_vectors", None)
+    if not save_path:
+        return None
+
+    file_md5 = file_meta.get("file_md5", "unknown_md5")
+    vectors = {}
+    duplicates = 0
+    for chunk in all_chunks:
+        for fn in chunk:
+            meta = fn.get("function_metadata") or {}
+            feats = fn.get("function_features") or {}
+            if isinstance(meta, str):
+                meta = ast.literal_eval(meta)
+            if isinstance(feats, str):
+                feats = ast.literal_eval(feats)
+            name = meta.get("function_name")
+            if not name:
+                continue
+            tf = Counter(
+                f.get("hash") for f in feats.get("bsim_features_meta", []) if f.get("hash")
+            )
+            if not tf:
+                continue
+            if name in vectors:
+                # A name can repeat (static functions from different objects);
+                # ground truth cannot tell them apart, so keep the first.
+                duplicates += 1
+                continue
+            vectors[name] = dict(tf)
+
+    os.makedirs(save_path, exist_ok=True)
+    target_file = os.path.join(save_path, f"{file_md5}.json")
+    try:
+        with open(target_file, "w") as f:
+            json.dump({
+                "meta": {
+                    "file_md5": file_md5,
+                    "file_name": file_meta.get("file_name"),
+                    "n_functions": len(vectors),
+                    "duplicate_names": duplicates,
+                },
+                "vectors": vectors,
+            }, f)
+        logging.info(f"[+] Vectors saved to {target_file} ({len(vectors)} functions)")
+        return target_file
+    except Exception as e:
+        logging.error(f"[!] Failed to save vectors to {target_file}: {e}")
+        return None
+
+
 def process_target(target, args, config, batch_order) -> tuple[int, list]:
     target_path = Path(target).resolve()
 
@@ -369,6 +462,11 @@ def process_target(target, args, config, batch_order) -> tuple[int, list]:
                             all_chunks = list(stream_generator)
                             if not all_chunks:
                                 all_chunks = [[]]
+
+                            save_local_dump(file_meta, all_chunks, args, collections[0])
+                            save_local_vectors(file_meta, all_chunks, args)
+                            if getattr(args, "no_upload", False):
+                                continue
 
                             for collection in collections:
                                 for idx, chunk in enumerate(all_chunks):
@@ -444,6 +542,16 @@ def process_target(target, args, config, batch_order) -> tuple[int, list]:
                         all_chunks = list(stream_generator)
                         if not all_chunks:
                             all_chunks = [[]]
+
+                        saved = save_local_dump(file_meta, all_chunks, args, collections[0])
+                        saved = save_local_vectors(file_meta, all_chunks, args) or saved
+                        if getattr(args, "no_upload", False):
+                            t_total = time.time() - t0
+                            logging.info(
+                                f"[+] Local analysis finished for {target_path.name} "
+                                f"in {t_total:.3f}s (dump: {saved})"
+                            )
+                            return 1, []
 
                         for collection in collections:
                             for idx, chunk in enumerate(all_chunks):

@@ -1,0 +1,9 @@
+# Pinned corpus sources. Everything here is open source and fetched by
+# build_corpus.sh; nothing is vendored into this repo.
+#
+# name  version  sha256  url
+sqlite  3.45.3  ea170e73e447703e8359308ca2e4366a3ae0c4304a8665896f068c736781c651  https://www.sqlite.org/2024/sqlite-amalgamation-3450300.zip
+zlib    1.3.1   9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23  https://zlib.net/fossils/zlib-1.3.1.tar.gz
+lua     5.4.6   7d5ea1b9cb6aa0b59ca3dde1c6adcb57ef83a1ba8e5432c0ecd06bf439b3ad88  https://www.lua.org/ftp/lua-5.4.6.tar.gz
+zstd    1.5.6   8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1  https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
+mbedtls 3.6.0   b527b4e859c1dd38c0f3ecc4fd784ce53326f19996f9328af75ce46f88136627  https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/mbedtls-3.6.0.tar.gz

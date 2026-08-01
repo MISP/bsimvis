@@ -132,6 +132,22 @@ JSON fixtures in `data/bench/` (`--dir` to override) into the `test_bench` colle
 `--save data/bench_results/<name>.json` and regress against one with `--compare`;
 `data/bench_results/` is gitignored, `data/bench/` is not.
 
+`scripts/bench/` is the BSim scoring benchmark suite, built on a reproducible
+open-source corpus (180 cross-compiled binaries, 313k functions) that is *not* in
+git — see `doc/bench_corpus.md` for how to rebuild it under `$CORPUS_ROOT`.
+
+| Script | Answers |
+|:--- |:--- |
+| `corpus/build_corpus.sh`, `corpus/manifest.py`, `corpus/extract.py` | build the corpus, describe it, Ghidra-extract it once |
+| `quality.py` | retrieval accuracy per algorithm, offline over extracted vectors |
+| `pipeline_bench.py` | ingest + build-sim throughput per algorithm (needs the stack) |
+| `scoring_cost.py`, `recall.py`, `oracle_compare.py`, `idf_coverage.py` | per-pair cost, small-scale recall, Ghidra oracle, weighting go/no-go |
+| `bsim_baseline.py` + `bsim/BSimQueryAll.java` | Ghidra's own BSim database as a retrieval baseline |
+
+The BSim baseline is benchmark-only: it drives `support/bsim` and
+`support/analyzeHeadless` from the vendored `bin/` Ghidra. Do not add a BSim
+database dependency to the application.
+
 ## Contributions
 
 Always minimal code change unless user asks drastic change.

@@ -438,6 +438,20 @@ def main():
         help="Save analyzed JSON data to a file instead of (or in addition to) uploading",
     )
     upload_parser.add_argument(
+        "--save-vectors",
+        metavar="DIR",
+        help="With --local-analysis: write compact {function: {feature_hash: tf}} "
+        "vectors per binary. Kilobytes instead of the multi-GB --save-json dump; "
+        "used by the BSim benchmark corpus.",
+    )
+    upload_parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        default=False,
+        help="With --save-json and --local-analysis: write the dump and skip the API "
+        "entirely (offline extraction, e.g. for the benchmark corpus)",
+    )
+    upload_parser.add_argument(
         "targets",
         nargs="+",
         help="Path to Ghidra project (.gpr), a specific binary, or a directory/*",

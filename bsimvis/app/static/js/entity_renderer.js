@@ -23,8 +23,6 @@ window.EntityRenderer = {
         
         const funcId = f['function_id'] || `${collection}:func:${file_md5}:${entry}`;
         
-        const safeName = (name || '').replace(/'/g, "\\'");
-        
         // Use global formatSigComponent from utils.js
         const fInfo = (typeof formatSigComponent === 'function') 
             ? formatSigComponent(namespace, returnType, name, parameters)
@@ -45,15 +43,15 @@ window.EntityRenderer = {
 
         return `
             <div class="entity-function" style="display:flex; align-items:center; gap:8px; overflow:hidden; width: 100%;" 
-                 title="${fInfo.fullSig}"
-                 data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
+                 title="${escapeAttr(fInfo.fullSig)}"
+                 data-entity-data='${escapeAttr(JSON.stringify(f))}'
                  oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
                 <b class="entity-name" style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview('${funcId}', '${safeName}', '${entry}', '${file_md5}', ${featCount}, event)" 
+                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)" 
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById('${funcId}', '${safeName}', '', event)">
-                    ${fInfo.ret ? `<span style="color:var(--token-address)">${fInfo.ret}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${fInfo.ns}::</span>` : ''}${name}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${t}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
+                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)">
+                    ${fInfo.ret ? `<span style="color:var(--token-address)">${escapeHtml(fInfo.ret)}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${escapeHtml(fInfo.ns)}::</span>` : ''}${escapeHtml(name)}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
                 </b>
                 ${actionsHtml}
             </div>
@@ -65,7 +63,7 @@ window.EntityRenderer = {
      */
     notePreviewAttrs: function(id, isFile) {
         return {
-            onmouseenter: `typeof showNoteTooltip === 'function' && showNoteTooltip('${id}', ${isFile}, event)`,
+            onmouseenter: `typeof showNoteTooltip === 'function' && showNoteTooltip(${jsString(id)}, ${!!isFile}, event)`,
             onmousemove: `typeof moveCodePreview === 'function' && moveCodePreview(event)`,
             onmouseleave: `typeof hideNoteTooltip === 'function' && hideNoteTooltip()`
         };
@@ -100,7 +98,7 @@ window.EntityRenderer = {
             className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
             icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
             tooltip: hasNotes ? `Notes by: ${noteOwners.join(', ')}` : 'Add Note',
-            onClick: `event.stopPropagation(); showNotePanel('${id}', event)`,
+            onClick: `event.stopPropagation(); showNotePanel(${jsString(id)}, event)`,
             badge: noteCount > 1 ? `+${noteCount}` : null,
             attr: hasNotes ? this.notePreviewAttrs(id, false) : {}
         });
@@ -122,7 +120,7 @@ window.EntityRenderer = {
             className: `btn-note-action ${hasNotes ? 'has-notes ' + this.noteOwnerClass(noteOwners) : ''}`,
             icon: hasNotes ? 'fa-solid fa-note-sticky' : 'fa-regular fa-note-sticky',
             tooltip: hasNotes ? `File Notes by: ${noteOwners.join(', ')}` : 'Add File Note',
-            onClick: `event.stopPropagation(); showFileNotePanel('${id}', event)`,
+            onClick: `event.stopPropagation(); showFileNotePanel(${jsString(id)}, event)`,
             badge: noteCount > 1 ? `+${noteCount}` : null,
             attr: hasNotes ? this.notePreviewAttrs(id, true) : {}
         });
@@ -208,9 +206,9 @@ window.EntityRenderer = {
         const fileData = { md5: actualMd5, fileId: fileId, name: actualMd5 };
         // ponytail: enable direct file context menu from any rendered md5
         return `
-            <span class="entity-md5 mono" style="color:var(--accent); cursor:pointer;" title="${actualMd5}"
-                  data-entity-data='${JSON.stringify(fileData).replace(/'/g, "&apos;")}'
-                  oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'># ${displayMd5}</span>
+            <span class="entity-md5 mono" style="color:var(--accent); cursor:pointer;" title="${escapeAttr(actualMd5)}"
+                  data-entity-data='${escapeAttr(JSON.stringify(fileData))}'
+                  oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'># ${escapeHtml(displayMd5)}</span>
         `;
     },
 
@@ -244,13 +242,12 @@ window.EntityRenderer = {
         const col = collection || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
         const fileId = `${col}:file:${actualMd5}`;
         const fileData = { md5: actualMd5, fileId: fileId, name: display, file_name: display };
-        const safeName = display.replace(/'/g, "\\'").replace(/"/g, "&quot;");
         // ponytail: generic component for filename with both click and contextmenu support
         return `
             <b class="entity-filename" style="color:var(--accent); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;"
-               data-entity-data='${JSON.stringify(fileData).replace(/'/g, "&apos;")}'
-               onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) showPanel('${col}', '${actualMd5}', '${safeName}', event)"
-               oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'>${display}</b>
+               data-entity-data='${escapeAttr(JSON.stringify(fileData))}'
+               onclick="openFileDetails(${escapeAttr(jsString(col))}, ${escapeAttr(jsString(actualMd5))}, ${escapeAttr(jsString(display))}, event)"
+               oncontextmenu='event.stopPropagation(); typeof EntityRenderer !== "undefined" && EntityRenderer.handleContextMenu(event, "file", this)'>${escapeHtml(display)}</b>
         `;
     }
 };

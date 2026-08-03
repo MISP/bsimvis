@@ -36,19 +36,21 @@ window.UI = {
     Button: {
         render: function(options = {}) {
             const classes = ['ui-button', options.className || ''].join(' ').trim();
-            const titleAttr = options.tooltip ? `title="${options.tooltip}"` : '';
-            const styleAttr = options.style ? `style="${options.style}"` : '';
+            const titleAttr = options.tooltip ? `title="${escapeAttr(options.tooltip)}"` : '';
+            const styleAttr = options.style ? `style="${escapeAttr(options.style)}"` : '';
             let extraAttrs = '';
             if (options.attr) {
-                for (const [key, val] of Object.entries(options.attr)) extraAttrs += ` ${key}="${val}"`;
+                // Values may be JS handler code; HTML-escaping them keeps the
+                // attribute intact and the browser unescapes before parsing.
+                for (const [key, val] of Object.entries(options.attr)) extraAttrs += ` ${key}="${escapeAttr(val)}"`;
             }
             let innerHtml = '';
-            if (options.icon) innerHtml += `<i class="${options.icon}"></i>`;
-            if (options.label) innerHtml += `<span>${options.label}</span>`;
-            if (options.helperText) innerHtml += `<small>${options.helperText}</small>`;
-            if (options.badge) innerHtml += `<div class="ui-button-badge">${options.badge}</div>`;
+            if (options.icon) innerHtml += `<i class="${escapeAttr(options.icon)}"></i>`;
+            if (options.label) innerHtml += `<span>${escapeHtml(options.label)}</span>`;
+            if (options.helperText) innerHtml += `<small>${escapeHtml(options.helperText)}</small>`;
+            if (options.badge) innerHtml += `<div class="ui-button-badge">${escapeHtml(options.badge)}</div>`;
             if (options.extraHtml) innerHtml += options.extraHtml;
-            return `<button class="${classes}" onclick="${options.onClick || ''}" ${titleAttr} ${styleAttr} ${extraAttrs}>${innerHtml}</button>`;
+            return `<button class="${escapeAttr(classes)}" onclick="${escapeAttr(options.onClick || '')}" ${titleAttr} ${styleAttr} ${extraAttrs}>${innerHtml}</button>`;
         }
     },
 
@@ -172,13 +174,13 @@ window.UI = {
             if (!items.length) return '';
             const crumbs = items.map((item, i) => {
                 const isLast = i === items.length - 1;
-                const icon = item.icon ? `<i class="${item.icon}"></i>` : '';
+                const icon = item.icon ? `<i class="${escapeAttr(item.icon)}"></i>` : '';
                 if (isLast) {
-                    return `<span class="breadcrumb-item current">${icon}${item.label}</span>`;
+                    return `<span class="breadcrumb-item current">${icon}${escapeHtml(item.label)}</span>`;
                 }
-                const clickAttr = item.onClick ? `onclick="${item.onClick}"` : '';
-                const hrefAttr = item.href ? `href="${item.href}"` : 'href="#"';
-                return `<a class="breadcrumb-item" ${hrefAttr} ${clickAttr}>${icon}${item.label}</a>`;
+                const clickAttr = item.onClick ? `onclick="${escapeAttr(item.onClick)}"` : '';
+                const hrefAttr = item.href ? `href="${escapeAttr(item.href)}"` : 'href="#"';
+                return `<a class="breadcrumb-item" ${hrefAttr} ${clickAttr}>${icon}${escapeHtml(item.label)}</a>`;
             }).join('<span class="breadcrumb-sep"><i class="fa-solid fa-chevron-right"></i></span>');
             return `<nav class="breadcrumb" aria-label="breadcrumb">${crumbs}</nav>`;
         }

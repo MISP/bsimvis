@@ -60,10 +60,26 @@ class FakeJobService:
     def is_paused(self):
         return False
 
+    def register_worker(self, worker_id, ttl=None):
+        self.registered = worker_id
+
+    def unregister_worker(self, worker_id):
+        self.registered = None
+
+    def try_admit(self, job_id, jtype):
+        return True
+
+    def release_admission(self, job_id):
+        pass
+
+    def record_job_peak(self, jtype, peak):
+        pass
+
 
 def make_worker(jobs, execute=lambda job_id, job_data: None):
     w = object.__new__(Worker)
     w.name = "test"
+    w.id = "test-0"  # normally f"{name}-{pid}", set in __init__
     w.running = True
     w.current_job_id = None
     w._last_reap = 0.0
@@ -84,6 +100,19 @@ def drain(jobs, execute=lambda job_id, job_data: None):
 def test_success_releases_claim():
     left = drain({"a": {"type": "t", "status": "pending"}})
     assert left == [], f"claim leaked after success: {left}"
+
+
+def test_jobs_actually_reach_the_executor():
+    """Guards the guard.
+
+    Every assertion in this file is about claims being released, and a claim is
+    released just as thoroughly when the loop throws before dispatching. When
+    admission control was added and FakeJobService lacked try_admit, the whole
+    file kept passing while executing nothing at all.
+    """
+    executed = []
+    drain({"a": {"type": "t", "status": "pending"}}, lambda jid, data: executed.append(jid))
+    assert executed == ["a"], f"the loop never dispatched the job: {executed}"
 
 
 def test_exception_releases_claim():

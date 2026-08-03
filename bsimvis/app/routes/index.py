@@ -6,10 +6,18 @@ stats_service = IndexStatsService()
 
 def get_index_status():
     """Returns database index statistics."""
-    collection = request.args.get("collection", "main")
+    # Defaulting to "main" meant a caller who forgot the parameter got an
+    # all-zero body with HTTP 200, indistinguishable from a genuinely empty
+    # instance. Ask for a collection or get told.
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "collection parameter is required"}, 400
     details = request.args.get("details") == "true"
 
     stats = stats_service.get_collection_stats(collection, details=details)
+    # Echo it back so a response can never be mistaken for another collection's.
+    if isinstance(stats, dict):
+        stats.setdefault("collection", collection)
     return stats
 
 

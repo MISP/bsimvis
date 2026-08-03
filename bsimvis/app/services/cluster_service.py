@@ -301,7 +301,11 @@ class ClusterService:
                 )
                 clusterer.fit(embeddings)
             else:
-                sub_dist = np.ones((size, size), dtype=np.float32)
+                # float64 up front. HDBSCAN's precomputed path needs float64
+                # anyway, so building this float32 and converting at fit time
+                # held BOTH the 100 MB original and its 200 MB copy alive at
+                # size=5000 -- 300 MB where 200 MB does the same work.
+                sub_dist = np.ones((size, size), dtype=np.float64)
                 np.fill_diagonal(sub_dist, 0)
 
                 if comp_id in comp_to_edges:
@@ -319,7 +323,7 @@ class ClusterService:
                     metric="precomputed",
                     gen_min_span_tree=True,
                 )
-                clusterer.fit(sub_dist.astype(np.float64))
+                clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
@@ -1610,7 +1614,9 @@ class ClusterService:
             sub_id_to_global = {i: g for i, g in enumerate(comp_nodes)}
             global_to_sub_id = {g: i for i, g in enumerate(comp_nodes)}
 
-            sub_dist = np.ones((size, size), dtype=np.float32)
+            # float64 up front; see run_clustering above. Building float32 and
+            # converting at fit time kept both matrices alive at once.
+            sub_dist = np.ones((size, size), dtype=np.float64)
             np.fill_diagonal(sub_dist, 0)
             for u, v, d in comp_to_edges.get(comp_id, []):
                 ui, vi = global_to_sub_id[u], global_to_sub_id[v]
@@ -1625,7 +1631,7 @@ class ClusterService:
                 metric="precomputed",
                 gen_min_span_tree=True,
             )
-            clusterer.fit(sub_dist.astype(np.float64))
+            clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:

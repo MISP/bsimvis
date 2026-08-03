@@ -1,6 +1,7 @@
 import uuid
 import time
 import json
+import os
 from enum import Enum
 from redis.exceptions import WatchError
 from .redis_client import get_queue_redis, get_redis
@@ -51,6 +52,30 @@ class JobType(Enum):
 # startup" remedy, which could not tell a dead claim from a live one.
 LEASE_TTL = 60  # seconds a claim stays valid without a refresh
 LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
+WORKERS_KEY = "workers:alive"  # ZSET worker_id -> registration expiry
+# Same shape as the lease: refreshed from the worker heartbeat, so a killed
+# worker ages out on its own. Generous enough that one slow heartbeat (the
+# worker is mid-job and the loop only ticks every LEASE_TTL/3) never drops a
+# live worker off the dashboard.
+WORKER_TTL = LEASE_TTL
+
+# --- memory admission control ---------------------------------------------
+# Weights are MEASURED, not hand-picked. The draft version of this listed
+# cluster_*, build_bin_sim and big binaries as "heavy" -- and enrich_features,
+# the job that actually killed ten workers, was not on the list. So instead each
+# worker records the peak RSS it actually saw for a job type and admission uses
+# that. Unmeasured types get a modest default and calibrate themselves after
+# one run.
+MEM_PEAK_KEY = "jobs:mem:peak"  # HASH jtype -> largest RSS observed, bytes
+MEM_RESERVED_KEY = "jobs:mem:reserved"  # HASH job_id -> bytes reserved
+MEM_USED_KEY = "jobs:mem:used"  # INT sum of live reservations
+MEM_DEFAULT_COST = 512 * 1024**2
+
+# Caveat worth keeping in view: tokens bound CONCURRENCY, not per-job
+# footprint. Each worker has its own cgroup, so serialising five
+# enrich_features jobs would not have saved any single one of them. This stops
+# the fleet from collectively overcommitting the host; it is necessary, not
+# sufficient.
 MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
 REAPER_LOCK_KEY = "jobs:reaper:lock"
 PAUSE_KEY = "jobs:paused"
@@ -509,6 +534,116 @@ class JobService:
         self.r.zrem(LEASE_KEY, job_id)
         # count 0: a job enqueued twice would otherwise leave a permanent orphan.
         self.r.lrem("jobs:processing", 0, job_id)
+        # The memory reservation has the same lifetime as the claim.
+        self.release_admission(job_id)
+
+    # ------------------------------------------------------------------
+    # Worker registry: an honest count of live worker processes
+    # ------------------------------------------------------------------
+
+    def register_worker(self, worker_id, ttl=WORKER_TTL):
+        """Marks a worker alive until `ttl` seconds from now.
+
+        Called from the worker's heartbeat, so a worker that is OOM-killed
+        simply stops refreshing and ages out. Same trick as the leases: nothing
+        here relies on a `finally` block that SIGKILL never runs.
+        """
+        self.r.zadd(WORKERS_KEY, {worker_id: time.time() + ttl})
+
+    def unregister_worker(self, worker_id):
+        """Drops a worker from the registry on a clean shutdown."""
+        self.r.zrem(WORKERS_KEY, worker_id)
+
+    def count_active_workers(self, now=None):
+        """Number of workers whose registration has not expired.
+
+        This is the real fleet size. The dashboard used to show the count of
+        active *jobs* instead, so a dead fleet holding stale `running` jobs
+        looked like a busy system -- which is why the outage went unnoticed.
+        """
+        now = time.time() if now is None else now
+        # Trim first so an unnoticed dead fleet cannot inflate the count forever.
+        self.r.zremrangebyscore(WORKERS_KEY, 0, now)
+        return self.r.zcard(WORKERS_KEY)
+
+    def list_active_workers(self, now=None):
+        """Live worker ids, soonest-to-expire first."""
+        now = time.time() if now is None else now
+        self.r.zremrangebyscore(WORKERS_KEY, 0, now)
+        return [
+            w.decode() if isinstance(w, bytes) else w
+            for w in self.r.zrange(WORKERS_KEY, 0, -1)
+        ]
+
+    # ------------------------------------------------------------------
+    # Memory admission control
+    # ------------------------------------------------------------------
+
+    def memory_budget(self):
+        """Bytes of worker memory the fleet may collectively reserve."""
+        env = os.getenv("JOB_MEMORY_BUDGET_MB")
+        if env:
+            return int(float(env) * 1024**2)
+        # Same reservation as launch_tmux.sh: leave 8 GB for kvrocks, redis and
+        # the desktop, offer the rest to jobs.
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1]) * 1024
+                        return max(total - 8 * 1024**3, 1024**3)
+        except OSError:
+            pass
+        return 8 * 1024**3
+
+    def record_job_peak(self, jtype, peak_bytes):
+        """Remembers the largest RSS ever seen for a job type."""
+        if not jtype or not peak_bytes:
+            return
+        prev = safe_int(self.r.hget(MEM_PEAK_KEY, jtype))
+        if peak_bytes > prev:
+            self.r.hset(MEM_PEAK_KEY, jtype, int(peak_bytes))
+
+    def job_cost(self, jtype):
+        """Measured peak for this job type, or a default until one exists."""
+        return safe_int(self.r.hget(MEM_PEAK_KEY, jtype), MEM_DEFAULT_COST) or (
+            MEM_DEFAULT_COST
+        )
+
+    def try_admit(self, job_id, jtype):
+        """Reserves this job's measured cost, or refuses if the fleet is full.
+
+        INCRBY-then-roll-back: two workers racing can never both slip past the
+        budget, because the increment is what decides.
+        """
+        cost = self.job_cost(jtype)
+        used = self.r.incrby(MEM_USED_KEY, cost)
+        # `used == cost` means nothing else was reserved. Always admit then,
+        # even if the job alone exceeds the budget -- otherwise a single
+        # expensive job type would deadlock the queue forever.
+        if used <= self.memory_budget() or used == cost:
+            self.r.hset(MEM_RESERVED_KEY, job_id, cost)
+            return True
+        self.r.incrby(MEM_USED_KEY, -cost)
+        return False
+
+    def release_admission(self, job_id):
+        """Gives a job's reservation back. Safe to call twice."""
+        cost = safe_int(self.r.hget(MEM_RESERVED_KEY, job_id))
+        if cost:
+            self.r.hdel(MEM_RESERVED_KEY, job_id)
+            self.r.incrby(MEM_USED_KEY, -cost)
+
+    def resync_admissions(self):
+        """Rebuilds the used counter from the live reservations.
+
+        A worker killed between INCRBY and its release leaks its reservation,
+        and enough leaks would starve the fleet into a permanent standstill.
+        The reaper calls this, so the budget self-heals the same way leases do.
+        """
+        total = sum(safe_int(v) for v in (self.r.hvals(MEM_RESERVED_KEY) or []))
+        self.r.set(MEM_USED_KEY, total)
+        return total
 
     def reap_expired(self, now=None):
         """Requeues jobs whose worker died, and clears stale in-flight entries.
@@ -569,6 +704,18 @@ class JobService:
                 )
                 self.enqueue_job(job_id)
                 requeued += 1
+
+            # Drop memory reservations for jobs that are no longer in flight.
+            # A worker killed between INCRBY and its release would otherwise
+            # leak budget permanently, and enough leaks starve the whole fleet
+            # into a standstill that looks exactly like the outage we are
+            # fixing. Then rebuild the counter from what is actually held.
+            in_flight = set(self.r.lrange("jobs:processing", 0, -1))
+            for job_id in list(self.r.hkeys(MEM_RESERVED_KEY) or []):
+                job_id = job_id.decode() if isinstance(job_id, bytes) else job_id
+                if job_id not in in_flight:
+                    self.r.hdel(MEM_RESERVED_KEY, job_id)
+            self.resync_admissions()
 
             return (requeued, failed, cleaned)
         finally:
@@ -796,9 +943,26 @@ class JobService:
         # Also update updated_at
         self.r.hset(f"job:{job_id}", "updated_at", timestamp)
 
-    def update_progress(self, job_id, progress, message=None):
-        """Updates progress (0-100) and optionally adds a log entry."""
-        self.r.hset(f"job:{job_id}", "progress", progress)
+    def update_progress(self, job_id, progress, message=None, processed=None, total=None):
+        """Updates progress (0-100) and optionally adds a log entry.
+
+        `processed`/`total` are what make the throughput fields on
+        /api/jobs/stats real. Only similarity_service ever wrote them, so during
+        an enrich_features drain every speed/ETA field on the dashboard read
+        zero and the only way to tell the queue had stalled was polling
+        pending_jobs by hand. Handlers that know their item counts should pass
+        them; `speed` is derived here so no caller has to time itself.
+        """
+        fields = {"progress": progress}
+        if total is not None:
+            fields["total_items"] = str(total)
+        if processed is not None:
+            fields["processed_items"] = str(processed)
+            started = safe_int(self.r.hget(f"job:{job_id}", "started_at"))
+            elapsed = time.time() - started / 1000.0 if started else 0
+            if elapsed > 0:
+                fields["speed"] = f"{processed / elapsed:.2f}"
+        self.r.hset(f"job:{job_id}", mapping=fields)
         if message:
             self.add_log(job_id, message)
 
@@ -851,6 +1015,11 @@ class JobService:
         total_speed = 0.0
         active_jobs_count = 0
         remaining_items = 0
+        # Longest per-job ETA derived from elapsed time vs progress percent, for
+        # handlers that report no item counts. Without it the queue could be
+        # visibly draining while global_eta sat at 0.
+        progress_eta = 0.0
+        now_s = time.time()
 
         for jid in processing_ids:
             job = job_hashes.get(jid)
@@ -876,10 +1045,21 @@ class JobService:
             done = safe_int(job.get("processed_items", 0))
             remaining_items += max(0, total - done)
 
+            pct = safe_int(job.get("progress", 0))
+            started = safe_int(job.get("started_at", 0))
+            if 0 < pct < 100 and started:
+                elapsed = now_s - started / 1000.0
+                if elapsed > 0:
+                    progress_eta = max(progress_eta, elapsed * (100 - pct) / pct)
+
         # Average speed
         avg_speed = total_speed / active_jobs_count if active_jobs_count > 0 else 0
 
-        global_eta = remaining_items / total_speed if total_speed > 0 else 0
+        # Item counts when we have them, elapsed-vs-percent otherwise.
+        if total_speed > 0 and remaining_items > 0:
+            global_eta = remaining_items / total_speed
+        else:
+            global_eta = progress_eta
 
         # Collect active collections
         active_collections = set()
@@ -930,7 +1110,11 @@ class JobService:
             )
 
         return {
-            "active_workers": active_jobs_count,
+            # A count of live worker processes, not of active jobs. The two
+            # differ exactly when it matters: a dead fleet still holding
+            # `running` jobs now reads 0 workers instead of looking busy.
+            "active_workers": self.count_active_workers(),
+            "active_jobs_count": active_jobs_count,
             "pending_jobs": pending_count,
             "avg_speed": round(avg_speed, 2),
             "total_speed": round(total_speed, 2),

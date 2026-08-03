@@ -399,11 +399,21 @@ class FeatureService:
         return results
 
     def index_global_features(
-        self, collection, feature_hashes, job_service=None, job_id=None
+        self,
+        collection,
+        feature_hashes,
+        job_service=None,
+        job_id=None,
+        progress_offset=0,
+        progress_total=None,
     ):
         """
         Computes global metadata (most common type/op pair, frequency, tf_score, decompiled context)
         for a list of feature hashes, and saves them to KV / secondary indexes.
+
+        `progress_offset`/`progress_total` let enrich_features call this once per
+        streamed batch while still reporting progress across the whole run.
+        When progress_total is set the caller owns the final 100% update.
         """
         if not feature_hashes:
             return
@@ -416,11 +426,19 @@ class FeatureService:
 
         # Process in chunks to avoid blocking Kvrocks / Redis
         chunk_size = 500
+        denom = progress_total or len(feature_hashes)
         for i in range(0, len(feature_hashes), chunk_size):
             if job_service and job_id:
-                pct = int(i / len(feature_hashes) * 100)
+                done = progress_offset + i
+                # Clamped: features can be queued while the job runs, so `done`
+                # may overshoot the count we started with.
+                pct = min(99, int(done / denom * 100)) if denom else 0
                 job_service.update_progress(
-                    job_id, pct, f"Enriching global features: {i}/{len(feature_hashes)}"
+                    job_id,
+                    pct,
+                    f"Enriching global features: {done}/{denom}",
+                    processed=done,
+                    total=denom,
                 )
 
             chunk = feature_hashes[i : i + chunk_size]
@@ -671,16 +689,29 @@ class FeatureService:
 
             save_pipe.execute()
 
-        if job_service and job_id:
+        if job_service and job_id and progress_total is None:
             job_service.update_progress(job_id, 100, "Completed feature enrichment.")
 
-    def enrich_features(self, collection, job_service=None, job_id=None):
+    def enrich_features(
+        self, collection, job_service=None, job_id=None, batch_size=5000
+    ):
         """
         Enriches all features that were added to the pending enrichment set.
+
+        Streamed and resumable. This handler OOM-killed ten workers in one
+        evening, and each kill restarted it from zero because the pending set
+        was only deleted at the very end -- five kills over two fleets meant the
+        same work was attempted five times and never finished.
+
+        Two changes: SSCAN a batch at a time instead of materialising the whole
+        set (stdlib-ref holds 375k hashes), and SREM each batch once it has been
+        indexed, so the set itself is the checkpoint. A kill now costs at most
+        one batch, and a rerun picks up exactly where the last one stopped.
+        Removing only what we have already processed is safe under SSCAN.
         """
         pending_key = f"{collection}:features:pending_enrichment"
-        feature_hashes = list(self.r.smembers(pending_key))
-        if not feature_hashes:
+        total = self.r.scard(pending_key)
+        if not total:
             logging.info(
                 f"[*] No pending features to enrich in collection: {collection}"
             )
@@ -690,14 +721,39 @@ class FeatureService:
                 )
             return True
 
-        feature_hashes = [
-            fh.decode() if isinstance(fh, bytes) else fh for fh in feature_hashes
-        ]
-
-        total = len(feature_hashes)
         logging.info(
             f"[*] Enriching {total} global features for collection: {collection}"
         )
-        self.index_global_features(collection, feature_hashes, job_service, job_id)
-        self.r.delete(pending_key)
+
+        processed = 0
+        while True:
+            # Cursor 0 every time on purpose: the batch we just finished is gone
+            # from the set, so the next scan returns the next slice of work.
+            _, batch = self.r.sscan(pending_key, 0, count=batch_size)
+            if not batch:
+                break
+            batch = [fh.decode() if isinstance(fh, bytes) else fh for fh in batch]
+
+            self.index_global_features(
+                collection,
+                batch,
+                job_service,
+                job_id,
+                progress_offset=processed,
+                progress_total=total,
+            )
+            # Checkpoint AFTER the batch is indexed, never before -- the same
+            # ordering rule as the INDEX_FUNCTIONS chunk delete.
+            self.r.srem(pending_key, *batch)
+            processed += len(batch)
+            logging.info(f"[*] Enriched {processed}/{total} features in {collection}")
+
+        if job_service and job_id:
+            job_service.update_progress(
+                job_id,
+                100,
+                f"Completed feature enrichment ({processed} features).",
+                processed=processed,
+                total=total,
+            )
         return True

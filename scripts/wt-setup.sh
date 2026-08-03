@@ -31,6 +31,12 @@ if [ ! -L bin ] || [ "$(readlink -f bin)" != "$MAIN_ROOT/bin" ]; then
   ln -s "$MAIN_ROOT/bin" bin
 fi
 
+# --- 1b. config from the example (the upload CLI hard-fails without it) -----
+if [ ! -f bsimvis_config.toml ] && [ -f bsimvis_config.toml.example ]; then
+  echo "Seeding bsimvis_config.toml from the example"
+  cp bsimvis_config.toml.example bsimvis_config.toml
+fi
+
 # --- 2. isolated .env (offset ports so it never collides with main/others) --
 if [ ! -f .env ]; then
   # Bands kept clear of main (.env: 5001/6380/6667) and of each other.

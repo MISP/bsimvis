@@ -2,11 +2,10 @@ import time
 import json
 import logging
 import signal
+import subprocess
 import sys
 import os
-import tempfile
 import threading
-from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -20,7 +19,6 @@ from bsimvis.app.services.similarity_service import SimilarityService
 from bsimvis.app.services.bin_sim_service import bin_sim_service
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.timer_service import job_timer
-from bsimvis.app.services.ghidra_service import ghidra_service
 from bsimvis.app.services.cluster_service import cluster_service
 from bsimvis.app.services.bin_cluster_service import bin_cluster_service
 from bsimvis.app.services.config_service import config_service
@@ -34,9 +32,64 @@ logging.basicConfig(
 )
 
 
+def _current_rss():
+    """Peak RSS in bytes since the last reset, from the kernel's own counter."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def _make_preferred_oom_victim():
+    """Raises this process's oom_score_adj so the kernel picks it before kvrocks.
+
+    Every process here inherits oom_score_adj=+200, and kvrocks is the largest
+    RSS in the session, so under real host pressure the kernel killed the
+    datastore first. An unprivileged process may only RAISE its own score, so
+    kvrocks cannot protect itself -- the worker volunteers instead. A killed
+    worker is recoverable (the reaper requeues its job); kvrocks is not.
+
+    Note this cannot be done with `systemd-run --scope -p OOMScoreAdjust=`:
+    that is an exec property and systemd rejects it on a scope unit.
+    """
+    adj = os.getenv("WORKER_OOM_SCORE_ADJ", "1000")
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write(str(adj))
+        return True
+    except OSError as e:
+        logging.warning(f"[!] Could not set oom_score_adj={adj}: {e}")
+        return False
+
+
+def _reset_peak_rss():
+    """Clears VmHWM so the next reading is this job's peak, not the worker's.
+
+    Linux exposes exactly this via clear_refs, which beats sampling: a job that
+    balloons and frees between two heartbeats would otherwise be recorded as
+    cheap. Best-effort -- sampling in the heartbeat covers kernels that refuse.
+    """
+    try:
+        with open("/proc/self/clear_refs", "w") as f:
+            f.write("5")
+        return True
+    except OSError:
+        return False
+
+
 class Worker:
     def __init__(self, name="worker-1"):
         self.name = name
+        # launch_tmux.sh used to start every worker without --name, so a whole
+        # fleet registered as "worker-1". The pid keeps ids unique even if that
+        # regresses, and makes lease_owner point at a process you can actually
+        # find.
+        self.id = f"{name}-{os.getpid()}"
+        _make_preferred_oom_victim()
         self.r_queue = get_queue_redis()
         self.r_data = get_redis()
         self.r_raw = get_raw_redis()
@@ -47,16 +100,17 @@ class Worker:
         # Initialize Lua scripts for this process
         lua_manager.init_app()
 
-        # Ensure Ghidra is ready
-        max_heap_mb = config_service.get("ghidra.max_heap_mb", 1536)
-        jvm_args = config_service.get("ghidra.jvm_args", [])
-        ghidra_service.ensure_launcher(max_heap_mb=max_heap_mb, jvm_args=jvm_args)
+        # No JVM here on purpose. Ghidra analysis runs in a child process
+        # (bsimvis/ghidra_job.py), so the worker does not carry a 1.3-2.4 GB
+        # JVM floor through every job that never touches Ghidra. Under a 3 GB
+        # cgroup cap that floor left enrich_features roughly 0.6 GB to work in.
 
         self.similarity_service = SimilarityService(self.r_data)
         self.metadata_service = MetadataService(self.r_data)
         self.running = True
         self.current_job_id = None
         self._last_reap = 0.0
+        self._job_peak_rss = 0
 
     def _reap(self, interval=30):
         """Runs the lease reaper, at most once per `interval` per worker."""
@@ -85,22 +139,49 @@ class Worker:
         run after SIGKILL or an OOM kill.
         """
         while self.running:
+            # Registration rides the same heartbeat as the lease: one dead
+            # process, one thing that stops refreshing, both age out together.
+            try:
+                self.job_service.register_worker(self.id)
+            except Exception as e:
+                logging.warning(f"[!] Worker registration failed: {e}")
             job_id = self.current_job_id
             if job_id:
                 try:
                     self.job_service.refresh_lease(job_id)
                 except Exception as e:
                     logging.warning(f"[!] Lease refresh failed for {job_id}: {e}")
+                # Sample RSS while a job runs. This is what makes admission
+                # weights measured rather than guessed -- the draft heavy-job
+                # list did not include enrich_features, the one that actually
+                # killed the fleet.
+                rss = _current_rss()
+                if rss > self._job_peak_rss:
+                    self._job_peak_rss = rss
             time.sleep(LEASE_TTL / 3)
 
     def run(self):
-        logging.info(f"[*] Worker {self.name} started. Waiting for jobs...")
+        logging.info(f"[*] Worker {self.id} started. Waiting for jobs...")
 
+        # Register before the first heartbeat tick so a fleet shows its true
+        # size immediately rather than 20s in.
+        self.job_service.register_worker(self.id)
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
 
         # Recover anything stranded by a previous crash before taking new work.
         self._reap()
 
+        try:
+            self._run_loop()
+        finally:
+            # Best-effort only. A SIGKILL never gets here, which is exactly why
+            # registrations expire on their own.
+            try:
+                self.job_service.unregister_worker(self.id)
+            except Exception:
+                pass
+
+    def _run_loop(self):
         while self.running:
             try:
                 self._reap()
@@ -133,7 +214,7 @@ class Worker:
                 # The claim is now held. The lease is what makes it recoverable:
                 # the finally below covers a clean exit, the lease expiring covers
                 # SIGKILL / OOM / power loss, where no finally ever runs.
-                self.job_service.claim_lease(job_id, self.name)
+                self.job_service.claim_lease(job_id, self.id)
                 self.current_job_id = job_id
                 try:
                     job_data = self.r_queue.hgetall(f"job:{job_id}")
@@ -144,6 +225,18 @@ class Worker:
 
                     if job_data.get("status") == JobStatus.CANCELLED.value:
                         logging.info(f"[-] Job {job_id} was cancelled. Skipping.")
+                        continue
+
+                    # Admission control: only start if the fleet can still
+                    # afford this job type's measured peak. Refused jobs go back
+                    # on the queue rather than being failed.
+                    jtype = job_data.get("type")
+                    if not self.job_service.try_admit(job_id, jtype):
+                        logging.info(
+                            f"[~] Job {job_id} ({jtype}) deferred: fleet memory budget full."
+                        )
+                        self._requeue(job_id)
+                        time.sleep(2)
                         continue
 
                     # Execute Job
@@ -159,14 +252,26 @@ class Worker:
                 traceback.print_exc()
                 time.sleep(1)
 
+    def _requeue(self, job_id):
+        """Puts a claimed job back on the queue untouched.
+
+        The `queued` latch must be cleared first: enqueue_job is idempotent and
+        would otherwise treat this as an already-queued pending job and drop it
+        on the floor, losing the job entirely.
+        """
+        self.r_queue.hdel(f"job:{job_id}", "queued")
+        self.job_service.enqueue_job(job_id)
+
     def _execute_job(self, job_id, job_data):
         jtype = job_data.get("type")
         payload = json.loads(job_data.get("payload", "{}"))
         parent_id = job_data.get("parent_id")
 
         logging.info(f"[+] Executing Job {job_id} ({jtype})...")
+        _reset_peak_rss()
+        self._job_peak_rss = 0
         self.job_service.add_log(
-            job_id, f"Worker {self.name} started processing {jtype}."
+            job_id, f"Worker {self.id} started processing {jtype}."
         )
         self.r_queue.hset(
             f"job:{job_id}",
@@ -199,6 +304,16 @@ class Worker:
                 traceback.print_exc()
                 self.job_service.fail_job(job_id, str(e))
             finally:
+                # Record what this job actually cost, so admission weights come
+                # from observation instead of a hand-picked list of suspects.
+                peak = max(_current_rss(), self._job_peak_rss)
+                if peak:
+                    try:
+                        self.job_service.record_job_peak(jtype, peak)
+                    except Exception as e:
+                        logging.warning(f"[!] Could not record memory peak: {e}")
+                    logging.info(f"[#] Job {job_id} peak RSS {peak / 1024**3:.2f} GiB")
+
                 # Finalize and save performance stats
                 stats = timer.finalize()
                 self.job_service.save_performance_stats(job_id, stats)
@@ -206,128 +321,63 @@ class Worker:
                 self.job_service.add_log(job_id, perf_summary)
                 logging.info(f"[#] Job {job_id} {perf_summary}")
 
-    def _collect_project_files(self, folder):
-        """Recursively collect all DomainFiles from a Ghidra project folder."""
-        files = list(folder.getFiles())
-        for sub in folder.getFolders():
-            files.extend(self._collect_project_files(sub))
-        return files
+    def _run_ghidra_out_of_process(self, job_id, payload):
+        """Runs one Ghidra analysis in a child process, with retries.
 
-    def _post_chunk(
-        self,
-        chunk,
-        idx,
-        is_final,
-        collection,
-        file_md5,
-        file_meta,
-        skip_sim,
-        payload,
-        hosts,
-        job_id,
-        splice_into_parent=True,
-    ):
-        import requests
-
-        chunk_payload = {
-            "collection": collection,
-            "file_md5": file_md5,
-            "chunk_index": idx,
-            "is_final": is_final,
-            "skip_sim": skip_sim,
-            "file_metadata": file_meta if idx == 0 else None,
-            "functions": chunk,
-        }
-        if splice_into_parent:
-            chunk_payload["parent_job_id"] = job_id
-
-        for opt in ["top_k", "min_score", "min_features", "algo"]:
-            if opt in payload:
-                chunk_payload[opt] = payload[opt]
-        for api_host in hosts:
-            url = f"http://{api_host}/api/file/upload_chunk"
-            resp = requests.post(url, json=chunk_payload, timeout=300)
-            resp.raise_for_status()
-            return resp.json()
-
-    def _stream_program_chunks(
-        self, program, payload, hosts, job_id, splice_into_parent=True
-    ):
-        collection = payload.get("collection", "main")
-        skip_sim = payload.get("skip_sim", False)
-
-        # Initialize stream generator with job context for real-time progress
-        generator = ghidra_service.stream_bsim_data(
-            program,
-            payload,
-            chunk_size=100,
-            job_service=self.job_service,
-            job_id=job_id,
-        )
-        file_meta = next(generator)
-
-        # Merge CLI-provided metadata (upload --metadata) into the file metadata so
-        # it gets stored just like the `metadata propagate` path. The raw-upload
-        # route forwards it as file_metadata_extra; without this the streaming
-        # analysis path silently drops it.
-        extra_meta = payload.get("file_metadata_extra")
-        if extra_meta:
-            if isinstance(extra_meta, str):
-                extra_meta = json.loads(extra_meta)
-            file_meta.update(extra_meta)
-            if "file_name" in extra_meta:
-                file_meta["file_name"] = extra_meta["file_name"]
-
-        file_md5 = file_meta.get("file_md5")
-
-        # Look-ahead: send each chunk immediately without buffering all of them.
-        # Holding one chunk behind lets us detect the final chunk on arrival of the next.
-        idx = 0
-        prev_chunk = None
-        for chunk in generator:
-            # Cancellation was only ever checked before a job started; a long
-            # decompilation ignored it entirely. Chunk boundaries are the natural
-            # place to notice.
-            if self.job_service.is_cancelled(job_id):
-                raise RuntimeError(f"Job {job_id} cancelled during streaming")
-            if prev_chunk is not None:
-                self._post_chunk(
-                    prev_chunk,
-                    idx - 1,
-                    False,
-                    collection,
-                    file_md5,
-                    file_meta,
-                    skip_sim,
-                    payload,
-                    hosts,
-                    job_id,
-                    splice_into_parent=splice_into_parent,
-                )
-                self.job_service.update_progress(job_id, 80, f"Uploaded chunk {idx}")
-            prev_chunk = chunk
-            idx += 1
-
-        # Send the final chunk (or empty sentinel when the program has no functions)
-        final_chunk = prev_chunk if prev_chunk is not None else []
-        final_idx = max(idx - 1, 0)
-        res = self._post_chunk(
-            final_chunk,
-            final_idx,
-            True,
-            collection,
-            file_md5,
-            file_meta,
-            skip_sim,
-            payload,
-            hosts,
+        Ghidra's JVM crashes -- there are 27 hs_err_pid*.log dumps in the repo
+        root. In-process, a crash took the worker down with it and whatever else
+        it was doing. Here a crash costs one child: we retry, and if the binary
+        crashes the JVM every time we flag it unanalyzed and move on rather than
+        letting one bad file kill workers forever.
+        """
+        attempts = int(os.getenv("GHIDRA_ANALYZE_ATTEMPTS", 3))
+        cmd = [
+            sys.executable,
+            "-m",
+            "bsimvis.ghidra_job",
+            "--job-id",
             job_id,
-            splice_into_parent=splice_into_parent,
-        )
-        self.job_service.update_progress(job_id, 100, f"Uploaded chunk {idx}/{idx}")
+            "--name",
+            self.id,
+        ]
 
-        pipeline_id = res.get("pipeline_id") if isinstance(res, dict) else None
-        return pipeline_id
+        for attempt in range(1, attempts + 1):
+            self.job_service.add_log(
+                job_id, f"Ghidra analysis attempt {attempt}/{attempts} (subprocess)."
+            )
+            try:
+                proc = subprocess.run(cmd, cwd=os.getcwd())
+                rc = proc.returncode
+            except Exception as e:
+                logging.error(f"[!] Could not launch Ghidra subprocess: {e}")
+                self.job_service.add_log(job_id, f"Could not launch analysis: {e}")
+                return False
+
+            if rc == 0:
+                return True
+
+            # Negative rc means a signal: SIGSEGV/SIGABRT is the JVM dying,
+            # which is exactly the case retrying is for.
+            reason = f"signal {-rc}" if rc < 0 else f"exit {rc}"
+            logging.warning(
+                f"[!] Ghidra analysis for {job_id} failed ({reason}), attempt {attempt}/{attempts}"
+            )
+            self.job_service.add_log(job_id, f"Analysis attempt {attempt} failed ({reason}).")
+
+        # Out of retries. Record it against the file so it is visible as
+        # unanalyzed rather than silently missing from the collection.
+        collection = payload.get("collection", "main")
+        file_md5 = payload.get("file_md5") or payload.get("md5")
+        if file_md5:
+            try:
+                self.r_data.sadd(f"{collection}:files:unanalyzed", file_md5)
+            except Exception as e:
+                logging.warning(f"[!] Could not flag {file_md5} unanalyzed: {e}")
+        self.job_service.add_log(
+            job_id,
+            f"Giving up after {attempts} attempts; flagged unanalyzed.",
+        )
+        return False
 
     def _dispatch(self, jtype, payload, job_id):
         """Dispatcher for background jobs."""
@@ -337,223 +387,7 @@ class Worker:
         batch_uuid = payload.get("batch_uuid")
 
         if jtype == JobType.GHIDRA_ANALYZE.value:
-            raw_file_id = payload.get("raw_file_id")
-            file_md5 = payload.get("file_md5")
-
-            # 1. Fetch raw binary from Kvrocks
-            raw_bytes = self.r_raw.get(raw_file_id)
-            if not raw_bytes:
-                self.job_service.add_log(
-                    job_id, f"Error: Raw file {raw_file_id} not found."
-                )
-                return False
-
-            temp_dir = None
-            temp_path = None
-            try:
-                # 2. Save to temp file with original name to preserve name in Ghidra/DB
-                orig_name = payload.get("file_name", "unknown")
-                orig_name = os.path.basename(orig_name)
-                if not orig_name:
-                    orig_name = "unknown"
-
-                temp_dir = tempfile.mkdtemp(prefix="bsim_worker_")
-                temp_path = os.path.join(temp_dir, orig_name)
-                with open(temp_path, "wb") as f:
-                    f.write(raw_bytes)
-
-                # 3. Run Analysis & Stream Chunks directly to API
-                app_host = os.getenv("APP_HOST", "localhost")
-                app_port = os.getenv("APP_PORT", "5000")
-                fallback_host = f"{app_host}:{app_port}"
-
-                # Check environment variables first, then fallback to config
-                hosts = (
-                    fallback_host
-                    if os.getenv("APP_PORT")
-                    else config_service.get("bsimvis.host", fallback_host)
-                )
-                if isinstance(hosts, str):
-                    hosts = [hosts]
-
-                # We will analyze using stream_bsim_data
-                if temp_path.endswith(".gpr.zip"):
-                    self.job_service.add_log(
-                        job_id, f"Extracting Ghidra project archive {orig_name}..."
-                    )
-                    import zipfile
-
-                    with zipfile.ZipFile(temp_path, "r") as zip_ref:
-                        zip_ref.extractall(temp_dir)
-
-                    # Find .gpr file
-                    gpr_path = None
-                    for root, dirs, files in os.walk(temp_dir):
-                        for file in files:
-                            if file.endswith(".gpr"):
-                                gpr_path = os.path.join(root, file)
-                                break
-                        if gpr_path:
-                            break
-
-                    if not gpr_path:
-                        self.job_service.add_log(
-                            job_id, "Error: No .gpr file found in archive."
-                        )
-                        return False
-
-                    self.job_service.add_log(
-                        job_id, f"Starting Ghidra project analysis for {orig_name}..."
-                    )
-                    from ghidra.base.project import GhidraProject
-
-                    project = GhidraProject.openProject(
-                        Path(gpr_path).parent, Path(gpr_path).stem
-                    )
-                    pipeline_ids = []
-                    try:
-                        root_folder = project.getProjectData().getRootFolder()
-                        files = self._collect_project_files(root_folder)
-                        for file in files:
-                            from ghidra.util.task import ConsoleTaskMonitor
-
-                            program = file.getDomainObject(
-                                project, True, False, ConsoleTaskMonitor()
-                            )
-                            try:
-                                binary_md5 = program.getExecutableMD5()
-                                if binary_md5:
-                                    # Check if already exists in collection
-                                    if self.r_data.sismember(
-                                        f"{collection}:all_files",
-                                        f"{collection}:file:{binary_md5}",
-                                    ):
-                                        self.job_service.add_log(
-                                            job_id,
-                                            f"Skipping {program.getName()} (MD5 {binary_md5} already exists in collection).",
-                                        )
-                                        continue
-
-                                ghidra_service.run_profile_analysis(
-                                    program,
-                                    payload.get("profile", "fast"),
-                                    force_reanalysis=False,
-                                )
-                                pipe_id = self._stream_program_chunks(
-                                    program,
-                                    payload,
-                                    hosts,
-                                    job_id,
-                                    splice_into_parent=True,
-                                )
-                                if pipe_id:
-                                    pipeline_ids.append(pipe_id)
-                            finally:
-                                if program:
-                                    program.release(project)
-
-                        if pipeline_ids:
-                            group_id = self.job_service.create_group(
-                                pipeline_ids, enqueue=False
-                            )
-                            parent_pipeline_id = self.r_queue.hget(
-                                f"job:{job_id}", "parent_id"
-                            )
-                            if parent_pipeline_id:
-                                parent_pipeline_id = (
-                                    parent_pipeline_id.decode()
-                                    if isinstance(parent_pipeline_id, bytes)
-                                    else parent_pipeline_id
-                                )
-                                if self.job_service.splice_tasks(
-                                    parent_pipeline_id, job_id, [group_id]
-                                ):
-                                    self.job_service.add_log(
-                                        parent_pipeline_id,
-                                        f"Spliced child pipelines group {group_id} into pipeline.",
-                                    )
-                    finally:
-                        project.close()
-                else:
-                    self.job_service.add_log(
-                        job_id, f"Starting Ghidra analysis for {orig_name}..."
-                    )
-                    # For a single file
-                    from ghidra.base.project import GhidraProject
-
-                    with tempfile.TemporaryDirectory(
-                        prefix="bsim_"
-                    ) as project_temp_dir:
-                        project = GhidraProject.createProject(
-                            project_temp_dir, "TempGhidraProject", False
-                        )
-                        try:
-                            if payload.get("processor"):
-                                from ghidra.program.model.lang import (
-                                    LanguageID,
-                                    CompilerSpecID,
-                                )
-                                from ghidra.program.util import DefaultLanguageService
-
-                                lang_service = (
-                                    DefaultLanguageService.getLanguageService()
-                                )
-                                lang_id = LanguageID(payload.get("processor"))
-                                lang = lang_service.getLanguage(lang_id)
-                                if payload.get("cspec"):
-                                    cspec_id = CompilerSpecID(payload.get("cspec"))
-                                    cspec = lang.getCompilerSpecByID(cspec_id)
-                                else:
-                                    cspec = lang.getDefaultCompilerSpec()
-                                program = project.importProgram(
-                                    Path(temp_path), lang, cspec
-                                )
-                            else:
-                                program = project.importProgram(Path(temp_path))
-
-                            ghidra_service.run_profile_analysis(
-                                program,
-                                payload.get("profile", "fast"),
-                                force_reanalysis=True,
-                            )
-                            self._stream_program_chunks(program, payload, hosts, job_id)
-                        finally:
-                            # close() releases every program importProgram() registered
-                            # and disposes the project's LocalFileSystem, which is what
-                            # stops its "File System Listener" thread. Without it the
-                            # thread and the whole Ghidra object graph it pins leak for
-                            # the life of the worker. Must run before the enclosing
-                            # TemporaryDirectory removes the project directory.
-                            #
-                            # Do NOT call program.release(project) first -- close()
-                            # already does it, and the second release throws
-                            # IllegalArgumentException: unknown consumer. The
-                            # openProject path above is different: those programs come
-                            # from DomainFile.getDomainObject(), are not tracked in
-                            # GhidraProject.openPrograms, and must be released by hand.
-                            project.close()
-
-                self.job_service.add_log(
-                    job_id, f"Analysis and streaming complete for {orig_name}."
-                )
-
-                return True
-            except Exception as e:
-                self.job_service.add_log(job_id, f"Analysis failed: {str(e)}")
-                raise
-            finally:
-                if temp_path and os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except Exception:
-                        pass
-                if temp_dir and os.path.exists(temp_dir):
-                    import shutil
-
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except Exception:
-                        pass
+            return self._run_ghidra_out_of_process(job_id, payload)
 
         elif jtype == JobType.INDEX_META.value:
             file_meta = payload.get("file_meta")
@@ -573,13 +407,12 @@ class Worker:
             functions_list = payload.get("functions_list")
             chunk_id = payload.get("chunk_id")
             if chunk_id:
-                # ponytail: retrieve from Kvrocks & delete right away
                 raw_funcs = self.r_data.get(chunk_id)
                 if raw_funcs:
                     functions_list = json.loads(raw_funcs)
-                    self.r_data.delete(chunk_id)
                 else:
-                    # ponytail: Duplicate run or missing data, finish gracefully
+                    # Deleted only after a successful commit below, so an empty
+                    # chunk here means the work is already done.
                     self.job_service.add_log(
                         job_id, "Chunk data empty or already processed. Skipping."
                     )
@@ -588,7 +421,7 @@ class Worker:
             file_meta = payload.get("file_meta")
             file_md5 = payload.get("file_md5")
             batch_uuid = payload.get("batch_uuid")
-            return self.processing_service.index_functions(
+            ok = self.processing_service.index_functions(
                 collection,
                 file_id,
                 self.job_service,
@@ -598,6 +431,16 @@ class Worker:
                 file_md5=file_md5,
                 batch_uuid=batch_uuid,
             )
+            # The chunk is the ONLY copy of these functions. Deleting it before
+            # the commit meant a crash in between lost them silently, and made
+            # the reaper's requeue destructive: the retry found no data and
+            # "succeeded" with nothing indexed. Delete last, so a retry always
+            # has something to retry with. index_functions writes keyed by
+            # function id, so replaying a chunk overwrites rather than
+            # duplicates.
+            if ok and chunk_id:
+                self.r_data.delete(chunk_id)
+            return ok
 
         elif jtype == JobType.INDEX_FEATURES.value:
             # For INDEX_FEATURES, we need a list of function IDs

@@ -120,7 +120,7 @@ window.CollectionDetailView = {
                         const lastBuilt = pool.last_built_at && pool.last_built_at != '0' ? (typeof window.formatDate === 'function' ? formatDate(parseInt(pool.last_built_at)) : pool.last_built_at) : '—';
                         return `
                         <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                            <td style="padding:10px 15px;"><a href="${poolUrl}" onclick="Nav.openPath('${poolUrl}', event)" style="font-weight:bold; color:var(--text); text-decoration:none;">${pool.name || pool.id}</a></td>
+                            <td style="padding:10px 15px;"><a href="${poolUrl}" onclick="Nav.openPath(${escapeAttr(jsString(poolUrl))}, event)" style="font-weight:bold; color:var(--text); text-decoration:none;">${pool.name || pool.id}</a></td>
                             <td style="padding:10px 15px;">${this._statusBadge(pool.sync_status || 'created')}</td>
                             <td style="padding:10px 15px; text-align:right; color:var(--dim);">${lastBuilt}</td>
                         </tr>`;
@@ -141,7 +141,7 @@ window.CollectionDetailView = {
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         <code style="font-size:0.8rem; color:var(--dim); background: var(--hover); padding:3px 10px; border-radius:4px; border:1px solid var(--border);">${name}</code>
-                        <button onclick="copyToClipboard('${name}', this)" class="btn-copy" title="Copy Collection Name" style="padding:4px 8px; font-size:0.75rem;">
+                        <button onclick="copyToClipboard(${escapeAttr(jsString(name))}, this)" class="btn-copy" title="Copy Collection Name" style="padding:4px 8px; font-size:0.75rem;">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                     </div>
@@ -149,8 +149,8 @@ window.CollectionDetailView = {
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                     <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/upload')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-upload"></i> Upload Binaries</button>
-                    <button onclick="window.collectionDetailClean('${name}', this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-broom"></i> Clean</button>
-                    <button onclick="window.collectionDetailDelete('${name}', this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-broom"></i> Clean</button>
+                    <button onclick="window.collectionDetailDelete(${escapeAttr(jsString(name))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
                 </div>
             </div>
 
@@ -262,12 +262,12 @@ window.CollectionDetailView = {
                                 const status = job.status;
                                 let actions = '<div class="job-actions" style="display:flex; justify-content:flex-end;">';
                                 if (status === 'pending' || status === 'running') {
-                                    actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+                                    actions += `<button class="job-btn-action danger" onclick="cancelJob(${escapeAttr(jsString(job.id))})" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
                                 }
                                 if (status === 'failed' || status === 'cancelled' || status === 'completed') {
-                                    actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+                                    actions += `<button class="job-btn-action" onclick="retryJob(${escapeAttr(jsString(job.id))})" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
                                 }
-                                actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
+                                actions += `<button class="job-btn-action info" onclick="showJobDetails(${escapeAttr(jsString(job.id))})" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
                                 actions += '</div>';
 
                                 let progressClass = '';
@@ -296,7 +296,7 @@ window.CollectionDetailView = {
 
                                 return `
                                 <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                    <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath('${jobUrl}', event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
+                                    <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath(${escapeAttr(jsString(jobUrl))}, event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
                                     <td style="padding:10px 15px; font-weight:600; text-transform:capitalize;">${job.type}</td>
                                     <td style="padding:10px 15px;">${statusBadge}</td>
                                     <td style="padding:10px 15px;">${progressHtml}</td>

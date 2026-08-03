@@ -123,7 +123,7 @@ window.PoolDetailView = {
         const crossOnly = pool.only_cross_collection;
 
         const buildBtnHtml = status === 'outdated'
-            ? `<button onclick="window.poolDetailBuild('${poolId}', this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-play"></i> Build</button>`
+            ? `<button onclick="window.poolDetailBuild(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-play"></i> Build</button>`
             : '';
 
         let totalPoolBatches = 0;
@@ -160,10 +160,10 @@ window.PoolDetailView = {
                         const batchesUrl = `/collections/${encodeURIComponent(cname)}/batches`;
                         return `
                         <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                            <td style="padding:10px 15px;"><a href="${collUrl}" onclick="Nav.openPath('${collUrl}', event)" style="font-weight:bold; color:var(--text); text-decoration:none;">${cname}</a></td>
-                            <td style="padding:10px 15px; text-align:right;"><a href="${batchesUrl}" onclick="Nav.openPath('${batchesUrl}', event)" class="clickable-count" style="color:var(--accent); font-weight:700; text-decoration:none;">${batches}</a></td>
-                            <td style="padding:10px 15px; text-align:right;"><a href="${filesUrl}" onclick="Nav.openPath('${filesUrl}', event)" class="clickable-count" style="color:#60a5fa; font-weight:700; text-decoration:none;">${files}</a></td>
-                            <td style="padding:10px 15px; text-align:right;"><a href="${funcsUrl}" onclick="Nav.openPath('${funcsUrl}', event)" class="clickable-count" style="color:#a78bfa; font-weight:700; text-decoration:none;">${funcs}</a></td>
+                            <td style="padding:10px 15px;"><a href="${collUrl}" onclick="Nav.openPath(${escapeAttr(jsString(collUrl))}, event)" style="font-weight:bold; color:var(--text); text-decoration:none;">${cname}</a></td>
+                            <td style="padding:10px 15px; text-align:right;"><a href="${batchesUrl}" onclick="Nav.openPath(${escapeAttr(jsString(batchesUrl))}, event)" class="clickable-count" style="color:var(--accent); font-weight:700; text-decoration:none;">${batches}</a></td>
+                            <td style="padding:10px 15px; text-align:right;"><a href="${filesUrl}" onclick="Nav.openPath(${escapeAttr(jsString(filesUrl))}, event)" class="clickable-count" style="color:#60a5fa; font-weight:700; text-decoration:none;">${files}</a></td>
+                            <td style="padding:10px 15px; text-align:right;"><a href="${funcsUrl}" onclick="Nav.openPath(${escapeAttr(jsString(funcsUrl))}, event)" class="clickable-count" style="color:#a78bfa; font-weight:700; text-decoration:none;">${funcs}</a></td>
                         </tr>`;
                     }).join('')}
                 </tbody>
@@ -187,13 +187,13 @@ window.PoolDetailView = {
                         <i class="fa-solid fa-diagram-project" style="font-size:1.4rem; color:var(--accent);"></i>
                         <h1 style="margin:0; font-size:1.5rem; color:var(--text); display:inline-flex; align-items:center; gap:8px;">
                             <span id="pool-detail-name-text">${name}</span>
-                            <button class="btn-action" title="Rename" onclick="window.poolDetailRename('${poolId}')" style="background:transparent; border:none; padding:4px; font-size:1rem;"><i class="fa-solid fa-pen"></i></button>
+                            <button class="btn-action" title="Rename" onclick="window.poolDetailRename(${escapeAttr(jsString(poolId))})" style="background:transparent; border:none; padding:4px; font-size:1rem;"><i class="fa-solid fa-pen"></i></button>
                         </h1>
                         ${crossOnly ? `<span style="background:rgba(245,158,11,0.15); border:1px solid rgba(245,158,11,0.3); color:#f59e0b; padding:3px 10px; border-radius:20px; font-size:0.72rem; font-weight:700; display:inline-flex; align-items:center; gap:5px;"><i class="fa-solid fa-arrow-right-arrow-left"></i> Cross-Only</span>` : ''}
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                         <code style="font-size:0.8rem; color:var(--dim); background: var(--hover); padding:3px 10px; border-radius:4px; border:1px solid var(--border);">${poolId}</code>
-                        <button onclick="copyToClipboard('${poolId}', this)" class="btn-copy" title="Copy Pool ID" style="padding:4px 8px; font-size:0.75rem;">
+                        <button onclick="copyToClipboard(${escapeAttr(jsString(poolId))}, this)" class="btn-copy" title="Copy Pool ID" style="padding:4px 8px; font-size:0.75rem;">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                     </div>
@@ -201,9 +201,9 @@ window.PoolDetailView = {
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                     <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     ${buildBtnHtml}
-                    <button onclick="window.poolDetailCluster('${poolId}', this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
-                    <button onclick="window.poolDetailRebuild('${poolId}', this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-rotate"></i> Rebuild</button>
-                    <button onclick="window.poolDetailDelete('${poolId}', this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    <button onclick="window.poolDetailCluster(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
+                    <button onclick="window.poolDetailRebuild(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-rotate"></i> Rebuild</button>
+                    <button onclick="window.poolDetailDelete(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
                 </div>
             </div>
 
@@ -358,12 +358,12 @@ window.PoolDetailView = {
                                 const status = job.status;
                                 let actions = '<div class="job-actions" style="display:flex; justify-content:flex-end;">';
                                 if (status === 'pending' || status === 'running') {
-                                    actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+                                    actions += `<button class="job-btn-action danger" onclick="cancelJob(${escapeAttr(jsString(job.id))})" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
                                 }
                                 if (status === 'failed' || status === 'cancelled' || status === 'completed') {
-                                    actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+                                    actions += `<button class="job-btn-action" onclick="retryJob(${escapeAttr(jsString(job.id))})" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
                                 }
-                                actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
+                                actions += `<button class="job-btn-action info" onclick="showJobDetails(${escapeAttr(jsString(job.id))})" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
                                 actions += '</div>';
 
                                 let progressClass = '';
@@ -392,7 +392,7 @@ window.PoolDetailView = {
 
                                 return `
                                 <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                    <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath('${jobUrl}', event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
+                                    <td style="padding:10px 15px; font-family:monospace;"><a href="${jobUrl}" onclick="Nav.openPath(${escapeAttr(jsString(jobUrl))}, event)" style="color:var(--accent); text-decoration:none; font-weight:600;">${job.id}</a></td>
                                     <td style="padding:10px 15px; font-weight:600; text-transform:capitalize;">${job.type}</td>
                                     <td style="padding:10px 15px;">${statusBadge}</td>
                                     <td style="padding:10px 15px;">${progressHtml}</td>

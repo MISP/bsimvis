@@ -292,10 +292,10 @@ window.FeatureView = {
                 const metaInfoEl = this.container.querySelector('#feat-meta-info');
 
                 if (titleTextEl) {
-                    titleTextEl.innerHTML = `Feature occurrences: <span class="hash-badge">${this.featureHash}</span> <button class="btn-copy" style="vertical-align:text-bottom" title="Copy Feature ID: ${fullId}" onclick="copyToClipboard('${fullId}', this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
+                    titleTextEl.innerHTML = `Feature occurrences: <span class="hash-badge">${escapeHtml(this.featureHash)}</span> <button class="btn-copy" style="vertical-align:text-bottom" title="Copy Feature ID: ${escapeAttr(fullId)}" onclick="copyToClipboard(${escapeAttr(jsString(fullId))}, this)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>`;
                 }
                 if (metaInfoEl) {
-                    metaInfoEl.innerHTML = `<span class="dim">Collection:</span> ${this.collection} | <span class="dim">Total Instances:</span> ${this.totalOccurrences}`;
+                    metaInfoEl.innerHTML = `<span class="dim">Collection:</span> ${escapeHtml(this.collection)} | <span class="dim">Total Instances:</span> ${this.totalOccurrences}`;
                 }
             }
 
@@ -312,16 +312,16 @@ window.FeatureView = {
                 const originHtml = `
                     <div style="font-weight:bold; color:var(--accent); font-size:1rem; margin-bottom:4px;">${funcName}</div>
                     <div class="dim" style="font-size:0.7rem;">Address: ${addr}</div>
-                    <div class="dim" style="font-size:0.7rem;">Binary: ${md5}</div>
+                    <div class="dim" style="font-size:0.7rem;">Binary: ${escapeHtml(md5)}</div>
                     <div class="dim" style="font-size:0.7rem; margin-top:2px;">Lines: <span style="color:var(--accent);">${(occ['line_idx'] || []).map(l => l + 1).join(', ')}</span></div>
                     <div style="display:flex; align-items:center; gap:5px; margin-top:8px;">
-                        <code class="origin-id" style="font-size:0.6rem;">${funcId}</code>
-                        <button class="btn-copy" title="Copy Function ID: ${funcId}" onclick="copyToClipboard('${funcId}', this)">
+                        <code class="origin-id" style="font-size:0.6rem;">${escapeHtml(funcId)}</code>
+                        <button class="btn-copy" title="Copy Function ID: ${escapeAttr(funcId)}" onclick="copyToClipboard(${escapeAttr(jsString(funcId))}, this)">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                         </button>
                     </div>
                     <div style="display:flex; gap:5px; margin-top:5px;">
-                        <button class="btn-code-action" onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '', event)">
+                        <button class="btn-code-action" onclick="showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(funcName))}, '', event)">
                             <span>↗</span> Code
                         </button>
                     </div>
@@ -334,10 +334,10 @@ window.FeatureView = {
                     file_md5: md5,
                     entrypoint_address: addr,
                     collection: this.collection
-                }).replace(/'/g, "&apos;");
+                });
 
                 const metaHtml = `
-                    <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${occ.type}</div>
+                    <div style="font-size:0.75rem; margin-bottom:5px; color:var(--accent); font-weight:bold;">${escapeHtml(occ.type)}</div>
                     <div style="display:flex; flex-direction:column; gap:2px;">
                         ${occ['previous_pcode_op'] ? `<span class="prev-badge" title="Previous Op">PREV: ${occ['previous_pcode_op']}</span>` : ''}
                         <span class="op-badge" title="${occ['pcode_op_full'] || ''}">${occ['pcode_op']}</span>
@@ -376,7 +376,7 @@ window.FeatureView = {
                 let contextHtml = '<div class="dim" style="padding:10px;">No context</div>';
                 if (sourceData && sourceData.rows) {
                     contextHtml = `<div class="code-card clickable" title="Click to jump to lines ${targetLinesStr || ''}"
-                         onclick="showFunctionCodeById('${funcId}', '${funcName.replace(/'/g, "\\'")}', '${lineHash}', event)">`;
+                         onclick="showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(funcName))}, ${escapeAttr(jsString(lineHash))}, event)">`;
 
                     const contextLineSet = new Set();
                     (occ['line_idx'] || []).forEach(l => {
@@ -409,7 +409,7 @@ window.FeatureView = {
                 }
 
                 tr.innerHTML = `
-                    <td class="code-cell" data-entity-data='${originEntityData}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">${originHtml}</td>
+                    <td class="code-cell" data-entity-data='${escapeAttr(originEntityData)}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">${originHtml}</td>
                     <td class="code-cell">${metaHtml}</td>
                     <td class="code-cell"><span class="mono" style="font-size:0.75rem; border: 1px solid var(--border); padding:1px 4px; border-radius:3px; background: var(--hover);">${occ['seq'] || 'N/A'}</span></td>
                     <td class="code-cell">${pcodeHtml}</td>

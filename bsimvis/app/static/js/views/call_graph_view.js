@@ -85,7 +85,7 @@ window.CallGraphView = {
                         };
 
                         let metaHtml = '';
-                        metaHtml += renderRow('fa-solid fa-file-signature', 'Filename', fileName, 'var(--accent)', true, `const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${file_md5}', '${fileName.replace(/'/g, "\\\\'")}', event); }`);
+                        metaHtml += renderRow('fa-solid fa-file-signature', 'Filename', fileName, 'var(--accent)', true, `const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(file_md5))}, ${escapeAttr(jsString(fileName))}, event); }`);
                         metaHtml += renderRow('fa-solid fa-microchip', 'Architecture', file.language_id || file.language, '#ae81ff');
                         metaHtml += renderRow('fa-solid fa-list-ol', 'Functions', file.function_count, '#a6e22e');
                         metaHtml += renderRow('fa-solid fa-shield', 'AV Type', file.avtype);

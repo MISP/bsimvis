@@ -22,6 +22,7 @@ def list_jobs():
 
     status = request.args.get("status")
     jtype = request.args.get("type")
+    tier = request.args.get("tier", type=int)
     jobs, total = job_service.list_jobs(
         limit=limit,
         offset=offset,
@@ -29,6 +30,7 @@ def list_jobs():
         pool=pool,
         status=status,
         jtype=jtype,
+        tier=tier,
     )
     return {"items": jobs, "total": total}
 
@@ -53,6 +55,20 @@ def cancel_job(job_id):
     if not success:
         return {"error": "Job not found or already completed"}, 404
     return {"status": "cancelled", "job_id": job_id}
+
+
+def pause_jobs():
+    """Stops workers claiming new jobs. In-flight jobs finish normally."""
+    return {"paused": job_service.set_paused(True)}
+
+
+def resume_jobs():
+    """Lets workers claim jobs again."""
+    return {"paused": job_service.set_paused(False)}
+
+
+def get_pause_state():
+    return {"paused": job_service.is_paused()}
 
 
 def cancel_all_jobs():

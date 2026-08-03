@@ -2,6 +2,7 @@ import uuid
 import time
 import json
 from enum import Enum
+from redis.exceptions import WatchError
 from .redis_client import get_queue_redis, get_redis
 
 
@@ -42,6 +43,17 @@ class JobType(Enum):
     BUILD_POOL_BIN_SIM = "build_pool_bin_sim"
     CLUSTER_POOL_BINARIES = "cluster_pool_binaries"
     LLM_BATCH = "llm_batch"
+
+
+# Lease-based claims. A worker refreshes its lease while it holds a job; if the
+# process dies (SIGKILL, OOM, host reset) nothing refreshes it, the lease expires
+# and the reaper requeues the job. This replaces the old "sweep jobs:processing on
+# startup" remedy, which could not tell a dead claim from a live one.
+LEASE_TTL = 60  # seconds a claim stays valid without a refresh
+LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
+MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
+REAPER_LOCK_KEY = "jobs:reaper:lock"
+PAUSE_KEY = "jobs:paused"
 
 
 def safe_int(val, default=0):
@@ -456,6 +468,18 @@ class JobService:
         self.r.hset(f"job:{job_id}", "error", error_msg)
         self.add_log(job_id, f"Execution error: {error_msg}")
 
+        # Failure cascades down as well as up: without this the remaining children
+        # of a failed pipeline stay queued and still run.
+        raw_tids = self.r.hget(f"job:{job_id}", "task_ids")
+        if raw_tids:
+            for tid in json.loads(raw_tids):
+                child_status = self.r.hget(f"job:{tid}", "status")
+                if child_status in (
+                    JobStatus.PENDING.value,
+                    JobStatus.RUNNING.value,
+                ):
+                    self.cancel_job(tid)
+
         parent_id = self.r.hget(f"job:{job_id}", "parent_id")
         if parent_id:
             parent_type = self.r.hget(f"job:{parent_id}", "type")
@@ -465,11 +489,149 @@ class JobService:
             else:
                 self.fail_job(parent_id, f"Failed because sub-task {job_id} failed.")
 
+    # ------------------------------------------------------------------
+    # Leases: crash recovery for claimed jobs
+    # ------------------------------------------------------------------
+
+    def claim_lease(self, job_id, owner, ttl=LEASE_TTL):
+        """Records a lease for a claimed job. Called right after the queue pop."""
+        self.r.zadd(LEASE_KEY, {job_id: time.time() + ttl})
+        self.r.hset(f"job:{job_id}", "lease_owner", owner)
+
+    def refresh_lease(self, job_id, ttl=LEASE_TTL):
+        """Extends a live lease. No-op if the reaper already took the job away."""
+        # XX: never resurrect a lease the reaper has already released, or the job
+        # would run twice -- once here, once from the requeue.
+        return self.r.zadd(LEASE_KEY, {job_id: time.time() + ttl}, xx=True)
+
+    def release_lease(self, job_id):
+        """Drops the lease and the in-flight marker. Safe to call twice."""
+        self.r.zrem(LEASE_KEY, job_id)
+        # count 0: a job enqueued twice would otherwise leave a permanent orphan.
+        self.r.lrem("jobs:processing", 0, job_id)
+
+    def reap_expired(self, now=None):
+        """Requeues jobs whose worker died, and clears stale in-flight entries.
+
+        Returns (requeued, failed, cleaned). Held under a short lock so a fleet
+        starting together does not requeue the same job several times.
+        """
+        if not self.r.set(REAPER_LOCK_KEY, "1", nx=True, ex=30):
+            return (0, 0, 0)
+
+        now = time.time() if now is None else now
+        try:
+            expired = list(self.r.zrangebyscore(LEASE_KEY, 0, now))
+
+            # Entries sitting in jobs:processing with no lease at all: either a
+            # worker died between the queue pop and claim_lease, or they predate
+            # leases entirely (the historical jobs:processing leak).
+            leased = set(self.r.zrange(LEASE_KEY, 0, -1))
+            for job_id in self.r.lrange("jobs:processing", 0, -1):
+                if job_id not in leased and job_id not in expired:
+                    expired.append(job_id)
+
+            requeued = failed = cleaned = 0
+            for job_id in dict.fromkeys(expired):
+                job = self.r.hgetall(f"job:{job_id}")
+                status = job.get("status") if job else None
+
+                if not job or status in (
+                    JobStatus.COMPLETED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ):
+                    # Already resolved -- the list entry is just stale bookkeeping.
+                    self.release_lease(job_id)
+                    cleaned += 1
+                    continue
+
+                self.release_lease(job_id)
+                attempts = self.r.hincrby(f"job:{job_id}", "attempts", 1)
+                if attempts > MAX_ATTEMPTS:
+                    self.add_log(
+                        job_id,
+                        f"Abandoned after {attempts - 1} attempts (worker kept dying).",
+                    )
+                    self.fail_job(
+                        job_id,
+                        f"Lease expired {attempts - 1} times; giving up.",
+                    )
+                    failed += 1
+                    continue
+
+                # The `queued` latch is what stops a re-enqueue, and the status is
+                # still `running` from the dead worker. Both must be reset first.
+                self.r.hdel(f"job:{job_id}", "queued", "lease_owner")
+                self.r.hset(f"job:{job_id}", "status", JobStatus.PENDING.value)
+                self.add_log(
+                    job_id, f"Lease expired; requeued (attempt {attempts + 1})."
+                )
+                self.enqueue_job(job_id)
+                requeued += 1
+
+            return (requeued, failed, cleaned)
+        finally:
+            self.r.delete(REAPER_LOCK_KEY)
+
+    # ------------------------------------------------------------------
+    # Pause / resume
+    # ------------------------------------------------------------------
+
+    def is_paused(self):
+        """True when workers should finish their current job and stop claiming."""
+        return bool(self.r.exists(PAUSE_KEY))
+
+    def set_paused(self, paused):
+        if paused:
+            self.r.set(PAUSE_KEY, "1")
+        else:
+            self.r.delete(PAUSE_KEY)
+        return self.is_paused()
+
+    # ------------------------------------------------------------------
+    # Task splicing
+    # ------------------------------------------------------------------
+
+    def splice_tasks(self, parent_id, after_id, new_tids, retries=10):
+        """Inserts task ids into a parent's task_ids after `after_id`, atomically.
+
+        task_ids is a JSON blob, so a plain read-modify-write loses one of two
+        concurrent splices (chunks arrive in parallel). WATCH makes the write
+        fail instead of silently dropping tasks.
+        """
+        if not new_tids:
+            return True
+        key = f"job:{parent_id}"
+        for _ in range(retries):
+            try:
+                with self.r.pipeline() as pipe:
+                    pipe.watch(key)
+                    raw = pipe.hget(key, "task_ids")
+                    if raw is None:
+                        pipe.unwatch()
+                        return False
+                    existing = json.loads(raw)
+                    try:
+                        idx = existing.index(after_id)
+                        updated = existing[: idx + 1] + new_tids + existing[idx + 1 :]
+                    except ValueError:
+                        updated = existing + new_tids
+                    pipe.multi()
+                    pipe.hset(key, "task_ids", json.dumps(updated))
+                    pipe.execute()
+                return True
+            except WatchError:
+                continue
+        return False
+
     def get_job_status(self, job_id):
         """Returns the full job or pipeline status."""
         data = self.r.hgetall(f"job:{job_id}")
         if not data:
             return None
+
+        data["tier"] = 2 if data.get("parent_id") else 1
 
         # Decode JSON fields
         if "payload" in data:
@@ -779,7 +941,14 @@ class JobService:
         }
 
     def list_jobs(
-        self, limit=100, offset=0, collection=None, pool=None, status=None, jtype=None
+        self,
+        limit=100,
+        offset=0,
+        collection=None,
+        pool=None,
+        status=None,
+        jtype=None,
+        tier=None,
     ):
         """Returns a paged list of jobs and the total count."""
         # Use collection index key if collection filter is passed
@@ -800,7 +969,7 @@ class JobService:
 
         # Optimize: if no filter is active, we can slice top-level job IDs early
         # to avoid fetching and parsing all 1000 jobs.
-        has_filters = any([collection, pool, status, jtype])
+        has_filters = any([collection, pool, status, jtype, tier])
         sliced_job_ids = all_job_ids
         if not has_filters:
             sliced_job_ids = all_job_ids[offset : offset + limit]
@@ -884,6 +1053,12 @@ class JobService:
                     "parent_id": parent_id,
                     "task_ids": task_ids,
                     "payload": job.get("payload", ""),
+                    # Visibility tier, derived from root-ness rather than a type
+                    # table: a job the user started has no parent run (tier 1),
+                    # anything spawned underneath one is internal (tier 2). The
+                    # same type is legitimately both depending on context.
+                    "tier": 2 if parent_id else 1,
+                    "attempts": safe_int(job.get("attempts", 0)),
                 }
             )
 
@@ -957,6 +1132,8 @@ class JobService:
             if status and job_dict.get("status") != status:
                 continue
             if jtype and job_dict.get("type") != jtype:
+                continue
+            if tier and job_dict.get("tier") != safe_int(tier):
                 continue
 
             filtered_top_level_jobs.append(job_dict)

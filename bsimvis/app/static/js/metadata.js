@@ -1,5 +1,19 @@
 // Shared Function Metadata Card Renderer for BSimVis
 
+// Opens the file details panel (or navigates to the file page as a fallback).
+// Kept as a named function so callers pass values as JS arguments instead of
+// building a long inline handler out of untrusted strings.
+window.openFileDetails = function (collection, md5, fileName, event) {
+    const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel);
+    if (showPanel) {
+        showPanel(collection, md5, fileName, event);
+        return;
+    }
+    const url = `/collections/${encodeURIComponent(collection)}/files/${encodeURIComponent(md5)}`;
+    const Nav = window.Nav || (window.parent && window.parent.Nav);
+    if (Nav) Nav.openPath(url, event, { title: `File: ${fileName}`, type: 'file' });
+};
+
 function renderFunctionMetadata(container, m, fullId, options = {}) {
     if (!m) return "";
     
@@ -77,14 +91,12 @@ window.getNavHandler = () => {
     };
 };
 
-const safeName = (funcData.function_name || '').replace(/'/g, "\\'");
-                
-return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()('${funcData.function_id}', '${safeName}', '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
+return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
     ${funcHtml}
     ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
 </span>`;
             }
-            return `<span class="relation-tag">${JSON.stringify(t)}</span>`;
+            return `<span class="relation-tag">${escapeHtml(JSON.stringify(t))}</span>`;
         }).join('');
         
         return `<div class="relation-column">
@@ -102,7 +114,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
 
     if (options.showCodeLink) {
         headerActionsHtml += `
-            <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const f = window.parseFuncId('${fullId}'); const url = '/collection/' + encodeURIComponent(f.collection) + '/function/' + encodeURIComponent(f.md5) + '/' + encodeURIComponent(f.address); Nav.openPath(url, event, { title: 'Code: ' + f.address, type: 'function' });" title="Open Code" 
+            <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const f = window.parseFuncId(${escapeAttr(jsString(fullId))}); const url = '/collection/' + encodeURIComponent(f.collection) + '/function/' + encodeURIComponent(f.md5) + '/' + encodeURIComponent(f.address); Nav.openPath(url, event, { title: 'Code: ' + f.address, type: 'function' });" title="Open Code" 
                style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: color-mix(in srgb, var(--token-register) 10%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--token-register) 30%, transparent);">
                <i class="fa-solid fa-code"></i>
             </a>`;
@@ -119,14 +131,14 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
     const renderRow = (key, val, icon = null) => {
         const labelText = key === 'function_id_hash' ? 'function hash' : key.replace(/_/g, ' ');
         const prefix = icon ? `<i class="fa-solid ${icon}" style="margin-right:8px; opacity:0.5; width:14px;"></i>` : '';
-        let valueDisplay = (key === 'entrypoint_address') ? `@ ${val}` : (key === 'file_md5' ? `# ${val}` : val);
+        let valueDisplay = (key === 'entrypoint_address') ? `@ ${escapeHtml(val)}` : (key === 'file_md5' ? `# ${escapeHtml(val)}` : escapeHtml(val));
         const valueColor = (key.includes('address') || key.includes('md5') || key.includes('id') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
         
         if (key === 'bsim_features_count') {
-            valueDisplay = `${val} <button class="btn-icon" onclick="navigateToFeatures('${fullId}', event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
+            valueDisplay = `${escapeHtml(val)} <button class="btn-icon" onclick="navigateToFeatures(${escapeAttr(jsString(fullId))}, event)" title="Show Features" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0 2px; font-size: 0.8rem; opacity: 0.7; display:inline-flex; align-items:center; vertical-align:middle; margin-left:4px;">🔍</button>`;
         }
         if (key === 'file_name') {
-            valueDisplay = `<b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${val.replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${val.replace(/'/g, "\\'")}', type: 'file'}); }">${val}</b>`;
+            valueDisplay = `<b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(fileMd5))}, ${escapeAttr(jsString(val))}, event)">${escapeHtml(val)}</b>`;
         }
 
         return `<div class="meta-row" title="${labelText}">
@@ -174,22 +186,22 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
     const toggleText = startCollapsed ? 'Show more metadata' : 'Show less metadata';
 
     const cardHtml = `
-    <div class="func-meta-card modern flattened compact" ${options.side ? `data-side="${options.side}"` : ''}>
+    <div class="func-meta-card modern flattened compact" ${options.side ? `data-side="${escapeAttr(options.side)}"` : ''}>
         <div class="meta-header">
             <div class="meta-title-row" style="margin-bottom: 8px;">
                 <div class="meta-sig" 
-                     data-entity-data='${JSON.stringify({
+                     data-entity-data='${escapeAttr(JSON.stringify({
                         function_id: fullId,
                         function_name: label,
                         file_md5: fileMd5,
                         entrypoint_address: addr,
                         collection: collection
-                     }).replace(/'/g, "&apos;")}'
+                     }))}'
                      oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
-                    <span class="meta-return-type">${returnType}</span>
-                    ${namespace ? `<span class="meta-namespace">${namespace}::</span>` : ''}
-                    <span class="meta-func-name">${label}</span>
-                    <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
+                    <span class="meta-return-type">${escapeHtml(returnType)}</span>
+                    ${namespace ? `<span class="meta-namespace">${escapeHtml(namespace)}::</span>` : ''}
+                    <span class="meta-func-name">${escapeHtml(label)}</span>
+                    <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${escapeHtml(typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p)}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
                     
                     <div class="meta-sig-actions" style="margin-left: 10px;">
                         ${EntityRenderer.renderNoteButton(fullId, m.note_owners, { raw_data: m })}
@@ -197,7 +209,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                     </div>
 
                     <div class="meta-header-addr mono" style="margin-left: 10px; color: var(--accent); font-size: 0.8rem; opacity: 0.8;">
-                        @ ${addr}
+                        @ ${escapeHtml(addr)}
                     </div>
 
                     <div class="meta-header-tags" style="display: inline-flex; gap: 4px; margin-left: 10px;">
@@ -211,8 +223,8 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
             
             <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid var(--border); color: #ddd; margin-top: 6px;">
                 <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;">
-                    <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${fileMd5}</span>
-                    <span><b style="font-size: 1rem; color: var(--accent); font-family: 'Inter', sans-serif; cursor: pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${(m['file_name'] || '').replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${(m['file_name'] || '').replace(/'/g, "\\'")}', type: 'file'}); }">${m['file_name'] || 'N/A'}</b></span>
+                    <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${escapeHtml(fileMd5)}</span>
+                    <span><b style="font-size: 1rem; color: var(--accent); font-family: 'Inter', sans-serif; cursor: pointer;" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(fileMd5))}, ${escapeAttr(jsString(m['file_name'] || ''))}, event)">${escapeHtml(m['file_name'] || 'N/A')}</b></span>
                     <div style="display: flex; align-items: center; overflow: hidden; margin-left: 5px;">
                         ${fileTagsHtml}
                     </div>
@@ -409,8 +421,8 @@ function renderFileMetadata(container, m, fullId, options = {}) {
     const renderRow = (key, val, icon = null) => {
         const labelText = key.replace(/_/g, ' ');
         const prefix = icon ? `<i class="fa-solid ${icon}" style="margin-right:8px; opacity:0.5; width:14px;"></i>` : '';
-        let valueDisplay = val;
-        if (key.includes('date') && val) valueDisplay = new Date(val).toLocaleString();
+        let valueDisplay = escapeHtml(val);
+        if (key.includes('date') && val) valueDisplay = escapeHtml(new Date(val).toLocaleString());
         if (key === 'cohesion_score' && val) valueDisplay = (val * 100).toFixed(1) + '%';
         
         const valueColor = (key.includes('md5') || key.includes('count') || key.includes('score')) ? 'var(--accent)' : 'inherit';
@@ -442,23 +454,23 @@ function renderFileMetadata(container, m, fullId, options = {}) {
     statsMetaKeys.forEach(k => { if (m[k] !== undefined) statsHtml += renderRow(k, m[k], getIcon(k)); });
 
     const cardHtml = `
-    <div class="func-meta-card modern flattened compact file-meta-card" ${options.side ? `data-side="${options.side}"` : ''}>
+    <div class="func-meta-card modern flattened compact file-meta-card" ${options.side ? `data-side="${escapeAttr(options.side)}"` : ''}>
         <div class="meta-header">
             <div class="meta-title-row" style="margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
                 <div class="meta-sig" 
-                     data-entity-data='${JSON.stringify({
+                     data-entity-data='${escapeAttr(JSON.stringify({
                         type: 'file',
                         file_md5: fileMd5,
                         file_name: fileName,
                         collection: collection
-                     }).replace(/'/g, "&apos;")}'
+                     }))}'
                      oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)"
                      style="display: flex; align-items: center; flex: 1;">
                     <i class="fa-solid fa-file" style="margin-right: 8px; color: var(--accent);"></i>
-                    <span class="meta-func-name"><b style="color:var(--accent); cursor:pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${fileName.replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${fileName.replace(/'/g, "\\'")}', type: 'file'}); }">${fileName}</b></span>
+                    <span class="meta-func-name"><b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(fileMd5))}, ${escapeAttr(jsString(fileName))}, event)">${escapeHtml(fileName)}</b></span>
                     
                     <div class="meta-header-addr mono" style="margin-left: 10px; color: var(--accent); font-size: 0.8rem; opacity: 0.8;">
-                        # ${fileMd5}
+                        # ${escapeHtml(fileMd5)}
                     </div>
 
                     <div class="meta-header-tags" style="display: inline-flex; gap: 4px; margin-left: 10px;">

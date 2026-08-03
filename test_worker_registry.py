@@ -124,6 +124,25 @@ def test_update_progress_without_counts_still_works():
     assert "speed" not in svc.r.hgetall("job:j2")
 
 
+def test_worker_volunteers_as_the_oom_victim():
+    """kvrocks cannot lower its own score, so the worker raises its own.
+
+    Only exercised upward (200 -> 1000): the kernel forbids lowering it without
+    privilege, which is the whole reason this is done here and not on kvrocks.
+    """
+    import os as _os
+
+    from bsimvis.worker import _make_preferred_oom_victim
+
+    _os.environ["WORKER_OOM_SCORE_ADJ"] = "1000"
+    try:
+        assert _make_preferred_oom_victim() is True
+        with open("/proc/self/oom_score_adj") as f:
+            assert f.read().strip() == "1000"
+    finally:
+        _os.environ.pop("WORKER_OOM_SCORE_ADJ", None)
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(list(globals().items())):

@@ -69,9 +69,14 @@ human() {  # bytes -> GiB, 2dp
     awk -v b="${1:-0}" 'BEGIN { if (b+0 <= 0) print "n/a"; else printf "%.2f GiB", b/1073741824 }'
 }
 
+WORKER_FAST_FAIL_SECONDS=${WORKER_FAST_FAIL_SECONDS:-30}
+WORKER_MAX_RESTART_DELAY=${WORKER_MAX_RESTART_DELAY:-120}
+
 restarts=0
+fast_failures=0
 while true; do
     echo "[supervisor] starting ${NAME} (restart ${restarts}, MemoryMax=${WORKER_MEMORY_MAX:-none})"
+    started_at=$SECONDS
 
     if [ -n "$WORKER_MEMORY_MAX" ] && command -v systemd-run > /dev/null; then
         # A named unit is what lets teardown stop the scope and lets us find
@@ -80,9 +85,13 @@ while true; do
         : > "$PEAK_FILE"
         sample_peak &
         sampler=$!
+        # OOMScoreAdjust is NOT a valid property for a scope unit -- systemd
+        # rejects it with "Unknown assignment" and nothing starts. The worker
+        # sets its own oom_score_adj from WORKER_OOM_SCORE_ADJ instead, which
+        # is allowed because raising your own score never needs privilege.
+        WORKER_OOM_SCORE_ADJ="$WORKER_OOM_SCORE_ADJ" \
         systemd-run --user --scope -q --unit="$UNIT" \
             -p MemoryMax="$WORKER_MEMORY_MAX" -p MemoryAccounting=yes \
-            -p OOMScoreAdjust="$WORKER_OOM_SCORE_ADJ" \
             $PYTHON_CMD bsimvis/worker.py --name "$NAME"
         rc=$?
         kill "$sampler" 2> /dev/null
@@ -112,6 +121,27 @@ while true; do
         echo "[supervisor] ${NAME} hit WORKER_MAX_RESTARTS=${WORKER_MAX_RESTARTS}; giving up."
         break
     fi
-    echo "[supervisor] restarting ${NAME} in ${WORKER_RESTART_DELAY}s..."
-    sleep "$WORKER_RESTART_DELAY"
+
+    # Back off when the worker dies immediately. A misconfiguration that stops
+    # the worker booting at all would otherwise spin at the base delay forever
+    # and bury the actual error under thousands of restart lines -- which is
+    # exactly what a bad systemd property did on the first run of this script.
+    if [ "$((SECONDS - started_at))" -lt "$WORKER_FAST_FAIL_SECONDS" ]; then
+        fast_failures=$((fast_failures + 1))
+    else
+        fast_failures=0
+    fi
+    delay=$WORKER_RESTART_DELAY
+    i=0
+    while [ "$i" -lt "$fast_failures" ] && [ "$delay" -lt "$WORKER_MAX_RESTART_DELAY" ]; do
+        delay=$((delay * 2))
+        i=$((i + 1))
+    done
+    [ "$delay" -gt "$WORKER_MAX_RESTART_DELAY" ] && delay=$WORKER_MAX_RESTART_DELAY
+
+    if [ "$fast_failures" -ge 3 ]; then
+        echo "[supervisor] ${NAME} has failed ${fast_failures}x within ${WORKER_FAST_FAIL_SECONDS}s -- this looks like a misconfiguration, not a crash."
+    fi
+    echo "[supervisor] restarting ${NAME} in ${delay}s..."
+    sleep "$delay"
 done 2>&1 | tee -a "$LOG"

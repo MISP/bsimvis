@@ -44,6 +44,28 @@ def _current_rss():
     return 0
 
 
+def _make_preferred_oom_victim():
+    """Raises this process's oom_score_adj so the kernel picks it before kvrocks.
+
+    Every process here inherits oom_score_adj=+200, and kvrocks is the largest
+    RSS in the session, so under real host pressure the kernel killed the
+    datastore first. An unprivileged process may only RAISE its own score, so
+    kvrocks cannot protect itself -- the worker volunteers instead. A killed
+    worker is recoverable (the reaper requeues its job); kvrocks is not.
+
+    Note this cannot be done with `systemd-run --scope -p OOMScoreAdjust=`:
+    that is an exec property and systemd rejects it on a scope unit.
+    """
+    adj = os.getenv("WORKER_OOM_SCORE_ADJ", "1000")
+    try:
+        with open("/proc/self/oom_score_adj", "w") as f:
+            f.write(str(adj))
+        return True
+    except OSError as e:
+        logging.warning(f"[!] Could not set oom_score_adj={adj}: {e}")
+        return False
+
+
 def _reset_peak_rss():
     """Clears VmHWM so the next reading is this job's peak, not the worker's.
 
@@ -67,6 +89,7 @@ class Worker:
         # regresses, and makes lease_owner point at a process you can actually
         # find.
         self.id = f"{name}-{os.getpid()}"
+        _make_preferred_oom_victim()
         self.r_queue = get_queue_redis()
         self.r_data = get_redis()
         self.r_raw = get_raw_redis()

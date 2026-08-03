@@ -27,6 +27,13 @@ PYTHON_CMD=${PYTHON_CMD:-uv run python}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
 WORKER_MEMORY_MAX=${WORKER_MEMORY_MAX:-}
 WORKER_RESTART_DELAY=${WORKER_RESTART_DELAY:-5}
+# Under real host pressure the kernel picked kvrocks -- the datastore -- as its
+# first victim, because every process here inherits oom_score_adj=+200 and
+# kvrocks is the biggest RSS in the session. An unprivileged process can only
+# RAISE its own oom_score_adj, so kvrocks cannot protect itself; making workers
+# the maximum-score victim achieves the same ordering without root. A worker
+# dying is recoverable (the lease reaper requeues its job); kvrocks dying is not.
+WORKER_OOM_SCORE_ADJ=${WORKER_OOM_SCORE_ADJ:-1000}
 # 0 = restart forever. A crash-looping worker still backs off by the delay.
 WORKER_MAX_RESTARTS=${WORKER_MAX_RESTARTS:-0}
 
@@ -75,6 +82,7 @@ while true; do
         sampler=$!
         systemd-run --user --scope -q --unit="$UNIT" \
             -p MemoryMax="$WORKER_MEMORY_MAX" -p MemoryAccounting=yes \
+            -p OOMScoreAdjust="$WORKER_OOM_SCORE_ADJ" \
             $PYTHON_CMD bsimvis/worker.py --name "$NAME"
         rc=$?
         kill "$sampler" 2> /dev/null

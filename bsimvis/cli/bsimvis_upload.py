@@ -14,6 +14,13 @@ from bsimvis.app.services.ghidra_service import ghidra_service
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 DEFAULT_BATCH_NAME = "Ghidra Batch"
 
+# Per-target outcomes. "Already present by MD5" is a third state, not a failure:
+# folding it into failure made a fully-deduplicated group report 0/19 and look
+# like a total wipeout. Callers should treat only UPLOAD_FAILED as an error.
+UPLOAD_FAILED = 0
+UPLOAD_OK = 1
+UPLOAD_DUPLICATE = 2
+
 
 def archive_ghidra_project(gpr_path: Path) -> Optional[str]:
     """
@@ -230,6 +237,8 @@ def _perform_raw_upload(raw_bytes, file_name, args):
     collections = args.collections if args.collections else ["main"]
 
     success = True
+    duplicate = False  # every rejection so far was "already exists"
+    failed = False  # at least one genuine error
     pipeline_details = []
     for collection in collections:
         for api_host in hosts:
@@ -312,12 +321,23 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                     except Exception:
                         err_msg = e.response.text[:200]
 
-                if not is_duplicate:
+                if is_duplicate:
+                    duplicate = True
+                else:
                     err_suffix = f" (Details: {err_msg})" if err_msg else ""
                     logging.error(f"[!] Upload failed for {api_url}: {e}{err_suffix}")
+                    failed = True
                 success = False
 
-    return (1 if success else 0), pipeline_details
+    # A file already present by MD5 is not a failure. Collapsing the two meant a
+    # group where every file was already indexed reported "0.00% (0/19)" and
+    # looked like a total wipeout -- while a run where everything genuinely
+    # failed reported the same thing and still exited 0.
+    if failed:
+        return UPLOAD_FAILED, pipeline_details
+    if duplicate:
+        return UPLOAD_DUPLICATE, pipeline_details
+    return (UPLOAD_OK if success else UPLOAD_FAILED), pipeline_details
 
 
 def process_target(target, args, config, batch_order) -> tuple[int, list]:
@@ -591,6 +611,8 @@ def main(args):
         }
 
         success_count = 0
+        duplicate_count = 0
+        failed_count = 0
         total = len(args.targets)
         pipeline_details = []
 
@@ -603,18 +625,29 @@ def main(args):
                 target_name = future_to_target[future]
                 try:
                     result, p_details = future.result()
-                    if result == 1:
+                    if result == UPLOAD_OK:
                         success_count += 1
                         pipeline_details.extend(p_details)
+                    elif result == UPLOAD_DUPLICATE:
+                        duplicate_count += 1
+                    else:
+                        failed_count += 1
                 except Exception as e:
                     # tqdm.write ensures the progress bar stays at the bottom
                     # while the error message is printed above it
                     pbar.write(f"[!] Exception in job for {target_name}: {e}")
+                    failed_count += 1
 
                 pbar.update(1)
 
+        # Report the three outcomes separately. The SightHouse bridge used to
+        # regex-scrape this success-rate line because it was the only signal
+        # available; the counts and the exit code are the interface now.
         rate = (success_count / total * 100) if total > 0 else 0
         print(f"[i] Success rate : {rate:.2f}% ({success_count}/{total})")
+        print(f"[i] Uploaded     : {success_count}")
+        print(f"[i] Skipped (dup): {duplicate_count}")
+        print(f"[i] Failed       : {failed_count}")
 
         if pipeline_details:
             # Group pipeline IDs by (host, collection)
@@ -651,6 +684,12 @@ def main(args):
                     )
                 except Exception as e:
                     logging.error(f"[!] Batch finalize failed for {api_url}: {e}")
+                    failed_count += 1
+
+        # Exit code reflects real failures only. It used to be 0 unconditionally,
+        # so a run where every single file failed still looked like a success to
+        # any caller or CI step.
+        return 1 if failed_count else 0
 
 
 def load_config(path=DEFAULT_CONFIG_NAME):

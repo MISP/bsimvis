@@ -73,13 +73,22 @@ class TimedPipeline(redis.client.Pipeline):
             timer.record(desc, duration, category)
 
 
+# A hung kvrocks command must not outlive the lease of the job making it.
+# These were 1000 SECONDS, so a single blocked socket read looked like a stuck
+# job for 17 minutes while its lease (60s) expired and the reaper requeued the
+# work underneath it -- which made every lease timing meaningless. 30s leaves
+# room for a slow command and still fails well inside one lease period; the
+# retry policy below rides out a transient stall. Override for a genuinely slow
+# host with KVROCKS_SOCKET_TIMEOUT.
+KV_SOCKET_TIMEOUT = float(os.getenv("KVROCKS_SOCKET_TIMEOUT", 30))
+
 # Kvrocks is for data
 KV_CONFIG = {
     "host": os.getenv("KVROCKS_HOST", "localhost"),
     "port": int(os.getenv("KVROCKS_PORT", 6666)),
     "decode_responses": True,
-    "socket_timeout": 1000,
-    "socket_connect_timeout": 1000,
+    "socket_timeout": KV_SOCKET_TIMEOUT,
+    "socket_connect_timeout": 5,
     "health_check_interval": 30,
     "socket_keepalive": True,
     "retry_on_timeout": True,

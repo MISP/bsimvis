@@ -645,7 +645,11 @@ def main():
             args.host = api_host_str
             if not args.hosts:
                 args.hosts = [api_host_str]
-            bsimvis_upload.run_upload(None, None, args)
+            # Propagate the failure count as an exit code: upload used to exit 0
+            # even when every file failed.
+            rc = bsimvis_upload.run_upload(None, None, args)
+            if rc:
+                sys.exit(rc)
         elif args.subcommand == "job":
             bsimvis_job.run_job(g_host, int(g_port), args)
         elif args.subcommand == "worker":

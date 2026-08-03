@@ -598,13 +598,12 @@ class Worker:
             functions_list = payload.get("functions_list")
             chunk_id = payload.get("chunk_id")
             if chunk_id:
-                # ponytail: retrieve from Kvrocks & delete right away
                 raw_funcs = self.r_data.get(chunk_id)
                 if raw_funcs:
                     functions_list = json.loads(raw_funcs)
-                    self.r_data.delete(chunk_id)
                 else:
-                    # ponytail: Duplicate run or missing data, finish gracefully
+                    # Deleted only after a successful commit below, so an empty
+                    # chunk here means the work is already done.
                     self.job_service.add_log(
                         job_id, "Chunk data empty or already processed. Skipping."
                     )
@@ -613,7 +612,7 @@ class Worker:
             file_meta = payload.get("file_meta")
             file_md5 = payload.get("file_md5")
             batch_uuid = payload.get("batch_uuid")
-            return self.processing_service.index_functions(
+            ok = self.processing_service.index_functions(
                 collection,
                 file_id,
                 self.job_service,
@@ -623,6 +622,16 @@ class Worker:
                 file_md5=file_md5,
                 batch_uuid=batch_uuid,
             )
+            # The chunk is the ONLY copy of these functions. Deleting it before
+            # the commit meant a crash in between lost them silently, and made
+            # the reaper's requeue destructive: the retry found no data and
+            # "succeeded" with nothing indexed. Delete last, so a retry always
+            # has something to retry with. index_functions writes keyed by
+            # function id, so replaying a chunk overwrites rather than
+            # duplicates.
+            if ok and chunk_id:
+                self.r_data.delete(chunk_id)
+            return ok
 
         elif jtype == JobType.INDEX_FEATURES.value:
             # For INDEX_FEATURES, we need a list of function IDs

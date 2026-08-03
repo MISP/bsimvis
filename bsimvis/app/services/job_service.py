@@ -1,6 +1,7 @@
 import uuid
 import time
 import json
+import os
 from enum import Enum
 from redis.exceptions import WatchError
 from .redis_client import get_queue_redis, get_redis
@@ -57,6 +58,24 @@ WORKERS_KEY = "workers:alive"  # ZSET worker_id -> registration expiry
 # worker is mid-job and the loop only ticks every LEASE_TTL/3) never drops a
 # live worker off the dashboard.
 WORKER_TTL = LEASE_TTL
+
+# --- memory admission control ---------------------------------------------
+# Weights are MEASURED, not hand-picked. The draft version of this listed
+# cluster_*, build_bin_sim and big binaries as "heavy" -- and enrich_features,
+# the job that actually killed ten workers, was not on the list. So instead each
+# worker records the peak RSS it actually saw for a job type and admission uses
+# that. Unmeasured types get a modest default and calibrate themselves after
+# one run.
+MEM_PEAK_KEY = "jobs:mem:peak"  # HASH jtype -> largest RSS observed, bytes
+MEM_RESERVED_KEY = "jobs:mem:reserved"  # HASH job_id -> bytes reserved
+MEM_USED_KEY = "jobs:mem:used"  # INT sum of live reservations
+MEM_DEFAULT_COST = 512 * 1024**2
+
+# Caveat worth keeping in view: tokens bound CONCURRENCY, not per-job
+# footprint. Each worker has its own cgroup, so serialising five
+# enrich_features jobs would not have saved any single one of them. This stops
+# the fleet from collectively overcommitting the host; it is necessary, not
+# sufficient.
 MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
 REAPER_LOCK_KEY = "jobs:reaper:lock"
 PAUSE_KEY = "jobs:paused"
@@ -515,6 +534,8 @@ class JobService:
         self.r.zrem(LEASE_KEY, job_id)
         # count 0: a job enqueued twice would otherwise leave a permanent orphan.
         self.r.lrem("jobs:processing", 0, job_id)
+        # The memory reservation has the same lifetime as the claim.
+        self.release_admission(job_id)
 
     # ------------------------------------------------------------------
     # Worker registry: an honest count of live worker processes
@@ -553,6 +574,76 @@ class JobService:
             w.decode() if isinstance(w, bytes) else w
             for w in self.r.zrange(WORKERS_KEY, 0, -1)
         ]
+
+    # ------------------------------------------------------------------
+    # Memory admission control
+    # ------------------------------------------------------------------
+
+    def memory_budget(self):
+        """Bytes of worker memory the fleet may collectively reserve."""
+        env = os.getenv("JOB_MEMORY_BUDGET_MB")
+        if env:
+            return int(float(env) * 1024**2)
+        # Same reservation as launch_tmux.sh: leave 8 GB for kvrocks, redis and
+        # the desktop, offer the rest to jobs.
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        total = int(line.split()[1]) * 1024
+                        return max(total - 8 * 1024**3, 1024**3)
+        except OSError:
+            pass
+        return 8 * 1024**3
+
+    def record_job_peak(self, jtype, peak_bytes):
+        """Remembers the largest RSS ever seen for a job type."""
+        if not jtype or not peak_bytes:
+            return
+        prev = safe_int(self.r.hget(MEM_PEAK_KEY, jtype))
+        if peak_bytes > prev:
+            self.r.hset(MEM_PEAK_KEY, jtype, int(peak_bytes))
+
+    def job_cost(self, jtype):
+        """Measured peak for this job type, or a default until one exists."""
+        return safe_int(self.r.hget(MEM_PEAK_KEY, jtype), MEM_DEFAULT_COST) or (
+            MEM_DEFAULT_COST
+        )
+
+    def try_admit(self, job_id, jtype):
+        """Reserves this job's measured cost, or refuses if the fleet is full.
+
+        INCRBY-then-roll-back: two workers racing can never both slip past the
+        budget, because the increment is what decides.
+        """
+        cost = self.job_cost(jtype)
+        used = self.r.incrby(MEM_USED_KEY, cost)
+        # `used == cost` means nothing else was reserved. Always admit then,
+        # even if the job alone exceeds the budget -- otherwise a single
+        # expensive job type would deadlock the queue forever.
+        if used <= self.memory_budget() or used == cost:
+            self.r.hset(MEM_RESERVED_KEY, job_id, cost)
+            return True
+        self.r.incrby(MEM_USED_KEY, -cost)
+        return False
+
+    def release_admission(self, job_id):
+        """Gives a job's reservation back. Safe to call twice."""
+        cost = safe_int(self.r.hget(MEM_RESERVED_KEY, job_id))
+        if cost:
+            self.r.hdel(MEM_RESERVED_KEY, job_id)
+            self.r.incrby(MEM_USED_KEY, -cost)
+
+    def resync_admissions(self):
+        """Rebuilds the used counter from the live reservations.
+
+        A worker killed between INCRBY and its release leaks its reservation,
+        and enough leaks would starve the fleet into a permanent standstill.
+        The reaper calls this, so the budget self-heals the same way leases do.
+        """
+        total = sum(safe_int(v) for v in (self.r.hvals(MEM_RESERVED_KEY) or []))
+        self.r.set(MEM_USED_KEY, total)
+        return total
 
     def reap_expired(self, now=None):
         """Requeues jobs whose worker died, and clears stale in-flight entries.
@@ -613,6 +704,18 @@ class JobService:
                 )
                 self.enqueue_job(job_id)
                 requeued += 1
+
+            # Drop memory reservations for jobs that are no longer in flight.
+            # A worker killed between INCRBY and its release would otherwise
+            # leak budget permanently, and enough leaks starve the whole fleet
+            # into a standstill that looks exactly like the outage we are
+            # fixing. Then rebuild the counter from what is actually held.
+            in_flight = set(self.r.lrange("jobs:processing", 0, -1))
+            for job_id in list(self.r.hkeys(MEM_RESERVED_KEY) or []):
+                job_id = job_id.decode() if isinstance(job_id, bytes) else job_id
+                if job_id not in in_flight:
+                    self.r.hdel(MEM_RESERVED_KEY, job_id)
+            self.resync_admissions()
 
             return (requeued, failed, cleaned)
         finally:

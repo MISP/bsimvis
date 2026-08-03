@@ -34,6 +34,33 @@ logging.basicConfig(
 )
 
 
+def _current_rss():
+    """Peak RSS in bytes since the last reset, from the kernel's own counter."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def _reset_peak_rss():
+    """Clears VmHWM so the next reading is this job's peak, not the worker's.
+
+    Linux exposes exactly this via clear_refs, which beats sampling: a job that
+    balloons and frees between two heartbeats would otherwise be recorded as
+    cheap. Best-effort -- sampling in the heartbeat covers kernels that refuse.
+    """
+    try:
+        with open("/proc/self/clear_refs", "w") as f:
+            f.write("5")
+        return True
+    except OSError:
+        return False
+
+
 class Worker:
     def __init__(self, name="worker-1"):
         self.name = name
@@ -62,6 +89,7 @@ class Worker:
         self.running = True
         self.current_job_id = None
         self._last_reap = 0.0
+        self._job_peak_rss = 0
 
     def _reap(self, interval=30):
         """Runs the lease reaper, at most once per `interval` per worker."""
@@ -102,6 +130,13 @@ class Worker:
                     self.job_service.refresh_lease(job_id)
                 except Exception as e:
                     logging.warning(f"[!] Lease refresh failed for {job_id}: {e}")
+                # Sample RSS while a job runs. This is what makes admission
+                # weights measured rather than guessed -- the draft heavy-job
+                # list did not include enrich_features, the one that actually
+                # killed the fleet.
+                rss = _current_rss()
+                if rss > self._job_peak_rss:
+                    self._job_peak_rss = rss
             time.sleep(LEASE_TTL / 3)
 
     def run(self):
@@ -171,6 +206,18 @@ class Worker:
                         logging.info(f"[-] Job {job_id} was cancelled. Skipping.")
                         continue
 
+                    # Admission control: only start if the fleet can still
+                    # afford this job type's measured peak. Refused jobs go back
+                    # on the queue rather than being failed.
+                    jtype = job_data.get("type")
+                    if not self.job_service.try_admit(job_id, jtype):
+                        logging.info(
+                            f"[~] Job {job_id} ({jtype}) deferred: fleet memory budget full."
+                        )
+                        self._requeue(job_id)
+                        time.sleep(2)
+                        continue
+
                     # Execute Job
                     self._execute_job(job_id, job_data)
                 finally:
@@ -184,12 +231,24 @@ class Worker:
                 traceback.print_exc()
                 time.sleep(1)
 
+    def _requeue(self, job_id):
+        """Puts a claimed job back on the queue untouched.
+
+        The `queued` latch must be cleared first: enqueue_job is idempotent and
+        would otherwise treat this as an already-queued pending job and drop it
+        on the floor, losing the job entirely.
+        """
+        self.r_queue.hdel(f"job:{job_id}", "queued")
+        self.job_service.enqueue_job(job_id)
+
     def _execute_job(self, job_id, job_data):
         jtype = job_data.get("type")
         payload = json.loads(job_data.get("payload", "{}"))
         parent_id = job_data.get("parent_id")
 
         logging.info(f"[+] Executing Job {job_id} ({jtype})...")
+        _reset_peak_rss()
+        self._job_peak_rss = 0
         self.job_service.add_log(
             job_id, f"Worker {self.id} started processing {jtype}."
         )
@@ -224,6 +283,16 @@ class Worker:
                 traceback.print_exc()
                 self.job_service.fail_job(job_id, str(e))
             finally:
+                # Record what this job actually cost, so admission weights come
+                # from observation instead of a hand-picked list of suspects.
+                peak = max(_current_rss(), self._job_peak_rss)
+                if peak:
+                    try:
+                        self.job_service.record_job_peak(jtype, peak)
+                    except Exception as e:
+                        logging.warning(f"[!] Could not record memory peak: {e}")
+                    logging.info(f"[#] Job {job_id} peak RSS {peak / 1024**3:.2f} GiB")
+
                 # Finalize and save performance stats
                 stats = timer.finalize()
                 self.job_service.save_performance_stats(job_id, stats)

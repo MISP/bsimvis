@@ -73,6 +73,16 @@ class FakeRedis:
         h[field] = str(int(h.get(field, 0)) + amount)
         return int(h[field])
 
+    def hkeys(self, key):
+        return list(self.hashes.get(key, {}).keys())
+
+    def hvals(self, key):
+        return list(self.hashes.get(key, {}).values())
+
+    def incrby(self, key, amount):
+        self.strings[key] = str(int(self.strings.get(key, 0)) + amount)
+        return int(self.strings[key])
+
     # --- lists
     def lpush(self, key, *vals):
         lst = self.lists.setdefault(key, [])

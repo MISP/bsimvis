@@ -263,14 +263,14 @@ function updateDiffQueueUI() {
             status.innerHTML = '';
         } else if (queue.length === 1) {
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px color-mix(in srgb, var(--token-warning) 40%, transparent);">
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; ">
                     <span>±</span> 1/2 Selected: ${queue[0].name}
                     <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
                 </span>`;
         } else {
             const compareBtnHtml = window.parent === window ? `<button onclick="openStandaloneDiff(event)" style="background:var(--window-tray); color:var(--success); border:1px solid var(--success); padding:2px 8px; border-radius:4px; font-weight:bold; cursor:pointer; font-size:0.75rem;">Compare ↗</button>` : '';
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:var(--success); color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px color-mix(in srgb, var(--token-symbol) 40%, transparent);">
+                <span class="badge diff-queue-badge" style="background:var(--success); color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; ">
                     <span>±</span> 2/2 Ready: ${queue[0].name} vs ${queue[1].name}
                     ${compareBtnHtml}
                     <button onclick="clearDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear Diff Selection">&times;</button>
@@ -348,7 +348,7 @@ function updateFileDiffQueueUI() {
             status.innerHTML = '';
         } else if (queue.length === 1) {
             status.innerHTML = `
-                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; box-shadow:0 0 8px color-mix(in srgb, var(--token-warning) 40%, transparent);">
+                <span class="badge diff-queue-badge" style="background:#fd971f; color:var(--window-tray); display:flex; align-items:center; gap:8px; font-weight:bold; ">
                     <i class="fa-solid fa-file-code"></i> 1/2 Selected: ${queue[0].name}
                     <button onclick="clearFileDiffSelection()" style="background:none; border:none; cursor:pointer; color:var(--window-tray); font-weight:bold; font-size:1.1rem; padding:0; line-height:1;" title="Clear File Diff Selection">&times;</button>
                 </span>`;

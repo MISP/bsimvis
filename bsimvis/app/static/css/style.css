@@ -185,7 +185,6 @@ body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 4px 15px var(--border);
     margin-bottom: 15px;
 }
 
@@ -538,7 +537,6 @@ body {
 .relation-tag:hover {
     background: color-mix(in srgb, var(--token-register) 15%, transparent);
     transform: translateY(-1px);
-    box-shadow: 0 2px 5px var(--border);
 }
 
 .sig-ret { color: var(--token-address); }
@@ -928,7 +926,6 @@ body {
     font-size: 0.8em;
     line-height: 1.2;
     max-width: 320px;
-    box-shadow: 0 4px 10px black;
     display: none;
 }
 
@@ -1176,7 +1173,6 @@ body {
     overflow: hidden;
     margin: 4px 0;
     transition: all 0.2s;
-    box-shadow: 0 2px 8px var(--border);
     text-align: left;
     cursor: default;
 }
@@ -1187,7 +1183,6 @@ body {
 
 .code-card.clickable:hover {
     border-color: var(--accent) !important;
-    box-shadow: 0 4px 12px var(--border);
     transform: translateY(-1px);
 }
 
@@ -1266,7 +1261,6 @@ body {
     backdrop-filter: blur(10px);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 10px 30px var(--border);
     padding: 6px 0;
     min-width: 200px;
     display: none;
@@ -1560,7 +1554,6 @@ body {
     overflow-y: auto;
     z-index: 20002;
     min-width: 150px;
-    box-shadow: 0 4px 15px var(--window-bg);
     display: none;
     left: 0;
     top: 100%;
@@ -1641,7 +1634,6 @@ body {
     border-radius: 8px;
     padding: 10px;
     z-index: 10000;
-    box-shadow: 0 10px 30px var(--border);
     flex-direction: column;
     min-width: 180px;
     max-height: 160px;
@@ -1786,7 +1778,6 @@ body {
     border: 2px solid var(--accent);
     border-radius: 8px;
     padding: 0;
-    box-shadow: 0 10px 40px var(--border);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1803,7 +1794,6 @@ body {
     border-left: 4px solid var(--accent);
     padding: 8px 15px;
     border-radius: 4px;
-    box-shadow: 0 4px 15px var(--border);
     color: var(--accent);
     font-weight: bold;
     font-size: 0.85rem;
@@ -1826,7 +1816,6 @@ body {
 .btn-file-diff-action.active {
     background-color: var(--token-warning) !important;
     color: var(--window-tray) !important;
-    box-shadow: 0 0 10px color-mix(in srgb, var(--token-warning) 50%, transparent);
     border-color: var(--text) !important;
 }
 
@@ -1840,7 +1829,6 @@ body {
     background: var(--card-bg);
     border: 1px solid var(--accent);
     border-radius: 8px;
-    box-shadow: 0 15px 50px var(--border);
     backdrop-filter: blur(15px);
 }
 
@@ -1889,7 +1877,6 @@ body {
     display: none;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 -4px 15px var(--border);
     z-index: 1000;
     animation: slideUp 0.3s ease-out;
 }
@@ -1924,7 +1911,6 @@ body {
 
 .btn-compare:hover {
     filter: brightness(1.1);
-    box-shadow: 0 0 12px color-mix(in srgb, var(--token-warning) 60%, transparent);
     transform: translateY(-1px);
 }
 
@@ -1978,7 +1964,6 @@ body {
     font-size: 0.8em;
     line-height: 1.2;
     max-width: 320px;
-    box-shadow: 0 4px 10px black;
     display: none;
 }
 
@@ -2101,7 +2086,6 @@ table td {
     border-radius: 10px;
     min-width: 12px;
     text-align: center;
-    box-shadow: 0 2px 5px var(--border);
     z-index: 10;
     line-height: 1;
     writing-mode: horizontal-tb;
@@ -2207,7 +2191,6 @@ body.in-iframe #module-view-container {
     background-color: var(--token-warning);
     color: var(--window-tray);
     border-color: var(--text);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--token-warning) 50%, transparent);
 }
 
 .ui-button.btn-sim-action {
@@ -2268,7 +2251,6 @@ body.in-iframe #module-view-container {
 
 .floating-status-panel > * {
     pointer-events: auto;
-    box-shadow: 0 4px 12px var(--border), 0 0 0 1px var(--border);
     border-radius: 8px;
     background: var(--card-bg);
     backdrop-filter: blur(12px);
@@ -2283,7 +2265,6 @@ body.in-iframe #module-view-container {
 .floating-status-panel > *:hover {
     background: var(--hover);
     transform: translateY(-2px);
-    box-shadow: 0 6px 16px var(--border), 0 0 0 1px var(--border);
 }
 
 /* Specific styling overrides for floating view-job-status */

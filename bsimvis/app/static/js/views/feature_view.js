@@ -188,7 +188,6 @@ window.FeatureView = {
                     color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
-                    box-shadow: 0 4px 15px var(--border);
                     max-width: 320px;
                 }
             </style>
@@ -350,7 +349,7 @@ window.FeatureView = {
                 const lineHash = targetLinesStr ? `#L${targetLinesStr}` : '';
 
                 const pcodeHtml = `
-                    <div class="code-card" style="box-shadow: none;">
+                    <div class="code-card" style="">
                         <div class="code-card-line">
                             <div class="code-card-text pcode-text">${occ['pcode_op_full'] || '<span class="dim">N/A</span>'}</div>
                         </div>

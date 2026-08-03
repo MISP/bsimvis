@@ -655,7 +655,7 @@
         }
 
         tooltip.innerHTML = `
-        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); box-shadow: 0 15px 50px var(--window-bg); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
+        <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
             <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
                 <i class="fa-solid fa-file" style="color: var(--accent);"></i>
                 <span>${fileName}</span>

@@ -372,7 +372,6 @@ tr:nth-child(even) {
     border: 2px solid var(--accent);
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 2px 4px var(--border);
     transition: transform 0.1s ease;
 }
 
@@ -416,7 +415,6 @@ tr:nth-child(even) {
     font-size: 0.8em;
     line-height: 1.2;
     max-width: 320px;
-    box-shadow: 0 4px 10px var(--border);
     display: none;
 }
 
@@ -537,7 +535,6 @@ tr:nth-child(even) {
 
 .btn-primary:hover {
     filter: brightness(1.2);
-    box-shadow: 0 0 15px var(--accent);
 }
 
 .btn-note-action {
@@ -572,7 +569,6 @@ tr:nth-child(even) {
     border-radius: 10px;
     min-width: 12px;
     text-align: center;
-    box-shadow: 0 2px 5px var(--border);
     z-index: 10;
     line-height: 1;
     writing-mode: horizontal-tb;
@@ -688,7 +684,6 @@ html.light-theme .btn-note-action.has-notes.notes-both:hover {
     background: var(--window-bg);
     border: 1px solid var(--border);
     border-top: 3px solid var(--accent);
-    box-shadow: 0 10px 50px var(--window-bg);
     z-index: 10000;
     display: flex;
     flex-direction: column;
@@ -700,7 +695,6 @@ html.light-theme .btn-note-action.has-notes.notes-both:hover {
 
 .floating-window.active {
     border-color: var(--accent);
-    box-shadow: 0 10px 60px rgba(4, 217, 255, 0.2);
 }
 
 .floating-window.sticky {
@@ -996,7 +990,6 @@ body.resizing {
     cursor: pointer;
     text-transform: uppercase;
     transition: all 0.2s;
-    box-shadow: 0 4px 10px var(--border);
 }
 
 .btn-graph:hover {
@@ -1064,7 +1057,6 @@ select {
     color: var(--text);
     font-family: "Segoe UI", 'Inter', sans-serif;
     pointer-events: none;
-    box-shadow: 0 4px 15px var(--border);
 }
 
 .graph-loading-content {
@@ -1083,7 +1075,6 @@ select {
     border-radius: 6px;
     padding: 10px;
     font-size: 0.8rem;
-    box-shadow: 0 10px 30px var(--window-bg);
     backdrop-filter: blur(5px);
     display: none;
 }
@@ -1335,7 +1326,6 @@ body.filters-collapsed .filter-row {
     justify-content: center;
     border-radius: 0 8px 8px 0;
     transition: all 0.3s ease;
-    box-shadow: 4px 0 10px var(--border);
     font-size: 1.2rem;
     padding: 0;
 }
@@ -1401,7 +1391,6 @@ body.sidebar-collapsed #sidebar-toggle {
     background: var(--accent) !important;
     color: var(--window-tray) !important;
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px var(--border);
 }
 
 .toggle-btn {
@@ -1525,7 +1514,6 @@ html.light-theme path.chord { mix-blend-mode: multiply; }
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.35);
     z-index: 10000;
     width: 330px;
     max-height: 400px;
@@ -1686,7 +1674,6 @@ body.sidebar-collapsed .sidebar-nav #nav-history-chevron {
     max-width: 380px;
     max-height: 70vh;
     overflow-y: auto;
-    box-shadow: 20px 0 50px var(--window-bg);
     border-radius: 0 8px 8px 0;
     padding: 0;
     animation: collectionFlyoutFade 0.2s ease-out;
@@ -1963,7 +1950,6 @@ tr.child-depth-3 td { background: var(--hover) !important; }
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 10px 40px var(--border);
     display: flex;
     flex-direction: column;
     max-height: 90vh;
@@ -2010,7 +1996,6 @@ tr.child-depth-3 td { background: var(--hover) !important; }
     transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     display: flex;
     flex-direction: column;
-    box-shadow: -10px 0 50px var(--border);
 }
 
 .side-panel.open {
@@ -2062,7 +2047,6 @@ tr.child-depth-3 td { background: var(--hover) !important; }
     display: flex;
     align-items: center;
     gap: 12px;
-    box-shadow: 0 10px 30px var(--border);
     animation: toastSlideIn 0.3s ease-out;
     transition: all 0.3s;
     pointer-events: auto;
@@ -2209,7 +2193,6 @@ body.in-iframe main {
     background: color-mix(in srgb, var(--token-register) 10%, transparent);
     padding: 15px;
     border-radius: 12px;
-    box-shadow: 0 4px 15px var(--border);
     border: 1px solid color-mix(in srgb, var(--token-register) 20%, transparent);
 }
 
@@ -2342,7 +2325,6 @@ body.in-iframe main {
     justify-content: center;
     transition: all 0.2s;
     backdrop-filter: blur(4px);
-    box-shadow: 0 4px 12px var(--border);
 }
 
 .floating-copy-btn:hover {

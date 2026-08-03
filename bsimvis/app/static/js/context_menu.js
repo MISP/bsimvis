@@ -742,7 +742,6 @@
                 background: #181818;
                 border: 1px solid var(--border);
                 border-radius: 12px;
-                box-shadow: 0 20px 50px var(--border);
                 width: 440px;
                 max-width: 90vw;
                 padding: 24px;

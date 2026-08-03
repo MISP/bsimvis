@@ -2095,7 +2095,7 @@ function buildInferredMetaCards(da, db, colA, colB) {
     const inferredHtmlB = buildInferredHtml(ib, colB);
 
     return `<div style="display: flex; gap: 20px; flex-wrap: wrap; width: 100%;">
-        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
             <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> ${filenameA}: Clusters
             </div>
@@ -2103,7 +2103,7 @@ function buildInferredMetaCards(da, db, colA, colB) {
                 ${inferredHtmlA}
             </div>
         </div>
-        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+        <div class="card" style="flex: 1; min-width: 300px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
             <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-family: sans-serif;">
                 <i class="fa-solid fa-wand-magic-sparkles"></i> ${filenameB}: Clusters
             </div>

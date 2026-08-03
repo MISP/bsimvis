@@ -206,7 +206,7 @@ window.showTooltip = (e, tag, coll) => {
     if (!el) {
         el = document.createElement('div');
         el.id = 'tag-tooltip';
-        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px var(--border); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
+        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
         document.body.appendChild(el);
     }
 
@@ -276,7 +276,7 @@ window.handleTagContextMenu = (e, tag) => {
     if (!menu) {
         menu = document.createElement('div');
         menu.id = 'tag-custom-context-menu';
-        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px var(--border); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
+        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
         document.body.appendChild(menu);
     }
 

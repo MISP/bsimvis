@@ -31,7 +31,7 @@ function getHierarchyTooltip() {
     if (!el) {
         el = document.createElement('div');
         el.id = 'hierarchy-tooltip';
-        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; box-shadow:0 15px 50px var(--window-bg); max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
+        el.style.cssText = "position:fixed; z-index:20003; background:rgba(13,15,20,0.98); border-radius:8px; border:1px solid var(--accent,#66d9ef); display:none; pointer-events:auto; font-size:0.8rem; max-width:calc(100vw - 30px); backdrop-filter:blur(15px); overflow:hidden;";
         document.body.appendChild(el);
         
         el.addEventListener('click', (event) => {

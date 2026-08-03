@@ -61,7 +61,7 @@ function renderUploadView(params) {
                                 <div style="position: relative;">
                                     <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                                     <input type="hidden" id="upload-processor" value="">
-                                    <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--window-tray); border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; box-shadow: 0 6px 18px var(--border);"></div>
+                                    <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--window-tray); border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; "></div>
                                 </div>
                                 <div id="upload-processor-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
                             </div>

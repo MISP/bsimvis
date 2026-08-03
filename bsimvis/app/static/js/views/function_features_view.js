@@ -119,7 +119,6 @@ window.FunctionFeaturesView = {
                     color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
-                    box-shadow: 0 4px 15px var(--border);
                     max-width: 320px;
                 }
             </style>

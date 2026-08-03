@@ -4373,7 +4373,7 @@ async function renderPoolCreationForm() {
     `).join('');
 
     gridHeader.innerHTML = `
-        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px var(--border); overflow:hidden;">
+        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; overflow:hidden;">
             <!-- COLLAPSIBLE HEADER -->
             <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background: var(--hover); transition: background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='var(--border)'">
                 <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
@@ -4538,7 +4538,7 @@ async function renderPoolCreationForm() {
 
                             <div style="margin-top:auto; padding-top:15px; display:flex; justify-content:flex-end; gap:12px;">
                                 <button onclick="renderPoolCreationForm()" class="btn-secondary" style="padding:10px 20px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer;">Reset</button>
-                                <button onclick="submitCreatePool(this)" class="btn-primary" style="padding:10px 25px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; box-shadow: 0 4px 10px rgba(255,171,46,0.15);">
+                                <button onclick="submitCreatePool(this)" class="btn-primary" style="padding:10px 25px; border-radius:6px; font-size:0.85rem; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:8px; ">
                                     <i class="fa-solid fa-plus-circle"></i> Create Pool
                                 </button>
                             </div>

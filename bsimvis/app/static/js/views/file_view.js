@@ -84,13 +84,13 @@ window.FileView = {
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                     <div style="display: flex; flex-direction: column; gap: 20px;">
-                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                             <div id="file-meta-container">
                                 <!-- Reused comparison table layout here -->
                             </div>
                         </div>
 
-                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                             <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
                                 <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
                             </div>
@@ -101,7 +101,7 @@ window.FileView = {
 
                 <!-- Functions Tab Panel -->
                 <div id="file-panel-functions" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border); display: flex; flex-direction: column; gap: 15px;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
                         <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
@@ -148,7 +148,7 @@ window.FileView = {
 
                 <!-- Clusters Tab Panel -->
                 <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                         <div class="cluster-list" id="cluster-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                     </div>
                 </div>
@@ -331,7 +331,6 @@ window.FileView = {
                     .attr("width", width)
                     .attr("height", height)
                     .attr("viewBox", `0 0 ${width} ${height}`)
-                    .style("box-shadow", "0 2px 10px var(--border)")
                     .style("border-radius", "50%");
                     
                 svg.append("g")

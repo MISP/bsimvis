@@ -61,6 +61,10 @@ sample_peak() {
     [ -n "$peak_path" ] || return 0
     while [ -r "$peak_path" ]; do
         cat "$peak_path" > "$PEAK_FILE" 2>/dev/null
+        # Also outside the tmpdir: teardown kills this session before the
+        # supervisor can print its exit line, and the cgroup dies with the
+        # scope, so without this the peak of a clean run is unrecoverable.
+        cat "$peak_path" > "$LOG_DIR/${NAME}.peak" 2>/dev/null
         sleep 5
     done
 }

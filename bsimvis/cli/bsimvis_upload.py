@@ -533,8 +533,10 @@ def run_upload(host, port, args):
 
     logging.basicConfig(level=level, force=True)
 
-    # Map back to what main(args) expects
-    main(args)
+    # Map back to what main(args) expects. Returning it matters: the failure
+    # count is the exit code, and dropping it here would keep `upload` exiting
+    # 0 no matter how many files failed.
+    return main(args)
 
 
 def main(args):

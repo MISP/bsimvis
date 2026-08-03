@@ -37,6 +37,11 @@ logging.basicConfig(
 class Worker:
     def __init__(self, name="worker-1"):
         self.name = name
+        # launch_tmux.sh used to start every worker without --name, so a whole
+        # fleet registered as "worker-1". The pid keeps ids unique even if that
+        # regresses, and makes lease_owner point at a process you can actually
+        # find.
+        self.id = f"{name}-{os.getpid()}"
         self.r_queue = get_queue_redis()
         self.r_data = get_redis()
         self.r_raw = get_raw_redis()
@@ -85,6 +90,12 @@ class Worker:
         run after SIGKILL or an OOM kill.
         """
         while self.running:
+            # Registration rides the same heartbeat as the lease: one dead
+            # process, one thing that stops refreshing, both age out together.
+            try:
+                self.job_service.register_worker(self.id)
+            except Exception as e:
+                logging.warning(f"[!] Worker registration failed: {e}")
             job_id = self.current_job_id
             if job_id:
                 try:
@@ -94,13 +105,27 @@ class Worker:
             time.sleep(LEASE_TTL / 3)
 
     def run(self):
-        logging.info(f"[*] Worker {self.name} started. Waiting for jobs...")
+        logging.info(f"[*] Worker {self.id} started. Waiting for jobs...")
 
+        # Register before the first heartbeat tick so a fleet shows its true
+        # size immediately rather than 20s in.
+        self.job_service.register_worker(self.id)
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
 
         # Recover anything stranded by a previous crash before taking new work.
         self._reap()
 
+        try:
+            self._run_loop()
+        finally:
+            # Best-effort only. A SIGKILL never gets here, which is exactly why
+            # registrations expire on their own.
+            try:
+                self.job_service.unregister_worker(self.id)
+            except Exception:
+                pass
+
+    def _run_loop(self):
         while self.running:
             try:
                 self._reap()
@@ -133,7 +158,7 @@ class Worker:
                 # The claim is now held. The lease is what makes it recoverable:
                 # the finally below covers a clean exit, the lease expiring covers
                 # SIGKILL / OOM / power loss, where no finally ever runs.
-                self.job_service.claim_lease(job_id, self.name)
+                self.job_service.claim_lease(job_id, self.id)
                 self.current_job_id = job_id
                 try:
                     job_data = self.r_queue.hgetall(f"job:{job_id}")
@@ -166,7 +191,7 @@ class Worker:
 
         logging.info(f"[+] Executing Job {job_id} ({jtype})...")
         self.job_service.add_log(
-            job_id, f"Worker {self.name} started processing {jtype}."
+            job_id, f"Worker {self.id} started processing {jtype}."
         )
         self.r_queue.hset(
             f"job:{job_id}",

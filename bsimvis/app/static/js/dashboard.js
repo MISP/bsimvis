@@ -2954,13 +2954,17 @@ window.addEventListener('load', () => {
             const icon = document.getElementById('nav-jobs-icon');
             const navLink = document.getElementById('nav-jobs');
 
-            const isActive = stats.active_workers > 0 || stats.pending_jobs > 0;
+            // active_workers is now a real worker-process count, so the spinner
+            // keys off running jobs instead -- otherwise an idle-but-alive fleet
+            // would spin forever.
+            const activeJobs = stats.active_jobs_count ?? 0;
+            const isActive = activeJobs > 0 || stats.pending_jobs > 0;
 
             if (loader && icon && navLink) {
                 if (isActive) {
                     loader.style.display = 'block';
                     icon.style.display = 'none';
-                    navLink.title = `${stats.active_workers} active, ${stats.pending_jobs} pending jobs`;
+                    navLink.title = `${activeJobs} active, ${stats.pending_jobs} pending jobs (${stats.active_workers} workers)`;
                 } else {
                     loader.style.display = 'none';
                     icon.style.display = 'inline-block';

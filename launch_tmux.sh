@@ -100,21 +100,29 @@ APP_HOST=${APP_HOST:-0.0.0.0}
 APP_PORT=${APP_PORT:-5000}
 REDIS_PORT=${REDIS_PORT:-6379}
 KVROCKS_PORT=${KVROCKS_PORT:-6666}
-# Each worker holds a Ghidra JVM. Budget ~2.5 GB RSS per worker (1536 MB heap
-# plus JVM native overhead, measured 2.4 GB peak) and reserve 8 GB for kvrocks,
-# redis and the desktop. The old MemTotal/3 gave the whole host to the fleet and
-# the kernel OOM-killed kvrocks instead.
-# ponytail: heuristic, one big binary can still blow past 2.5 GB. A hard
-# guarantee needs a per-worker cgroup MemoryMax.
-WORKERS_MAX_BY_RAM=$(awk '/MemTotal/ {m=$2/1024/1024; n=int((m-8)/2.5); print (n>1?n:1)}' /proc/meminfo)
+# Each worker holds a Ghidra JVM (1536 MB heap plus JVM native overhead,
+# measured 2.4 GB peak). Run each in its own systemd scope so a runaway worker
+# is OOM-killed instead of thrashing the host into a freeze. Empty = no
+# backstop. scripts/worker-supervisor.sh prints the scope's memory.peak on every
+# exit, which is how you find out whether this number is too low.
+WORKER_MEMORY_MAX=${WORKER_MEMORY_MAX:-3G}
+
+# The fleet budget must be the SAME number the cgroup enforces. It used to be
+# hardcoded at 2.5 while the cgroup enforced 3G, so the host could be sold
+# 20% more worker memory than the kernel would ever allow -- reserve 8 GB for
+# kvrocks, redis and the desktop, then divide by the real per-worker cap.
+WORKER_BUDGET_GB=$(awk -v v="${WORKER_MEMORY_MAX:-2.5G}" 'BEGIN {
+    n = v + 0
+    if (v ~ /[Mm]$/) n /= 1024
+    else if (v ~ /[Kk]$/) n /= 1048576
+    print (n > 0 ? n : 2.5)
+}')
+WORKERS_MAX_BY_RAM=$(awk -v b="$WORKER_BUDGET_GB" '/MemTotal/ {m=$2/1024/1024; n=int((m-8)/b); print (n>1?n:1)}' /proc/meminfo)
 WORKERS_COUNT=${WORKERS_COUNT:-5}
 if [ "$WORKERS_COUNT" -gt "$WORKERS_MAX_BY_RAM" ]; then
-    echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM)"
+    echo "Capping WORKERS_COUNT ${WORKERS_COUNT} -> ${WORKERS_MAX_BY_RAM} (host RAM, ${WORKER_BUDGET_GB} GB/worker)"
     WORKERS_COUNT=$WORKERS_MAX_BY_RAM
 fi
-# Hard backstop: run each worker in its own systemd scope so a runaway worker is
-# OOM-killed instead of thrashing the host into a freeze. Empty = no backstop.
-WORKER_MEMORY_MAX=${WORKER_MEMORY_MAX:-3G}
 ENABLE_MILVUS=${ENABLE_MILVUS:-false}
 DATA_BASE_DIR=${DATA_BASE_DIR:-"$(pwd)/data"}
 PROJECT_NAME=${PROJECT_NAME:-bsimvis}
@@ -131,10 +139,17 @@ if [ "$CLEAN_TMUX" = "true" ]; then
         redis-cli -p "${KVROCKS_PORT}" shutdown 2>/dev/null || true
     fi
 
+    # Worker scopes are separate systemd units, not children of the tmux shell:
+    # kill-session alone leaves them running and still eating the queue.
+    for unit in $(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" 2>/dev/null | awk '{print $1}'); do
+        echo "Stopping leftover worker scope ${unit}..."
+        systemctl --user stop "${unit}" 2>/dev/null || true
+    done
+
     if tmux has-session -t "${PROJECT_NAME}" 2>/dev/null; then
         echo "Cleaning up tmux session ${PROJECT_NAME}..."
         tmux kill-session -t "${PROJECT_NAME}"
-        
+
         # Wait for ports to be freed
         wait_for_port_free "${REDIS_PORT}" "Redis"
         wait_for_port_free "${KVROCKS_PORT}" "Kvrocks"
@@ -224,13 +239,17 @@ fi
 start_tmux "app" "${PYTHON_CMD} app.py"
 
 # Start Workers
+# Each window runs the supervisor, not the worker: the supervisor owns the
+# systemd scope, restarts the worker after an OOM kill, and reports the scope's
+# memory.peak. Running the worker directly meant a kill took the window with it.
 echo "Starting ${WORKERS_COUNT} workers..."
-WORKER_WRAP=""
-if [ -n "$WORKER_MEMORY_MAX" ] && command -v systemd-run > /dev/null; then
-    WORKER_WRAP="systemd-run --user --scope -q -p MemoryMax=${WORKER_MEMORY_MAX} "
-fi
+LOG_DIR=${LOG_DIR:-"$(pwd)/logs"}
+mkdir -p "$LOG_DIR"
 for i in $(seq 1 $WORKERS_COUNT); do
-    start_tmux "worker-${i}" "${WORKER_WRAP}${PYTHON_CMD} bsimvis/worker.py"
+    # --name is what makes the worker identifiable: without it every worker
+    # registered as "worker-1" and the fleet looked like a single worker.
+    start_tmux "worker-${i}" \
+        "LOG_DIR='${LOG_DIR}' PYTHON_CMD='${PYTHON_CMD}' PROJECT_NAME='${PROJECT_NAME}' WORKER_MEMORY_MAX='${WORKER_MEMORY_MAX}' bash scripts/worker-supervisor.sh worker-${i}"
 done
 
 echo "--------------------------"

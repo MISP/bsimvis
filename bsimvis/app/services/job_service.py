@@ -51,6 +51,12 @@ class JobType(Enum):
 # startup" remedy, which could not tell a dead claim from a live one.
 LEASE_TTL = 60  # seconds a claim stays valid without a refresh
 LEASE_KEY = "jobs:leased"  # ZSET job_id -> expiry timestamp
+WORKERS_KEY = "workers:alive"  # ZSET worker_id -> registration expiry
+# Same shape as the lease: refreshed from the worker heartbeat, so a killed
+# worker ages out on its own. Generous enough that one slow heartbeat (the
+# worker is mid-job and the loop only ticks every LEASE_TTL/3) never drops a
+# live worker off the dashboard.
+WORKER_TTL = LEASE_TTL
 MAX_ATTEMPTS = 3  # requeue this many times before failing the job for good
 REAPER_LOCK_KEY = "jobs:reaper:lock"
 PAUSE_KEY = "jobs:paused"
@@ -510,6 +516,44 @@ class JobService:
         # count 0: a job enqueued twice would otherwise leave a permanent orphan.
         self.r.lrem("jobs:processing", 0, job_id)
 
+    # ------------------------------------------------------------------
+    # Worker registry: an honest count of live worker processes
+    # ------------------------------------------------------------------
+
+    def register_worker(self, worker_id, ttl=WORKER_TTL):
+        """Marks a worker alive until `ttl` seconds from now.
+
+        Called from the worker's heartbeat, so a worker that is OOM-killed
+        simply stops refreshing and ages out. Same trick as the leases: nothing
+        here relies on a `finally` block that SIGKILL never runs.
+        """
+        self.r.zadd(WORKERS_KEY, {worker_id: time.time() + ttl})
+
+    def unregister_worker(self, worker_id):
+        """Drops a worker from the registry on a clean shutdown."""
+        self.r.zrem(WORKERS_KEY, worker_id)
+
+    def count_active_workers(self, now=None):
+        """Number of workers whose registration has not expired.
+
+        This is the real fleet size. The dashboard used to show the count of
+        active *jobs* instead, so a dead fleet holding stale `running` jobs
+        looked like a busy system -- which is why the outage went unnoticed.
+        """
+        now = time.time() if now is None else now
+        # Trim first so an unnoticed dead fleet cannot inflate the count forever.
+        self.r.zremrangebyscore(WORKERS_KEY, 0, now)
+        return self.r.zcard(WORKERS_KEY)
+
+    def list_active_workers(self, now=None):
+        """Live worker ids, soonest-to-expire first."""
+        now = time.time() if now is None else now
+        self.r.zremrangebyscore(WORKERS_KEY, 0, now)
+        return [
+            w.decode() if isinstance(w, bytes) else w
+            for w in self.r.zrange(WORKERS_KEY, 0, -1)
+        ]
+
     def reap_expired(self, now=None):
         """Requeues jobs whose worker died, and clears stale in-flight entries.
 
@@ -796,9 +840,26 @@ class JobService:
         # Also update updated_at
         self.r.hset(f"job:{job_id}", "updated_at", timestamp)
 
-    def update_progress(self, job_id, progress, message=None):
-        """Updates progress (0-100) and optionally adds a log entry."""
-        self.r.hset(f"job:{job_id}", "progress", progress)
+    def update_progress(self, job_id, progress, message=None, processed=None, total=None):
+        """Updates progress (0-100) and optionally adds a log entry.
+
+        `processed`/`total` are what make the throughput fields on
+        /api/jobs/stats real. Only similarity_service ever wrote them, so during
+        an enrich_features drain every speed/ETA field on the dashboard read
+        zero and the only way to tell the queue had stalled was polling
+        pending_jobs by hand. Handlers that know their item counts should pass
+        them; `speed` is derived here so no caller has to time itself.
+        """
+        fields = {"progress": progress}
+        if total is not None:
+            fields["total_items"] = str(total)
+        if processed is not None:
+            fields["processed_items"] = str(processed)
+            started = safe_int(self.r.hget(f"job:{job_id}", "started_at"))
+            elapsed = time.time() - started / 1000.0 if started else 0
+            if elapsed > 0:
+                fields["speed"] = f"{processed / elapsed:.2f}"
+        self.r.hset(f"job:{job_id}", mapping=fields)
         if message:
             self.add_log(job_id, message)
 
@@ -851,6 +912,11 @@ class JobService:
         total_speed = 0.0
         active_jobs_count = 0
         remaining_items = 0
+        # Longest per-job ETA derived from elapsed time vs progress percent, for
+        # handlers that report no item counts. Without it the queue could be
+        # visibly draining while global_eta sat at 0.
+        progress_eta = 0.0
+        now_s = time.time()
 
         for jid in processing_ids:
             job = job_hashes.get(jid)
@@ -876,10 +942,21 @@ class JobService:
             done = safe_int(job.get("processed_items", 0))
             remaining_items += max(0, total - done)
 
+            pct = safe_int(job.get("progress", 0))
+            started = safe_int(job.get("started_at", 0))
+            if 0 < pct < 100 and started:
+                elapsed = now_s - started / 1000.0
+                if elapsed > 0:
+                    progress_eta = max(progress_eta, elapsed * (100 - pct) / pct)
+
         # Average speed
         avg_speed = total_speed / active_jobs_count if active_jobs_count > 0 else 0
 
-        global_eta = remaining_items / total_speed if total_speed > 0 else 0
+        # Item counts when we have them, elapsed-vs-percent otherwise.
+        if total_speed > 0 and remaining_items > 0:
+            global_eta = remaining_items / total_speed
+        else:
+            global_eta = progress_eta
 
         # Collect active collections
         active_collections = set()
@@ -930,7 +1007,11 @@ class JobService:
             )
 
         return {
-            "active_workers": active_jobs_count,
+            # A count of live worker processes, not of active jobs. The two
+            # differ exactly when it matters: a dead fleet still holding
+            # `running` jobs now reads 0 workers instead of looking busy.
+            "active_workers": self.count_active_workers(),
+            "active_jobs_count": active_jobs_count,
             "pending_jobs": pending_count,
             "avg_speed": round(avg_speed, 2),
             "total_speed": round(total_speed, 2),

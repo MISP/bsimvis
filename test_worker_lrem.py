@@ -60,10 +60,17 @@ class FakeJobService:
     def is_paused(self):
         return False
 
+    def register_worker(self, worker_id, ttl=None):
+        self.registered = worker_id
+
+    def unregister_worker(self, worker_id):
+        self.registered = None
+
 
 def make_worker(jobs, execute=lambda job_id, job_data: None):
     w = object.__new__(Worker)
     w.name = "test"
+    w.id = "test-0"  # normally f"{name}-{pid}", set in __init__
     w.running = True
     w.current_job_id = None
     w._last_reap = 0.0

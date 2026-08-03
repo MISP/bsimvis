@@ -127,6 +127,16 @@ class FakeRedis:
     def zscore(self, key, member):
         return self.zsets.get(key, {}).get(member)
 
+    def zcard(self, key):
+        return len(self.zsets.get(key, {}))
+
+    def zremrangebyscore(self, key, lo, hi):
+        z = self.zsets.get(key, {})
+        doomed = [m for m, s in z.items() if lo <= s <= hi]
+        for m in doomed:
+            del z[m]
+        return len(doomed)
+
     # --- pipeline (single-threaded, so WATCH never actually conflicts here)
     def pipeline(self, transaction=True):
         return FakePipeline(self)
@@ -156,14 +166,24 @@ class FakePipeline:
     def hget(self, key, field):
         return self.r.hget(key, field)
 
+    def hgetall(self, key):
+        # Buffered so get_global_stats' read pipeline returns results in order.
+        self.queued.append(("hgetall", key))
+        return self
+
     def hset(self, key, field=None, value=None, mapping=None):
         if self.buffering:
-            self.queued.append((key, field, value, mapping))
+            self.queued.append(("hset", key, field, value, mapping))
             return self
         return self.r.hset(key, field, value, mapping)
 
     def execute(self):
-        out = [self.r.hset(k, f, v, m) for k, f, v, m in self.queued]
+        out = []
+        for op in self.queued:
+            if op[0] == "hgetall":
+                out.append(self.r.hgetall(op[1]))
+            else:
+                out.append(self.r.hset(op[1], op[2], op[3], op[4]))
         self.queued = []
         self.buffering = False
         return out

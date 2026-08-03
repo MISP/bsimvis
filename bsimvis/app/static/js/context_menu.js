@@ -198,11 +198,11 @@
 
             html += `
             <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--border); margin-bottom: 4px;">
-                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'color-mix(in srgb, var(--token-register) 10%, transparent)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'var(--border)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
+                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'color-mix(in srgb, var(--token-register) 10%, transparent)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'var(--border)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))})">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
                     Bookmark
                 </button>
-                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'color-mix(in srgb, var(--token-instruction) 10%, transparent)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'var(--border)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
+                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'color-mix(in srgb, var(--token-instruction) 10%, transparent)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'var(--border)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))})">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
                     Ignore
                 </button>
@@ -218,9 +218,9 @@
                 const checkboxStyle = `color: ${isActive ? color : 'var(--border)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
 
                 tagsSubmenuHtml += `
-                <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})">
                     <i class="fa-solid ${isActive ? 'fa-square-check' : 'fa-square'}" style="${checkboxStyle}"></i>
-                    <span>${tag}</span>
+                    <span>${escapeHtml(tag)}</span>
                 </div>`;
             });
 
@@ -229,7 +229,7 @@
             }
 
             tagsSubmenuHtml += `
-            <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.showTagManagementModal('${etype}', '${eid}')">
+            <div class="context-menu-item add-custom-tag-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.showTagManagementModal(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))})">
                 <i class="fa-solid fa-plus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add custom tag...</span>
             </div>`;
@@ -253,11 +253,11 @@
                     if (window.getTagMetadata) {
                         color = window.getTagMetadata(tag).color;
                     }
-                    const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, '${etype}', '${eid}', '${tag}')`;
+                    const removeClick = `event.stopPropagation(); window.removeContextMenuTag(event, ${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})`;
                     return `
                     <span class="sim-tag-card" style="border-color:${color}44; color:${color}; background:${color}11; margin: 2px; padding: 1px 6px; font-size: 0.7rem; border-radius: 4px; display: inline-flex; align-items: center;">
-                        ${tag}
-                        <span onclick="${removeClick}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
+                        ${escapeHtml(tag)}
+                        <span onclick="${escapeAttr(removeClick)}" style="cursor: pointer; margin-left: 4px; opacity: 0.7; font-weight: bold;">×</span>
                     </span>`;
                 }).join('');
 
@@ -324,26 +324,26 @@
         const col = getCollectionFromHash();
         if (resolvedType === 'function') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToDiff(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add to Diff</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar('${norm.id}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); seeSimilar(${escapeAttr(jsString(norm.id))}, event)">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>See Similar</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel('${norm.id}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFeaturePanel(${escapeAttr(jsString(norm.id))}, event)">
                 <i class="fa-solid fa-fingerprint" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Features</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFunctionCodeById('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', '', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); showFunctionCodeById(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, '', event)">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Code</span>
             </div>`;
 
             // LLM batch: the selected rows, or this function alone when nothing
             // is selected, so the default action needs no dialog.
-            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds().length ? window.getSelectedTableIds() : ['${norm.id}'])`;
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds().length ? window.getSelectedTableIds() : [${escapeAttr(jsString(norm.id))}])`;
             actionsSubmenuHtml += renderLLMSubmenu([
                 { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${llmIds} }` },
                 { label: 'Tags', icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${llmIds} }` },
@@ -355,20 +355,20 @@
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
             const simUrl = Nav.buildUIUrl(col, ['functions', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5);
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcsUrl}', event, { title: 'Functions', type: 'functions' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcsUrl))}, event, { title: 'Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToFileDiff('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); addToFileDiff(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, event)">
                 <i class="fa-solid fa-plus-minus" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Add to File Diff</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${cgUrl}', event, { title: 'Call Graph: ${norm.md5}', type: 'call_graph' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(cgUrl))}, event, { title: ${escapeAttr(jsString('Call Graph: ' + norm.md5))}, type: 'call_graph' })">
                 <i class="fa-solid fa-sitemap" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Call Graph</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${simUrl}', event, { title: 'Function Similarities', type: 'function-similarity' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(simUrl))}, event, { title: 'Function Similarities', type: 'function-similarity' })">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
             </div>
@@ -376,45 +376,44 @@
             // Whole-binary enrichment: same LLM entries, resolved from the file
             // filter instead of a row selection.
             actionsSubmenuHtml += renderLLMSubmenu([
-                { label: 'Summary (all functions)', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ filters: 'file_md5=${norm.md5}' }` },
-                { label: 'Tags (all functions)', icon: 'fa-tags', actions: "['tags']", opts: `{ filters: 'file_md5=${norm.md5}' }` },
-                { label: 'Summary + tags (all functions)', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ filters: 'file_md5=${norm.md5}' }` },
-                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ filters: 'file_md5=${norm.md5}', askPrompt: true }` }
+                { label: 'Summary (all functions)', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)} }` },
+                { label: 'Tags (all functions)', icon: 'fa-tags', actions: "['tags']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)} }` },
+                { label: 'Summary + tags (all functions)', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)} }` },
+                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ filters: ${jsString('file_md5=' + norm.md5)}, askPrompt: true }` }
             ]);
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly('${norm.id1}', '${String(norm.name1 || '').replace(/'/g, "\\'")}', '${norm.id2}', '${String(norm.name2 || '').replace(/'/g, "\\'")}', event)">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly(${escapeAttr(jsString(norm.id1))}, ${escapeAttr(jsString(norm.name1 || ''))}, ${escapeAttr(jsString(norm.id2))}, ${escapeAttr(jsString(norm.name2 || ''))}, event)">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Diff</span>
             </div>`;
         } else if (resolvedType === 'bin_similarity') {
             const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(col, norm.md5_a, col, norm.md5_b);
-            const safeNameA = String(norm.name_a || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-            const safeNameB = String(norm.name_b || '').replace(/'/g, "\\'").replace(/"/g, "&quot;");
+            const diffTitle = `Bin Diff: ${String(norm.name_a || '')} vs ${String(norm.name_b || '')}`;
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(diffTitle))}, type: 'bin_sim' })">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Binary Diff</span>
             </div>`;
         } else if (resolvedType === 'cluster') {
             const funcClusterUrl = Nav.buildUIUrl(col, ['functions']) + '?cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${funcClusterUrl}', event, { title: 'Cluster Functions', type: 'functions' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcClusterUrl))}, event, { title: 'Cluster Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
         } else if (resolvedType === 'bin_cluster') {
             const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster('${norm.id}', '${String(norm.name || '').replace(/'/g, "\\'")}')">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath('${fileClusterUrl}', event, { title: 'Cluster Files', type: 'files' })">
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(fileClusterUrl))}, event, { title: 'Cluster Files', type: 'files' })">
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;
@@ -651,7 +650,7 @@
         const entries = items.map(i => `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${i.opts})">
                 <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-                <span>${i.label}</span>
+                <span>${escapeHtml(i.label)}</span>
             </div>`).join('');
 
         return `
@@ -669,12 +668,10 @@
     function renderCopyItem(label, text, icon = 'fa-copy') {
         if (text === null || text === undefined || text === '') return '';
         const strText = String(text);
-        const safeText = strText.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const safeLabel = String(label).replace(/'/g, "\\'").replace(/"/g, "&quot;");
         return `
-        <div class="context-menu-item" onclick="event.stopPropagation(); copyMetadata('${safeText}', '${safeLabel}')">
-            <i class="fa-solid ${icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-            <span>Copy ${label}</span>
+        <div class="context-menu-item" onclick="event.stopPropagation(); copyMetadata(${escapeAttr(jsString(strText))}, ${escapeAttr(jsString(String(label)))})">
+            <i class="fa-solid ${escapeAttr(icon)}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+            <span>Copy ${escapeHtml(label)}</span>
         </div>`;
     }
 
@@ -934,8 +931,8 @@
                     <button class="tag-modal-close" onclick="window.closeTagManagementModal()">&times;</button>
                 </div>
                 <div class="tag-modal-target-info">
-                    <strong>Entity:</strong> ${etype.toUpperCase()} <br/>
-                    <strong>ID:</strong> ${eid}
+                    <strong>Entity:</strong> ${escapeHtml(etype.toUpperCase())} <br/>
+                    <strong>ID:</strong> ${escapeHtml(eid)}
                 </div>
                 
                 <div>
@@ -978,9 +975,9 @@
                     activeList.innerHTML = activeTags.map(tag => {
                         const meta = tagMeta[tag] || { color: '#66d9ef' };
                         return `
-                            <span class="tag-modal-tag-pill" style="background: ${meta.color}">
-                                ${tag}
-                                <span class="remove-btn" onclick="window.handleModalRemoveTag('${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">&times;</span>
+                            <span class="tag-modal-tag-pill" style="background: ${safeCssColor(meta.color)}">
+                                ${escapeHtml(tag)}
+                                <span class="remove-btn" onclick="window.handleModalRemoveTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})">&times;</span>
                             </span>
                         `;
                     }).join('');
@@ -997,9 +994,9 @@
                 if (filtered.length === 0) {
                     if (query) {
                         suggestionsList.innerHTML = `
-                            <div class="tag-modal-suggestion-item" onclick="window.handleModalAddTag('${etype}', '${eid}', '${String(query).replace(/'/g, "\\'")}')">
+                            <div class="tag-modal-suggestion-item" onclick="window.handleModalAddTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(query))})">
                                 <i class="fa-solid fa-plus" style="color: var(--accent, #a6e22e);"></i>
-                                <span>Create new tag: <strong>${query}</strong></span>
+                                <span>Create new tag: <strong>${escapeHtml(query)}</strong></span>
                             </div>
                         `;
                     } else {
@@ -1009,12 +1006,12 @@
                     suggestionsList.innerHTML = filtered.map(tag => {
                         const isApplied = activeTags.includes(tag);
                         const meta = tagMeta[tag] || { color: '#66d9ef' };
-                        const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag('${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')"`;
+                        const clickAction = isApplied ? '' : `onclick="window.handleModalAddTag(${escapeAttr(jsString(etype))}, ${escapeAttr(jsString(eid))}, ${escapeAttr(jsString(tag))})"`;
                         const activeClass = isApplied ? 'active-tag' : '';
                         return `
                             <div class="tag-modal-suggestion-item ${activeClass}" ${clickAction}>
-                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${meta.color}"></span>
-                                <span>${tag}</span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${safeCssColor(meta.color)}"></span>
+                                <span>${escapeHtml(tag)}</span>
                                 ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, var(--subtle));">Applied</span>' : ''}
                             </div>
                         `;

@@ -1314,10 +1314,10 @@ function renderBinSimTables(isFilterChange = false) {
                     similarityHtml = `
                     <div style="display:flex; align-items:center; gap:8px;">
                         <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
-                            onmouseenter="showDiffPreview('${fA.function_id}', '${(fA.function_name || '').replace(/'/g, "\\'")}', '${fB.function_id}', '${(fB.function_name || '').replace(/'/g, "\\'")}', ${m.similarity}, event)"
+                            onmouseenter="showDiffPreview(${escapeAttr(jsString(fA.function_id))}, ${escapeAttr(jsString(fA.function_name || ''))}, ${escapeAttr(jsString(fB.function_id))}, ${escapeAttr(jsString(fB.function_name || ''))}, ${Number(m.similarity) || 0}, event)"
                             onmousemove="moveCodePreview(event)"
                             onmouseleave="hideDiffPreview(event)"
-                            onclick="Nav.openPath('${diffUrl}', event, { title: 'Diff: ${fA.function_name} vs ${fB.function_name}', type: 'diff' })"
+                            onclick="Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(`Diff: ${fA.function_name} vs ${fB.function_name}`))}, type: 'diff' })"
                             title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
                     </div>
                     ${EntityRenderer.renderTag('similarity', pairId, m.tags || [], m.user_tags || [])}
@@ -1340,11 +1340,11 @@ function renderBinSimTables(isFilterChange = false) {
 
                 return `
                 <tr style="border-bottom: 1px solid var(--border);"
-                    data-entity-data='${JSON.stringify({
+                    data-entity-data='${escapeAttr(JSON.stringify({
                         cluster_id: m.cluster_id,
                         cluster_uuid: m.cluster_uuid,
                         cluster_name: m.cluster_name
-                    }).replace(/'/g, "&apos;")}'
+                    }))}'
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                     <td style="padding:10px;">
                         ${similarityHtml}
@@ -1375,7 +1375,7 @@ function renderBinSimTables(isFilterChange = false) {
                     <td style="padding:10px;">
                         <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
                     </td>
-                    <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusterData).replace(/'/g, "&apos;")}' style="padding:10px;">
+                    <td class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(clusterData))}' style="padding:10px;">
                         ${EntityRenderer.renderClusterCard(clusterData)}
                     </td>
                 </tr>
@@ -1393,11 +1393,11 @@ function renderBinSimTables(isFilterChange = false) {
         if (thead && !isFilterChange) {
             thead.innerHTML = `
                 <tr>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
                     <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('${stateKey}', 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
+                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
                 </tr>
                 <tr class="filter-row">
                     <th>${searchHtml(prefix)}</th>
@@ -1437,11 +1437,11 @@ function renderBinSimTables(isFilterChange = false) {
             seedBinSimClusterSamples(clusterData[0]);
             return `
             <tr style="border-bottom: 1px solid var(--border);"
-                data-entity-data='${JSON.stringify({
+                data-entity-data='${escapeAttr(JSON.stringify({
                     cluster_id: u.cluster_id,
                     cluster_uuid: u.cluster_uuid,
                     cluster_name: u.cluster_name
-                }).replace(/'/g, "&apos;")}'
+                }))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                 <td style="padding:8px;">
                     ${funcs.map(renderFuncBadge).join('')}
@@ -1457,7 +1457,7 @@ function renderBinSimTables(isFilterChange = false) {
                 <td style="padding:10px;">
                     <span class="dim">${(u.avg_features || 0).toFixed(0)}</span>
                 </td>
-                <td class="cluster-cards-cell" data-clusters='${JSON.stringify(clusterData).replace(/'/g, "&apos;")}' style="padding:10px;">
+                <td class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(clusterData))}' style="padding:10px;">
                     ${clusterData.length > 0 ? EntityRenderer.renderClusterCard(clusterData) : ''}
                 </td>
             </tr>
@@ -1684,15 +1684,14 @@ function renderBinSimPairs(items) {
         let diffUrl = `/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
         if (poolId) diffUrl = `/pools/${encodeURIComponent(poolId)}/collections/${collA}/files/${item.md5_a}/vs/${collB}/${item.md5_b}`;
 
-        const safeNameA = (item.file_name_a || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const safeNameB = (item.file_name_b || 'Unknown').replace(/'/g, "\\'").replace(/"/g, "&quot;");
-        const onClickHandler = `Nav.openPath('${diffUrl}', event, { title: 'Bin Diff: ${safeNameA} vs ${safeNameB}', type: 'bin_sim' });`;
+        const diffTitle = `Bin Diff: ${item.file_name_a || 'Unknown'} vs ${item.file_name_b || 'Unknown'}`;
+        const onClickHandler = `Nav.openPath(${jsString(diffUrl)}, event, { title: ${jsString(diffTitle)}, type: 'bin_sim' });`;
 
         html += `
             <tr class="sim-row">
                 <td>
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${onClickHandler}" title="Open Diff">${scoreFormatted}</div>
+                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${scoreFormatted}</div>
                     </div>
                 </td>
                 <td class="sim-cell">
@@ -1820,7 +1819,7 @@ function renderBinSimStrip(containerId, m, fileId) {
         ? EntityRenderer.renderFileNoteButton(fileId, m.note_owners || [], { raw_data: m })
         : '';
     el.innerHTML = `
-        <a href="${fileUrl}" onclick="event.preventDefault(); Nav.openPath('${fileUrl}', event, { title: 'File: ${safeName}', type: 'file' });" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40%; text-decoration:none;" title="${name}" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${name}</a>
+        <a href="${escapeAttr(fileUrl)}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(fileUrl))}, event, { title: ${escapeAttr(jsString('File: ' + name))}, type: 'file' });" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:40%; text-decoration:none;" title="${escapeAttr(name)}" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${escapeHtml(name)}</a>
         <span style="display:inline-flex; gap:4px; flex:1; min-width:0; flex-wrap:wrap;">${tags}</span>
         <span style="margin-left:auto;">${noteBtn}</span>
     `;
@@ -2022,7 +2021,7 @@ function buildMetaCompareTable(da, db, colA, colB) {
             const confScore = confObj.percent;
             const confColor = d3.interpolateRdYlGn(confScore / 100);
             const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-            return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+            return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${escapeHtml(k)}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
         }).join('');
         return `
             <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -2072,7 +2071,7 @@ function buildInferredMetaCards(da, db, colA, colB) {
             const confScore = confObj.percent;
             const confColor = d3.interpolateRdYlGn(confScore / 100);
             const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-            return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+            return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(clusterLink))}, event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${escapeHtml(k)}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
         }).join('');
         return `
             <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>

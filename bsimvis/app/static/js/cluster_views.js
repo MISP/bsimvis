@@ -1221,7 +1221,7 @@ class ClusterHierarchy extends D3BaseLayout {
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
-                                                 data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                                                 data-entity-data='${escapeAttr(JSON.stringify(m))}'
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -1254,7 +1254,7 @@ class ClusterHierarchy extends D3BaseLayout {
                     const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                     return `
                         <div class="hier-function-item" data-index="${i}"
-                             data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                             data-entity-data='${escapeAttr(JSON.stringify(m))}'
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -2255,7 +2255,7 @@ class ClusterPacking {
                                         const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                                         return `
                                             <div class="hier-function-item" data-index="${i}"
-                                                 data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                                                 data-entity-data='${escapeAttr(JSON.stringify(m))}'
                                                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                                                 <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                                                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">
@@ -2288,7 +2288,7 @@ class ClusterPacking {
                     const sig = formatSigComponent(m.namespace || '', m.return_type || 'void', m.function_name || 'Unknown', m.parameters || []);
                     return `
                         <div class="hier-function-item" data-index="${i}"
-                             data-entity-data='${JSON.stringify(m).replace(/'/g, "&apos;")}'
+                             data-entity-data='${escapeAttr(JSON.stringify(m))}'
                              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                             <span style="opacity: 0.5; margin-right: 6px; font-size: 0.7rem; font-family: monospace;">${i + 1}.</span>
                             <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;">

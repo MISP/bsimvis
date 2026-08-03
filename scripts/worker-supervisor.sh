@@ -143,8 +143,15 @@ while true; do
     done
     [ "$delay" -gt "$WORKER_MAX_RESTART_DELAY" ] && delay=$WORKER_MAX_RESTART_DELAY
 
+    # An OOM kill is a real crash, not a config error. Conflating the two sent
+    # me hunting a broken systemd property while the actual cause was a job
+    # genuinely exceeding MemoryMax.
     if [ "$fast_failures" -ge 3 ]; then
-        echo "[supervisor] ${NAME} has failed ${fast_failures}x within ${WORKER_FAST_FAIL_SECONDS}s -- this looks like a misconfiguration, not a crash."
+        if [ "$rc" -eq 137 ]; then
+            echo "[supervisor] ${NAME} OOM-killed ${fast_failures}x in a row -- a job is exceeding MemoryMax=${WORKER_MEMORY_MAX}. See scripts/job_memory_report.py."
+        else
+            echo "[supervisor] ${NAME} has failed ${fast_failures}x within ${WORKER_FAST_FAIL_SECONDS}s with no OOM kill -- this looks like a misconfiguration."
+        fi
     fi
     echo "[supervisor] restarting ${NAME} in ${delay}s..."
     sleep "$delay"

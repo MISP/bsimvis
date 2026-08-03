@@ -31,10 +31,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis, get_raw_redis
-from bsimvis.app.services.job_service import JobService
+from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.ghidra_service import ghidra_service
 from bsimvis.app.services.config_service import config_service
+
+
+def _peak_rss():
+    """This process's peak RSS in bytes, from the kernel's own counter."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
 
 
 class GhidraAnalyzer:
@@ -422,7 +434,24 @@ def main(argv=None):
         return 2
     payload = json.loads(job.get("payload", "{}"))
 
-    ok = analyzer.run(payload, args.job_id)
+    try:
+        ok = analyzer.run(payload, args.job_id)
+    finally:
+        # Report our own peak. The parent measures its VmHWM, which does NOT
+        # include this process -- but this process DOES share the parent's
+        # systemd scope, so the JVM counts against the same MemoryMax. Without
+        # this, ghidra_analyze was weighted at the worker's ~0.8 GiB while the
+        # scope was actually hitting the 3 GB cap and being OOM-killed.
+        peak = _peak_rss()
+        if peak:
+            try:
+                analyzer.job_service.record_job_peak(
+                    JobType.GHIDRA_ANALYZE.value, peak
+                )
+            except Exception as e:
+                logging.warning(f"Could not record Ghidra peak: {e}")
+            logging.info(f"[#] Ghidra child peak RSS {peak / 1024**3:.2f} GiB")
+
     # Exit code is the whole interface back to the worker.
     return 0 if ok else 1
 

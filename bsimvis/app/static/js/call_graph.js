@@ -32,7 +32,7 @@ class FileCallGraph {
             const select = document.getElementById('call-graph-file-select');
             if (select) {
                 select.innerHTML = '<option value="">-- Select File --</option>' + 
-                    (data.files || []).map(f => `<option value="${f.file_md5}" ${f.file_md5 === file_md5 ? 'selected' : ''}>${f.file_name} (${f.file_md5.substring(0,8)})</option>`).join('');
+                    (data.files || []).map(f => `<option value="${escapeAttr(f.file_md5)}" ${f.file_md5 === file_md5 ? 'selected' : ''}>${escapeHtml(f.file_name)} (${escapeHtml(f.file_md5.substring(0,8))})</option>`).join('');
                 
                 select.onchange = (e) => {
                     if (e.target.value) {

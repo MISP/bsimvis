@@ -293,8 +293,8 @@ class ChordGraph {
 
         tip.innerHTML = `
             <div style="border-bottom: 1px solid var(--border); padding-bottom:8px; margin-bottom:8px; min-width:250px;">
-                <div style="font-weight:bold; color:var(--accent); font-size:0.95rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${node.name}</div>
-                <div class="dim mono" style="font-size:0.7rem; margin-top:2px; opacity:0.7;"># ${node.md5}</div>
+                <div style="font-weight:bold; color:var(--accent); font-size:0.95rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(node.name)}</div>
+                <div class="dim mono" style="font-size:0.7rem; margin-top:2px; opacity:0.7;"># ${escapeHtml(node.md5)}</div>
             </div>
             
             ${renderRow('fa-globe', 'Architecture', node.arch)}
@@ -322,7 +322,7 @@ class ChordGraph {
         tip.innerHTML = `
             <div style="font-weight:bold; color:var(--success);">Binary Similarity</div>
             <div style="margin-top:5px; font-size:0.8rem;">
-                <b>${n1.name}</b> ↔ <b>${n2.name}</b>
+                <b>${escapeHtml(n1.name)}</b> ↔ <b>${escapeHtml(n2.name)}</b>
             </div>
             <div style="margin-top:8px; font-size:1.1rem; color:var(--success); font-weight:bold;">
                 Score: ${(score * 100).toFixed(1)}%

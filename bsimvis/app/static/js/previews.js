@@ -235,11 +235,11 @@
 
         tooltip.innerHTML = `
             <div class="preview-card">
-                <div class="preview-header">Quick Preview: ${name || id.split(':').pop()}</div>
+                <div class="preview-header">Quick Preview: ${escapeHtml(name || id.split(':').pop())}</div>
                 <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px; margin-bottom:5px;">
-                    Addr: ${addr || '---'} | Bin: ${file_name || bin || '---'} | Feat: ${v_size || 0}
+                    Addr: ${escapeHtml(addr || '---')} | Bin: ${escapeHtml(file_name || bin || '---')} | Feat: ${escapeHtml(v_size || 0)}
                 </div>
-                <div style="font-size:0.55rem; color:var(--subtle,#75715e); padding:0 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">ID: ${id}</div>
+                <div style="font-size:0.55rem; color:var(--subtle,#75715e); padding:0 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">ID: ${escapeHtml(id)}</div>
                 <div class="preview-header" style="border:none; margin-top:10px;">Loading Code...</div>
             </div>
             ${extraHtml}
@@ -390,7 +390,7 @@
             html = `<div style="font-weight:bold; color:var(--accent,#66d9ef); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${hashes.length})</div>`;
             hashes.forEach(h => {
                 html += `<div style="margin-bottom:8px;">
-                    <div style="font-family:monospace; color:var(--accent,#66d9ef); font-weight:bold;">${h}</div>
+                    <div style="font-family:monospace; color:var(--accent,#66d9ef); font-weight:bold;">${escapeHtml(h)}</div>
                 </div>`;
             });
         }
@@ -650,7 +650,7 @@
         if (cc_ip) {
             extraFieldsHtml += `<div style="display: flex; justify-content: space-between; font-size: 0.75rem; border-bottom: 1px solid var(--border); padding: 2px 0;">
                 <span style="color: #777; text-transform: uppercase;"><i class="fa-solid fa-network-wired" style="margin-right: 6px; opacity: 0.5; width: 14px;"></i>CC IPs</span>
-                <span class="mono" style="color: var(--info, #60a5fa); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${cc_ip}">${cc_ip}</span>
+                <span class="mono" style="color: var(--info, #60a5fa); font-family: 'JetBrains Mono', 'Consolas', monospace; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(cc_ip)}">${escapeHtml(cc_ip)}</span>
             </div>`;
         }
 
@@ -658,7 +658,7 @@
         <div class="func-meta-card modern" style="border: 1px solid var(--accent, #66d9ef); background: rgba(13,15,20,0.98); backdrop-filter: blur(15px); padding: 12px; border-radius: 8px; margin-bottom: 0;">
             <div style="font-weight: bold; font-size: 0.95rem; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; color: var(--text); display: flex; align-items: center; gap: 8px; font-family: 'Inter', sans-serif;">
                 <i class="fa-solid fa-file" style="color: var(--accent);"></i>
-                <span>${fileName}</span>
+                <span>${escapeHtml(fileName)}</span>
             </div>
             
             <div style="display: flex; flex-direction: column; gap: 4px; font-family: 'Inter', sans-serif;">

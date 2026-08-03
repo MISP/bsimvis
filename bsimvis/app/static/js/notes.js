@@ -1,3 +1,11 @@
+// Notes are Markdown written by users and the LLM. marked does not sanitize,
+// so escape the source first: HTML in a note then shows as text instead of
+// running as markup.
+function renderNoteMarkdown(text) {
+    const escaped = escapeHtml(text);
+    return (typeof marked !== 'undefined') ? marked.parse(escaped) : escaped;
+}
+
 /**
  * Independent Notes and AI Insight Side Panels for BSimVis
  * Supports both function notes (/api/notes/*) and file notes (/api/notes/file/*).
@@ -426,31 +434,31 @@ async function refreshNotes(funcId) {
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                     <span style="font-size: 0.7rem; font-weight: bold; color: #ffd700; text-transform: uppercase;">Editing Note</span>
                                 </div>
-                                <textarea id="edit-note-text-${note.id}" 
-                                    onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); submitEditNote('${funcId}', '${note.id}');} if(event.key==='Escape'){cancelEditNote('${funcId}');}"
-                                    style="width: 100%; min-height: 100px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;">${note.text}</textarea>
+                                <textarea id="edit-note-text-${escapeAttr(note.id)}" 
+                                    onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); submitEditNote(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(note.id))});} if(event.key==='Escape'){cancelEditNote(${escapeAttr(jsString(funcId))});}"
+                                    style="width: 100%; min-height: 100px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;">${escapeHtml(note.text)}</textarea>
                                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                                    <button onclick="cancelEditNote('${funcId}')" style="background: var(--border); color: var(--meta-text-muted); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Cancel</button>
-                                    <button onclick="submitEditNote('${funcId}', '${note.id}')" style="background: #ffd700; color: var(--window-tray); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.75rem;">Save</button>
+                                    <button onclick="cancelEditNote(${escapeAttr(jsString(funcId))})" style="background: var(--border); color: var(--meta-text-muted); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Cancel</button>
+                                    <button onclick="submitEditNote(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(note.id))})" style="background: #ffd700; color: var(--window-tray); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.75rem;">Save</button>
                                 </div>
                             </div>
                         `;
                     }
 
-                    const renderedText = (typeof marked !== 'undefined') ? marked.parse(note.text) : note.text;
+                    const renderedText = renderNoteMarkdown(note.text);
                     return `
                         <div class="note-item" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid ${isAI ? '#ae81ff' : '#ffd700'}; border: 1px solid var(--border); border-left-width: 4px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <span style="font-size: 0.7rem; font-weight: bold; color: ${isAI ? '#ae81ff' : '#ffd700'}; text-transform: uppercase;">${note.owner}</span>
-                                <span style="font-size: 0.6rem; color: var(--subtle);">${new Date(note.timestamp).toLocaleString()}</span>
+                                <span style="font-size: 0.7rem; font-weight: bold; color: ${isAI ? '#ae81ff' : '#ffd700'}; text-transform: uppercase;">${escapeHtml(note.owner)}</span>
+                                <span style="font-size: 0.6rem; color: var(--subtle);">${escapeHtml(new Date(note.timestamp).toLocaleString())}</span>
                             </div>
                             <div class="collapsible-container">
                                 <div class="note-text note-markdown-body collapsible-content ${note.text.length > 500 ? 'collapsed' : ''}">${renderedText}</div>
                                 ${note.text.length > 500 ? '<button class="toggle-expand-btn" onclick="toggleContentExpand(this)"><i class="fa-solid fa-chevron-down"></i> Show More</button>' : ''}
                             </div>
                             <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
-                                <button onclick="startEditNote('${note.id}', '${funcId}')" title="Edit Note" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 0.85rem;"><i class="fa-solid fa-pen"></i></button>
-                                <button onclick="deleteNote('${funcId}', '${note.id}')" style="background: none; border: none; color: var(--subtle); cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
+                                <button onclick="startEditNote(${escapeAttr(jsString(note.id))}, ${escapeAttr(jsString(funcId))})" title="Edit Note" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 0.85rem;"><i class="fa-solid fa-pen"></i></button>
+                                <button onclick="deleteNote(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(note.id))})" style="background: none; border: none; color: var(--subtle); cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
                             </div>
                         </div>
                     `;
@@ -655,7 +663,7 @@ function updateChatMessageUI(msgEl, content, index, funcId) {
         chatHistories[funcId][index].content = content;
     }
 
-    let html = (typeof marked !== "undefined") ? marked.parse(content) : content;
+    let html = renderNoteMarkdown(content);
     const isLong = content.length > 500;
     msgEl.innerHTML = `
         <div class="collapsible-container">
@@ -666,7 +674,7 @@ function updateChatMessageUI(msgEl, content, index, funcId) {
     if (msgEl.classList.contains('ai') && content.trim().length > 0) {
         const actionsEl = document.createElement("div");
         actionsEl.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 8px;";
-        actionsEl.innerHTML = `<button onclick="saveMessageAsNote('${currentNotesFuncId}', ${index}, this)" style="background: #2a2a2a; color: #ffd700; border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;"><i class="fa-solid fa-plus"></i> Save Note</button>`;
+        actionsEl.innerHTML = `<button onclick="saveMessageAsNote(${escapeAttr(jsString(currentNotesFuncId))}, ${Number(index)}, this)" style="background: #2a2a2a; color: #ffd700; border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;"><i class="fa-solid fa-plus"></i> Save Note</button>`;
         msgEl.appendChild(actionsEl);
     }
     if (historyEl && isAtBottom) historyEl.scrollTop = historyEl.scrollHeight;
@@ -820,7 +828,7 @@ window.showNoteTooltip = async function(id, isFile, e) {
 
     tooltip.innerHTML = `
         <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-            <div class="preview-header">Notes: ${id.split(':').pop()}</div>
+            <div class="preview-header">Notes: ${escapeHtml(id.split(':').pop())}</div>
             <div class="note-preview-scroll" style="flex:1; overflow-y:auto; padding: 10px;">
                 <div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">Loading notes...</div>
             </div>
@@ -843,12 +851,12 @@ window.showNoteTooltip = async function(id, isFile, e) {
             } else {
                 scrollContainer.innerHTML = notes.map(note => {
                     const isAI = note.owner === 'llm' || note.owner === 'AI';
-                    const renderedText = (typeof marked !== 'undefined') ? marked.parse(note.text) : note.text;
+                    const renderedText = renderNoteMarkdown(note.text);
                     return `
                         <div style="background: var(--meta-bg); border-radius: 6px; padding: 12px; margin-bottom: 8px; border-left: 4px solid ${isAI ? 'var(--info)' : 'var(--note-accent)'}; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                                <span style="font-size: 0.65rem; font-weight: bold; color: ${isAI ? 'var(--info)' : 'var(--note-accent)'}; text-transform: uppercase;">${note.owner}</span>
-                                <span style="font-size: 0.55rem; color: var(--subtle);">${new Date(note.timestamp).toLocaleString()}</span>
+                                <span style="font-size: 0.65rem; font-weight: bold; color: ${isAI ? 'var(--info)' : 'var(--note-accent)'}; text-transform: uppercase;">${escapeHtml(note.owner)}</span>
+                                <span style="font-size: 0.55rem; color: var(--subtle);">${escapeHtml(new Date(note.timestamp).toLocaleString())}</span>
                             </div>
                             <div class="note-markdown-body" style="font-size: 0.75rem;">${renderedText}</div>
                         </div>

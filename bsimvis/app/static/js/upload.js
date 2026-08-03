@@ -535,9 +535,9 @@ async function startBatchUpload() {
         goBtn.innerHTML = `
             <span style="font-size: 0.8rem; color: var(--subtle);">
                 <i class="fa-solid fa-layer-group" style="margin-right: 6px;"></i>
-                Uploaded to <b style="color: var(--text);">${collection}</b>
+                Uploaded to <b style="color: var(--text);">${escapeHtml(collection)}</b>
             </span>
-            <button id="go-to-collection-btn" onclick="Nav.openPath('${collectionUrl}')" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
+            <button id="go-to-collection-btn" onclick="Nav.openPath(${escapeAttr(jsString(collectionUrl))})" class="btn-primary" style="height: 34px; padding: 0 16px; font-size: 0.8rem; display: flex; align-items: center; gap: 8px;">
                 <i class="fa-solid fa-arrow-right"></i> Go to Collection
             </button>
         `;

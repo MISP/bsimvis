@@ -423,11 +423,11 @@ window.Breadcrumbs = {
             if (index > 0) {
                 html += '<span class="breadcrumb-sep"><i class="fa-solid fa-chevron-right"></i></span>';
             }
-            const iconHtml = segment.icon ? `<i class="${segment.icon}"></i>` : '';
+            const iconHtml = segment.icon ? `<i class="${escapeAttr(segment.icon)}"></i>` : '';
             if (index === segments.length - 1) {
-                html += `<span class="breadcrumb-item current">${iconHtml}<span>${segment.label}</span></span>`;
+                html += `<span class="breadcrumb-item current">${iconHtml}<span>${escapeHtml(segment.label)}</span></span>`;
             } else {
-                html += `<a href="${segment.url}" class="breadcrumb-item" onclick="Nav.openPath('${segment.url}', event)">${iconHtml}<span>${segment.label}</span></a>`;
+                html += `<a href="${escapeAttr(segment.url)}" class="breadcrumb-item" onclick="Nav.openPath(${escapeAttr(jsString(segment.url))}, event)">${iconHtml}<span>${escapeHtml(segment.label)}</span></a>`;
             }
         });
         html += '</nav>';

@@ -57,14 +57,14 @@ function getJobTargetLink(job) {
         if (activePool) {
             const prefix = window.location.pathname.startsWith('/pool/') ? 'pool' : 'pools';
             const url = `/${prefix}/${encodeURIComponent(activePool)}/collections/${encodeURIComponent(ctx.collection)}/files/${encodeURIComponent(rawTarget)}`;
-            return `<a onclick="window.Nav && window.Nav.openPath('${url}');" class="job-target-link" title="View File in Pool ${activePool}"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${displayTarget}</code></a>`;
+            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File in Pool ${escapeAttr(activePool)}"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${escapeHtml(displayTarget)}</code></a>`;
         } else if (ctx.collection) {
             const url = `/collections/${encodeURIComponent(ctx.collection)}/files/${encodeURIComponent(rawTarget)}`;
-            return `<a onclick="window.Nav && window.Nav.openPath('${url}');" class="job-target-link" title="View File Details"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${displayTarget}</code></a>`;
+            return `<a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString(url))});" class="job-target-link" title="View File Details"><i class="fa-solid fa-file-code"></i> <code class="job-target-text">${escapeHtml(displayTarget)}</code></a>`;
         }
     }
     
-    return `<code class="job-target-text" title="${rawTarget}">${displayTarget}</code>`;
+    return `<code class="job-target-text" title="${escapeAttr(rawTarget)}">${escapeHtml(displayTarget)}</code>`;
 }
 
 // Job Type to FontAwesome Icon mapping
@@ -339,12 +339,12 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
 
         let actions = '<div class="job-actions">';
         if (status === 'pending' || status === 'running') {
-            actions += `<button class="job-btn-action danger" onclick="cancelJob('${job.id}')" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
+            actions += `<button class="job-btn-action danger" onclick="cancelJob(${escapeAttr(jsString(job.id))})" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
         }
         if (status === 'failed' || status === 'cancelled' || status === 'completed') {
-            actions += `<button class="job-btn-action" onclick="retryJob('${job.id}')" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
+            actions += `<button class="job-btn-action" onclick="retryJob(${escapeAttr(jsString(job.id))})" title="Retry/Resume Job"><i class="fa-solid fa-rotate-right"></i></button>`;
         }
-        actions += `<button class="job-btn-action info" onclick="showJobDetails('${job.id}')" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
+        actions += `<button class="job-btn-action info" onclick="showJobDetails(${escapeAttr(jsString(job.id))})" title="View Logs & Details"><i class="fa-solid fa-circle-info"></i></button>`;
         actions += '</div>';
 
         const isCollapsed = isPipeline && collapsedPipelines.has(job.id);
@@ -361,7 +361,7 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
         let chevronHtml = '';
         if (isPipeline) {
             const chevron = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
-            chevronHtml = `<i class="fa-solid ${chevron} collapse-chevron" onclick="togglePipelineCollapse('${job.id}')" style="cursor: pointer; color: var(--accent); width: 14px; text-align: center; margin-right: 6px;"></i>`;
+            chevronHtml = `<i class="fa-solid ${chevron} collapse-chevron" onclick="togglePipelineCollapse(${escapeAttr(jsString(job.id))})" style="cursor: pointer; color: var(--accent); width: 14px; text-align: center; margin-right: 6px;"></i>`;
         } else {
             // Leaf nodes get a spacer so they align with pipeline labels
             chevronHtml = `<span style="width: 20px; display: inline-block;"></span>`;
@@ -399,9 +399,9 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
             const ctx = parseCollectionContext(job.collection);
             if (ctx.pool) {
                 const displayName = job.pool_name || ctx.pool;
-                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;" title="Pool UUID: ${ctx.pool}"><i class="fa-solid fa-sitemap"></i> <a onclick="window.Nav && window.Nav.openPath('/pools/${ctx.pool}');">${displayName}</a></div>`;
+                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;" title="Pool UUID: ${escapeAttr(ctx.pool)}"><i class="fa-solid fa-sitemap"></i> <a onclick="window.Nav && window.Nav.openPath(${escapeAttr(jsString('/pools/' + encodeURIComponent(ctx.pool)))});">${escapeHtml(displayName)}</a></div>`;
             } else {
-                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;"><i class="fa-solid fa-layer-group"></i> <a onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl('${job.collection}', []));">${job.collection}</a></div>`;
+                collectionDisplay = `<div class="job-collection-cell" style="cursor:pointer;"><i class="fa-solid fa-layer-group"></i> <a onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl(${escapeAttr(jsString(job.collection))}, []));">${escapeHtml(job.collection)}</a></div>`;
             }
         } else {
             collectionDisplay = '<span class="dim">-</span>';
@@ -597,11 +597,11 @@ async function refreshJobModal(jobId, isInitial = false) {
                 const isPoolValue = key === 'pool_id' && typeof value === 'string' && value !== '';
 
                 if (isNavigable) {
-                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl('${escapeHtml(value)}', []));">${value}</a>`;
+                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="window.Nav && window.Nav.openPath(window.Nav.buildUIUrl(${escapeAttr(jsString(value))}, []));">${escapeHtml(value)}</a>`;
                 } else if (isPoolValue) {
-                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="void(0); window.Nav && window.Nav.openPath('/pools/${value}');">${value}</a>`;
+                    displayValue = `<a style="cursor:pointer; color: var(--accent); font-size: 0.85rem;" onclick="void(0); window.Nav && window.Nav.openPath(${escapeAttr(jsString('/pools/' + encodeURIComponent(value)))});">${escapeHtml(value)}</a>`;
                 } else if (typeof value === 'object' && value !== null) {
-                    displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${JSON.stringify(value)}</code>`;
+                    displayValue = `<code style="font-size: 0.7rem; color: var(--subtle);">${escapeHtml(JSON.stringify(value))}</code>`;
                 } else if (typeof value === 'string' && value.length > 30) {
                     displayValue = `<code title="${value}" style="font-size: 0.75rem;">${value.substring(0, 12)}...${value.substring(value.length - 8)}</code>`;
                 } else {

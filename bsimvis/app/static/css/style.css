@@ -2313,3 +2313,17 @@ body.in-iframe #module-view-container {
 
 
 
+/* Tag chips get their colors from inline styles (per-tag hex at ~7% alpha fill),
+   which is invisible on white. window.tagInk() already darkened the hue; give the
+   fill and border enough weight to read against the light background. */
+html.light-theme .tag-card,
+html.light-theme .sim-tag-card {
+    background: color-mix(in srgb, currentColor 12%, #fff) !important;
+    border-color: color-mix(in srgb, currentColor 55%, #fff) !important;
+}
+
+html.light-theme .analysis-tag-badge {
+    background: var(--hover);
+    color: #444;
+    opacity: 1;
+}

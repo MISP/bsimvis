@@ -41,6 +41,22 @@ if (typeof safeCssColor === 'undefined') {
     };
 }
 
+// Tag colors are picked for a dark background; on the light theme the pale ones
+// (yellow, light green) vanish. Darken them, keeping the hue so tags stay
+// recognizable. ponytail: pure function, callers re-render on theme toggle.
+window.tagInk = function (color) {
+    if (!document.documentElement.classList.contains('light-theme')) return color;
+    let hex = String(color || '').trim();
+    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex)) return color;
+    if (hex.length === 4) hex = '#' + [...hex.slice(1)].map(c => c + c).join('');
+    const rgb = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+    // Relative luminance; anything brighter than this washes out on white.
+    const lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+    if (lum <= 0.40) return hex;
+    const k = 0.40 / lum; // uniform scale keeps the hue, just dims it
+    return '#' + rgb.map(c => Math.round(c * k).toString(16).padStart(2, '0')).join('');
+};
+
 let isFetchingTagMetadata = false;
 let tagFetchPromise = null;
 
@@ -233,13 +249,13 @@ window.showTooltip = (e, tag, coll) => {
 };
 
 window.getTagMetadata = (tag) => {
-    if (tag === 'bookmark') return { color: '#66d9ef', priority: 1000 };
-    if (tag === 'ignore') return { color: '#f92672', priority: 900 };
+    if (tag === 'bookmark') return { color: window.tagInk('#66d9ef'), priority: 1000 };
+    if (tag === 'ignore') return { color: window.tagInk('#f92672'), priority: 900 };
     const m = tagMetadata[tag] || (window.parent && window.parent.tagMetadata && window.parent.tagMetadata[tag]);
-    if (m) return { ...m, color: safeCssColor(m.color) };
+    if (m) return { ...m, color: window.tagInk(safeCssColor(m.color)) };
     const palette = ["#FF5555", "#50FA7B", "#F1FA8C", "#BD93F9", "#FF79C6", "#8BE9FD", "#FFB86C", "#A6E22E", "#66D9EF", "#FFD700", "#FF69B4", "#7B68EE", "#48D1CC", "#00FF7F", "#F4A460"];
     let hash = 0; for (let i = 0; i < tag.length; i++) hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-    return { color: palette[Math.abs(hash) % palette.length], priority: 0 };
+    return { color: window.tagInk(palette[Math.abs(hash) % palette.length]), priority: 0 };
 };
 
 window.hideTooltip = () => {
@@ -333,7 +349,7 @@ window.handleTagContextMenu = (e, tag) => {
             }
 
             // Update all tag badges and cards in the current document
-            updateTagUIElements(tag, newColor);
+            updateTagUIElements(tag, window.tagInk(newColor));
 
             // Refresh row colors
             if (typeof refreshAllRowColors === 'function') {
@@ -393,7 +409,7 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
     const userHtml = userTagsList.map(t => {
         if (t === 'bookmark' || t === 'ignore') return '';
         const meta = tagMetadata[t] || { color: '#66d9ef' };
-        const color = safeCssColor(meta.color);
+        const color = window.tagInk(safeCssColor(meta.color));
         const removeClick = `removeTag(event, ${jsString(etype)}, ${jsString(eid)}, ${jsString(t)})`;
         const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
 
@@ -1095,7 +1111,7 @@ async function confirmAddTag(etype, eid, tag, container) {
 
 function updateUIForTagAdd(editors, tag) {
     const meta = tagMetadata[tag] || { color: '#66d9ef' };
-    const color = safeCssColor(meta.color);
+    const color = window.tagInk(safeCssColor(meta.color));
     const isBookmark = (tag === 'bookmark');
     const isIgnore = (tag === 'ignore');
     const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';

@@ -40,10 +40,11 @@ window.renderTagVocabulary = function (items) {
         // handler bare, then the whole handler is attribute-escaped.
         const js = escapeAttr(jsString(t.tag));
         const color = safeCssColor(t.color);
+        const ink = window.tagInk ? window.tagInk(color) : color;
         return `
         <tr data-id="${tag}">
             <td>
-                <span class="tag-card" style="background:${color}22; border:1px solid ${color}; color:${color}; padding:2px 8px; border-radius:10px; font-size:0.75rem;">${tag}</span>
+                <span class="tag-card" style="background:${ink}22; border:1px solid ${ink}; color:${ink}; padding:2px 8px; border-radius:10px; font-size:0.75rem;">${tag}</span>
             </td>
             <td>
                 <input type="color" value="${color}" title="Tag color"

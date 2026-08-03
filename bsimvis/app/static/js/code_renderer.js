@@ -89,8 +89,8 @@ window.TOKEN_COLORS = {
 
 window.renderRichHtml = function (rows, options = {}) {
     const noBg = options.noBg === true;
-    const bg = noBg ? 'transparent' : (options.bg || '#272822');
-    const fg = noBg ? '#222' : (options.fg || '#f8f8f2');
+    const bg = noBg ? 'transparent' : (options.bg || 'var(--card-bg)');
+    const fg = noBg ? 'var(--meta-header-bg)' : (options.fg || '#f8f8f2');
     const font = options.font || "Consolas, 'Courier New', monospace";
     const showGutter = options.showGutter === true; // Default to false
 
@@ -115,15 +115,15 @@ window.renderRichHtml = function (rows, options = {}) {
             
             // If no background, make the default color darker for better contrast on light docs
             if (noBg && (t.type === 'default' || !window.TOKEN_COLORS[t.type])) {
-                color = '#222';
+                color = 'var(--meta-header-bg)';
             }
             
             let tStyle = `color: ${color};`;
             
             // Highlight diffs if requested
             if (options.showDiffs) {
-                if (t.diff_class === 'diff-match') tStyle += " background-color: rgba(166, 226, 46, 0.15); border-bottom: 1px solid #a6e22e;";
-                else if (t.diff_class === 'diff-unique') tStyle += " background-color: rgba(249, 38, 114, 0.15); border-bottom: 1px solid #f92672;";
+                if (t.diff_class === 'diff-match') tStyle += " background-color: color-mix(in srgb, var(--token-symbol) 15%, transparent); border-bottom: 1px solid #a6e22e;";
+                else if (t.diff_class === 'diff-unique') tStyle += " background-color: color-mix(in srgb, var(--token-instruction) 15%, transparent); border-bottom: 1px solid #f92672;";
             }
 
             const escapedText = t.text.replace(/&/g, '&amp;')

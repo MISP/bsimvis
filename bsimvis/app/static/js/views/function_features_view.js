@@ -48,7 +48,7 @@ window.FunctionFeaturesView = {
                 }
 
                 .feat-table-container th {
-                    background: #000;
+                    background: var(--window-tray);
                     color: var(--accent);
                     text-transform: uppercase;
                     font-size: 0.65rem;
@@ -74,16 +74,16 @@ window.FunctionFeaturesView = {
                 .hash-badge {
                     font-family: 'Consolas', monospace;
                     color: #ae81ff;
-                    background: rgba(174, 129, 255, 0.1);
+                    background: color-mix(in srgb, var(--token-address) 10%, transparent);
                     padding: 1px 4px;
                     border-radius: 3px;
                     font-size: 0.75rem;
                 }
 
                 .hash-badge:hover {
-                    background: rgba(174, 129, 255, 0.3);
+                    background: color-mix(in srgb, var(--token-address) 30%, transparent);
                     border: 1px solid #ae81ff;
-                    color: #fff;
+                    color: var(--text);
                 }
 
                 .type-badge {
@@ -94,7 +94,7 @@ window.FunctionFeaturesView = {
 
                 .pcode-badge {
                     background: #f92672;
-                    color: #000;
+                    color: var(--window-tray);
                     padding: 2px 6px;
                     border-radius: 4px;
                     font-weight: bold;
@@ -112,14 +112,14 @@ window.FunctionFeaturesView = {
                     display: none;
                     position: fixed;
                     z-index: 20000;
-                    background: rgba(0,0,0,0.95);
+                    background: var(--window-bg);
                     padding: 10px;
                     border-radius: 4px;
                     border: 1px solid var(--accent);
-                    color: #fff;
+                    color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                    box-shadow: 0 4px 15px var(--border);
                     max-width: 320px;
                 }
             </style>
@@ -129,8 +129,8 @@ window.FunctionFeaturesView = {
                     <div>
                         <h1 style="color:var(--accent); margin:0; font-size:1.2rem;">Function Features Browser</h1>
                         <div style="margin-top:8px; font-size:0.85rem;">
-                            <span class="dim">Function:</span> <span id="ff-func-id" style="font-family:monospace; color:#ccc;">---</span> 
-                            | <span id="ff-feature-count" class="badge" style="background:rgba(102,217,239,0.1); color:var(--accent); margin-left:10px;">0 features</span>
+                            <span class="dim">Function:</span> <span id="ff-func-id" style="font-family:monospace; color:var(--meta-text-muted);">---</span> 
+                            | <span id="ff-feature-count" class="badge" style="background:color-mix(in srgb, var(--token-register) 10%, transparent); color:var(--accent); margin-left:10px;">0 features</span>
                         </div>
                     </div>
                 </div>
@@ -265,7 +265,7 @@ window.FunctionFeaturesView = {
                         </button>
                     </div>
                 </td>
-                <td><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${f['seq'] || 'N/A'}</span></td>
+                <td><span class="mono" style="font-size:0.75rem; border: 1px solid var(--border); padding:1px 4px; border-radius:3px; background: var(--hover);">${f['seq'] || 'N/A'}</span></td>
                 <td><span class="type-badge">${f.type || 'N/A'}</span></td>
                 <td>
                     <div style="display:inline-flex; flex-direction:column; gap:3px;">
@@ -312,7 +312,7 @@ window.FunctionFeaturesView = {
         const data = this.globalTips[idx];
         if (!data) return;
 
-        let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+        let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
 
         data[2].forEach(f => {
             const color = f[8] || 'var(--accent)';

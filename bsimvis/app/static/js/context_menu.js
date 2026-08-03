@@ -197,12 +197,12 @@
             const isIgnored = userTags.includes('ignore');
 
             html += `
-            <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
-                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'rgba(102, 217, 239, 0.1)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'rgba(255, 255, 255, 0.1)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
+            <div style="display: flex; gap: 8px; padding: 6px 16px; border-bottom: 1px solid var(--border); margin-bottom: 4px;">
+                <button class="bookmark-btn ${isBookmarked ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isBookmarked ? 'color-mix(in srgb, var(--token-register) 10%, transparent)' : 'none'}; border: 1px solid ${isBookmarked ? '#66d9ef' : 'var(--border)'}; color: ${isBookmarked ? '#66d9ef' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuBookmark(event, '${etype}', '${eid}')">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="${isBookmarked ? '#66d9ef' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
                     Bookmark
                 </button>
-                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'rgba(249, 38, 114, 0.1)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'rgba(255, 255, 255, 0.1)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
+                <button class="ignore-btn ${isIgnored ? 'active' : ''}" style="flex: 1; padding: 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: ${isIgnored ? 'color-mix(in srgb, var(--token-instruction) 10%, transparent)' : 'none'}; border: 1px solid ${isIgnored ? '#f92672' : 'var(--border)'}; color: ${isIgnored ? '#f92672' : '#75715e'}; cursor: pointer; transition: all 0.2s;" onclick="event.stopPropagation(); window.toggleContextMenuIgnore(event, '${etype}', '${eid}')">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
                     Ignore
                 </button>
@@ -215,7 +215,7 @@
             allKnownTags.forEach(tag => {
                 const isActive = userTags.includes(tag);
                 const color = window.getTagMetadata ? window.getTagMetadata(tag).color : '#66d9ef';
-                const checkboxStyle = `color: ${isActive ? color : 'rgba(255,255,255,0.2)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
+                const checkboxStyle = `color: ${isActive ? color : 'var(--border)'}; width: 16px; text-align: center; font-size: 0.8rem;`;
 
                 tagsSubmenuHtml += `
                 <div class="context-menu-item" onclick="event.stopPropagation(); window.toggleContextMenuTag(event, '${etype}', '${eid}', '${String(tag).replace(/'/g, "\\'")}')">
@@ -225,7 +225,7 @@
             });
 
             if (tagsSubmenuHtml) {
-                tagsSubmenuHtml += `<div style="border-top: 1px solid rgba(255,255,255,0.05); margin: 4px 0;"></div>`;
+                tagsSubmenuHtml += `<div style="border-top: 1px solid var(--border); margin: 4px 0;"></div>`;
             }
 
             tagsSubmenuHtml += `
@@ -240,7 +240,7 @@
                 <span>Tags</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; max-height: 250px; overflow-y: auto; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
                     ${tagsSubmenuHtml}
                 </div>
             </div>`;
@@ -262,7 +262,7 @@
                 }).join('');
 
                 html += `
-                <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); margin-bottom: 4px;">
+                <div style="padding: 4px 16px 8px 16px; display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 4px;">
                     ${tagsHtml}
                 </div>`;
             }
@@ -313,7 +313,7 @@
                 <span>Copy</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
                     ${copySubmenuHtml}
                 </div>
             </div>`;
@@ -427,7 +427,7 @@
                 <span>Actions</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
                 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20005;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 185px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20005;">
                     ${actionsSubmenuHtml}
                 </div>
             </div>`;
@@ -660,7 +660,7 @@
                 <span>LLM</span>
                 <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
 
-                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: rgba(30, 30, 30, 0.98); border: 1px solid rgba(255, 255, 255, 0.15); z-index: 20006;">
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
                     ${entries}
                 </div>
             </div>`;
@@ -726,7 +726,7 @@
                 left: 0;
                 width: 100%;
                 height: 100%;
-                background: rgba(0, 0, 0, 0.75);
+                background: var(--border);
                 backdrop-filter: blur(6px);
                 z-index: 30000;
                 display: none;
@@ -740,9 +740,9 @@
             }
             .tag-modal-content {
                 background: #181818;
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid var(--border);
                 border-radius: 12px;
-                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+                box-shadow: 0 20px 50px var(--border);
                 width: 440px;
                 max-width: 90vw;
                 padding: 24px;
@@ -751,7 +751,7 @@
                 display: flex;
                 flex-direction: column;
                 gap: 16px;
-                color: #eee;
+                color: var(--meta-text);
             }
             .tag-modal-overlay.active .tag-modal-content {
                 transform: translateY(0);
@@ -760,7 +760,7 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                border-bottom: 1px solid var(--border);
                 padding-bottom: 12px;
             }
             .tag-modal-header h3 {
@@ -772,7 +772,7 @@
             .tag-modal-close {
                 background: none;
                 border: none;
-                color: #888;
+                color: var(--subtle);
                 font-size: 1.5rem;
                 cursor: pointer;
                 line-height: 1;
@@ -780,16 +780,16 @@
                 transition: color 0.15s ease;
             }
             .tag-modal-close:hover {
-                color: #fff;
+                color: var(--text);
             }
             .tag-modal-target-info {
                 font-size: 0.75rem;
-                color: #aaa;
+                color: var(--meta-text-muted);
                 word-break: break-all;
-                background: rgba(255, 255, 255, 0.02);
+                background: var(--hover);
                 padding: 10px 14px;
                 border-radius: 6px;
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                border: 1px solid var(--border);
                 font-family: var(--mono, monospace);
                 line-height: 1.4;
             }
@@ -798,7 +798,7 @@
                 font-weight: 700;
                 text-transform: uppercase;
                 letter-spacing: 1px;
-                color: #888;
+                color: var(--subtle);
                 margin-bottom: 8px;
             }
             .tag-modal-active-tags {
@@ -814,7 +814,7 @@
                 padding: 4px 10px;
                 border-radius: 4px;
                 font-size: 0.75rem;
-                color: #000;
+                color: var(--window-tray);
                 font-weight: 600;
             }
             .tag-modal-tag-pill .remove-btn {
@@ -834,10 +834,10 @@
             }
             .tag-modal-input {
                 flex: 1;
-                background: #121212;
-                border: 1px solid rgba(255, 255, 255, 0.15);
+                background: var(--bg);
+                border: 1px solid var(--border);
                 border-radius: 6px;
-                color: #fff;
+                color: var(--text);
                 padding: 8px 12px;
                 font-size: 0.85rem;
                 outline: none;
@@ -848,7 +848,7 @@
             }
             .tag-modal-btn-add {
                 background: var(--accent, #a6e22e);
-                color: #000;
+                color: var(--window-tray);
                 border: none;
                 border-radius: 6px;
                 padding: 0 16px;
@@ -863,9 +863,9 @@
             .tag-modal-suggestions {
                 max-height: 150px;
                 overflow-y: auto;
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                border: 1px solid var(--border);
                 border-radius: 6px;
-                background: #121212;
+                background: var(--bg);
             }
             .tag-modal-suggestion-item {
                 padding: 8px 12px;
@@ -875,11 +875,11 @@
                 cursor: pointer;
                 font-size: 0.8rem;
                 transition: background 0.15s ease;
-                color: #ccc;
+                color: var(--meta-text-muted);
             }
             .tag-modal-suggestion-item:hover {
-                background: rgba(255, 255, 255, 0.05);
-                color: #fff;
+                background: var(--hover);
+                color: var(--text);
             }
             .tag-modal-suggestion-item.active-tag {
                 opacity: 0.4;
@@ -974,7 +974,7 @@
             
             if (activeList) {
                 if (activeTags.length === 0) {
-                    activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, #888);">No custom tags applied.</span>`;
+                    activeList.innerHTML = `<span style="font-style: italic; font-size: 0.75rem; color: var(--dim, var(--subtle));">No custom tags applied.</span>`;
                 } else {
                     activeList.innerHTML = activeTags.map(tag => {
                         const meta = tagMeta[tag] || { color: '#66d9ef' };
@@ -1004,7 +1004,7 @@
                             </div>
                         `;
                     } else {
-                        suggestionsList.innerHTML = `<div style="padding: 12px; font-size: 0.75rem; font-style: italic; color: var(--dim, #888);">No existing tags found. Type above to create one.</div>`;
+                        suggestionsList.innerHTML = `<div style="padding: 12px; font-size: 0.75rem; font-style: italic; color: var(--dim, var(--subtle));">No existing tags found. Type above to create one.</div>`;
                     }
                 } else {
                     suggestionsList.innerHTML = filtered.map(tag => {
@@ -1016,7 +1016,7 @@
                             <div class="tag-modal-suggestion-item ${activeClass}" ${clickAction}>
                                 <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: ${meta.color}"></span>
                                 <span>${tag}</span>
-                                ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, #888);">Applied</span>' : ''}
+                                ${isApplied ? '<span style="margin-left: auto; font-size: 0.7rem; color: var(--dim, var(--subtle));">Applied</span>' : ''}
                             </div>
                         `;
                     }).join('');

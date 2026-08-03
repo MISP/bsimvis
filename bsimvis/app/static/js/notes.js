@@ -106,24 +106,24 @@ function renderNotesPanelHTML(el) {
     el.innerHTML = `
         <div class="panel-v2-header">
             <h3 style="margin: 0; font-size: 0.9rem; color: #ffd700;"><i class="fa-solid fa-comments"></i> Notes</h3>
-            <button onclick="closeNotesPanel()" style="background: none; border: none; color: #888; cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'"><i class="fa-solid fa-xmark"></i></button>
+            <button onclick="closeNotesPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div id="notes-column" style="flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden;">
             <div id="notes-drop-overlay" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; background: rgba(255, 215, 0, 0.1); border: 2px dashed #ffd700; z-index: 100; pointer-events: none; align-items: center; justify-content: center; flex-direction: column; color: #ffd700; font-weight: bold; font-size: 1.2rem; backdrop-filter: blur(2px);">
                 <i class="fa-solid fa-plus-circle" style="font-size: 3rem; margin-bottom: 10px;"></i>
                 Drop to Save Note
             </div>
-            <div id="notes-list" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: #121212;">
-                <div style="text-align: center; color: #888; padding: 20px;">Loading notes...</div>
+            <div id="notes-list" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; background: var(--bg);">
+                <div style="text-align: center; color: var(--subtle); padding: 20px;">Loading notes...</div>
             </div>
-            <div style="padding: 16px; background: #1a1a1a; border-top: 1px solid #333;">
-                <textarea id="new-note-text" placeholder="Add a new note (Markdown)..." style="width: 100%; min-height: 80px; background: #0a0a0a; border: 1px solid #444; color: #eee; padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;"></textarea>
+            <div style="padding: 16px; background: var(--meta-bg); border-top: 1px solid var(--border);">
+                <textarea id="new-note-text" placeholder="Add a new note (Markdown)..." style="width: 100%; min-height: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;"></textarea>
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <select id="note-owner-select" style="background: #0a0a0a; color: #ccc; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; outline: none;">
+                    <select id="note-owner-select" style="background: var(--bg); color: var(--meta-text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 0.8rem; outline: none;">
                         <option value="user">User</option>
                         <option value="llm">LLM</option>
                     </select>
-                    <button onclick="saveNote(currentNotesFuncId)" style="background: var(--accent, #ffd700); color: #000; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Add Note</button>
+                    <button onclick="saveNote(currentNotesFuncId)" style="background: var(--accent, #ffd700); color: var(--window-tray); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Add Note</button>
                 </div>
             </div>
         </div>
@@ -153,15 +153,15 @@ function renderAIPanelHTML(el) {
             <span style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; color: #ae81ff; font-weight: bold;"><i class="fa-solid fa-robot"></i> AI Insight</span>
             <div style="display: flex; align-items: center; gap: 12px;">
                 <div id="llm-status" style="font-size: 0.75rem; color: #ae81ff; font-style: italic; font-weight: normal; text-transform: none;"></div>
-                <button onclick="closeAIPanel()" style="background: none; border: none; color: #888; cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'"><i class="fa-solid fa-xmark"></i></button>
+                <button onclick="closeAIPanel()" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 1.1rem; padding: 4px; display: flex; align-items: center; transition: color 0.2s;" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--subtle)'"><i class="fa-solid fa-xmark"></i></button>
             </div>
         </div>
-        <div id="llm-chat-history" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; background: #0f0f0f;"></div>
-        <div style="padding: 16px; background: #1a1a1a; border-top: 1px solid #333;">
-            <textarea id="llm-input" placeholder="Ask AI about this function..." style="width: 100%; min-height: 80px; background: #0a0a0a; border: 1px solid #444; color: #eee; padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;"></textarea>
+        <div id="llm-chat-history" style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 20px; background: var(--card-bg);"></div>
+        <div style="padding: 16px; background: var(--meta-bg); border-top: 1px solid var(--border);">
+            <textarea id="llm-input" placeholder="Ask AI about this function..." style="width: 100%; min-height: 80px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;"></textarea>
             <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                <button id="llm-stop-btn" onclick="stopLLMGeneration()" style="display:none; background: #f44336; color: #fff; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Stop</button>
-                <button id="llm-send-btn" onclick="sendLLMChat()" style="background: #ae81ff; color: #000; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Send</button>
+                <button id="llm-stop-btn" onclick="stopLLMGeneration()" style="display:none; background: #f44336; color: var(--text); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Stop</button>
+                <button id="llm-send-btn" onclick="sendLLMChat()" style="background: #ae81ff; color: var(--window-tray); border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem;">Send</button>
             </div>
         </div>
     `;
@@ -298,9 +298,9 @@ function injectNotesStyles() {
             position: fixed;
             top: 0;
             height: 100vh;
-            background: #1e1e1e;
-            border-left: 1px solid #333;
-            box-shadow: -5px 0 20px rgba(0,0,0,0.4);
+            background: var(--card-bg);
+            border-left: 1px solid var(--border);
+            box-shadow: -5px 0 20px var(--border);
             z-index: 10000;
             display: flex;
             flex-direction: column;
@@ -310,18 +310,18 @@ function injectNotesStyles() {
 
         .panel-v2-header {
             padding: 12px 16px; 
-            background: #252525; 
-            border-bottom: 1px solid #333; 
+            background: var(--meta-bg); 
+            border-bottom: 1px solid var(--border); 
             display: flex; 
             justify-content: space-between; 
             align-items: center;
         }
 
         .panel-handle {
-            background: #252525;
-            border: 1px solid #444;
+            background: var(--meta-bg);
+            border: 1px solid var(--border);
             border-right: none;
-            color: #888;
+            color: var(--subtle);
             padding: 15px 8px;
             cursor: pointer;
             border-radius: 8px 0 0 8px;
@@ -334,29 +334,29 @@ function injectNotesStyles() {
             font-weight: bold;
             letter-spacing: 1px;
             transition: all 0.2s;
-            box-shadow: -2px 0 10px rgba(0,0,0,0.3);
+            box-shadow: -2px 0 10px var(--border);
         }
-        .panel-handle:hover { color: #fff; background: #333; }
-        .panel-handle.user.active { color: #ffd700; border-color: #ffd700; background: #1a1a1a; }
-        .panel-handle.ai.active { color: #ae81ff; border-color: #ae81ff; background: #1a1a1a; }
+        .panel-handle:hover { color: var(--text); background: var(--border); }
+        .panel-handle.user.active { color: #ffd700; border-color: #ffd700; background: var(--meta-bg); }
+        .panel-handle.ai.active { color: #ae81ff; border-color: #ae81ff; background: var(--meta-bg); }
         .panel-handle i { font-size: 0.9rem; transform: rotate(90deg); }
 
         .note-markdown-body, .llm-markdown-body { 
             font-family: 'Fira Code', monospace;
             font-size: 0.85rem; 
             line-height: 1.6; 
-            color: #eee; 
+            color: var(--meta-text); 
         }
         .note-markdown-body p, .llm-markdown-body p { margin-top: 0; margin-bottom: 12px; }
-        .note-markdown-body code { background: #333; padding: 2px 5px; border-radius: 3px; color: #ffd700; font-weight: bold; }
-        .llm-markdown-body code { background: #333; padding: 2px 5px; border-radius: 3px; color: #ae81ff; font-weight: bold; }
-        .note-markdown-body pre, .llm-markdown-body pre { background: #0a0a0a; padding: 12px; border-radius: 6px; overflow-x: auto; border: 1px solid #333; margin: 12px 0; }
-        .note-markdown-body blockquote { border-left: 4px solid #ffd700; margin: 12px 0; padding-left: 15px; color: #aaa; font-style: italic; background: rgba(255, 215, 0, 0.05); }
-        .llm-markdown-body blockquote { border-left: 4px solid #ae81ff; margin: 12px 0; padding-left: 15px; color: #aaa; font-style: italic; background: rgba(174, 129, 255, 0.05); }
+        .note-markdown-body code { background: var(--border); padding: 2px 5px; border-radius: 3px; color: #ffd700; font-weight: bold; }
+        .llm-markdown-body code { background: var(--border); padding: 2px 5px; border-radius: 3px; color: #ae81ff; font-weight: bold; }
+        .note-markdown-body pre, .llm-markdown-body pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; border: 1px solid var(--border); margin: 12px 0; }
+        .note-markdown-body blockquote { border-left: 4px solid #ffd700; margin: 12px 0; padding-left: 15px; color: var(--meta-text-muted); font-style: italic; background: rgba(255, 215, 0, 0.05); }
+        .llm-markdown-body blockquote { border-left: 4px solid #ae81ff; margin: 12px 0; padding-left: 15px; color: var(--meta-text-muted); font-style: italic; background: color-mix(in srgb, var(--token-address) 5%, transparent); }
         
         .chat-msg { border-radius: 8px; padding: 12px 16px; max-width: 95%; position: relative; }
-        .chat-msg.user { background: #252525; align-self: flex-end; border-bottom-right-radius: 0; border: 1px solid #444; }
-        .chat-msg.ai { background: #1a1a1a; align-self: flex-start; border-bottom-left-radius: 0; border: 1px solid #333; }
+        .chat-msg.user { background: var(--meta-bg); align-self: flex-end; border-bottom-right-radius: 0; border: 1px solid var(--border); }
+        .chat-msg.ai { background: var(--meta-bg); align-self: flex-start; border-bottom-left-radius: 0; border: 1px solid var(--border); }
         .chat-msg.user::after { content: 'YOU'; position: absolute; top: -18px; right: 0; font-size: 0.6rem; color: #ffd700; }
         .chat-msg.ai::after { content: 'AI INSIGHT'; position: absolute; top: -18px; left: 0; font-size: 0.6rem; color: #ae81ff; }
         
@@ -416,7 +416,7 @@ async function refreshNotes(funcId) {
             }
 
             if (notes.length === 0) {
-                listEl.innerHTML = '<div style="text-align: center; color: #555; padding: 40px; font-style: italic;">No notes yet.</div>';
+                listEl.innerHTML = '<div style="text-align: center; color: var(--subtle); padding: 40px; font-style: italic;">No notes yet.</div>';
             } else {
                 listEl.innerHTML = notes.map(note => {
                     const isAI = note.owner === 'llm' || note.owner === 'AI';
@@ -424,16 +424,16 @@ async function refreshNotes(funcId) {
                     
                     if (isEditing) {
                         return `
-                            <div class="note-item editing" style="background: #1a1a1a; border-radius: 6px; padding: 15px; border-left: 4px solid #ffd700; border: 1px solid #ffd700; border-left-width: 4px;">
+                            <div class="note-item editing" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid #ffd700; border: 1px solid #ffd700; border-left-width: 4px;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                     <span style="font-size: 0.7rem; font-weight: bold; color: #ffd700; text-transform: uppercase;">Editing Note</span>
                                 </div>
                                 <textarea id="edit-note-text-${note.id}" 
                                     onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); submitEditNote('${funcId}', '${note.id}');} if(event.key==='Escape'){cancelEditNote('${funcId}');}"
-                                    style="width: 100%; min-height: 100px; background: #0a0a0a; border: 1px solid #444; color: #eee; padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;">${note.text}</textarea>
+                                    style="width: 100%; min-height: 100px; background: var(--bg); border: 1px solid var(--border); color: var(--meta-text); padding: 10px; border-radius: 4px; resize: vertical; margin-bottom: 8px; box-sizing: border-box; font-family: 'Fira Code', monospace; font-size: 0.85rem; outline: none;">${note.text}</textarea>
                                 <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                                    <button onclick="cancelEditNote('${funcId}')" style="background: #333; color: #ccc; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Cancel</button>
-                                    <button onclick="submitEditNote('${funcId}', '${note.id}')" style="background: #ffd700; color: #000; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.75rem;">Save</button>
+                                    <button onclick="cancelEditNote('${funcId}')" style="background: var(--border); color: var(--meta-text-muted); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">Cancel</button>
+                                    <button onclick="submitEditNote('${funcId}', '${note.id}')" style="background: #ffd700; color: var(--window-tray); border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.75rem;">Save</button>
                                 </div>
                             </div>
                         `;
@@ -441,18 +441,18 @@ async function refreshNotes(funcId) {
 
                     const renderedText = (typeof marked !== 'undefined') ? marked.parse(note.text) : note.text;
                     return `
-                        <div class="note-item" style="background: #1a1a1a; border-radius: 6px; padding: 15px; border-left: 4px solid ${isAI ? '#ae81ff' : '#ffd700'}; border: 1px solid #333; border-left-width: 4px;">
+                        <div class="note-item" style="background: var(--meta-bg); border-radius: 6px; padding: 15px; border-left: 4px solid ${isAI ? '#ae81ff' : '#ffd700'}; border: 1px solid var(--border); border-left-width: 4px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                 <span style="font-size: 0.7rem; font-weight: bold; color: ${isAI ? '#ae81ff' : '#ffd700'}; text-transform: uppercase;">${note.owner}</span>
-                                <span style="font-size: 0.6rem; color: #666;">${new Date(note.timestamp).toLocaleString()}</span>
+                                <span style="font-size: 0.6rem; color: var(--subtle);">${new Date(note.timestamp).toLocaleString()}</span>
                             </div>
                             <div class="collapsible-container">
                                 <div class="note-text note-markdown-body collapsible-content ${note.text.length > 500 ? 'collapsed' : ''}">${renderedText}</div>
                                 ${note.text.length > 500 ? '<button class="toggle-expand-btn" onclick="toggleContentExpand(this)"><i class="fa-solid fa-chevron-down"></i> Show More</button>' : ''}
                             </div>
                             <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
-                                <button onclick="startEditNote('${note.id}', '${funcId}')" title="Edit Note" style="background: none; border: none; color: #555; cursor: pointer; font-size: 0.85rem;"><i class="fa-solid fa-pen"></i></button>
-                                <button onclick="deleteNote('${funcId}', '${note.id}')" style="background: none; border: none; color: #555; cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
+                                <button onclick="startEditNote('${note.id}', '${funcId}')" title="Edit Note" style="background: none; border: none; color: var(--subtle); cursor: pointer; font-size: 0.85rem;"><i class="fa-solid fa-pen"></i></button>
+                                <button onclick="deleteNote('${funcId}', '${note.id}')" style="background: none; border: none; color: var(--subtle); cursor: pointer;"><i class="fa-solid fa-trash"></i></button>
                             </div>
                         </div>
                     `;
@@ -667,8 +667,8 @@ function updateChatMessageUI(msgEl, content, index, funcId) {
     `;
     if (msgEl.classList.contains('ai') && content.trim().length > 0) {
         const actionsEl = document.createElement("div");
-        actionsEl.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; border-top: 1px solid #333; padding-top: 8px;";
-        actionsEl.innerHTML = `<button onclick="saveMessageAsNote('${currentNotesFuncId}', ${index}, this)" style="background: #2a2a2a; color: #ffd700; border: 1px solid #444; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;"><i class="fa-solid fa-plus"></i> Save Note</button>`;
+        actionsEl.style.cssText = "margin-top: 10px; display: flex; justify-content: flex-end; border-top: 1px solid var(--border); padding-top: 8px;";
+        actionsEl.innerHTML = `<button onclick="saveMessageAsNote('${currentNotesFuncId}', ${index}, this)" style="background: #2a2a2a; color: #ffd700; border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;"><i class="fa-solid fa-plus"></i> Save Note</button>`;
         msgEl.appendChild(actionsEl);
     }
     if (historyEl && isAtBottom) historyEl.scrollTop = historyEl.scrollHeight;
@@ -790,3 +790,86 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateLayout();
 });
+
+// --- Hover Tooltip for Notes ---
+window.showNoteTooltip = async function(id, isFile, e) {
+    const isMenuOpen = window.graphContextMenuOpen || (window.top && window.top.graphContextMenuOpen);
+    if (isMenuOpen) return;
+    if (!id) return;
+    
+    let tooltip = document.getElementById('note-preview-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.id = 'note-preview-tooltip';
+        Object.assign(tooltip.style, {
+            position: 'fixed',
+            display: 'none',
+            zIndex: '20000',
+            pointerEvents: 'none',
+            minWidth: '320px',
+            maxWidth: '480px',
+            maxHeight: '450px',
+            overflow: 'hidden',
+            flexDirection: 'column',
+            gap: '10px'
+        });
+        document.body.appendChild(tooltip);
+    }
+
+    tooltip.style.display = 'flex';
+    tooltip.classList.add('showing');
+    if (window.moveCodePreview) window.moveCodePreview(e);
+
+    tooltip.innerHTML = `
+        <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
+            <div class="preview-header">Notes: ${id.split(':').pop()}</div>
+            <div class="note-preview-scroll" style="flex:1; overflow-y:auto; padding: 10px;">
+                <div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">Loading notes...</div>
+            </div>
+        </div>
+    `;
+
+    const collection = (window.getCollectionFromId && window.getCollectionFromId(id)) || id.split(':')[0];
+    const idParam = isFile ? `file_id=${encodeURIComponent(id)}` : `func_id=${encodeURIComponent(id)}`;
+    const endpoint = isFile ? '/api/notes/file/list' : '/api/notes/list';
+    
+    try {
+        const apiParams = (window.getApiParams || (window.parent && window.parent.getApiParams) || (() => ''))(collection);
+        const res = await fetch(`${endpoint}?${apiParams}&${idParam}`);
+        const data = await res.json();
+        if (data.status === 'success') {
+            const notes = data.notes || [];
+            const scrollContainer = tooltip.querySelector('.note-preview-scroll');
+            if (notes.length === 0) {
+                scrollContainer.innerHTML = '<div style="text-align: center; color: var(--subtle); font-style: italic; font-size: 0.8rem;">No notes found.</div>';
+            } else {
+                scrollContainer.innerHTML = notes.map(note => {
+                    const isAI = note.owner === 'llm' || note.owner === 'AI';
+                    const renderedText = (typeof marked !== 'undefined') ? marked.parse(note.text) : note.text;
+                    return `
+                        <div style="background: var(--meta-bg); border-radius: 6px; padding: 12px; margin-bottom: 8px; border-left: 4px solid ${isAI ? 'var(--info)' : 'var(--note-accent)'}; border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 0.65rem; font-weight: bold; color: ${isAI ? 'var(--info)' : 'var(--note-accent)'}; text-transform: uppercase;">${note.owner}</span>
+                                <span style="font-size: 0.55rem; color: var(--subtle);">${new Date(note.timestamp).toLocaleString()}</span>
+                            </div>
+                            <div class="note-markdown-body" style="font-size: 0.75rem;">${renderedText}</div>
+                        </div>
+                    `;
+                }).join('');
+                if (notes.length > 1) {
+                    scrollContainer.innerHTML += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle); margin-top:8px;">💡 Use scroll wheel to read all notes</div>`;
+                }
+            }
+        }
+    } catch (err) {
+        tooltip.innerHTML = `<div class="preview-header" style="color:#ff5555">Error loading notes</div>`;
+    }
+};
+
+window.hideNoteTooltip = function() {
+    const tooltip = document.getElementById('note-preview-tooltip');
+    if (tooltip) {
+        tooltip.style.display = 'none';
+        tooltip.classList.remove('showing');
+    }
+};

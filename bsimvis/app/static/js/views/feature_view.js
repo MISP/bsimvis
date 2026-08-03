@@ -49,7 +49,7 @@ window.FeatureView = {
                 }
 
                 .feature-table-container th {
-                    background: #000;
+                    background: var(--window-tray);
                     color: var(--accent);
                     padding: 12px;
                     text-align: left;
@@ -74,15 +74,15 @@ window.FeatureView = {
                 .hash-badge {
                     font-family: monospace;
                     color: #ae81ff;
-                    background: rgba(174, 129, 255, 0.1);
+                    background: color-mix(in srgb, var(--token-address) 10%, transparent);
                     padding: 2px 6px;
                     border-radius: 4px;
-                    border: 1px solid rgba(174, 129, 255, 0.2);
+                    border: 1px solid color-mix(in srgb, var(--token-address) 20%, transparent);
                 }
 
                 .op-badge {
                     background: #f92672;
-                    color: #000;
+                    color: var(--window-tray);
                     padding: 2px 6px;
                     border-radius: 4px;
                     font-weight: bold;
@@ -93,18 +93,18 @@ window.FeatureView = {
 
                 .feature-primary {
                     border-bottom: 2px solid #a6e22e;
-                    background: rgba(166, 226, 46, 0.15);
+                    background: color-mix(in srgb, var(--token-symbol) 15%, transparent);
                     border-radius: 2px;
                 }
 
                 .feature-secondary {
                     border-bottom: 2px solid #f92672;
-                    background: rgba(249, 38, 114, 0.1);
+                    background: color-mix(in srgb, var(--token-instruction) 10%, transparent);
                     border-radius: 2px;
                 }
 
                 .bsim-group-active-unique {
-                    background: rgba(166, 226, 46, 0.25) !important;
+                    background: color-mix(in srgb, var(--token-symbol) 25%, transparent) !important;
                     border-bottom: 2px solid #a6e22e !important;
                     border-radius: 2px;
                 }
@@ -119,9 +119,9 @@ window.FeatureView = {
                 }
 
                 .btn-code-action {
-                    background: rgba(102, 217, 239, 0.1);
+                    background: color-mix(in srgb, var(--token-register) 10%, transparent);
                     color: var(--accent);
-                    border: 1px solid rgba(102, 217, 239, 0.3);
+                    border: 1px solid color-mix(in srgb, var(--token-register) 30%, transparent);
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 0.75rem;
@@ -133,13 +133,13 @@ window.FeatureView = {
                 }
 
                 .btn-code-action:hover {
-                    background: rgba(102, 217, 239, 0.2);
+                    background: color-mix(in srgb, var(--token-register) 20%, transparent);
                 }
 
                 .btn-sim-action {
-                    background: rgba(174, 129, 255, 0.1);
+                    background: color-mix(in srgb, var(--token-address) 10%, transparent);
                     color: #ae81ff;
-                    border: 1px solid rgba(174, 129, 255, 0.3);
+                    border: 1px solid color-mix(in srgb, var(--token-address) 30%, transparent);
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 0.75rem;
@@ -151,13 +151,13 @@ window.FeatureView = {
                 }
 
                 .btn-sim-action:hover {
-                    background: rgba(174, 129, 255, 0.2);
+                    background: color-mix(in srgb, var(--token-address) 20%, transparent);
                 }
 
                 .btn-diff-action {
-                    background: rgba(166, 226, 46, 0.1);
+                    background: color-mix(in srgb, var(--token-symbol) 10%, transparent);
                     color: #a6e22e;
-                    border: 1px solid rgba(166, 226, 46, 0.3);
+                    border: 1px solid color-mix(in srgb, var(--token-symbol) 30%, transparent);
                     border-radius: 4px;
                     padding: 3px 8px;
                     font-size: 0.75rem;
@@ -169,26 +169,26 @@ window.FeatureView = {
                 }
 
                 .btn-diff-action:hover {
-                    background: rgba(166, 226, 46, 0.2);
+                    background: color-mix(in srgb, var(--token-symbol) 20%, transparent);
                 }
                 
                 .btn-diff-action.active {
                     background: #a6e22e;
-                    color: #000;
+                    color: var(--window-tray);
                 }
 
                 .feat-tooltip {
                     display: none;
                     position: fixed;
                     z-index: 20000;
-                    background: rgba(0,0,0,0.95);
+                    background: var(--window-bg);
                     padding: 12px;
                     border-radius: 6px;
                     border: 1px solid var(--accent);
-                    color: #fff;
+                    color: var(--text);
                     font-size: 0.8rem;
                     pointer-events: none;
-                    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+                    box-shadow: 0 4px 15px var(--border);
                     max-width: 320px;
                 }
             </style>
@@ -412,7 +412,7 @@ window.FeatureView = {
                 tr.innerHTML = `
                     <td class="code-cell" data-entity-data='${originEntityData}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">${originHtml}</td>
                     <td class="code-cell">${metaHtml}</td>
-                    <td class="code-cell"><span class="mono" style="font-size:0.75rem; border:1px solid rgba(255,255,255,0.05); padding:1px 4px; border-radius:3px; background:rgba(255,255,255,0.02);">${occ['seq'] || 'N/A'}</span></td>
+                    <td class="code-cell"><span class="mono" style="font-size:0.75rem; border: 1px solid var(--border); padding:1px 4px; border-radius:3px; background: var(--hover);">${occ['seq'] || 'N/A'}</span></td>
                     <td class="code-cell">${pcodeHtml}</td>
                     <td class="code-cell">${pcodeBlockHtml}</td>
                     <td class="code-cell">${tfHtml}</td>
@@ -474,7 +474,7 @@ window.FeatureView = {
         if (!cached || !cached.tips || !cached.tips[idx]) return;
 
         const data = cached.tips[idx];
-        let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
+        let html = `<div style="font-weight:bold; color:var(--accent); border-bottom:1px solid var(--border); padding-bottom:5px; margin-bottom:5px;">Features (${data[1]})</div>`;
 
         data[2].forEach(f => {
             const color = f[8] || 'var(--accent)';

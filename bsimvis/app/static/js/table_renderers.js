@@ -248,7 +248,7 @@ window.TableRenderers = {
                                 
                                 if (bestInf) {
                                     const hue = Math.max(0, Math.min(120, bestInf.cohesion * 120));
-                                    const color = `hsl(${hue}, 80%, 60%)`;
+                                    const color = `hsl(${hue}, var(--color-s-med), var(--color-l-med))`;
                                     return `<div class="dim" title="Inferred from cluster (cohesion: ${(bestInf.cohesion*100).toFixed(1)}%)">
                                         ${field.label}: <span style="color:${color}; opacity: 0.9; font-style: italic;">${bestInf.value} <small>(${(bestInf.cohesion*100).toFixed(0)}%)</small></span>
                                     </div>`;

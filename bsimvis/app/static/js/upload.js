@@ -24,26 +24,26 @@ function renderUploadView(params) {
 
             <div class="upload-grid" style="display: grid; grid-template-columns: 1fr 1.2fr; gap: 40px;">
                 <div class="upload-settings-panel">
-                    <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+                    <div style="background: var(--hover); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
                         <h3 style="font-size: 0.9rem; text-transform: uppercase; color: var(--accent); margin: 0 0 20px 0; letter-spacing: 1px;">Pipeline Settings</h3>
                         
                         <div class="form-group" style="margin-bottom: 15px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Collection</label>
-                            <select id="upload-collection" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; margin-bottom: 8px;">
+                            <select id="upload-collection" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer; margin-bottom: 8px;">
                                 <option value="${collection}">${collection}</option>
                             </select>
-                            <input type="text" id="upload-new-collection" placeholder="New Collection Name..." style="display: none; width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            <input type="text" id="upload-new-collection" placeholder="New Collection Name..." style="display: none; width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
 
                         <div class="form-group" style="margin-bottom: 15px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Batch Name</label>
-                            <input type="text" id="upload-batch-name" placeholder="e.g. Firmware v1.2" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            <input type="text" id="upload-batch-name" placeholder="e.g. Firmware v1.2" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
 
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
                             <div class="form-group">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Analysis Profile</label>
-                                <select id="upload-profile" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                <select id="upload-profile" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
                                     <option value="fast">Fast</option>
                                     <option value="balanced" selected>Balanced</option>
                                     <option value="deep">Deep</option>
@@ -51,7 +51,7 @@ function renderUploadView(params) {
                             </div>
                             <div class="form-group">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Min Func Len</label>
-                                <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                <input type="number" id="upload-min-func-len" value="0" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                             </div>
                         </div>
 
@@ -59,15 +59,15 @@ function renderUploadView(params) {
                             <div class="form-group">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Processor</label>
                                 <div style="position: relative;">
-                                    <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                                    <input type="text" id="upload-processor-search" autocomplete="off" placeholder="Auto-detect — click to browse" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                                     <input type="hidden" id="upload-processor" value="">
-                                    <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: #000; border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; box-shadow: 0 6px 18px rgba(0,0,0,0.6);"></div>
+                                    <div id="upload-processor-list" style="display: none; position: absolute; z-index: 50; top: 100%; left: 0; right: 0; max-height: 260px; overflow-y: auto; background: var(--window-tray); border: 1px solid var(--border); border-radius: 4px; margin-top: 2px; box-shadow: 0 6px 18px var(--border);"></div>
                                 </div>
                                 <div id="upload-processor-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
                             </div>
                             <div class="form-group">
                                 <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Compiler Spec</label>
-                                <select id="upload-cspec" disabled style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
+                                <select id="upload-cspec" disabled style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">
                                     <option value="">Default</option>
                                 </select>
                                 <div id="upload-cspec-hint" style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px; min-height: 1em;"></div>
@@ -76,11 +76,11 @@ function renderUploadView(params) {
 
                         <div class="form-group" style="margin-bottom: 20px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Tags (Global)</label>
-                            <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
                         <div class="form-group" style="margin-bottom: 20px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
-                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: #000; border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
 
                         <div style="padding-top: 15px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px;">
@@ -95,9 +95,9 @@ function renderUploadView(params) {
                 </div>
 
                 <div class="upload-drop-panel" style="display: flex; flex-direction: column; gap: 20px;">
-                    <div id="upload-drop-zone" style="border: 2px dashed var(--border); border-radius: 8px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: rgba(255,255,255,0.01);">
+                    <div id="upload-drop-zone" style="border: 2px dashed var(--border); border-radius: 8px; padding: 50px 20px; text-align: center; cursor: pointer; transition: all 0.2s; background: var(--hover);">
                         <i class="fa-solid fa-cloud-arrow-up" style="font-size: 3.5rem; color: var(--accent); margin-bottom: 15px; opacity: 0.5;"></i>
-                        <div style="font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; color: #fff;">Drop Binaries Here</div>
+                        <div style="font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; color: var(--text);">Drop Binaries Here</div>
                         <div style="font-size: 0.85rem; color: var(--subtle);">or click to browse files</div>
                         <input type="file" id="upload-file-input" multiple style="display: none;">
                     </div>
@@ -106,13 +106,13 @@ function renderUploadView(params) {
                         <h4 style="font-size: 0.8rem; text-transform: uppercase; color: var(--subtle); margin: 0 0 10px 0; display: flex; justify-content: space-between;">
                             Selected Files <span id="file-count-badge" class="badge">0</span>
                         </h4>
-                        <div id="upload-file-list" style="flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); border: 1px solid var(--border); border-radius: 4px; padding: 5px;">
+                        <div id="upload-file-list" style="flex: 1; overflow-y: auto; background: var(--border); border: 1px solid var(--border); border-radius: 4px; padding: 5px;">
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div id="upload-progress-container" style="margin-top: 40px; display: none; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
+            <div id="upload-progress-container" style="margin-top: 40px; display: none; background: var(--border); border: 1px solid var(--border); border-radius: 8px; padding: 25px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h3 style="color: var(--accent); font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 10px;">
                         <div class="nav-job-spinner" id="global-upload-spinner" style="margin:0"></div>
@@ -120,7 +120,7 @@ function renderUploadView(params) {
                     </h3>
                     <div id="global-progress-text" style="font-size: 0.85rem; font-weight: bold; color: var(--accent);">0%</div>
                 </div>
-                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: rgba(255,255,255,0.05);">
+                <div class="job-progress-track" style="height: 10px; margin-bottom: 25px; background: var(--hover);">
                     <div id="global-progress-fill" class="job-progress-fill progress-running" style="width: 0%;"></div>
                 </div>
                 <div id="upload-progress-list" style="display: flex; flex-direction: column; gap: 12px; max-height: 400px; overflow-y: auto; padding-right: 10px;">
@@ -206,15 +206,15 @@ function renderProcessorOptions() {
         '<div data-lang-id="" style="padding: 7px 9px; font-size: 0.8rem; color: var(--subtle); cursor: pointer; border-bottom: 1px solid var(--border);">Auto-detect</div>' +
         matches
             .map(
-                l => `<div data-lang-id="${escapeHtmlAttr(l.id)}" style="padding: 7px 9px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.04);">
-                        <div style="color: #fff;">${escapeHtmlAttr(l.id)}</div>
+                l => `<div data-lang-id="${escapeHtmlAttr(l.id)}" style="padding: 7px 9px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid var(--border);">
+                        <div style="color: var(--text);">${escapeHtmlAttr(l.id)}</div>
                         <div style="color: var(--subtle); font-size: 0.7rem;">${escapeHtmlAttr(l.description || '')}</div>
                       </div>`
             )
             .join('');
 
     for (const row of panel.querySelectorAll('[data-lang-id]')) {
-        row.onmouseenter = () => (row.style.background = 'rgba(255,255,255,0.06)');
+        row.onmouseenter = () => (row.style.background = 'var(--border)');
         row.onmouseleave = () => (row.style.background = 'transparent');
         row.onmousedown = () => {
             selectUploadProcessor(row.getAttribute('data-lang-id'));
@@ -294,13 +294,13 @@ function setupUploadEvents() {
 
     dropZone.ondragleave = () => {
         dropZone.style.borderColor = 'var(--border)';
-        dropZone.style.background = 'rgba(255,255,255,0.01)';
+        dropZone.style.background = 'var(--border)';
     };
 
     dropZone.ondrop = (e) => {
         e.preventDefault();
         dropZone.style.borderColor = 'var(--border)';
-        dropZone.style.background = 'rgba(255,255,255,0.01)';
+        dropZone.style.background = 'var(--border)';
         handleFiles(e.dataTransfer.files);
     };
 }
@@ -353,7 +353,7 @@ function updateFileList() {
     badge.innerText = selectedFiles.length;
 
     list.innerHTML = selectedFiles.map((file, i) => `
-        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.8rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.8rem;">
             <div style="display: flex; align-items: center; gap: 10px; overflow: hidden;">
                 <i class="fa-solid fa-file-binary" style="color: var(--subtle); flex-shrink: 0;"></i>
                 <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${file.name}">${file.name}</span>
@@ -419,7 +419,7 @@ async function startBatchUpload() {
                 <div style="font-size: 0.8rem; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; padding-right: 15px;">${file.name}</div>
                 <div id="file-status-${i}" style="font-size: 0.7rem; font-weight: bold; color: var(--subtle); flex-shrink: 0;">PREPARING</div>
             </div>
-            <div class="job-progress-track" style="height: 4px; background: rgba(255,255,255,0.05);">
+            <div class="job-progress-track" style="height: 4px; background: var(--hover);">
                 <div id="file-progress-${i}" class="job-progress-fill" style="width: 0%;"></div>
             </div>
         `;

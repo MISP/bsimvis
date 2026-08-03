@@ -139,3 +139,39 @@ window.addEventListener('popstate', () => {
         window.refreshData();
     }
 });
+
+// Global keyboard shortcuts for navbar navigation (uses capture phase to beat local handlers)
+window.addEventListener('keydown', (e) => {
+    // Cycle with Alt+Up and Alt+Down (works everywhere, even in inputs)
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const navLinks = Array.from(document.querySelectorAll('nav.sidebar-nav a[id^="nav-"]'));
+        if (!navLinks.length) return;
+        
+        const activeIndex = navLinks.findIndex(a => a.classList.contains('active'));
+        let newIndex = activeIndex;
+        
+        if (e.key === 'ArrowUp') {
+            newIndex = activeIndex > 0 ? activeIndex - 1 : navLinks.length - 1;
+        } else {
+            newIndex = activeIndex < navLinks.length - 1 ? activeIndex + 1 : 0;
+        }
+        
+        if (newIndex >= 0 && newIndex < navLinks.length) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            navLinks[newIndex].click();
+        }
+    }
+    
+    // Direct select with Alt+1 to Alt+9
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9') {
+        const navLinks = Array.from(document.querySelectorAll('nav.sidebar-nav a[id^="nav-"]'));
+        const index = parseInt(e.key) - 1;
+        
+        if (index >= 0 && index < navLinks.length) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            navLinks[index].click();
+        }
+    }
+}, true);

@@ -10,17 +10,20 @@ window.FileView = {
     clusters: {},
     functionsLoaded: false,
     sortState: { col: 'function_name', dir: 1 },
-    filterState: { q: '', featMin: '', featMax: '' },
+    funcClusters: {},
+    funcPage: { total: null, loading: false, reqId: 0 },
+    FUNC_PAGE_SIZE: 100,
 
     async init(params, containerId) {
         this.params = params;
         this.container = document.getElementById(containerId);
         this.functions = [];
         this.clusters = {};
+        this.funcClusters = {};
+        this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
-        this.filterState = { q: '', featMin: '', featMax: '' };
-        
+
         const collection = params.collection || '';
         const file_md5 = params.md5 || params.file_md5;
 
@@ -39,22 +42,22 @@ window.FileView = {
                     color:var(--subtle); font-size:0.9rem; font-weight:600; letter-spacing:0.01em;
                     transition:color 0.15s, border-color 0.15s, background 0.15s;
                 }
-                .bsim-tab:hover { color:var(--text); background:rgba(255,255,255,0.04); }
+                .bsim-tab:hover { color:var(--text); background: var(--hover); }
                 .bsim-tab.active { color:var(--accent); border-bottom-color:var(--accent); }
                 
                 .file-func-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
                 .file-func-table th { text-align:left; padding:10px; border-bottom:1px solid var(--border); color:var(--subtle); text-transform:uppercase; font-size:0.75rem; letter-spacing:0.05em; }
-                .file-func-table td { padding:10px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
-                .file-func-table tr:hover { background: rgba(255,255,255,0.02); }
+                .file-func-table td { padding:10px; border-bottom: 1px solid var(--border); vertical-align:middle; }
+                .file-func-table tr:hover { background: var(--hover); }
                 
                 .file-func-table th.sortable { cursor: pointer; user-select: none; }
                 .file-func-table th.sortable:hover { color: var(--text); }
-                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.1); }
-                .file-func-table tr.filter-row input { background: #000; border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
+                .file-func-table tr.filter-row th { padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--border); }
+                .file-func-table tr.filter-row input { background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; box-sizing: border-box; }
 
                 .bin-sim-mc-table { width:100%; border-collapse:collapse; font-size:0.82rem; }
                 .bin-sim-mc-table th { text-align:left; padding:6px 12px; color:var(--subtle); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; border-bottom:1px solid var(--border); }
-                .bin-sim-mc-table td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
+                .bin-sim-mc-table td { padding:6px 12px; border-bottom: 1px solid var(--border); vertical-align:top; font-family:'Consolas',monospace; word-break:break-word; }
                 .bin-sim-mc-cat { padding:10px 12px 4px; font-weight:bold; color:var(--accent); font-size:0.78rem; }
                 .bin-sim-mc-label { color:var(--subtle); font-family:'Inter',sans-serif; width:160px; }
                 
@@ -81,14 +84,14 @@ window.FileView = {
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
                     <div style="display: flex; flex-direction: column; gap: 20px;">
-                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
                             <div id="file-meta-container">
                                 <!-- Reused comparison table layout here -->
                             </div>
                         </div>
 
-                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
-                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
+                            <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
                                 <i class="fa-solid fa-wand-magic-sparkles"></i> Inferred Metadata
                             </div>
                             <div class="meta-grid" id="inferred-meta" style="display: grid; grid-template-columns: auto 1fr; gap: 10px 15px; font-size: 0.85rem;"></div>
@@ -98,9 +101,10 @@ window.FileView = {
 
                 <!-- Functions Tab Panel -->
                 <div id="file-panel-functions" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
-                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
-                            <table class="file-func-table">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border); display: flex; flex-direction: column; gap: 15px;">
+                        <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
+                        <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
+                            <table class="file-func-table" id="file-func-table">
                                 <thead>
                                     <tr>
                                         <th class="sortable" onclick="FileView.toggleSort('function_name')">Function <span id="sort-icon-function_name">↕</span></th>
@@ -111,18 +115,26 @@ window.FileView = {
                                         <th>Notes</th>
                                     </tr>
                                     <tr class="filter-row">
-                                        <th><input type="text" id="flt-q" placeholder="Search name/tag/addr..." style="width:100%;" oninput="FileView.handleFilterChange()" /></th>
-                                        <th></th>
-                                        <th></th>
-                                        <th></th>
                                         <th>
-                                            <div style="display:flex; align-items:center; gap:2px;">
-                                                <input type="number" id="flt-feat-min" placeholder="Min" style="width:45%;" oninput="FileView.handleFilterChange()" />
-                                                <span class="dim" style="font-size:0.6rem">-</span>
-                                                <input type="number" id="flt-feat-max" placeholder="Max" style="width:45%;" oninput="FileView.handleFilterChange()" />
+                                            <div style="display:flex; flex-direction:column; gap:4px;">
+                                                <input type="text" id="flt-func-name" placeholder="Name..." style="width:100%;" onfocus="FileView.attachFieldAutocomplete(this, 'function_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <div style="display:flex; gap:2px;">
+                                                    <input type="text" id="flt-func-namespace" placeholder="Namespace..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'namespace')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                    <input type="text" id="flt-func-ret_type" placeholder="Return type..." style="width:50%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'return_type')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                </div>
                                             </div>
                                         </th>
-                                        <th></th>
+                                        <th><input type="text" id="flt-func-address" placeholder="Addr..." style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th><input type="text" id="flt-func-tag" placeholder="Tag..." style="width:100%;" onfocus="FileView.attachTagFilterAutocomplete(this)" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th>
+                                            <div style="display:flex; flex-direction:column; gap:2px;">
+                                                <input type="text" id="flt-func-cluster" placeholder="UUID..." style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <input type="text" id="flt-func-cluster-name" placeholder="Cluster name..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'cluster_name')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                                <input type="number" id="flt-func-min-cohesion" placeholder="Min cohesion..." value="0.95" step="0.05" min="0" max="1" title="Min Cluster Cohesion" style="width:100%; font-size:0.6rem;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" />
+                                            </div>
+                                        </th>
+                                        <th><input type="number" id="flt-func-min-features" placeholder="Min" min="0" title="Min Features" style="width:100%;" oninput="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
+                                        <th><input type="text" id="flt-func-note-owner" placeholder="Note owner..." style="width:100%; font-size:0.6rem;" onfocus="FileView.attachFieldAutocomplete(this, 'note_owners')" onchange="FileView.handleFilterChange()" onkeydown="FileView.handleFilterKey(event)" /></th>
                                     </tr>
                                 </thead>
                                 <tbody id="file-functions-tbody">
@@ -130,12 +142,13 @@ window.FileView = {
                                 </tbody>
                             </table>
                         </div>
+                        <div id="file-func-status" class="dim" style="font-size:0.7rem; text-align:center;"></div>
                     </div>
                 </div>
 
                 <!-- Clusters Tab Panel -->
                 <div id="file-panel-clusters" class="file-view-panel" style="display: none;">
-                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px var(--border);">
                         <div class="cluster-list" id="cluster-list" style="display: flex; flex-direction: column; gap: 10px;"></div>
                     </div>
                 </div>
@@ -296,7 +309,7 @@ window.FileView = {
                     legendHtml += `
                         <div style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 4px;">
                             <div style="width: 10px; height: 10px; background-color: ${color}; border-radius: 2px;"></div>
-                            <span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
+                            <span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;" title="${d.value}">${d.value}</span>
                             <span style="color: var(--dim); margin-left: auto;">${d.percent || 0}%</span>
                         </div>
                     `;
@@ -304,7 +317,7 @@ window.FileView = {
                 });
                 
                 if (totalPercent < 100) {
-                    pieData.push({value: 100 - totalPercent, color: 'rgba(255,255,255,0.05)', isDummy: true});
+                    pieData.push({value: 100 - totalPercent, color: 'var(--border)', isDummy: true});
                 }
                 
                 const width = 50;
@@ -318,7 +331,7 @@ window.FileView = {
                     .attr("width", width)
                     .attr("height", height)
                     .attr("viewBox", `0 0 ${width} ${height}`)
-                    .style("box-shadow", "0 2px 10px rgba(0,0,0,0.5)")
+                    .style("box-shadow", "0 2px 10px var(--border)")
                     .style("border-radius", "50%");
                     
                 svg.append("g")
@@ -334,7 +347,7 @@ window.FileView = {
                 const svgHtml = svg.node().outerHTML;
                 
                 return `
-                    <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 6px;">
+                    <div style="margin-top: 15px; padding: 10px; background: var(--border); border: 1px solid var(--border); border-radius: 6px;">
                         <div style="font-size: 0.75rem; color: var(--dim); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
                             <i class="${icon}"></i> ${title}
                         </div>
@@ -381,14 +394,14 @@ window.FileView = {
                     distBadges += renderDist('MD5 Distributions', 'fa-solid fa-fingerprint', cm.md5_distribution);
 
                     clustersHtml += `
-                        <div class="cluster-item" style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
-                            <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:#fff;">
+                        <div class="cluster-item" style="background: var(--border); border: 1px solid var(--border); border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:8px;">
+                            <div class="cluster-item-header" style="margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center; font-weight:bold; font-size:0.95rem; color:var(--text);">
                                 <span style="color: var(--accent);"><i class="fa-solid fa-bullseye" style="margin-right: 6px;"></i>${name}</span>
                                 <a href="#" style="font-size:0.75rem; color:var(--dim); text-decoration:none;" onclick="FileView.openClusterFiles(event, '${cm.cluster_uuid}')">View Binaries <i class="fa-solid fa-arrow-right"></i></a>
                             </div>
                             <div class="cluster-stat-badges" style="margin-bottom: 5px; display:flex; gap:10px; flex-wrap:wrap;">
-                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
-                                <div class="stat-badge" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
+                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-users" style="color:var(--dim);"></i><span>Members: <span class="val" style="color:var(--accent); font-family: 'JetBrains Mono', 'Consolas', monospace;">${size}</span></span></div>
+                                <div class="stat-badge" style="background: var(--hover); border: 1px solid var(--border); padding:4px 8px; border-radius:4px; font-size:0.75rem; display:flex; align-items:center; gap:6px;"><i class="fa-solid fa-bullseye" style="color:var(--dim);"></i><span>Cohesion: <span class="val" style="color: ${cohesionColor}; font-family: 'JetBrains Mono', 'Consolas', monospace;">${cohesion}</span></span></div>
                             </div>
                             ${distBadges}
                         </div>
@@ -406,7 +419,7 @@ window.FileView = {
                     const confScore = confObj.percent;
                     const confColor = d3.interpolateRdYlGn(confScore / 100);
                     const clusterLink = Nav.buildUIUrl(collection, ['search', 'files']) + `?bin_cluster_uuid=${encodeURIComponent(confObj.cluster_uuid)}`;
-                    return `<a href="${clusterLink}" class="stat-badge" style="background: rgba(255,255,255,0.02); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: #ccc; font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
+                    return `<a href="${clusterLink}" class="stat-badge" style="background: var(--hover); display: inline-flex; margin: 2px 4px 2px 0; text-decoration: none; transition: background 0.2s;" onclick="event.preventDefault(); Nav.openPath('${clusterLink}', event);"><span style="color: var(--meta-text-muted); font-family: 'JetBrains Mono', 'Consolas', monospace;">${k}</span> <span class="val" style="margin-left: 4px; color: ${confColor};">${confScore}%</span></a>`;
                 }).join('');
                 return `
                     <div class="meta-label" style="align-items: flex-start; margin-top: 4px; color: var(--dim); text-transform: uppercase; font-size: 0.75rem; display: flex; gap: 6px;"><i class="${icon}" style="width:14px; text-align:center;"></i> ${label}</div>
@@ -425,6 +438,17 @@ window.FileView = {
             if (inferredHtml) {
                 document.getElementById('inferred-meta').innerHTML = inferredHtml;
                 document.getElementById('inferred-meta-card').style.display = 'block';
+            }
+
+            // Unique-value counts appended to the filter placeholders
+            if (typeof loadFieldCardinalities === 'function') {
+                loadFieldCardinalities(collection, 'func', {
+                    'function_name': 'flt-func-name',
+                    'namespace': 'flt-func-namespace',
+                    'return_type': 'flt-func-ret_type',
+                    'cluster_name': 'flt-func-cluster-name',
+                    'note_owners': 'flt-func-note-owner'
+                });
             }
 
             // Silently fetch functions so they're ready when switching tabs
@@ -476,26 +500,115 @@ window.FileView = {
         this.switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
     },
 
-    async loadFunctionsTable() {
-        if (this.functionsLoaded) return;
+    // Filter inputs -> /api/function/search params. Same names the function
+    // search view uses, so the server-side handling is shared.
+    FUNC_FILTERS: {
+        'flt-func-name': 'function_name',
+        'flt-func-namespace': 'namespace',
+        'flt-func-ret_type': 'return_type',
+        'flt-func-address': 'entrypoint_address',
+        'flt-func-tag': 'func_tag',
+        'flt-func-cluster': 'cluster_uuid',
+        'flt-func-cluster-name': 'cluster_name',
+        'flt-func-min-cohesion': 'min_cohesion',
+        'flt-func-min-features': 'min_features',
+        'flt-func-note-owner': 'note_owner'
+    },
+
+    // attachAutocomplete rebinds focus/click/input on the element, so the inline
+    // onfocus only ever runs once — same wiring as the function search view.
+    attachFieldAutocomplete(input, field) {
+        if (typeof attachAutocomplete !== 'function') return;
+        attachAutocomplete(input, 'func', field, (val) => {
+            input.value = val;
+            this.applyFilters();
+        });
+    },
+
+    attachTagFilterAutocomplete(input) {
+        if (typeof attachTagAutocomplete !== 'function') return;
+        attachTagAutocomplete(input, (val) => {
+            input.value = val;
+            this.applyFilters();
+        });
+    },
+
+    applyFilters() {
+        clearTimeout(this._filterTimer);
+        this.loadFunctionsTable({ reset: true });
+    },
+
+    buildFunctionsQuery(offset) {
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
+        const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
+        const p = new URLSearchParams(apiParams);
+        p.set('file_md5', file_md5);
+        p.set('offset', offset);
+        p.set('limit', this.FUNC_PAGE_SIZE);
+        p.set('sort_by', this.sortState.col);
+        p.set('sort_order', this.sortState.dir === 1 ? 'asc' : 'desc');
+        for (const [id, param] of Object.entries(this.FUNC_FILTERS)) {
+            const v = (document.getElementById(id)?.value || '').trim();
+            if (v) p.set(param, v);
+        }
+        return p.toString();
+    },
+
+    async loadFunctionsTable({ reset = false } = {}) {
+        if (this.funcPage.loading && !reset) return;
+        if (!reset && this.functionsLoaded) return;
+        if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
+
         const tbody = document.getElementById('file-functions-tbody');
-        
+        if (reset) {
+            this.functions = [];
+            this.funcPage.total = null;
+        }
+        this.funcPage.loading = true;
+        this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
+
+        // Bump on every request so a slow earlier page can't overwrite a newer filter's result
+        const reqId = ++this.funcPage.reqId;
+
         try {
-            const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
-            const res = await fetch(`/api/function/search?file_md5=${file_md5}&limit=1000&${apiParams}`);
+            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(this.functions.length)}`);
             if (!res.ok) throw new Error("Functions load failed");
             const data = await res.json();
-            
-            this.functions = data.functions || [];
-            document.getElementById('functions-count').innerText = this.functions.length;
+            if (reqId !== this.funcPage.reqId) return;
+            if (data.error) throw new Error(data.error);
+
+            this.functions = this.functions.concat(data.functions || []);
+            this.funcPage.total = data.total || 0;
+            this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
+            document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
             this.functionsLoaded = true;
         } catch (e) {
             console.error(e);
+            if (reqId !== this.funcPage.reqId) return;
             if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading functions: ${e.message}</td></tr>`;
+            this.setFunctionsStatus('');
+        } finally {
+            if (reqId === this.funcPage.reqId) this.funcPage.loading = false;
         }
+    },
+
+    setFunctionsStatus(html) {
+        const el = document.getElementById('file-func-status');
+        if (el) el.innerHTML = html;
+    },
+
+    // Loads the next page whenever the table is scrolled near the bottom.
+    bindFunctionsScroll() {
+        const scroller = document.getElementById('file-func-scroll');
+        if (!scroller || scroller._funcScrollBound) return;
+        scroller._funcScrollBound = true;
+        scroller.addEventListener('scroll', () => {
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+                this.loadFunctionsTable();
+            }
+        });
     },
 
     toggleSort(col) {
@@ -505,85 +618,51 @@ window.FileView = {
             this.sortState.col = col;
             this.sortState.dir = 1;
         }
-        
+
         ['function_name', 'entrypoint_address', 'bsim_features_count'].forEach(c => {
             const el = document.getElementById(`sort-icon-${c}`);
             if (el) {
                 el.innerText = this.sortState.col === c ? (this.sortState.dir === 1 ? '▲' : '▼') : '↕';
             }
         });
-        
-        this.renderFunctionsTable();
+
+        this.loadFunctionsTable({ reset: true });
     },
 
     handleFilterChange() {
-        this.filterState.q = document.getElementById('flt-q').value;
-        this.filterState.featMin = document.getElementById('flt-feat-min').value;
-        this.filterState.featMax = document.getElementById('flt-feat-max').value;
-        this.renderFunctionsTable();
+        clearTimeout(this._filterTimer);
+        this._filterTimer = setTimeout(() => this.loadFunctionsTable({ reset: true }), 350);
+    },
+
+    handleFilterKey(e) {
+        if (e.key === 'Enter') this.applyFilters();
     },
 
     renderFunctionsTable() {
         const tbody = document.getElementById('file-functions-tbody');
         if (!tbody) return;
 
-        // Apply filters
-        let filtered = this.functions.slice();
-        
-        const q = this.filterState.q.toLowerCase().trim();
-        if (q) {
-            filtered = filtered.filter(f => {
-                const name = (f.function_name || '').toLowerCase();
-                const addr = (f.entrypoint_address || '').toLowerCase();
-                const tags = (f.tags || []).join(' ').toLowerCase() + ' ' + (f.user_tags || []).join(' ').toLowerCase();
-                return name.includes(q) || addr.includes(q) || tags.includes(q);
-            });
-        }
-        
-        const minFeat = parseInt(this.filterState.featMin);
-        const maxFeat = parseInt(this.filterState.featMax);
-        if (!isNaN(minFeat)) {
-            filtered = filtered.filter(f => (f.bsim_features_count || 0) >= minFeat);
-        }
-        if (!isNaN(maxFeat)) {
-            filtered = filtered.filter(f => (f.bsim_features_count || 0) <= maxFeat);
-        }
-
-        // Apply sort
-        const col = this.sortState.col;
-        const dir = this.sortState.dir;
-        filtered.sort((a, b) => {
-            let valA = a[col];
-            let valB = b[col];
-            
-            if (col === 'bsim_features_count') {
-                valA = Number(valA || 0);
-                valB = Number(valB || 0);
-            } else {
-                valA = String(valA || '').toLowerCase();
-                valB = String(valB || '').toLowerCase();
-            }
-            
-            if (valA < valB) return -dir;
-            if (valA > valB) return dir;
-            return 0;
-        });
-
-        if (filtered.length === 0) {
+        // Filtering, sorting and paging all happen server-side; render what we hold.
+        if (this.functions.length === 0) {
             tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No functions found.</td></tr>';
+            this.setFunctionsStatus('');
             return;
         }
 
         const collection = this.params.collection || '';
         const file_md5 = this.params.md5 || this.params.file_md5;
 
-        tbody.innerHTML = filtered.map(f => {
+        tbody.innerHTML = this.functions.map(f => {
             const entry = f.entrypoint_address || '';
             const funcName = f.function_name || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
             const funcId = f.function_id || `${fColl}:func:${file_md5}:${entry}`;
-            
+            // renderFunction/context menu read these off the object; the search API may omit them
+            f.collection = fColl;
+            f.file_md5 = f.file_md5 || file_md5;
+            f.function_id = funcId;
+
             // Notes
             const noteBtn = window.EntityRenderer ? window.EntityRenderer.renderNoteButton(funcId, f.note_owners, { isTable: true, raw_data: f }) : '';
             
@@ -591,7 +670,7 @@ window.FileView = {
             const tagsHtml = window.EntityRenderer ? window.EntityRenderer.renderTag('function', funcId, f.tags || [], f.user_tags || []) : '';
             
             // Clusters
-            const cls = (f.clusters || []).map(uuid => this.clusters[uuid]).filter(Boolean);
+            const cls = (f.clusters || []).map(uuid => (this.funcClusters || {})[uuid] || this.clusters[uuid]).filter(Boolean);
             const clusterCardHtml = window.EntityRenderer ? window.EntityRenderer.renderClusterCard(cls) : '';
 
             // Clickable details URL
@@ -608,12 +687,12 @@ window.FileView = {
                 <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
                     data-entity-data='${JSON.stringify(f).replace(/'/g, "&apos;")}'
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
-                    <td>
-                        <a href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath('${detailUrl}', event);" style="color:var(--accent); font-weight:bold; text-decoration:none;">
-                            ${funcName}
-                        </a>
+                    <td class="sim-cell" style="min-width:300px;">
+                        ${window.EntityRenderer ? window.EntityRenderer.renderFunction(f, { hideNote: true }) : funcName}
                     </td>
-                    <td class="mono" style="color:var(--accent);">@ ${entry}</td>
+                    <td>
+                        <a class="mono" href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath('${detailUrl}', event);" style="color:var(--accent); text-decoration:none;">@ ${entry}</a>
+                    </td>
                     <td>${tagsHtml}</td>
                     <td>${clusterCardHtml}</td>
                     <td>
@@ -627,8 +706,14 @@ window.FileView = {
             `;
         }).join('');
 
+        const shown = this.functions.length;
+        const total = this.funcPage.total ?? shown;
+        this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        this.bindFunctionsScroll();
+
+        // TableSelection takes an element id, not an element (constructor is idempotent per table)
         if (window.TableSelection) {
-            new window.TableSelection(tbody.closest('table'));
+            new window.TableSelection('file-func-table');
         }
     },
 
@@ -660,10 +745,14 @@ window.FileView = {
             window.removeEventListener('hashchange', this._onHashChange);
             this._hashBound = false;
         }
+        clearTimeout(this._filterTimer);
+        this.funcPage.reqId++;   // orphan any request still in flight
         this.container = null;
         this.params = null;
         this.functions = [];
         this.clusters = {};
+        this.funcClusters = {};
+        this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
     }
 };

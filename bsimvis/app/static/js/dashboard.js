@@ -472,11 +472,8 @@ window.ModuleLoader = {
 function hideDashboardActions() {
     const toHide = [
         document.getElementById('search-settings-container'),
-        document.getElementById('header-clear-btn'),
-        document.getElementById('header-history-btn-container'),
-        document.getElementById('toggle-filters-btn'),
-        document.getElementById('collapse-header-btn'),
-        document.getElementById('header-settings-btn')
+        document.getElementById('header-clear-btn'), // filter-actions-container
+        document.getElementById('collapse-header-btn')
     ];
     toHide.forEach(el => {
         if (el) el.style.display = 'none';
@@ -487,15 +484,59 @@ function hideDashboardActions() {
 
 function showDashboardActions() {
     const toShow = [
-        document.getElementById('header-clear-btn'),
-        document.getElementById('header-history-btn-container'),
-        document.getElementById('toggle-filters-btn'),
+        document.getElementById('header-clear-btn'), // filter-actions-container
         document.getElementById('collapse-header-btn'),
         document.getElementById('header-settings-btn')
     ];
     toShow.forEach(el => {
         if (el) el.style.display = '';
     });
+}
+
+function toggleFilterActionsDropdown(event) {
+    event.stopPropagation();
+    const dd = document.getElementById('filter-actions-dropdown');
+    if (!dd) return;
+    const isOpen = dd.style.display !== 'none';
+    if (isOpen) {
+        dd.style.display = 'none';
+    } else {
+        dd.style.display = 'block';
+        // Close on outside click
+        const close = (e) => {
+            if (!dd.contains(e.target) && e.target !== event.currentTarget) {
+                dd.style.display = 'none';
+                document.removeEventListener('click', close);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', close), 0);
+    }
+}
+
+function closeFilterActionsDropdown() {
+    const dd = document.getElementById('filter-actions-dropdown');
+    if (dd) dd.style.display = 'none';
+}
+
+// Add a NOT exclude tag card for 'ignore' to all visible tag filter containers
+function addNotIgnoreFilters() {
+    const tagContainerIds = ['sim', 'func', 'file', 'bin-sim'];
+    const typeMap = { 'sim': 'sim_tag', 'func': 'func_tag', 'file': 'file_tag', 'bin-sim': 'file_tag' };
+    let added = 0;
+    tagContainerIds.forEach(key => {
+        const container = document.getElementById(`tag-container-${key}`);
+        if (!container) return;
+        // Only act on visible containers
+        if (container.offsetParent === null) return;
+        // Check if 'ignore' exclude card already exists
+        const already = Array.from(container.querySelectorAll('.tag-filter-card')).find(
+            c => c.dataset.value === 'ignore' && c.dataset.exclude === 'true'
+        );
+        if (already) return;
+        createTagCard(key, typeMap[key], 'ignore', true);
+        added++;
+    });
+    if (added > 0) triggerTagSearch();
 }
 
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
@@ -598,7 +639,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             }
 
             gridHeader.innerHTML = `
-                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.01);">
+                <div style="padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: var(--hover);">
                     <div style="display: flex; gap: 10px; align-items: center;">
                         ${showContextBtn ? `
                             <button class="top-action-btn ${isContextFiltered ? 'active' : ''}" onclick="window.goToContextJobs()" style="${isContextFiltered ? 'background: var(--accent); color: var(--bg);' : ''}">
@@ -1147,7 +1188,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         <div style="position:relative; display:inline-flex; align-items:center;">
                             <input type="number" id="sim-pool-limit" value="${poolLimit}" step="100000" min="1000" max="1000000" 
                                 title="Max candidates to score / filter" 
-                                style="width:70px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                                style="width:70px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                                 onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                             <span id="pool-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Pool Truncated: Not all candidates were scored.">⚠️</span>
                         </div>`;
@@ -1158,7 +1199,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <div style="position:relative; display:inline-flex; align-items:center;">
                         <input type="number" id="sim-limit" value="${countLimit}" step="10" min="1" max="50000" 
                             title="Max results to display (Output Limit)" 
-                            style="width:60px; background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
+                            style="width:60px; background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.65rem; border-radius:4px; padding:2px 5px;" 
                             onchange="debouncedSearch(${applyFn})" onkeydown="handleFilterKey(event, ${applyFn})">
                         <span id="limit-warn-icon" style="display:none; cursor:help; margin-left:4px; font-size:0.8rem;" title="Output Limit Reached: Results are capped.">ℹ️</span>
                     </div>
@@ -1210,7 +1251,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                 <input type="text" id="flt-file-yara" placeholder="Yara..." value="${p.get('yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-avtype" placeholder="AVType..." value="${p.get('avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-ccip" placeholder="CC IP..." value="${p.get('cc_ip') || ''}" onfocus="attachAutocomplete(this, 'file', 'cc_ip', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                                <hr style="margin: 2px 0; border: none; border-top: 1px solid rgba(255,255,255,0.1);">
+                                <hr style="margin: 2px 0; border: none; border-top: 1px solid var(--border);">
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 2px;">
                                     <input type="text" id="flt-file-inf-yara" placeholder="Inf.Yara" title="Inferred Yara" value="${p.get('inferred_yara') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_yara', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                                     <input type="text" id="flt-file-inf-avtype" placeholder="Inf.AV" title="Inferred AVType" value="${p.get('inferred_avtype') || ''}" onfocus="attachAutocomplete(this, 'file', 'inferred_avtype', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.55rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
@@ -1290,18 +1331,18 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     if (path === 'function-similarity') {
                         headHtml += `
                             <th style="font-size: 0.65rem;">
-                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.65rem; border-radius:2px;">
+                                <select id="sim-algo" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.65rem; border-radius:2px;">
                                     <option value="unweighted_cosine" ${p.get('algo') === 'unweighted_cosine' ? 'selected' : ''}>Cosine</option>
                                     <option value="jaccard" ${p.get('algo') === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                     <option value="milvus_sparse" ${p.get('algo') === 'milvus_sparse' ? 'selected' : ''}>Milvus Sparse</option>
                                 </select>
                                 <div style="margin-top:4px;">
-                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px;">
+                                    <select id="sim-cross-binary" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px;">
                                         <option value="" ${!p.get('cross_binary') ? 'selected' : ''}>All Binaries</option>
                                         <option value="false" ${p.get('cross_binary') === 'false' ? 'selected' : ''}>Same Binary Only</option>
                                         <option value="true" ${p.get('cross_binary') === 'true' ? 'selected' : ''}>Cross Binary Only</option>
                                     </select>
-                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:#000; color:var(--text); border:1px solid #333; font-size:0.6rem; border-radius:2px; margin-top:4px;">
+                                    <select id="sim-match-mode" onchange="applySimSearch()" style="width:100%; background:var(--window-tray); color:var(--text); border:1px solid var(--border); font-size:0.6rem; border-radius:2px; margin-top:4px;">
                                         <option value="any" ${(p.get('match_mode') || 'any') === 'any' ? 'selected' : ''}>Match Any Function</option>
                                         <option value="both" ${p.get('match_mode') === 'both' ? 'selected' : ''}>Match Both Functions</option>
                                     </select>
@@ -1342,10 +1383,10 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const types = ['', 'pipeline', 'group', 'file_data_ingest', 'ghidra_analyze', 'idx_meta', 'idx_functions', 'idx_features', 'build_sim', 'cluster_functions', 'cluster_binaries', 'enrich_features'];
                 const typeOptions = types.map(t => { const label = t ? t.replace(/_/g, ' ').toUpperCase() : 'All Types'; return `<option value="${t}" ${p.get('type') === t ? 'selected' : ''}>${label}</option>`; }).join('');
                 headHtml += `<tr class="filter-row">
-                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
+                    <th><select id="job-type-filter" onchange="applyJobSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${typeOptions}</select></th>
                     <th></th>
                     <th></th>
-                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
+                    <th><select id="job-status-filter" onchange="applyJobSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOptions}</select></th>
                     <th></th><th></th><th></th><th></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -1376,7 +1417,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 if (dataTableHeader) dataTableHeader.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${p.get('cluster_uuid') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${p.get('cluster_id') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
-                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:rgba(0,0,0,0.3); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${p.get('cluster_name') || ''}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${p.get('min_count') || '0'}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${p.get('max_count') || ''}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${p.get('min_stability') || '0'}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${p.get('min_cohesion') || '0'}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${p.get('max_cohesion') || ''}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
@@ -1408,7 +1449,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th></th>
                     <th></th>
                     <th></th>
-                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:#000; border:1px solid #333; color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
+                    <th><select id="flt-pool-status" onchange="applyPoolSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">${statusOpts}</select></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="date" id="flt-pool-min-date" title="From" value="${msToDate(p.get('min_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"><input type="date" id="flt-pool-max-date" title="To" value="${msToDate(p.get('max_created_at'))}" onchange="debouncedSearch(applyPoolSearch)" style="font-size:0.6rem; width:48%; box-sizing:border-box;"></div></th>
                     <th></th>
                 </tr>`;
@@ -2264,8 +2305,8 @@ function renderTopCorrelations(items, clustersMap = {}) {
             </td>
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
-                    <div style="color:#aaa; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta1?.file_name}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${p.meta2?.file_name}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2634,9 +2675,16 @@ const UIParams = {
     cohesionThreshold: localStorage.getItem('cohesionThreshold') !== null ? parseFloat(localStorage.getItem('cohesionThreshold')) : 0.95,
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
-    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true'
+    useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
+    lightTheme: localStorage.getItem('lightTheme') === 'true'
 };
 window.UIParams = UIParams;
+
+// Apply theme early on load
+// ponytail: light theme initialization
+if (UIParams.lightTheme) {
+    document.documentElement.classList.add('light-theme');
+}
 
 function toggleUISettings() {
     const panel = document.getElementById('ui-settings-panel');
@@ -2649,10 +2697,19 @@ function updateUIParams() {
     UIParams.colorByTag = document.getElementById('param-color-tags').checked;
     UIParams.includeHeaders = document.getElementById('param-include-headers').checked;
     UIParams.useFloatingWindows = document.getElementById('param-use-floating-windows').checked;
+    UIParams.lightTheme = document.getElementById('param-light-theme').checked;
 
     localStorage.setItem('colorByTag', UIParams.colorByTag);
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
+    localStorage.setItem('lightTheme', UIParams.lightTheme);
+
+    // ponytail: light theme toggle action
+    if (UIParams.lightTheme) {
+        document.documentElement.classList.add('light-theme');
+    } else {
+        document.documentElement.classList.remove('light-theme');
+    }
 
     // Sync with sim-color-by-tag for tags.js compatibility
     localStorage.setItem('sim-color-by-tag', UIParams.colorByTag);
@@ -2696,9 +2753,11 @@ function loadUIParams() {
     const elColorTags = document.getElementById('param-color-tags');
     const elIncludeHeaders = document.getElementById('param-include-headers');
     const elFloatingWindows = document.getElementById('param-use-floating-windows');
+    const elLightTheme = document.getElementById('param-light-theme');
     if (elColorTags) elColorTags.checked = UIParams.colorByTag;
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
     if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
+    if (elLightTheme) elLightTheme.checked = UIParams.lightTheme;
 }
 
 window.addEventListener('load', () => {
@@ -2846,8 +2905,8 @@ window.addEventListener('load', () => {
         const algo = params.get('algo') || 'unweighted_cosine';
 
         // Select all possible buttons
-        const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
-        const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+        const btns = document.querySelectorAll('.nav-rebuild-btn');
+        const icons = document.querySelectorAll('.nav-rebuild-icon');
 
         btns.forEach(btn => btn.disabled = true);
         icons.forEach(icon => icon.classList.add('fa-spin'));
@@ -2910,8 +2969,8 @@ window.addEventListener('load', () => {
             }
 
             // Update rebuild buttons
-            const btns = document.querySelectorAll('.nav-rebuild-btn, #header-rebuild-all-btn');
-            const icons = document.querySelectorAll('.nav-rebuild-icon, #header-rebuild-all-icon');
+            const btns = document.querySelectorAll('.nav-rebuild-btn');
+            const icons = document.querySelectorAll('.nav-rebuild-icon');
 
             const { collection: currentCollection, pool: currentPool, viewKey: path } = getRoutingState();
 
@@ -2929,19 +2988,6 @@ window.addEventListener('load', () => {
                 if (showAnimation) icon.classList.add('fa-spin');
                 else icon.classList.remove('fa-spin');
             });
-
-            // Handle Header Rebuild Button Visibility (only if sidebar is collapsed AND view is Clusters/BinSim)
-            const headerRebuildBtn = document.getElementById('header-rebuild-all-btn');
-            if (headerRebuildBtn) {
-                const isCollapsed = document.body.classList.contains('sidebar-collapsed');
-                const isRelevantView = (path === 'clusters' || path === 'binary-similarity');
-
-                if (isCollapsed && isRelevantView) {
-                    headerRebuildBtn.style.display = 'inline-flex';
-                } else {
-                    headerRebuildBtn.style.display = 'none';
-                }
-            }
 
             // Update view-specific job indicator
             const activeJobs = stats.active_jobs || [];
@@ -3058,8 +3104,10 @@ function renderClusters(items) {
             cluster_name: c.cluster_name
         }).replace(/'/g, "&apos;")}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'cluster', this)">
-            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
-                ${(c.cluster_uuid || '').substring(0, 8)}
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('functions', new URLSearchParams('cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" style="color:var(--accent); text-decoration:none;">
+                    ${(c.cluster_uuid || '').substring(0, 8)}
+                </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
@@ -3081,7 +3129,7 @@ function renderClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.avg_stability).toFixed(2)}</span>
@@ -3090,7 +3138,7 @@ function renderClusters(items) {
             <td class="mono dim">${(c.avg_features || 0).toFixed(1)}</td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
@@ -3228,8 +3276,10 @@ function renderBinClusters(items) {
             cluster_name: displayName
         }).replace(/'/g, "&apos;")}'
             oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
-            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}" style="color:var(--accent)">
-                ${(c.cluster_uuid || '').substring(0, 8)}
+            <td class="mono cluster-uuid-id-cell" data-uuid="${c.cluster_uuid}" data-id="${c.cluster_id}">
+                <a href="javascript:void(0)" onclick="event.preventDefault(); navigate('files', new URLSearchParams('bin_cluster_uuid=' + '${c.cluster_uuid}'), ${(collection ? `'${collection}'` : 'null')})" style="color:var(--accent); text-decoration:none;">
+                    ${(c.cluster_uuid || '').substring(0, 8)}
+                </a>
                 <div class="dim" style="font-size:0.7rem">ID: ${c.cluster_id}</div>
             </td>
             <td>
@@ -3254,7 +3304,7 @@ function renderBinClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--success); width:${Math.min(100, c.avg_stability).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.avg_stability).toFixed(2)}</span>
@@ -3262,7 +3312,7 @@ function renderBinClusters(items) {
             </td>
             <td>
                 <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="flex:1; height:4px; background:#333; border-radius:2px; overflow:hidden; min-width:60px;">
+                    <div style="flex:1; height:4px; background:var(--border); border-radius:2px; overflow:hidden; min-width:60px;">
                         <div style="height:100%; background:var(--info); width:${((c.cohesion_score || 0) * 100).toFixed(0)}%"></div>
                     </div>
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
@@ -3591,6 +3641,9 @@ window.renameCluster = renameCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
 window.resetColumnWidths = resetColumnWidths;
+window.toggleFilterActionsDropdown = toggleFilterActionsDropdown;
+window.closeFilterActionsDropdown = closeFilterActionsDropdown;
+window.addNotIgnoreFilters = addNotIgnoreFilters;
 window.toggleSort = toggleSort;
 window.applySearch = applySearch;
 window.switchSimView = switchSimView;
@@ -4313,16 +4366,16 @@ async function renderPoolCreationForm() {
     const fileClusterMethod = clustering.selection_method || 'eom';
 
     const colCheckboxes = collections.map(col => `
-        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom:1px solid rgba(255,255,255,0.03); transition: background 0.2s;">
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 12px; cursor:pointer; font-size:0.8rem; border-bottom: 1px solid var(--border); transition: background 0.2s;">
             <input type="checkbox" name="pool-collections" value="${col.name}" onchange="updateAutoPoolName()">
             <span>${col.name} <span style="font-size:0.7rem; color:var(--dim);">(${col.total_files || 0} files)</span></span>
         </label>
     `).join('');
 
     gridHeader.innerHTML = `
-        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); overflow:hidden;">
+        <div id="create-pool-card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 20px var(--border); overflow:hidden;">
             <!-- COLLAPSIBLE HEADER -->
-            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background:rgba(255,255,255,0.02); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+            <div onclick="togglePoolCreationForm()" style="padding:15px 25px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; background: var(--hover); transition: background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='var(--border)'">
                 <h3 style="margin:0; font-size:1.05rem; color:var(--accent); display:flex; align-items:center; gap:12px;">
                     <i class="fa-solid fa-diagram-project"></i> Create New Pool
                 </h3>
@@ -4332,10 +4385,10 @@ async function renderPoolCreationForm() {
             </div>
 
             <div id="pool-creation-content" style="padding:0 25px 25px 25px; display: none;">
-                <div id="pool-creation-form-container" style="border-top:1px solid rgba(255,255,255,0.05); padding-top:20px;">
+                <div id="pool-creation-form-container" style="border-top: 1px solid var(--border); padding-top:20px;">
                     <div style="margin-bottom: 25px;">
                         <label style="display:block; font-size:0.75rem; color:var(--dim); margin-bottom:6px; font-weight:600; text-transform:uppercase;">Pool Name</label>
-                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
+                        <input type="text" id="new-pool-name" placeholder="e.g. Shared Analysis Pool" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:6px; font-size:0.85rem;">
                     </div>
 
                     <div style="display:grid; grid-template-columns: 320px 1fr; gap:30px;">
@@ -4350,9 +4403,9 @@ async function renderPoolCreationForm() {
                             </div>
                             <div style="position:relative;">
                                 <i class="fa-solid fa-magnifying-glass" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:0.8rem; color:var(--dim);"></i>
-                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
+                                <input type="text" placeholder="Filter collections..." oninput="filterPoolCollections(this.value)" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px 10px 8px 35px; border-radius:6px; font-size:0.8rem;">
                             </div>
-                            <div id="pool-collections-list" style="background:rgba(0,0,0,0.15); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
+                            <div id="pool-collections-list" style="background:var(--border); border:1px solid var(--border); border-radius:6px; max-height:430px; overflow-y:auto; scrollbar-width: thin;">
                                 ${colCheckboxes.length ? colCheckboxes : '<div style="padding:20px; font-size:0.85rem; color:var(--dim); text-align:center;">No collections found.</div>'}
                             </div>
                         </div>
@@ -4360,7 +4413,7 @@ async function renderPoolCreationForm() {
                         <!-- RIGHT COLUMN: CONFIGURATION -->
                         <div style="display:flex; flex-direction:column; gap:15px;">
                             <div style="display:flex; align-items:center; gap:25px; background:rgba(255,171,46,0.03); border:1px solid rgba(255,171,46,0.15); border-radius:8px; padding:12px 15px;">
-                                <div style="display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.2); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
+                                <div style="display:flex; align-items:center; gap:8px; background:var(--border); padding:6px 12px; border-radius:20px; border:1px solid var(--border); flex-shrink:0;">
                                     <input type="checkbox" id="pool-cross-only" style="cursor:pointer; width:14px; height:14px; accent-color:var(--accent);">
                                     <label for="pool-cross-only" style="font-size:0.75rem; cursor:pointer; font-weight:700; color:var(--accent); display:flex; align-items:center; gap:4px;">
                                         <i class="fa-solid fa-arrow-right-arrow-left"></i> CROSS-ONLY
@@ -4374,7 +4427,7 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
                                 <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                     <i class="fa-solid fa-microchip"></i> Function-Level
                                 </div>
@@ -4384,7 +4437,7 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                <select id="pool-func-algo" onchange="const d=document.getElementById('pool-file-algo-display'); if(d) d.textContent=this.value;" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                     <option value="unweighted_cosine" ${funcAlgo === 'unweighted_cosine' ? 'selected' : ''}>Unweighted Cosine</option>
                                                     <option value="jaccard" ${funcAlgo === 'jaccard' ? 'selected' : ''}>Jaccard</option>
                                                 </select>
@@ -4392,15 +4445,15 @@ async function renderPoolCreationForm() {
                                             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-topk" value="${funcTopK}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minscore" step="0.05" value="${funcMinScore}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Features</label>
-                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-func-minfeatures" value="${funcMinFeatures}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4408,19 +4461,19 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-size" value="${funcClusterMinSize}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-min-samples" value="${funcClusterMinSamples}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-cluster-epsilon" step="0.05" value="${funcClusterEpsilon}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <select id="pool-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 <option value="eom" ${funcClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
                                                 <option value="leaf" ${funcClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>
@@ -4429,12 +4482,12 @@ async function renderPoolCreationForm() {
                                 </div>
                             </div>
 
-                            <div style="display:flex; flex-direction:column; gap:12px; background:rgba(0,0,0,0.1); border:1px solid var(--border); border-radius:8px; padding:15px;">
+                            <div style="display:flex; flex-direction:column; gap:12px; background:var(--border); border:1px solid var(--border); border-radius:8px; padding:15px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center;">
                                     <div style="display:flex; align-items:center; gap:8px; color:var(--accent); font-weight:600; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.03em;">
                                         <i class="fa-solid fa-file-code"></i> File-Level
                                     </div>
-                                    <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.03); padding:2px 10px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                                    <div style="display:flex; align-items:center; gap:10px; background: var(--hover); padding:2px 10px; border-radius:20px; border: 1px solid var(--border);">
                                         <input type="checkbox" id="pool-enable-files" checked onchange="document.getElementById('file-params-grid').style.opacity = this.checked ? '1' : '0.4'; document.getElementById('file-params-grid').style.pointerEvents = this.checked ? 'auto' : 'none';" style="cursor:pointer; width:12px; height:12px; accent-color:var(--accent);">
                                         <label for="pool-enable-files" style="font-size:0.7rem; cursor:pointer; font-weight:600; color:var(--text);">Enabled</label>
                                     </div>
@@ -4445,16 +4498,16 @@ async function renderPoolCreationForm() {
                                         <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
                                             <div>
                                                 <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Algorithm</label>
-                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.1); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
+                                                <div id="pool-file-algo-display" title="Inherited from function similarity: file scores live in the namespace of the function clusters they are built from." style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--dim); padding:6px; border-radius:4px; font-size:0.75rem;">${funcAlgo}</div>
                                             </div>
                                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Top K</label>
-                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-file-topk" value="${fileTopK}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                                 <div>
                                                     <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Score</label>
-                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                                    <input type="number" id="pool-file-minscore" step="0.05" value="${fileMinScore}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                                 </div>
                                             </div>
                                         </div>
@@ -4462,19 +4515,19 @@ async function renderPoolCreationForm() {
                                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Cluster</label>
-                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-size" value="${fileClusterMinSize}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Min Samples</label>
-                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-min-samples" value="${fileClusterMinSamples}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Epsilon</label>
-                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
+                                            <input type="number" id="pool-file-cluster-epsilon" step="0.05" value="${fileClusterEpsilon}" style="width:100%; box-sizing:border-box; background:var(--border); border:1px solid var(--border); color:var(--text); padding:6px; border-radius:4px; font-size:0.75rem;">
                                         </div>
                                         <div>
                                             <label style="display:block; font-size:0.65rem; color:var(--dim); margin-bottom:4px;">Method</label>
-                                            <select id="pool-file-cluster-method" style="width:100%; background:rgba(0,0,0,0.2); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
+                                            <select id="pool-file-cluster-method" style="width:100%; background:var(--border); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:4px; font-size:0.8rem;">
                                                 <option value="eom" ${fileClusterMethod === 'eom' ? 'selected' : ''}>EOM</option>
                                                 <option value="leaf" ${fileClusterMethod === 'leaf' ? 'selected' : ''}>Leaf</option>
                                             </select>

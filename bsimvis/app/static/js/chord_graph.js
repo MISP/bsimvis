@@ -25,7 +25,7 @@ class ChordGraph {
             .attr("width", "100%")
             .attr("height", "100%")
             .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
-            .style("background-color", "#0d0f14")
+            .style("background-color", "var(--window-bg)")
             .style("user-select", "none");
 
         this.g = this.svg.append("g");
@@ -83,7 +83,7 @@ class ChordGraph {
         if (!this.data.length) {
             this.g.append("text")
                 .attr("text-anchor", "middle")
-                .attr("fill", "#888")
+                .attr("fill", "var(--subtle)")
                 .text("No binary similarity data found for this collection.");
             return;
         }
@@ -157,7 +157,7 @@ class ChordGraph {
 
         group.append("path")
             .attr("fill", d => getMd5Color(nodes[d.index].md5))
-            .attr("stroke", "#fff")
+            .attr("stroke", "var(--text)")
             .attr("stroke-width", 0.5)
             .attr("d", arc)
             .style("cursor", "pointer")
@@ -187,7 +187,7 @@ class ChordGraph {
                 ${d.angle > Math.PI ? "rotate(180)" : ""}
             `)
             .attr("text-anchor", d => d.angle > Math.PI ? "end" : "start")
-            .attr("fill", "#fff")
+            .attr("fill", "var(--text)")
             .style("font-size", "10px")
             .style("font-weight", "bold")
             .text(d => nodes[d.index].name || nodes[d.index].md5.substring(0, 8));
@@ -231,7 +231,6 @@ class ChordGraph {
             .attr("d", ribbon)
             .attr("fill", d => d.fillColor)
             .attr("stroke", "none")
-            .style("mix-blend-mode", "screen")
             .on("mouseover", (event, d) => {
                 d3.selectAll(".chord").style("opacity", 0.1);
                 d3.select(event.currentTarget).style("opacity", 1);
@@ -293,7 +292,7 @@ class ChordGraph {
         const tags = [...(node.tags || []), ...(node.user_tags || [])];
 
         tip.innerHTML = `
-            <div style="border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:8px; margin-bottom:8px; min-width:250px;">
+            <div style="border-bottom: 1px solid var(--border); padding-bottom:8px; margin-bottom:8px; min-width:250px;">
                 <div style="font-weight:bold; color:var(--accent); font-size:0.95rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${node.name}</div>
                 <div class="dim mono" style="font-size:0.7rem; margin-top:2px; opacity:0.7;"># ${node.md5}</div>
             </div>
@@ -303,7 +302,7 @@ class ChordGraph {
             ${renderRow('fa-list-ol', 'Functions', node.functions_count)}
             ${renderRow('fa-calendar-day', 'Entry Date', typeof formatDate === 'function' ? formatDate(node.entry_date) : node.entry_date)}
             
-            <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:4px; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">
+            <div style="margin-top:10px; display:flex; flex-wrap:wrap; gap:4px; border-top: 1px solid var(--border); padding-top:8px;">
                 ${tags.length > 0 ? tags.map(t => `<span class="tag-pill" style="font-size:0.65rem; padding:1px 6px;">${t}</span>`).join('') : '<span class="dim" style="font-size:0.7rem;">No tags</span>'}
             </div>
         `;

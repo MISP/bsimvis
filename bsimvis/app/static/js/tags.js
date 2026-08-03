@@ -190,7 +190,7 @@ window.showTooltip = (e, tag, coll) => {
     if (!el) {
         el = document.createElement('div');
         el.id = 'tag-tooltip';
-        el.style.cssText = "position:fixed; z-index:20005; background:rgba(20,22,26,0.95); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.5); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
+        el.style.cssText = "position:fixed; z-index:20005; background:var(--meta-bg); border:1px solid var(--border); padding:12px; border-radius:8px; box-shadow:0 10px 30px var(--border); display:none; pointer-events:none; font-size:0.8rem; color:var(--text); backdrop-filter:blur(10px); min-width:180px;";
         document.body.appendChild(el);
     }
 
@@ -260,12 +260,12 @@ window.handleTagContextMenu = (e, tag) => {
     if (!menu) {
         menu = document.createElement('div');
         menu.id = 'tag-custom-context-menu';
-        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px rgba(0,0,0,0.6); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
+        menu.style.cssText = "position:fixed; z-index:20010; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; box-shadow:0 15px 35px var(--border); display:none; overflow:hidden; width:220px; font-family:var(--font-main, inherit);";
         document.body.appendChild(menu);
     }
 
     menu.innerHTML = `
-        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background:rgba(255,255,255,0.03); display:flex; justify-content:space-between; align-items:center;">
+        <div style="padding:12px 15px; font-weight:bold; font-size:0.8rem; color:var(--accent); border-bottom:1px solid var(--border); background: var(--hover); display:flex; justify-content:space-between; align-items:center;">
             <span>Tag: ${escapeHtml(tag)}</span>
             <button onclick="document.getElementById('tag-custom-context-menu').style.display='none'" style="background:none; border:none; color:var(--dim); cursor:pointer;"><i class="fa-solid fa-times"></i></button>
         </div>
@@ -279,7 +279,7 @@ window.handleTagContextMenu = (e, tag) => {
                 <input type="range" id="tag-prio-slider" min="0" max="1000" step="10" value="${currentMeta.priority}" style="width:100%; cursor:pointer;">
             </div>
 
-            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
+            <button id="tag-save-btn" style="width:100%; padding:10px; background:var(--accent); color:var(--window-tray); border:none; border-radius:4px; font-weight:bold; cursor:pointer; transition:opacity 0.2s;">
                 Apply Changes
             </button>
         </div>
@@ -481,9 +481,7 @@ window.showClusterCardTooltip = function(event, uuid, name, size, stability, coh
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
     let adjustedEvent = event;
     if (targetWindow !== window) {
-        let iframeId = 'code-frame';
-        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-        const iframe = targetWindow.document.getElementById(iframeId);
+        const iframe = window.getHostFrame();
         if (iframe) {
             const rect = iframe.getBoundingClientRect();
             adjustedEvent = {
@@ -530,9 +528,7 @@ window.moveClusterCardTooltip = function(e) {
     if (!activeTooltip) return;
     
     if (targetWindow !== window) {
-        let iframeId = 'code-frame';
-        if (window.location.pathname.includes('/diff/')) iframeId = 'diff-frame';
-        const iframe = targetWindow.document.getElementById(iframeId);
+        const iframe = window.getHostFrame();
         if (iframe) {
             const rect = iframe.getBoundingClientRect();
             const adjustedEvent = {
@@ -587,7 +583,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
         const score = (c.cohesion_score || 0).toFixed(2);
         const uuid = c.cluster_uuid;
         const hue = Math.max(0, Math.min(120, (c.cohesion_score || 0) * 120));
-        const color = `hsl(${hue}, 100%, 65%)`;
+        const color = `hsl(${hue}, var(--color-s-high), var(--color-l-high))`;
         
         let displayName = name;
         if (isBinary) {
@@ -633,7 +629,7 @@ window.renderClusterCards = (clusters, isBinary = false) => {
     const allHtml = sorted.map(c => renderCard(c, false)).join('');
     const overflowBox = `
         <div class="cluster-overflow-box">
-            <div style="font-size:0.6rem; color:#888; margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
+            <div style="font-size:0.6rem; color:var(--subtle); margin-bottom:4px; text-transform:uppercase; letter-spacing:1px; padding:0 4px;">Clusters</div>
             ${allHtml}
         </div>`;
 

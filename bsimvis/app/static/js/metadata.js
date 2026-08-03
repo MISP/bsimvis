@@ -103,7 +103,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
     if (options.showCodeLink) {
         headerActionsHtml += `
             <a class="btn-code-compact" href="#" onclick="event.preventDefault(); const f = window.parseFuncId('${fullId}'); const url = '/collection/' + encodeURIComponent(f.collection) + '/function/' + encodeURIComponent(f.md5) + '/' + encodeURIComponent(f.address); Nav.openPath(url, event, { title: 'Code: ' + f.address, type: 'function' });" title="Open Code" 
-               style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: rgba(102, 217, 239, 0.1); color: var(--accent); border: 1px solid rgba(102, 217, 239, 0.3);">
+               style="padding:0 5px; font-size: 0.75rem; border-radius: 3px; text-decoration:none; display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; margin-left:4px; background: color-mix(in srgb, var(--token-register) 10%, transparent); color: var(--accent); border: 1px solid color-mix(in srgb, var(--token-register) 30%, transparent);">
                <i class="fa-solid fa-code"></i>
             </a>`;
     }
@@ -209,7 +209,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                 </div>
             </div>
             
-            <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid rgba(255, 255, 255, 0.05); color: #ddd; margin-top: 6px;">
+            <div class="meta-header-file-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; padding-top: 6px; border-top: 1px solid var(--border); color: #ddd; margin-top: 6px;">
                 <div style="display: flex; gap: 12px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 80%;">
                     <span class="mono" style="color: var(--accent); font-size: 1rem; font-family: 'JetBrains Mono', 'Consolas', monospace;"># ${fileMd5}</span>
                     <span><b style="font-size: 1rem; color: var(--accent); font-family: 'Inter', sans-serif; cursor: pointer;" onclick="const showPanel = window.showFileDetailsPanel || (window.parent && window.parent.showFileDetailsPanel); if(showPanel) { showPanel('${collection}', '${fileMd5}', '${(m['file_name'] || '').replace(/'/g, "\\'")}', event); } else { const url = '/collections/' + encodeURIComponent('${collection}') + '/files/' + encodeURIComponent('${fileMd5}'); const Nav = window.Nav || (window.parent && window.parent.Nav); if(Nav) Nav.openPath(url, event, {title: 'File: ' + '${(m['file_name'] || '').replace(/'/g, "\\'")}', type: 'file'}); }">${m['file_name'] || 'N/A'}</b></span>
@@ -225,34 +225,34 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                 <div class="meta-col-body-wrapper ${collapseClass}">
                     <div class="meta-columns meta-col-body" style="gap: 20px;">
                         <!-- Row 1: Metadata Fields -->
-                    <div class="meta-col" style="border-right: 1px solid rgba(255, 255, 255, 0.05); padding-right: 15px;">
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-gears"></i> Function Metadata</div>
+                    <div class="meta-col" style="border-right: 1px solid var(--border); padding-right: 15px;">
+                        <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-gears"></i> Function Metadata</div>
                         ${funcHtml}
                     </div>
                     <div class="meta-col">
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-fingerprint"></i> BSim Vector Info</div>
+                        <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-fingerprint"></i> BSim Vector Info</div>
                         ${bsimHtml}
                         ${clustersHtml ? `
-                        <div class="meta-row" style="margin-top:4px; border-top: 1px solid rgba(255,255,255,0.05); padding-top:4px;">
+                        <div class="meta-row" style="margin-top:4px; border-top: 1px solid var(--border); padding-top:4px;">
                             <span class="meta-label"><i class="fa-solid fa-bullseye" style="margin-right:8px; opacity:0.5; width:14px;"></i>Clusters</span>
                             <span class="meta-value">${clustersHtml}</span>
                         </div>` : ''}
                         
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-top:12px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-file-invoice"></i> File Metadata</div>
+                        <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-top:12px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-file-invoice"></i> File Metadata</div>
                         ${fileHtml}
                     </div>
                     
                     <!-- Row 2: Relations (Callers & Callees aligned) -->
-                    <div class="meta-col" style="grid-column: span 2; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px; margin-top: 8px;">
+                    <div class="meta-col" style="grid-column: span 2; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 8px;">
                         <div class="meta-columns" style="margin-bottom: 0;">
-                            <div class="meta-col" style="border-right: 1px solid rgba(255, 255, 255, 0.05); padding-right: 15px;">
-                                <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;">
+                            <div class="meta-col" style="border-right: 1px solid var(--border); padding-right: 15px;">
+                                <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;">
                                     <i class="fa-solid fa-right-to-bracket"></i> Callers <span class="count" style="font-size:0.7rem; opacity:0.6; font-weight:normal; margin-left:4px;">(${m['callers'] ? m['callers'].length : 0})</span>
                                 </div>
                                 ${callersHtml}
                             </div>
                             <div class="meta-col">
-                                <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;">
+                                <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;">
                                     <i class="fa-solid fa-right-from-bracket"></i> Callees <span class="count" style="font-size:0.7rem; opacity:0.6; font-weight:normal; margin-left:4px;">(${m['callees'] ? m['callees'].length : 0})</span>
                                 </div>
                                 ${calleesHtml}
@@ -263,7 +263,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                 </div>
             </div>
             <div style="display: flex; justify-content: center; padding-top: 4px; padding-bottom: 4px;">
-                <button class="btn-more-toggle" onclick="toggleSection(this)" style="display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); padding: 4px 12px; border-radius: 4px; font-size: 0.75rem; color: #aaa; cursor: pointer; user-select: none; transition: all 0.2s;">
+                <button class="btn-more-toggle" onclick="toggleSection(this)" style="display: flex; align-items: center; gap: 6px; background: var(--hover); border: 1px solid var(--border); padding: 4px 12px; border-radius: 4px; font-size: 0.75rem; color: var(--meta-text-muted); cursor: pointer; user-select: none; transition: all 0.2s;">
                     <i class="fa-solid ${anglesIconClass} toggle-icon" style="font-size: 0.75rem; opacity: 0.7;"></i>
                     <span class="toggle-text" style="font-weight: 500;">${toggleText}</span>
                     <i class="fa-solid ${chevronClass} toggle-chevron" style="font-size: 0.7rem; opacity: 0.5;"></i>
@@ -471,12 +471,12 @@ function renderFileMetadata(container, m, fullId, options = {}) {
         <div class="meta-content">
             <div class="meta-section">
                 <div class="meta-columns meta-col-body" style="gap: 20px; padding: 10px 15px;">
-                    <div class="meta-col" style="border-right: 1px solid rgba(255, 255, 255, 0.05); padding-right: 15px;">
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-info-circle"></i> File Info</div>
+                    <div class="meta-col" style="border-right: 1px solid var(--border); padding-right: 15px;">
+                        <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-info-circle"></i> File Info</div>
                         ${fileHtml}
                     </div>
                     <div class="meta-col">
-                        <div style="font-weight:bold; color:var(--accent); border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-chart-bar"></i> Statistics</div>
+                        <div style="font-weight:bold; color:var(--accent); border-bottom: 1px solid var(--border); padding-bottom:4px; margin-bottom:8px; font-size:0.75rem;"><i class="fa-solid fa-chart-bar"></i> Statistics</div>
                         ${statsHtml}
                     </div>
                 </div>

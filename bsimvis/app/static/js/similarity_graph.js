@@ -39,7 +39,7 @@ class SimilarityGraph {
             .attr("width", "100%")
             .attr("height", "100%")
             .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
-            .style("background-color", "#121212")
+            .style("background-color", "var(--bg)")
             .style("user-select", "none");
 
         this.g = this.svg.append("g");
@@ -245,10 +245,10 @@ class SimilarityGraph {
             if (typeof getRawTagColor === 'function') {
                 if (mode === 'func_tag') {
                     const tagColor = getRawTagColor(n.tags, n.user_tags);
-                    return tagColor || "#333333";
+                    return tagColor || "var(--border)";
                 } else if (mode === 'file_tag') {
                     const tagColor = getRawTagColor(n.file_tags, n.file_user_tags);
-                    return tagColor || "#333333";
+                    return tagColor || "var(--border)";
                 }
             }
             return defaultColor;
@@ -269,23 +269,23 @@ class SimilarityGraph {
                 color2 = getMd5Color(target.data.md5);
             } else if (colorSimBy === 'sim_tag') {
                 if (typeof getRawTagColor === 'function') {
-                    linkColorOverride = getRawTagColor(p.tags, p.user_tags) || "#333333";
+                    linkColorOverride = getRawTagColor(p.tags, p.user_tags) || "var(--border)";
                 } else {
-                    linkColorOverride = "#333333";
+                    linkColorOverride = "var(--border)";
                 }
             } else if (colorSimBy === 'func_tag') {
                 if (typeof getRawTagColor === 'function') {
-                    color1 = getRawTagColor(source.data.tags, source.data.user_tags) || "#333333";
-                    color2 = getRawTagColor(target.data.tags, target.data.user_tags) || "#333333";
+                    color1 = getRawTagColor(source.data.tags, source.data.user_tags) || "var(--border)";
+                    color2 = getRawTagColor(target.data.tags, target.data.user_tags) || "var(--border)";
                 } else {
-                    color1 = color2 = "#333333";
+                    color1 = color2 = "var(--border)";
                 }
             } else if (colorSimBy === 'file_tag') {
                 if (typeof getRawTagColor === 'function') {
-                    color1 = getRawTagColor(source.data.file_tags, source.data.file_user_tags) || "#333333";
-                    color2 = getRawTagColor(target.data.file_tags, target.data.file_user_tags) || "#333333";
+                    color1 = getRawTagColor(source.data.file_tags, source.data.file_user_tags) || "var(--border)";
+                    color2 = getRawTagColor(target.data.file_tags, target.data.file_user_tags) || "var(--border)";
                 } else {
-                    color1 = color2 = "#333333";
+                    color1 = color2 = "var(--border)";
                 }
             }
 
@@ -407,7 +407,7 @@ class SimilarityGraph {
 
             let color = getMd5Color(md5);
             if (colorBinaryBy === 'file_tag') {
-                color = "#333333";
+                color = "var(--border)";
                 if (typeof getRawTagColor === 'function') {
                     const tagColor = getRawTagColor(nodes[0].file_tags, nodes[0].file_user_tags);
                     if (tagColor) color = tagColor;
@@ -744,7 +744,7 @@ class SimilarityGraph {
     }
 
     blendHex(c1, c2, t) {
-        if (!c1 || !c2) return "#888888";
+        if (!c1 || !c2) return "var(--subtle)";
         const rgb1 = [parseInt(c1.slice(1, 3), 16), parseInt(c1.slice(3, 5), 16), parseInt(c1.slice(5, 7), 16)];
         const rgb2 = [parseInt(c2.slice(1, 3), 16), parseInt(c2.slice(3, 5), 16), parseInt(c2.slice(5, 7), 16)];
         const res = rgb1.map((v, i) => Math.round(v * (1 - t) + rgb2[i] * t));

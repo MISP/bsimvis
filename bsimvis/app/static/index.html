@@ -34,7 +34,7 @@
     <script src="/js/bin_cluster_views.js?v=3"></script>
     <script src="/js/call_graph.js?v=3"></script>
     <script src="/js/binary_similarity.js?v=10"></script>
-    <script src="/js/chord_graph.js?v=7"></script>
+    <script src="/js/chord_graph.js?v=8"></script>
     <script src="/js/window_manager.js?v=3"></script>
     <script src="/js/upload.js?v=3"></script>
     <script src="/js/context_menu.js?v=7"></script>
@@ -70,25 +70,10 @@
                 <div id="header-top-actions" style="display:flex; gap:10px; align-items:center;">
 
 
-                    <button id="header-rebuild-all-btn" onclick="triggerRebuildAll()" class="top-action-btn"
-                        title="Rebuild Analysis" style="display:none; color:var(--accent); border-color:var(--accent);">
-                        <i class="fa-solid fa-arrows-rotate" id="header-rebuild-all-icon"></i> Rebuild Analysis
-                    </button>
-
                     <button onclick="refreshData(false, true)" class="top-action-btn" title="Refresh Data">
                         <i class="fa-solid fa-arrows-rotate" style="color:var(--accent);"></i> Refresh
                     </button>
 
-                    <button id="header-clear-btn" onclick="clearFilters()" class="top-action-btn danger-btn" title="Clear All Filters">
-                        <i class="fa-solid fa-trash-can"></i> Clear
-                    </button>
-                    <div id="header-history-btn-container" class="view-history-container" style="position:relative;">
-                        <button id="view-history-btn" class="top-action-btn" title="View Search History">
-                            <i class="fa-solid fa-clock-rotate-left"></i> History
-                        </button>
-                        <div id="view-history-dropdown" class="history-dropdown view-history-dropdown"
-                            style="display:none;"></div>
-                    </div>
                     <div class="export-dropdown-container" id="export-dropdown-container"
                         style="position:relative; display:none;">
                         <button id="export-btn" class="top-action-btn" title="Export Results"
@@ -114,10 +99,26 @@
                             </a>
                         </div>
                     </div>
-                    <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
-                        title="Toggle Filters">
-                        <i class="fa-solid fa-filter"></i> Filters
-                    </button>
+                    <!-- Filter toggle with inline actions dropdown -->
+                    <div id="header-clear-btn" class="filter-actions-container">
+                        <button id="toggle-filters-btn" class="toggle-btn active" onclick="toggleFilters()"
+                            title="Toggle Filters">
+                            <i class="fa-solid fa-filter"></i> Filters
+                        </button>
+                        <button class="filter-actions-chevron" onclick="toggleFilterActionsDropdown(event)" title="Filter Actions">
+                            <i class="fa-solid fa-chevron-down" style="font-size:0.6rem;"></i>
+                        </button>
+                        <div id="filter-actions-dropdown" class="history-dropdown view-history-dropdown"
+                            style="display:none; width:auto; min-width:190px; border-top-color:var(--token-instruction);">
+                            <div class="history-dropdown-title" style="color:var(--token-instruction);">Filter Actions</div>
+                            <a href="#" onclick="event.preventDefault(); clearFilters(); closeFilterActionsDropdown();" class="history-item" style="display:flex; align-items:center; text-decoration:none; font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-trash-can" style="color:var(--token-instruction); font-size:0.9rem;"></i> Clear All Filters
+                            </a>
+                            <a href="#" onclick="event.preventDefault(); addNotIgnoreFilters(); closeFilterActionsDropdown();" class="history-item" style="display:flex; align-items:center; text-decoration:none; font-size:0.75rem; gap:8px;">
+                                <i class="fa-solid fa-ban" style="color:var(--token-instruction); font-size:0.9rem;"></i> NOT Ignore (all tag fields)
+                            </a>
+                        </div>
+                    </div>
                     <button id="collapse-header-btn" class="toggle-btn active" onclick="toggleHeader()"
                         title="Toggle Search Area">
                         <i class="fa-solid fa-magnifying-glass"></i> Search
@@ -128,6 +129,48 @@
                 </div>
             </div>
         </div>
+
+        <!-- UI Settings Panel -->
+        <div id="ui-settings-panel"
+            style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                <h3 style="margin:0; font-size:1rem; color:var(--accent);">UI Settings</h3>
+                <button onclick="toggleUISettings()"
+                    style="background:none; border:none; color:var(--dim); cursor:pointer;"><i
+                        class="fa-solid fa-times"></i></button>
+            </div>
+            <label style="display:flex; align-items:center; gap:10px; margin-bottom: 15px; cursor:pointer; padding: 4px 0;">
+                <input type="checkbox" id="param-color-tags" onchange="updateUIParams()" style="cursor:pointer;">
+                <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-tags" style="color:var(--accent); width:16px; text-align:center;"></i> Color by Tags
+                </span>
+            </label>
+            <label style="display:flex; align-items:center; gap:10px; margin-bottom: 15px; cursor:pointer; padding: 4px 0;">
+                <input type="checkbox" id="param-include-headers" onchange="updateUIParams()" style="cursor:pointer;">
+                <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-heading" style="color:var(--accent); width:16px; text-align:center;"></i> Include Headers in Copy
+                </span>
+            </label>
+            <label style="display:flex; align-items:center; gap:10px; margin-bottom: 15px; cursor:pointer; padding: 4px 0;">
+                <input type="checkbox" id="param-use-floating-windows" onchange="updateUIParams()" style="cursor:pointer;">
+                <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-window-restore" style="color:var(--accent); width:16px; text-align:center;"></i> Use Floating Windows
+                </span>
+            </label>
+            <label style="display:flex; align-items:center; gap:10px; margin-bottom: 20px; cursor:pointer; padding: 4px 0;">
+                <input type="checkbox" id="param-light-theme" onchange="updateUIParams()" style="cursor:pointer;">
+                <span style="font-size:0.9rem; flex:1; display:flex; align-items:center; gap:10px;">
+                    <i class="fa-solid fa-sun" style="color:var(--accent); width:16px; text-align:center;"></i> Light Theme
+                </span>
+            </label>
+
+            <div style="border-top: 1px solid var(--border); padding-top: 15px;">
+                <button onclick="resetColumnWidths()" class="settings-panel-btn">
+                    <i class="fa-solid fa-arrows-left-right"></i> Reset Column Widths
+                </button>
+            </div>
+        </div>
+
         <div id="dashboard-view-container" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
             <div class="header">
                 <div class="header-top">
@@ -135,35 +178,6 @@
                             <h1 id="view-title" style="margin:0; white-space:nowrap;">Dashboard</h1>
                     </div>
                     <div id="search-area" style="margin-left:auto; flex:1;"></div>
-                </div>
-            </div>
-
-            <!-- UI Settings Panel -->
-            <div id="ui-settings-panel"
-                style="display:none; position:fixed; right:20px; top:60px; z-index:10000; width:300px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:20px; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                    <h3 style="margin:0; font-size:1rem; color:var(--accent);">UI Settings</h3>
-                    <button onclick="toggleUISettings()"
-                        style="background:none; border:none; color:var(--dim); cursor:pointer;"><i
-                            class="fa-solid fa-times"></i></button>
-                </div>
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 12px;">
-                    <input type="checkbox" id="param-color-tags" onchange="updateUIParams()">
-                    <label style="font-size:0.8rem;">Color by Tags</label>
-                </div>
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
-                    <input type="checkbox" id="param-include-headers" onchange="updateUIParams()">
-                    <label style="font-size:0.8rem;">Include Headers in Copy</label>
-                </div>
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom: 20px;">
-                    <input type="checkbox" id="param-use-floating-windows" onchange="updateUIParams()">
-                    <label style="font-size:0.8rem;">Use Floating Windows</label>
-                </div>
-
-                <div style="border-top: 1px solid var(--border); padding-top: 15px;">
-                    <button onclick="resetColumnWidths()" class="settings-panel-btn">
-                        <i class="fa-solid fa-arrows-left-right"></i> Reset Column Widths
-                    </button>
                 </div>
             </div>
 

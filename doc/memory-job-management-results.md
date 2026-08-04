@@ -212,29 +212,89 @@ ghidra_analyze                     0.18 GiB     0.8%
 ...
 ```
 
+## Real-case run against stdlib-ref (2026-08-04)
+
+Merged to `dev` and run against the live collection: 6,797 files, 68,591
+functions, 419,617 pending features. This overturned part of the diagnosis
+above, which is exactly why it was worth doing.
+
+### Supervision worked, and that was the point
+
+Workers were OOM-killed **22 times** and the fleet survived every one. The queue
+drained from 112 pending to 0 while that was happening, and the reaper requeued
+the 3 jobs stranded by the previous freeze on its first pass. Before this branch
+the same sequence took the fleet down and froze the queue for hours.
+
+### Measured peaks at real scale
+
+| job type | measured peak | vs `MemoryMax=3G` |
+|---|---|---|
+| `cluster_pool` | **3.03 GiB** | **exceeds** |
+| `build_pool_bin_sim` | **3.02 GiB** | **exceeds** |
+| `index_sim` | 2.12 GiB | fits |
+| `enrich_features` | 1.93 GiB (after fixes) | fits |
+| `idx_functions` | 1.66 GiB | fits |
+| `idx_features` | 1.13 GiB | fits |
+| `ghidra_analyze` (worker side) | 0.79 GiB | fits |
+
+`cluster_pool` and `build_pool_bin_sim` are the next things to bound. Worth
+noting against the brief, which argued clustering was *not* the culprit: at this
+scale two clustering job types are the only ones that exceed the cap outright.
+
+### Three further bugs, invisible until it ran
+
+1. **Peak scaled with `chunk_size`, not with the pending set.** Streaming the
+   pending set (B2) bounded the input list and did nothing for the real
+   allocation: `index_global_features` pipelines one `HRANDFIELD 100 withvalues`
+   per feature and holds every response at once. At the original 500 the worker
+   peaked over 3 GiB and was killed three times *before the first batch ever
+   committed* — the pending set never moved off 419,617. At 100 it peaks
+   1.93 GiB and runs. Now `ENRICH_CHUNK_SIZE` / `ENRICH_BATCH_SIZE`.
+
+2. **One malformed record aborted the whole run.** A function stored with an
+   empty `:source` list reached `entry_decoded[0]` — `isinstance([], list)` is
+   true, so `[][0]` raised `IndexError` at feature 2,800. With 419k features that
+   made enrichment impossible to finish however often it was retried, and before
+   resumability it also discarded everything enriched beforehand.
+
+3. **`ghidra_analyze` was under-weighted.** The Ghidra child shares the worker's
+   systemd scope, so its JVM counts against the same `MemoryMax`, but the worker
+   records only its own `VmHWM`. Admission saw ~0.8 GiB for a job whose scope was
+   hitting 3 GiB. The child now reports its own peak.
+
+### Result after the fixes
+
+`enrich_features` on the full set: pending 417,617 → 398,617, **19,000 features
+in 9 minutes**, progress 0 → 4%, peak steady at **1.93 GiB**, zero OOM kills,
+checkpointing every 1,000. At that rate the backlog needs roughly three more
+hours, and it now resumes rather than restarting.
+
 ## Still outstanding
 
-**The decisive `enrich_features` measurement has not been taken.** The numbers
-above come from a 2-file test collection with 265 features. `stdlib-ref` holds
-375,755. Those figures show the JVM floor is gone; they do *not* prove what
-`enrich_features` costs at real scale.
+- **Bound `cluster_pool` (3.03 GiB) and `build_pool_bin_sim` (3.02 GiB).** Both
+  exceed `MemoryMax=3G` on their own, so both will be OOM-killed every time they
+  run against a collection this size. Admission control cannot help: a job whose
+  cost exceeds the whole budget is admitted deliberately, or it would deadlock
+  the queue.
+- `MAX_ATTEMPTS=3` fails a job permanently after three lease expiries. For a
+  resumable job that is making real progress between kills, attempts arguably
+  should reset on progress rather than accumulate.
 
-`scripts/wt-setup.sh` deliberately never touches the main repo's 17G
-`data/kvrocks`, so this cannot be answered from the worktree. To answer it, run
-the branch against the real collection and read the report:
+Useful while any of this runs:
 
 ```bash
-uv run python scripts/job_memory_report.py     # after some enrich_features jobs
+uv run python scripts/job_memory_report.py     # measured peak per job type
 grep -h 'exited\|OOM-KILLED' logs/*.log        # scope peaks, incl. OOM kills
 ```
 
-The 351-job queue in the main stack's redis (`jobs:global`) is still intact and
-untouched, with the `enrich_features`, `build_pool_sim` and `cluster_pool` jobs
-the brief flagged as the ready-made test case.
+`WORKER_MEMORY_MAX` still has not been raised, and on the evidence it should not
+be: every job type except the two clustering ones fits inside 3 GB with room to
+spare. Raising the cap would paper over `cluster_pool` rather than bound it.
 
-Only after that number exists should `WORKER_MEMORY_MAX` be changed. The brief's
-rule still holds: if it wants 3.5 GB this is a config fix; if it wants 8 GB,
-`enrich_features` needs more bounding than streaming gave it.
+A correction to something I reported earlier in this branch's history: the
+"351-job queue" was `jobs:global` on redis **6379**, which is a job-history
+list, not the pending queue. The main stack's queue is on **6380**
+(`jobs:pending`), and it held 113 pending when the fleet was restarted.
 
 ## Not addressed
 

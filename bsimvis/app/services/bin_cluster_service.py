@@ -235,9 +235,9 @@ class BinClusterService:
             # Ensure local root maps to a single global internal ID
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
 
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
@@ -255,8 +255,8 @@ class BinClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -289,15 +289,15 @@ class BinClusterService:
         # 1. Birth lambdas for all clusters
         root_id = tree_df["parent"].min()
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         # 2. Death lambdas for all clusters
         death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            p = int(row["parent"])
-            l = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            p = int(row.parent)
+            l = float(row.lambda_val)
             if p not in death_lambdas or l > death_lambdas[p]:
                 death_lambdas[p] = l
 
@@ -323,11 +323,11 @@ class BinClusterService:
         # Build a pruned tree DataFrame
         if pruned_clusters:
             pruned_rows = []
-            for _, row in tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
-                child_size = int(row["child_size"])
-                lambda_val = float(row["lambda_val"])
+            for row in tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
+                child_size = int(row.child_size)
+                lambda_val = float(row.lambda_val)
 
                 if parent in pruned_clusters:
                     ancestor = get_nearest_non_pruned_ancestor(parent)
@@ -359,14 +359,14 @@ class BinClusterService:
 
         cluster_tree_key = f"{collection}:bin_cluster:tree_links:{algo}"
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(cluster_tree_key, json.dumps(tree_links))
@@ -395,9 +395,9 @@ class BinClusterService:
         # 5. Calculate Stability
         stabilities = {}
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         for label, members in cluster_members.items():
             b_lambda = birth_lambdas.get(label, 0.0)
@@ -525,20 +525,8 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        adj_sim = {i: {} for i in range(num_nodes)}
-        # Chunked .tolist(): element-wise NumPy iteration boxes every scalar,
-        # and converting all three arrays at once would materialise a large
-        # temporary. 1M at a time bounds it.
-        _CH = 1_000_000
-        for _s in range(0, edge_set.src.size, _CH):
-            for u, v, d in zip(
-                edge_set.src[_s : _s + _CH].tolist(),
-                edge_set.dst[_s : _s + _CH].tolist(),
-                edge_set.dist[_s : _s + _CH].tolist(),
-            ):
-                sim = 1.0 - d
-                adj_sim[u][v] = sim
-                adj_sim[v][u] = sim
+        # CSR rather than a dict of dicts -- see sim_edges.SimAdjacency.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
 
         total_clusters = len(cluster_members)
         if job_service and job_id:
@@ -616,21 +604,7 @@ class BinClusterService:
                 member_indices = [id_to_idx[file_id] for file_id in members]
                 n_members = len(members)
 
-                total_sim = 0.0
-                if n_members < 50:
-                    for i in range(n_members):
-                        u = member_indices[i]
-                        for j in range(i + 1, n_members):
-                            v = member_indices[j]
-                            total_sim += adj_sim[u].get(v, 0.0)
-                else:
-                    member_set = set(member_indices)
-                    for u in member_indices:
-                        for v, sim in adj_sim[u].items():
-                            if v in member_set:
-                                total_sim += sim
-                    total_sim /= 2.0
-
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0

@@ -270,9 +270,9 @@ class ClusterService:
             # Ensure local root maps to a single global internal ID
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
 
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
@@ -290,8 +290,8 @@ class ClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -326,15 +326,15 @@ class ClusterService:
         # Root birth is 0
         root_id = tree_df["parent"].min()
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         # 2. Death lambdas for all clusters (max lambda of any child)
         death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            p = int(row["parent"])
-            l = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            p = int(row.parent)
+            l = float(row.lambda_val)
             if p not in death_lambdas or l > death_lambdas[p]:
                 death_lambdas[p] = l
 
@@ -363,11 +363,11 @@ class ClusterService:
         # Build a pruned tree DataFrame
         if pruned_clusters:
             pruned_rows = []
-            for _, row in tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
-                child_size = int(row["child_size"])
-                lambda_val = float(row["lambda_val"])
+            for row in tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
+                child_size = int(row.child_size)
+                lambda_val = float(row.lambda_val)
 
                 if parent in pruned_clusters:
                     ancestor = get_nearest_non_pruned_ancestor(parent)
@@ -400,14 +400,14 @@ class ClusterService:
         # Store cluster parent-child relationships for dendrogram
         cluster_tree_key = f"{collection}:cluster:tree_links:{algo}"
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(cluster_tree_key, json.dumps(tree_links))
@@ -440,9 +440,9 @@ class ClusterService:
 
         # Pre-calculate leaf deaths
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         # Calculate stability for each hierarchical cluster
         for label, members in cluster_members.items():
@@ -610,21 +610,11 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        adj_sim = {i: {} for i in range(num_nodes)}
-        # Chunked .tolist(): iterating a NumPy array element-wise boxes every
-        # scalar, and converting all three at once would materialise ~450 MB of
-        # temporary Python lists on a 5.4M-edge pool. 1M at a time keeps the
-        # temporary bounded while staying off the slow per-element path.
-        _CH = 1_000_000
-        for _s in range(0, edge_set.src.size, _CH):
-            for u, v, d in zip(
-                edge_set.src[_s : _s + _CH].tolist(),
-                edge_set.dst[_s : _s + _CH].tolist(),
-                edge_set.dist[_s : _s + _CH].tolist(),
-            ):
-                sim = 1.0 - d
-                adj_sim[u][v] = sim
-                adj_sim[v][u] = sim
+        # CSR, not a dict of dicts. Measured on the real 11.3M-pair pool, the
+        # dict version held 1.08 GiB and took the run from 1.70 GiB to 2.78 GiB
+        # against a 3 GB cap -- the single largest structure left in clustering.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
+        mem_util.phase("after adj_sim", job_service, job_id)
 
         total_clusters = len(cluster_members)
         msg = f"Enriching metadata for {total_clusters} hierarchical clusters..."
@@ -653,21 +643,7 @@ class ClusterService:
                 member_indices = [id_to_idx[fid] for fid in members]
                 n_members = len(members)
 
-                total_sim = 0.0
-                if n_members < 50:
-                    for i in range(n_members):
-                        u = member_indices[i]
-                        for j in range(i + 1, n_members):
-                            v = member_indices[j]
-                            total_sim += adj_sim[u].get(v, 0.0)
-                else:
-                    member_set = set(member_indices)
-                    for u in member_indices:
-                        for v, sim in adj_sim[u].items():
-                            if v in member_set:
-                                total_sim += sim
-                    total_sim /= 2.0
-
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0
@@ -748,9 +724,10 @@ class ClusterService:
                 r.delete(pool_cluster_list_key)
                 r.sadd(pool_cluster_list_key, *[str(k) for k in cluster_members.keys()])
 
-        # Free the graph structures before propagation: adj_sim alone holds two dict
-        # entries per edge (~14M on a real collection) and kept the worker swapping
-        # through the whole sim-index phase.
+        # Free the graph structures before propagation: even as CSR, adj_sim
+        # holds two entries per edge (~22M on the 11.3M-pair pool), and keeping
+        # it alive through the whole sim-index phase used to leave the worker
+        # swapping.
         del adj_sim, comp_to_edges, edge_set, all_member_meta
 
         logging.info(f"Update sim indexes...")
@@ -903,6 +880,11 @@ class ClusterService:
             now = time.time()
             logging.info(f"[*] sim-index: {msg} (prev phase {now - phase_t:.1f}s)")
             phase_t = now
+            # This whole stage runs after the edge structures are freed, so it
+            # looked cheap and was not measured. On the 11.3M-pair pool it is
+            # where peak RSS actually lands, which is only visible with the
+            # phase markers on.
+            mem_util.phase(f"sim-index: {msg}", job_service, job_id)
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
 
@@ -1241,6 +1223,10 @@ class ClusterService:
                     f"[*] sim-index: propagated {processed}/~{total_sims} "
                     f"({time.time() - start_prop:.1f}s)"
                 )
+                if processed % 500_000 == 0:
+                    mem_util.phase(
+                        f"sim-index: propagated {processed}", job_service, job_id
+                    )
                 if job_service and job_id:
                     pct = (
                         min(int((processed / total_sims) * 100), 99)
@@ -1583,9 +1569,9 @@ class ClusterService:
             sub_internal_to_global = {}
             local_root_sub = local_tree_df["parent"].min()
 
-            for _, row in local_tree_df.iterrows():
-                parent = int(row["parent"])
-                child = int(row["child"])
+            for row in local_tree_df.itertuples(index=False):
+                parent = int(row.parent)
+                child = int(row.child)
                 if parent not in sub_internal_to_global:
                     sub_internal_to_global[parent] = next_cluster_id
                     next_cluster_id += 1
@@ -1600,8 +1586,8 @@ class ClusterService:
                     {
                         "parent": sub_internal_to_global[parent],
                         "child": global_child,
-                        "lambda_val": float(row["lambda_val"]),
-                        "child_size": int(row["child_size"]),
+                        "lambda_val": float(row.lambda_val),
+                        "child_size": int(row.child_size),
                     }
                 )
 
@@ -1625,14 +1611,14 @@ class ClusterService:
         r.set(tree_key, tree_json)
 
         tree_links = []
-        for _, row in tree_df.iterrows():
-            if int(row["child_size"]) > 1:
+        for row in tree_df.itertuples(index=False):
+            if int(row.child_size) > 1:
                 tree_links.append(
                     {
-                        "parent": int(row["parent"]),
-                        "child": int(row["child"]),
-                        "lambda": float(row["lambda_val"]),
-                        "size": int(row["child_size"]),
+                        "parent": int(row.parent),
+                        "child": int(row.child),
+                        "lambda": float(row.lambda_val),
+                        "size": int(row.child_size),
                     }
                 )
         r.set(
@@ -1660,14 +1646,14 @@ class ClusterService:
 
         # Stability
         birth_lambdas = {root_id: 0.0}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] > 1:
-                birth_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size > 1:
+                birth_lambdas[int(row.child)] = float(row.lambda_val)
 
         leaf_death_lambdas = {}
-        for _, row in tree_df.iterrows():
-            if row["child_size"] == 1:
-                leaf_death_lambdas[int(row["child"])] = float(row["lambda_val"])
+        for row in tree_df.itertuples(index=False):
+            if row.child_size == 1:
+                leaf_death_lambdas[int(row.child)] = float(row.lambda_val)
 
         stabilities = {}
         for label, members in cluster_members.items():
@@ -1678,21 +1664,9 @@ class ClusterService:
             )
             stabilities[label] = total_area
 
-        # Sparse adjacency for cohesion
-        adj_sim = {i: {} for i in range(num_nodes)}
-        # Chunked .tolist(): element-wise NumPy iteration boxes every scalar,
-        # and converting all three arrays at once would materialise a large
-        # temporary. 1M at a time bounds it.
-        _CH = 1_000_000
-        for _s in range(0, edge_set.src.size, _CH):
-            for u, v, d in zip(
-                edge_set.src[_s : _s + _CH].tolist(),
-                edge_set.dst[_s : _s + _CH].tolist(),
-                edge_set.dist[_s : _s + _CH].tolist(),
-            ):
-                sim = 1.0 - d
-                adj_sim[u][v] = sim
-                adj_sim[v][u] = sim
+        # Sparse adjacency for cohesion. CSR rather than a dict of dicts -- see
+        # sim_edges.SimAdjacency.
+        adj_sim = sim_edges.SimAdjacency(edge_set, num_nodes)
 
         # Generate cluster UUIDs first
         label_to_uuid = {c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()}
@@ -1798,11 +1772,7 @@ class ClusterService:
             n_members = len(members)
             if n_members > 1:
                 member_indices = [id_to_idx[fid] for fid in members]
-                total_sim = sum(
-                    adj_sim[member_indices[i]].get(member_indices[j], 0.0)
-                    for i in range(n_members)
-                    for j in range(i + 1, n_members)
-                )
+                total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
             else:
                 cohesion_score = 1.0

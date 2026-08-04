@@ -193,6 +193,114 @@ def test_arrays_are_compact_types():
     assert per_edge == 12, per_edge
 
 
+# --------------------------------------------------------------------------
+# SimAdjacency: the CSR replacement for the cohesion dict-of-dicts.
+# --------------------------------------------------------------------------
+
+
+def _dict_adj(edges, num_nodes):
+    """The structure SimAdjacency replaces, kept here as the reference."""
+    adj = {i: {} for i in range(num_nodes)}
+    for u, v, d in zip(edges.src.tolist(), edges.dst.tolist(), edges.dist.tolist()):
+        sim = 1.0 - d
+        adj[u][v] = sim
+        adj[v][u] = sim
+    return adj
+
+
+def _dict_cohesion(adj, member_indices):
+    total = 0.0
+    n = len(member_indices)
+    for i in range(n):
+        for j in range(i + 1, n):
+            total += adj[member_indices[i]].get(member_indices[j], 0.0)
+    return total
+
+
+def _edges_from(pairs):
+    r = FakeZRedis(members(pairs))
+    return sim_edges.load_edges(r, "k", PREFIX, False, "coll")
+
+
+def test_adjacency_lookup_matches_the_dict():
+    edges = _edges_from([("a", "b", 0.9), ("b", "c", 0.5), ("c", "d", 0.25)])
+    n = len(edges.id_to_idx)
+    adj, ref = sim_edges.SimAdjacency(edges, n), _dict_adj(edges, n)
+
+    for u in range(n):
+        for v in range(n):
+            assert abs(adj.get(u, v) - ref[u].get(v, 0.0)) < 1e-6, (u, v)
+
+
+def test_adjacency_neighbours_match_the_dict():
+    edges = _edges_from([("a", "b", 0.9), ("b", "c", 0.5), ("b", "d", 0.75)])
+    n = len(edges.id_to_idx)
+    adj, ref = sim_edges.SimAdjacency(edges, n), _dict_adj(edges, n)
+
+    for u in range(n):
+        idx, sims = adj.neighbours(u)
+        got = dict(zip(idx.tolist(), sims.tolist()))
+        assert got.keys() == ref[u].keys(), u
+        # float32 storage, so compare to its precision rather than exactly.
+        for v, sim in ref[u].items():
+            assert abs(got[v] - sim) < 1e-6, (u, v)
+
+
+def test_cohesion_matches_the_dict_on_both_branches():
+    # Crosses the 50-member threshold so the pairwise branch and the neighbour
+    # sweep are both exercised against the same reference.
+    pairs = []
+    for i in range(60):
+        for j in (i + 1, i + 2):
+            if j < 60:
+                pairs.append((f"f{i}", f"f{j}", 0.5 + (i % 5) / 20.0))
+    edges = _edges_from(pairs)
+    n = len(edges.id_to_idx)
+    adj, ref = sim_edges.SimAdjacency(edges, n), _dict_adj(edges, n)
+
+    for size in (2, 10, 49, 50, 60):
+        members_idx = list(range(size))
+        assert abs(
+            adj.cohesion_sum(members_idx) - _dict_cohesion(ref, members_idx)
+        ) < 1e-4, size
+
+
+def test_duplicate_pairs_take_the_last_value_not_the_sum():
+    # A pool can hold a pair in both directions. The dict overwrote; scipy would
+    # sum, which would silently inflate cohesion above 1.0.
+    edges = _edges_from([("a", "b", 0.5), ("b", "a", 0.5)])
+    adj = sim_edges.SimAdjacency(edges, len(edges.id_to_idx))
+
+    assert abs(adj.get(0, 1) - 0.5) < 1e-6
+    assert abs(adj.get(1, 0) - 0.5) < 1e-6
+    assert abs(adj.cohesion_sum([0, 1]) - 0.5) < 1e-6
+
+
+def test_isolated_node_has_no_neighbours():
+    edges = _edges_from([("a", "b", 0.9)])
+    adj = sim_edges.SimAdjacency(edges, len(edges.id_to_idx) + 1)
+    idx, sims = adj.neighbours(len(edges.id_to_idx))
+
+    assert idx.size == 0 and sims.size == 0
+    assert adj.get(len(edges.id_to_idx), 0) == 0.0
+    assert adj.cohesion_sum([0]) == 0.0
+
+
+def test_adjacency_is_smaller_than_the_dict_it_replaces():
+    import sys
+
+    edges = _edges_from([(f"f{i}", f"f{i+1}", 0.8) for i in range(200)])
+    n = len(edges.id_to_idx)
+    adj = sim_edges.SimAdjacency(edges, n)
+
+    csr_bytes = adj.indptr.nbytes + adj.indices.nbytes + adj.data.nbytes
+    ref = _dict_adj(edges, n)
+    dict_bytes = sys.getsizeof(ref) + sum(
+        sys.getsizeof(inner) + len(inner) * 24 for inner in ref.values()
+    )
+    assert csr_bytes < dict_bytes / 4, (csr_bytes, dict_bytes)
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(list(globals().items())):

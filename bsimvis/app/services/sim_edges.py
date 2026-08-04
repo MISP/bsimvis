@@ -199,6 +199,103 @@ def group_edges_by_component(edges, labels):
     }
 
 
+class SimAdjacency:
+    """Symmetric similarity adjacency, in CSR instead of a dict of dicts.
+
+    Cohesion needs two things from this structure and nothing else: the
+    similarity of one specific pair, and every neighbour of one node. A
+    `{u: {v: sim}}` dict serves both, but at 11.3M pairs it holds 22.6M boxed
+    float values across 26k inner dicts -- measured at 1.08 GiB, which took a
+    clustering run that sat at 1.70 GiB up to 2.78 GiB against a 3 GB cap.
+
+    Three arrays serve the same two lookups: `indptr` slicing gives the
+    neighbours of `u` directly, and a bisect within that slice answers the pair
+    query, because the column indices inside a CSR row are sorted.
+
+    Duplicate (u, v) entries are collapsed to the last one written, matching the
+    dict it replaces -- scipy would sum them instead, which would silently
+    inflate cohesion wherever a pool stores a pair in both directions.
+    """
+
+    __slots__ = ("indptr", "indices", "data")
+
+    def __init__(self, edges, num_nodes):
+        import scipy.sparse as sp
+
+        sim = (1.0 - edges.dist).astype(np.float32)
+        rows = np.concatenate([edges.src, edges.dst])
+        cols = np.concatenate([edges.dst, edges.src])
+        data = np.concatenate([sim, sim])
+
+        # Last-wins de-duplication. Sorting by the flattened (row, col) key and
+        # keeping the final entry of each run reproduces `adj[u][v] = sim`
+        # applied in edge order.
+        if rows.size:
+            # lexsort rather than sorting a combined row*n+col key: the key
+            # would be another int64 array as long as the edge list, and this
+            # runs during the construction spike we are trying to shrink.
+            order = np.lexsort((cols, rows))
+            rows, cols, data = rows[order], cols[order], data[order]
+            del order
+            # Keep the last entry of each equal run: entry i survives when it
+            # differs from i+1.
+            last = np.empty(rows.size, dtype=bool)
+            last[-1] = True
+            last[:-1] = (rows[1:] != rows[:-1]) | (cols[1:] != cols[:-1])
+            rows, cols, data = rows[last], cols[last], data[last]
+            del last
+
+        m = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        m.sort_indices()
+        self.indptr = m.indptr
+        self.indices = m.indices
+        self.data = m.data
+
+    def neighbours(self, u):
+        """(neighbour indices, similarities) for `u`, as views -- no copy."""
+        lo, hi = self.indptr[u], self.indptr[u + 1]
+        return self.indices[lo:hi], self.data[lo:hi]
+
+    def get(self, u, v, default=0.0):
+        """Similarity of the pair, or `default` when there is no edge."""
+        lo, hi = self.indptr[u], self.indptr[u + 1]
+        if lo == hi:
+            return default
+        pos = np.searchsorted(self.indices[lo:hi], v)
+        if pos < hi - lo and self.indices[lo + pos] == v:
+            return float(self.data[lo + pos])
+        return default
+
+    def cohesion_sum(self, member_indices):
+        """Sum of similarities over every pair inside `member_indices`.
+
+        The two access patterns the callers used to branch between, folded in
+        here: a pairwise probe for small clusters, a neighbour sweep for large
+        ones. The crossover is where scanning a node's whole neighbour list
+        starts beating |members| individual lookups.
+        """
+        n = len(member_indices)
+        if n < 2:
+            return 0.0
+
+        if n < 50:
+            total = 0.0
+            for i in range(n):
+                u = member_indices[i]
+                for j in range(i + 1, n):
+                    total += self.get(u, member_indices[j])
+            return total
+
+        member_set = np.zeros(self.indptr.size - 1, dtype=bool)
+        member_set[member_indices] = True
+        total = 0.0
+        for u in member_indices:
+            idx, sims = self.neighbours(u)
+            if idx.size:
+                total += float(sims[member_set[idx]].sum())
+        return total / 2.0
+
+
 def build_adjacency(edges, num_nodes):
     """Symmetric 0/1 adjacency for connected-components, built without Python lists."""
     import scipy.sparse as sp

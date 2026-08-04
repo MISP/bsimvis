@@ -682,7 +682,32 @@ class JobService:
                     continue
 
                 self.release_lease(job_id)
-                attempts = self.r.hincrby(f"job:{job_id}", "attempts", 1)
+
+                # MAX_ATTEMPTS predates jobs being resumable. enrich_features
+                # now checkpoints every batch, so a job could be OOM-killed
+                # three times while permanently enriching thousands of features
+                # each time and still be abandoned -- which is what happened.
+                #
+                # A job that advanced since its last claim is slow, not poison.
+                # The watermark only ever moves forward, so a job that stops
+                # advancing still fails after MAX_ATTEMPTS: the counter now
+                # targets jobs that make no progress rather than jobs that need
+                # more than three goes.
+                processed = safe_int(job.get("processed_items"))
+                watermark = safe_int(job.get("attempts_progress"))
+                if processed > watermark:
+                    self.r.hset(
+                        f"job:{job_id}",
+                        mapping={"attempts_progress": processed, "attempts": 0},
+                    )
+                    self.add_log(
+                        job_id,
+                        f"Progressed to {processed} items since the last attempt; "
+                        "retry counter reset.",
+                    )
+                    attempts = 0
+                else:
+                    attempts = self.r.hincrby(f"job:{job_id}", "attempts", 1)
                 if attempts > MAX_ATTEMPTS:
                     self.add_log(
                         job_id,

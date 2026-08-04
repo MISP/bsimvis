@@ -434,7 +434,14 @@ class FeatureService:
         # the pending set. At 500 the worker peaked over 3 GiB and was killed
         # three times before the first batch ever committed. Streaming the
         # pending set bounded the input list; this bounds the actual work.
-        chunk_size = int(os.getenv("ENRICH_CHUNK_SIZE", 100))
+        # 50, not 100. Measured on 10k real stdlib-ref features, three runs per
+        # setting: peak tracks chunk size almost linearly (100 -> 2.07/2.40 GiB,
+        # 50 -> 1.60 GiB, 25 -> 1.38 GiB) while throughput stays flat inside
+        # noise (44-49 features/s at every setting). The round-trip cost the
+        # smaller chunk was expected to pay does not show up, so this is ~30%
+        # of the peak for free. 25 buys much less and is not worth the extra
+        # round-trips.
+        chunk_size = int(os.getenv("ENRICH_CHUNK_SIZE", 50))
         denom = progress_total or len(feature_hashes)
         for i in range(0, len(feature_hashes), chunk_size):
             if job_service and job_id:

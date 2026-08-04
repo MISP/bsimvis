@@ -27,9 +27,100 @@ never touches the main repo's 17G `data/kvrocks`.
 
 ---
 
+## STATUS — all five items worked, 2026-08-04
+
+Branch `worktree-memjob-remaining`, five commits on top of `12f7f6a` (four
+code, one this doc). Test
+baseline held: 317/317 integration, and the unit suite is now 61 tests (53 plus
+8 new). Everything below was measured against real data, not derived.
+
+| # | Item | Outcome |
+|---|------|---------|
+| 1 | Validate clustering at scale | **Done, and it found a real problem.** See below. |
+| 2 | `enrich_features` headroom | Done. `ENRICH_CHUNK_SIZE` 100 → 50: ~1/3 of the peak back, no throughput cost. |
+| 3 | `adj_sim` | **Done, and it turned out to be needed.** CSR: 2.78 → 1.71 GiB at that phase. |
+| 4 | `MAX_ATTEMPTS` vs progress | Done. Retry counter resets on a forward-only progress watermark. |
+| 5 | `iterrows()`, upload cap | Both done. 17 sites → `itertuples`; the two caps were `* 1024` typos. |
+
+### The finding that matters
+
+Item 1 is closed twice over, and the second answer is worse than the first.
+
+**The good half.** The fleet drained and ran real jobs, so the two types that
+used to exceed the cap now have live numbers in `jobs:mem:peak`:
+
+```
+cluster_pool           0.39 GiB   (was 3.03)
+build_pool_bin_sim     0.42 GiB   (was 3.02)
+```
+
+No OOM kill since 01:45 on 2026-08-04, all of which predate the fixes and were
+the old `enrich_features` path. Correctness is confirmed too: against a
+reference copy of the pre-rewrite code on a full 1.27M-pair pool, 5475 clusters
+both sides, identical membership, cohesion matching to 7.1e-08. That covers the
+full clustering output, which the parity tests did not.
+
+**The bad half.** Clustering the largest pool —
+`global:pool:1551edc1-bf5d-47c7-a332-fdcbf292cb02`, 11.3M pairs — peaked at
+**4.06 GiB**, over the 3 GB cap. A `cluster_pool` job on that pool would be
+OOM-killed. The rewrite is not what fails: streaming 11.3M pairs costs 0.29 GiB,
+exactly as designed. The peak arrives later, and `adj_sim` (now CSR) is no
+longer the cause.
+
+Measured phases on that pool, dict version:
+
+```
+after streaming 11.3M pairs   0.29 GiB
+after comp_to_edges           0.91 GiB
+after adj_sim                 2.78 GiB   <- CSR now holds this at 1.71
+...                           4.06 GiB   <- final, somewhere after this
+```
+
+**So the one open question is where the last ~1.3 GiB goes**, between the
+cluster-metadata enrichment loop and the sim-index propagation stage. That
+stage runs after the edge structures are freed, so it always looked cheap and
+was never instrumented. It is instrumented now (`mem_util.phase` through the
+sim-index `phase()` helper, plus every 500k propagated), so the next real
+`cluster_pool` run on a large pool prints the attribution with
+`MEM_PHASE_LOG=1` in `.env` — no special run needed.
+
+I did not get that attribution myself: the instrumented re-run was still in the
+metadata loop when the machine locked up under the combined load of that run,
+the worker fleet and kvrocks, and rebooted. Which is its own lesson — do not
+run a full 11.3M-pair clustering alongside a busy fleet.
+
+**Two loose ends from that reboot:**
+
+- The 11.3M pool's cluster keys were left half-written when the run died mid
+  metadata-enrichment. Requeue a `cluster_pool` job for it to make them
+  consistent; that also produces the phase attribution above.
+- Services were not restarted after the reboot (`:6380` was down when I
+  checked). Bring the stack back up before reading any of these numbers again.
+
+### How the measurements were taken
+
+Two throwaway harnesses, both against real data, neither committed:
+
+- **Parity** — copies a real pool's sim ZSET into two scratch pool ids with the
+  member prefix rewritten, clusters one with the pre-rewrite code and one with
+  current, and compares membership and cohesion. Every write lands under
+  `global:pool:<scratch-uuid>:*`, so it cannot disturb anything real, and it
+  deletes those keys afterwards. This is the technique to reuse for any future
+  change to clustering output.
+- **Enrich bench** — re-enriches a `ZRANDMEMBER` sample of already-enriched
+  features at a given `ENRICH_CHUNK_SIZE`, reporting peak RSS and throughput.
+  Enrichment recomputes from the same source data, so a re-run writes back the
+  same values.
+
+---
+
 ## 1. Validate the clustering rewrite at real scale — the one real gap
 
 **This is the most important item and the reason this brief exists.**
+
+> **Closed 2026-08-04** — see STATUS above. Both job types now have live peaks
+> well under the cap, and correctness is confirmed against the old code. But
+> the 11.3M-pair pool peaks at 4.06 GiB, which is a new problem, not this one.
 
 `perf(cluster): stream similarity pairs…` (`f569793`) cut clustering peak from
 2.75 GiB to 0.43 GiB on a real 5.4M-pair pool. That result is backed by:
@@ -78,6 +169,11 @@ they do not cover the full clustering output.
 
 ## 2. `enrich_features` has almost no headroom
 
+> **Closed 2026-08-04** — default is now 50. Measured 100 -> 2.07/2.40 GiB,
+> 50 -> 1.60 GiB, 25 -> 1.38 GiB, with throughput flat at 44-49 features/s
+> across all three. The round-trip cost this was expected to pay is not there.
+
+
 Measured peak on the live collection: **2.75 GiB against a 3 GB cap** — 92%.
 
 It completes (the 419,617-feature `stdlib-ref` backlog fully drained,
@@ -102,6 +198,12 @@ judgement call the owner should make with the runtime trade-off visible.
 ---
 
 ## 3. `adj_sim` — the largest remaining structure
+
+> **Closed 2026-08-04** — done, and item 1 showed it was needed rather than
+> optional. `sim_edges.SimAdjacency`, all three sites. 2.78 -> 1.71 GiB at that
+> phase on the 11.3M-pair pool. Duplicate pairs take the last value, not the
+> sum, which is the one way scipy would have got this wrong.
+
 
 Measured: **0.89 GiB for 10.8M entries** on the 5.4M-pair pool. It is a
 dict-of-dicts holding two entries per edge, built *after* clustering:
@@ -131,6 +233,11 @@ already the shared home for this kind of thing.
 
 ## 4. `MAX_ATTEMPTS` does not account for progress
 
+> **Closed 2026-08-04** — resets against a forward-only `processed_items`
+> watermark. The poison-job test still passes, plus two new tests covering a job
+> that advances every attempt and one that advances once and then stalls.
+
+
 `job_service.py:79` — a job is failed permanently after 3 lease expiries
 (`:686`). That predates jobs being resumable.
 
@@ -149,6 +256,11 @@ passing.
 ---
 
 ## 5. Brief items deliberately not done
+
+> **Closed 2026-08-04** — both done. 17 `iterrows()` sites converted (25.9s ->
+> 17.2s on a 1.27M-pair parity run), and both upload caps were off by one
+> `* 1024` from their own comments.
+
 
 From the original brief's A4, worth doing, irrelevant to the outage:
 

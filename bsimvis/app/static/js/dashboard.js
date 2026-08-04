@@ -2994,7 +2994,7 @@ window.addEventListener('load', () => {
             });
 
             // Update view-specific job indicator
-            const activeJobs = stats.active_jobs || [];
+            const activeJobList = stats.active_jobs || [];
             const isJobInContext = (job) => {
                 if (currentPool) {
                     return job.pool_id === currentPool || job.collection === `pool:${currentPool}` || (currentCollection && job.collection === currentCollection);
@@ -3038,7 +3038,7 @@ window.addEventListener('load', () => {
                     .join(' ');
             };
 
-            const matchingJob = activeJobs.find(job => isJobInContext(job) && isJobRelevant(job));
+            const matchingJob = activeJobList.find(job => isJobInContext(job) && isJobRelevant(job));
             const statusBadge = document.getElementById('view-job-status');
             if (statusBadge) {
                 if (matchingJob) {

@@ -326,6 +326,45 @@ def test_poison_job_fails_instead_of_looping_forever():
     assert svc.r.hget("job:poison", "status") == JobStatus.FAILED.value
 
 
+def test_a_job_making_progress_is_not_abandoned():
+    # enrich_features checkpoints every batch. Being killed MAX_ATTEMPTS times
+    # while permanently enriching features each time is slow, not poison.
+    svc = make_service()
+    claim(svc, "slow", ttl=-1)
+
+    for i in range(MAX_ATTEMPTS + 3):
+        svc.r.hset("job:slow", "processed_items", str((i + 1) * 1000))
+        svc.r.delete("jobs:reaper:lock")
+        requeued, failed, _ = svc.reap_expired()
+        assert (requeued, failed) == (1, 0)
+        svc.r.hset("job:slow", "status", JobStatus.RUNNING.value)
+        svc.r.lpush("jobs:processing", "slow")
+        svc.claim_lease("slow", "worker-1", ttl=-1)
+
+    assert svc.r.hget("job:slow", "status") != JobStatus.FAILED.value
+
+
+def test_a_job_that_stops_progressing_still_fails():
+    # The counter targets jobs that make no progress -- a job that advances once
+    # and then stalls must still hit MAX_ATTEMPTS from where it stalled.
+    svc = make_service()
+    claim(svc, "stalled", ttl=-1)
+    svc.r.hset("job:stalled", "processed_items", "500")
+
+    for _ in range(MAX_ATTEMPTS + 1):
+        svc.r.delete("jobs:reaper:lock")
+        svc.reap_expired()  # processed_items never moves again
+        svc.r.hset("job:stalled", "status", JobStatus.RUNNING.value)
+        svc.r.lpush("jobs:processing", "stalled")
+        svc.claim_lease("stalled", "worker-1", ttl=-1)
+
+    svc.r.delete("jobs:reaper:lock")
+    _, failed, _ = svc.reap_expired()
+
+    assert failed == 1
+    assert svc.r.hget("job:stalled", "status") == JobStatus.FAILED.value
+
+
 def test_reaper_lock_stops_a_starting_fleet_double_requeueing():
     svc = make_service()
     claim(svc, "dead", ttl=-1)

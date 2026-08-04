@@ -149,6 +149,7 @@ New, all runnable standalone with `uv run python <file>`:
 | `test_worker_registry.py` | 9 | worker registration, expiry, the 13-jobs/0-workers outage shape, throughput fields, oom_score_adj |
 | `test_enrich_resumable.py` | 5 | batched SSCAN, checkpoint-after-index ordering, kill-and-resume |
 | `test_job_admission.py` | 11 | measured weights, budget enforcement, rollback, reaper reclaiming leaked reservations |
+| `test_sim_edges.py` | 10 | streamed edge loading, parity with the old inline algorithm, component grouping, adjacency |
 | `test_ghidra_subprocess.py` | 6 | child process invocation, JVM crash retry, retry budget, flag-unanalyzed, no JVM in worker |
 
 Existing suites still pass: `test_job_leases.py` (17), `test_worker_lrem.py`,
@@ -229,17 +230,17 @@ the same sequence took the fleet down and froze the queue for hours.
 
 | job type | measured peak | vs `MemoryMax=3G` |
 |---|---|---|
-| `cluster_pool` | **3.03 GiB** | **exceeds** |
-| `build_pool_bin_sim` | **3.02 GiB** | **exceeds** |
+| `cluster_pool` | **3.03 GiB** | **exceeds** (now bounded, see below) |
+| `build_pool_bin_sim` | **3.02 GiB** | **exceeds** (shares the same edge loading) |
 | `index_sim` | 2.12 GiB | fits |
 | `enrich_features` | 1.93 GiB (after fixes) | fits |
 | `idx_functions` | 1.66 GiB | fits |
 | `idx_features` | 1.13 GiB | fits |
 | `ghidra_analyze` (worker side) | 0.79 GiB | fits |
 
-`cluster_pool` and `build_pool_bin_sim` are the next things to bound. Worth
-noting against the brief, which argued clustering was *not* the culprit: at this
-scale two clustering job types are the only ones that exceed the cap outright.
+At this scale two clustering job types are the only ones that exceed the cap
+outright — worth noting against the brief, which argued clustering was *not* the
+culprit. Both are addressed in the next section.
 
 ### Three further bugs, invisible until it ran
 
@@ -269,16 +270,66 @@ in 9 minutes**, progress 0 → 4%, peak steady at **1.93 GiB**, zero OOM kills,
 checkpointing every 1,000. At that rate the backlog needs roughly three more
 hours, and it now resumes rather than restarting.
 
+## Bounding the clustering jobs
+
+Measured before changing anything, phase by phase, on a real 5.4M-pair pool
+(`global:pool:1bad2992…`). Every clustering entry point held **four Python
+copies of the same edge set at once**:
+
+| phase | RSS | delta |
+|---|---|---|
+| baseline | 0.04 GiB | |
+| `+ pairs` | 1.62 GiB | **+1.58** |
+| `+ edges` | 2.15 GiB | +0.53 |
+| `+ rows/cols/data` | 2.39 GiB | +0.24 |
+| `+ comp_to_edges` | 2.75 GiB | +0.36 |
+
+`pairs` alone was 58%, because each ZSET member embeds the full
+`global:pool:<uuid>:sim:` prefix (~180 chars) and a Python `str` adds ~49 bytes
+on top. **Peak scaled with the length of the id strings** — which is why the
+11.3M-pair pool projected to ~5.7 GiB against a 3 GB cap.
+
+`bsimvis/app/services/sim_edges.py` now owns "turn a similarity ZSET into an
+edge list": stream it, never materialise the members, accumulate into stdlib
+`array` buffers (12 bytes/edge, reinterpreted as NumPy without copying), group
+by component with one argsort and slices.
+
+Same pool, same phases, after: **0.43 GiB peak — a 6.4x reduction**, and the
+remaining term is the edge *count* with no dependence on id length.
+
+Applied to all three real implementations. Worth noting for the "shouldn't we do
+collections too" question: `run_pool_clustering` is a thin delegate to
+`run_clustering`, so **function clustering for pools and collections is already
+one code path**. Binary clustering is the one with two near-identical copies
+(`bin_cluster_service.run_clustering` and `run_pool_bin_clustering`); both were
+fixed.
+
+Two things found while in there:
+
+- `run_pool_bin_clustering` has **no sparse fallback** and always builds a dense
+  `size²` float64 matrix — 0.8 GiB at 10k nodes, 3.2 GiB at 20k, an OOM kill
+  with no warning. It now refuses above `CLUSTER_MAX_COMPONENT` (10000) and
+  leaves those files unclustered, saying so in the job log. The function paths
+  already had a sparse+SVD branch at ≥5000, so they needed no cap — a component
+  cap there would have been solving an already-solved problem.
+- `bin_cluster_service` still built its matrix float32 and converted at fit
+  time, holding both. Missed in the earlier float64 pass.
+
+`test_sim_edges.py` (10 tests) pins behaviour rather than memory, including
+parity against a reference copy of the old inline algorithm: identical edges,
+identical node numbering, and the subtle rule that `min_sim` drops an edge but
+still registers its nodes.
+
 ## Still outstanding
 
-- **Bound `cluster_pool` (3.03 GiB) and `build_pool_bin_sim` (3.02 GiB).** Both
-  exceed `MemoryMax=3G` on their own, so both will be OOM-killed every time they
-  run against a collection this size. Admission control cannot help: a job whose
-  cost exceeds the whole budget is admitted deliberately, or it would deadlock
-  the queue.
+- **`adj_sim` is now the largest single structure.** Built later in the same
+  functions as a dict of dicts with two entries per edge: **0.89 GiB for 10.8M
+  entries** on the pool above. Total peak still lands near 1.1 GiB, comfortably
+  inside the cap, so this is an optimisation rather than a fix — and rewriting
+  its consumers is a separate change.
 - `MAX_ATTEMPTS=3` fails a job permanently after three lease expiries. For a
-  resumable job that is making real progress between kills, attempts arguably
-  should reset on progress rather than accumulate.
+  resumable job making real progress between kills, attempts arguably should
+  reset on progress rather than accumulate.
 
 Useful while any of this runs:
 

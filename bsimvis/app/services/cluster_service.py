@@ -1,11 +1,20 @@
 import logging
 import json
+import os
 import time
 import uuid
 from collections import Counter, defaultdict
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.cluster_utils import pick_best_shared_cluster
+from bsimvis.app.services import mem_util, sim_edges
+
+# Above this many nodes a dense size^2 float64 distance matrix stops being
+# survivable (0.8 GiB at 10k, 3.2 GiB at 20k) on a 3 GB per-worker cap.
+CLUSTER_MAX_COMPONENT = int(os.getenv("CLUSTER_MAX_COMPONENT", 10000))
+
+_EMPTY_I = np.empty(0, dtype=np.int32)
+_EMPTY_F = np.empty(0, dtype=np.float32)
 
 try:
     import hdbscan
@@ -79,27 +88,6 @@ class ClusterService:
                 job_id, f"Fetching similarity pairs for {collection} ({algo})..."
             )
 
-        # Use ZSCAN to be safe with large datasets
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
-            if len(pairs) % 10000 == 0:
-                logging.info(f"[*] Fetched {len(pairs)} similarity pairs...")
-
-        msg = f"Fetched {len(pairs)} similarity pairs."
-        logging.info(f"[+] {msg}")
-        if job_service and job_id:
-            job_service.add_log(job_id, msg)
-
-        if not pairs:
-            logging.warning(f"No similarity pairs found for {collection}:{algo}")
-            return True
-
         # 1.5 Feature Filtering
         allowed_fids = None
         if min_features > 0:
@@ -108,106 +96,56 @@ class ClusterService:
             if job_service and job_id:
                 job_service.add_log(job_id, msg)
 
-            unique_fids = set()
-            for sid, _ in pairs:
-                if not sid.startswith(prefix):
-                    continue
-
-                ids_part = sid[len(prefix) :]
-                if "::" not in ids_part:
-                    continue
-
-                c1, c2 = ids_part.split("::")
-                if is_pool:
-                    unique_fids.add(c1)
-                    unique_fids.add(c2)
-                else:
-                    unique_fids.add(f"{collection}:func:{c1}")
-                    unique_fids.add(f"{collection}:func:{c2}")
-
-            allowed_fids = set()
-            fids_list = list(unique_fids)
-            # Bulk fetch bsim_features_count
-            pipe = r.pipeline(transaction=False)
-            for fid in fids_list:
-                pipe.get(f"{fid}:meta")
-
-            raw_res = pipe.execute()
-            for fid, res in zip(fids_list, raw_res):
-                try:
-                    val = 0
-                    if res:
-                        doc = json.loads(res)
-                        val = doc.get("bsim_features_count", 0)
-                    if int(val) >= min_features:
-                        allowed_fids.add(fid)
-                except (ValueError, TypeError, IndexError):
-                    continue
-
+            allowed_fids = sim_edges.collect_allowed_fids(
+                r, sim_score_key, prefix, is_pool, collection, min_features
+            )
             logging.info(f"[+] {len(allowed_fids)} functions passed feature filter.")
 
-        # 2. Build identity mapping and edge list
-        # We need a numeric mapping for HDBSCAN
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
+        # 2. Stream the ZSET straight into typed edge arrays.
+        # This used to build a `pairs` list of every member string first, then a
+        # second list of edge tuples. Measured on a real 5.4M-pair pool that was
+        # 2.15 GiB before clustering even started, against a 3 GB worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            is_pool,
+            collection,
+            min_sim=min_sim,
+            allowed_fids=allowed_fids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
 
-        for sid, score in pairs:
-            # sid format: {coll}:sim:{algo}:{clean_id1}::{clean_id2}
-            if not sid.startswith(prefix):
-                continue
+        msg = f"Fetched {edge_set.n_scanned} similarity pairs."
+        logging.info(f"[+] {msg}")
+        if job_service and job_id:
+            job_service.add_log(job_id, msg)
+        mem_util.phase(f"after streaming {edge_set.n_scanned} pairs", job_service, job_id)
 
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
+        if edge_set.n_scanned == 0:
+            logging.warning(f"No similarity pairs found for {collection}:{algo}")
+            return True
 
-            c1, c2 = ids_part.split("::")
-            if is_pool:
-                fid1 = c1
-                fid2 = c2
-            else:
-                fid1 = f"{collection}:func:{c1}"
-                fid2 = f"{collection}:func:{c2}"
-
-            # Apply Feature Filter
-            if allowed_fids is not None:
-                if fid1 not in allowed_fids or fid2 not in allowed_fids:
-                    continue
-
-            for fid in [fid1, fid2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            # 2.5 Apply similarity threshold if provided
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            # HDBSCAN works with distance. Distance = 1 - score (for normalized cosine)
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[fid1], id_to_idx[fid2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(
-                f"No valid edges found for {collection}:{algo} after parsing {len(pairs)} pairs."
+                f"No valid edges found for {collection}:{algo} after parsing {edge_set.n_scanned} pairs."
             )
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"Error: No valid similarity edges found after parsing {len(pairs)} pairs. Check filters.",
+                    f"Error: No valid similarity edges found after parsing {edge_set.n_scanned} pairs. Check filters.",
                 )
             return True
 
         num_nodes = len(id_to_idx)
-        msg = f"Building graph with {num_nodes} functions and {len(edges)} similarity edges..."
+        msg = f"Building graph with {num_nodes} functions and {edge_set.src.size} similarity edges..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+        mem_util.phase(f"after building {edge_set.src.size} edges", job_service, job_id)
 
         # 3. Connected Components and Local HDBSCAN
-        import scipy.sparse as sp
         from scipy.sparse.csgraph import connected_components
         import pandas as pd
 
@@ -216,17 +154,10 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        rows = []
-        cols = []
-        data = []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
+        mem_util.phase("after adjacency matrix", job_service, job_id)
         n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        del adj_matrix
 
         comp_to_nodes = {}
         for i, comp_id in enumerate(labels):
@@ -234,23 +165,28 @@ class ClusterService:
                 comp_to_nodes[comp_id] = []
             comp_to_nodes[comp_id].append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = labels[i]
-            if c == labels[j]:
-                if c not in comp_to_edges:
-                    comp_to_edges[c] = []
-                comp_to_edges[c].append((i, j, d))
+        # Views into one sorted permutation rather than a dict of tuple lists,
+        # which was a third full copy of every edge.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, labels)
+
+        mem_util.phase("after comp_to_edges", job_service, job_id)
 
         msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
+        biggest = max((len(v) for v in comp_to_nodes.values()), default=0)
+        logging.info(f"[*] Largest connected component: {biggest} nodes")
 
         global_tree_rows = []
         global_root_id = num_nodes
         next_cluster_id = num_nodes + 1
         comp_roots = []
+
+        # One scratch buffer for global-index -> component-local-index, reused
+        # across components. Allocating it per component would reintroduce a
+        # per-component O(num_nodes) allocation.
+        gmap = np.full(num_nodes, -1, dtype=np.int32)
 
         start_fit = time.time()
 
@@ -264,22 +200,24 @@ class ClusterService:
             sub_id_to_global = {
                 i: global_idx for i, global_idx in enumerate(comp_nodes)
             }
-            global_to_sub_id = {
-                global_idx: i for i, global_idx in enumerate(comp_nodes)
-            }
+
+            # Global index -> position within this component, vectorised. The
+            # per-edge Python loop that did this built three more lists per
+            # component on top of the edge copy it was reading from.
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F))
+            ui = gmap[e_src]
+            vi = gmap[e_dst]
 
             if size >= 5000:
                 from scipy.sparse.linalg import svds
+                import scipy.sparse as sp
 
-                rows_sp, cols_sp, data_sp = [], [], []
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sim = 1.0 - d
-                        rows_sp.extend([ui, vi])
-                        cols_sp.extend([vi, ui])
-                        data_sp.extend([sim, sim])
+                sim = 1.0 - e_dist
+                rows_sp = np.concatenate([ui, vi])
+                cols_sp = np.concatenate([vi, ui])
+                data_sp = np.concatenate([sim, sim])
 
                 comp_matrix = sp.csr_matrix(
                     (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
@@ -308,12 +246,9 @@ class ClusterService:
                 sub_dist = np.ones((size, size), dtype=np.float64)
                 np.fill_diagonal(sub_dist, 0)
 
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sub_dist[ui, vi] = d
-                        sub_dist[vi, ui] = d
+                if ui.size:
+                    sub_dist[ui, vi] = e_dist
+                    sub_dist[vi, ui] = e_dist
 
                 clusterer = hdbscan.HDBSCAN(
                     min_cluster_size=min(min_cluster_size, size),
@@ -676,10 +611,20 @@ class ClusterService:
             job_service.add_log(job_id, msg)
 
         adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # Chunked .tolist(): iterating a NumPy array element-wise boxes every
+        # scalar, and converting all three at once would materialise ~450 MB of
+        # temporary Python lists on a 5.4M-edge pool. 1M at a time keeps the
+        # temporary bounded while staying off the slow per-element path.
+        _CH = 1_000_000
+        for _s in range(0, edge_set.src.size, _CH):
+            for u, v, d in zip(
+                edge_set.src[_s : _s + _CH].tolist(),
+                edge_set.dst[_s : _s + _CH].tolist(),
+                edge_set.dist[_s : _s + _CH].tolist(),
+            ):
+                sim = 1.0 - d
+                adj_sim[u][v] = sim
+                adj_sim[v][u] = sim
 
         total_clusters = len(cluster_members)
         msg = f"Enriching metadata for {total_clusters} hierarchical clusters..."
@@ -806,7 +751,7 @@ class ClusterService:
         # Free the graph structures before propagation: adj_sim alone holds two dict
         # entries per edge (~14M on a real collection) and kept the worker swapping
         # through the whole sim-index phase.
-        del adj_sim, comp_to_edges, edges, all_member_meta
+        del adj_sim, comp_to_edges, edge_set, all_member_meta
 
         logging.info(f"Update sim indexes...")
 
@@ -1517,68 +1462,40 @@ class ClusterService:
                 f"[*] Fetching pool binary similarity pairs from {sim_score_key}",
             )
 
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
+        # Each half is "<coll>:<md5>", rebuilt as "<coll>:file:<md5>".
+        def _pool_bin_ids(c1, c2):
+            p1, p2 = c1.split(":"), c2.split(":")
+            if len(p1) < 2 or len(p2) < 2:
+                return None
+            return f"{p1[0]}:file:{p1[1]}", f"{p2[0]}:file:{p2[1]}"
 
-        if not pairs:
+        # Streamed into typed arrays instead of a `pairs` list plus an `edges`
+        # list. See sim_edges: that pattern cost 2.15 GiB on a real 5.4M-pair
+        # set, against a 3 GB per-worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            True,
+            None,
+            min_sim=min_sim,
+            id_fn=_pool_bin_ids,
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        if edge_set.n_scanned == 0:
             logging.warning(f"No binary similarity pairs found for pool {pool_id}")
             return True
 
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
-
-        for sid, score in pairs:
-            if not sid.startswith(prefix):
-                continue
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
-            parts = ids_part.split("::")
-            if len(parts) != 2:
-                continue
-
-            p1 = parts[0].split(":")
-            p2 = parts[1].split(":")
-            if len(p1) < 2 or len(p2) < 2:
-                continue
-            file_id1 = f"{p1[0]}:file:{p1[1]}"
-            file_id2 = f"{p2[0]}:file:{p2[1]}"
-
-            for fid in [file_id1, file_id2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[file_id1], id_to_idx[file_id2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(f"No valid edges for pool {pool_id} after filtering.")
             return True
 
         num_nodes = len(id_to_idx)
 
         # Split into connected components (same as BinClusterService.run_clustering)
-        rows, cols, data = [], [], []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
         n_components, comp_labels = connected_components(
             csgraph=adj_matrix, directed=False
         )
@@ -1587,11 +1504,8 @@ class ClusterService:
         for i, comp_id in enumerate(comp_labels):
             comp_to_nodes.setdefault(comp_id, []).append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = comp_labels[i]
-            if c == comp_labels[j]:
-                comp_to_edges.setdefault(c, []).append((i, j, d))
+        # Views into one sorted permutation, not a dict of tuple lists.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, comp_labels)
 
         if job_service and job_id:
             job_service.add_log(
@@ -1604,6 +1518,9 @@ class ClusterService:
         next_cluster_id = num_nodes + 1
         comp_roots = []
 
+        # Reused scratch: global index -> component-local index.
+        gmap_pb = np.full(num_nodes, -1, dtype=np.int32)
+
         for comp_id, comp_nodes in comp_to_nodes.items():
             size = len(comp_nodes)
             if size < min_cluster_size:
@@ -1612,16 +1529,40 @@ class ClusterService:
                 continue
 
             sub_id_to_global = {i: g for i, g in enumerate(comp_nodes)}
-            global_to_sub_id = {g: i for i, g in enumerate(comp_nodes)}
+
+            # Unlike the function clustering paths, this one has no sparse
+            # fallback for big components -- it always builds a dense size^2
+            # float64 matrix. 0.8 GiB at 10k nodes, 3.2 GiB at 20k: an OOM kill
+            # with no warning. Refuse instead, and say why.
+            if size > CLUSTER_MAX_COMPONENT:
+                msg = (
+                    f"Pool binary component {comp_id} has {size} files; a dense "
+                    f"distance matrix would need {size * size * 8 / 1024**3:.1f} GiB. "
+                    f"Above CLUSTER_MAX_COMPONENT={CLUSTER_MAX_COMPONENT}, so its "
+                    f"files are left unclustered rather than OOM-killing the worker."
+                )
+                logging.warning(f"[!] {msg}")
+                if job_service and job_id:
+                    job_service.add_log(job_id, msg)
+                for node in comp_nodes:
+                    comp_roots.append((node, 1))
+                continue
 
             # float64 up front; see run_clustering above. Building float32 and
             # converting at fit time kept both matrices alive at once.
             sub_dist = np.ones((size, size), dtype=np.float64)
             np.fill_diagonal(sub_dist, 0)
-            for u, v, d in comp_to_edges.get(comp_id, []):
-                ui, vi = global_to_sub_id[u], global_to_sub_id[v]
-                sub_dist[ui, vi] = d
-                sub_dist[vi, ui] = d
+
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap_pb[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
+            if e_src.size:
+                ui = gmap_pb[e_src]
+                vi = gmap_pb[e_dst]
+                sub_dist[ui, vi] = e_dist
+                sub_dist[vi, ui] = e_dist
 
             clusterer = hdbscan.HDBSCAN(
                 min_cluster_size=min(min_cluster_size, size),
@@ -1739,10 +1680,19 @@ class ClusterService:
 
         # Sparse adjacency for cohesion
         adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # Chunked .tolist(): element-wise NumPy iteration boxes every scalar,
+        # and converting all three arrays at once would materialise a large
+        # temporary. 1M at a time bounds it.
+        _CH = 1_000_000
+        for _s in range(0, edge_set.src.size, _CH):
+            for u, v, d in zip(
+                edge_set.src[_s : _s + _CH].tolist(),
+                edge_set.dst[_s : _s + _CH].tolist(),
+                edge_set.dist[_s : _s + _CH].tolist(),
+            ):
+                sim = 1.0 - d
+                adj_sim[u][v] = sim
+                adj_sim[v][u] = sim
 
         # Generate cluster UUIDs first
         label_to_uuid = {c: f"{uuid.uuid4().hex[:12]}" for c in cluster_members.keys()}

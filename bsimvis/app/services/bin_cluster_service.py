@@ -5,6 +5,10 @@ import uuid
 from collections import Counter
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services import sim_edges
+
+_EMPTY_I = np.empty(0, dtype=np.int32)
+_EMPTY_F = np.empty(0, dtype=np.float32)
 
 try:
     import hdbscan
@@ -70,76 +74,47 @@ class BinClusterService:
                 job_id, f"Fetching binary similarity pairs for {collection} ({algo})..."
             )
 
-        # Use ZSCAN to be safe with large datasets
-        pairs = []
-        cursor = 0
-        while True:
-            cursor, results = r.zscan(sim_score_key, cursor=cursor, count=1000)
-            for sid, score in results:
-                pairs.append((sid.decode() if isinstance(sid, bytes) else sid, score))
-            if cursor == 0:
-                break
-            if len(pairs) % 5000 == 0:
-                logging.info(f"[*] Fetched {len(pairs)} binary similarity pairs...")
+        prefix = f"{collection}:bin_sim:{algo}:"
 
-        msg = f"Fetched {len(pairs)} binary similarity pairs."
+        # 2. Stream the ZSET straight into typed edge arrays.
+        # sid format: {coll}:bin_sim:{algo}:{md5_a}::{md5_b}
+        # Same fix as cluster_service.run_clustering: building a `pairs` list of
+        # every member string and then a second list of edge tuples cost 2.15 GiB
+        # on a real 5.4M-pair set, against a 3 GB per-worker cap.
+        edge_set = sim_edges.load_edges(
+            r,
+            sim_score_key,
+            prefix,
+            False,
+            collection,
+            min_sim=min_sim,
+            node_kind="file",
+        )
+        id_to_idx = edge_set.id_to_idx
+        idx_to_id = edge_set.idx_to_id
+
+        msg = f"Fetched {edge_set.n_scanned} binary similarity pairs."
         logging.info(f"[+] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        if not pairs:
+        if edge_set.n_scanned == 0:
             logging.warning(f"No binary similarity pairs found for {collection}:{algo}")
             return True
 
-        prefix = f"{collection}:bin_sim:{algo}:"
-
-        # 2. Build identity mapping and edge list
-        # We need a numeric mapping for HDBSCAN
-        id_to_idx = {}
-        idx_to_id = {}
-        edges = []
-
-        for sid, score in pairs:
-            # sid format: {coll}:bin_sim:{algo}:{md5_a}::{md5_b}
-            if not sid.startswith(prefix):
-                continue
-
-            ids_part = sid[len(prefix) :]
-            if "::" not in ids_part:
-                continue
-
-            m1, m2 = ids_part.split("::")
-            file_id1 = f"{collection}:file:{m1}"
-            file_id2 = f"{collection}:file:{m2}"
-
-            for fid in [file_id1, file_id2]:
-                if fid not in id_to_idx:
-                    idx = len(id_to_idx)
-                    id_to_idx[fid] = idx
-                    idx_to_id[idx] = fid
-
-            # 2.5 Apply similarity threshold if provided
-            score_val = float(score)
-            if min_sim > 0 and score_val < min_sim:
-                continue
-
-            # HDBSCAN works with distance. Distance = 1 - score
-            dist = max(0, 1.0 - score_val)
-            edges.append((id_to_idx[file_id1], id_to_idx[file_id2], dist))
-
-        if not edges:
+        if edge_set.src.size == 0:
             logging.warning(
-                f"No valid edges found for {collection}:{algo} after parsing {len(pairs)} binary pairs."
+                f"No valid edges found for {collection}:{algo} after parsing {edge_set.n_scanned} binary pairs."
             )
             if job_service and job_id:
                 job_service.add_log(
                     job_id,
-                    f"Error: No valid similarity edges found after parsing {len(pairs)} binary pairs. Check filters.",
+                    f"Error: No valid similarity edges found after parsing {edge_set.n_scanned} binary pairs. Check filters.",
                 )
             return True
 
         num_nodes = len(id_to_idx)
-        msg = f"Building binary graph with {num_nodes} files and {len(edges)} similarity edges..."
+        msg = f"Building binary graph with {num_nodes} files and {edge_set.src.size} similarity edges..."
         logging.info(f"[*] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
@@ -153,17 +128,9 @@ class BinClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
-        rows = []
-        cols = []
-        data = []
-        for i, j, d in edges:
-            if d < 1.0:  # Only real similarity edges
-                rows.extend([i, j])
-                cols.extend([j, i])
-                data.extend([1, 1])
-
-        adj_matrix = sp.csr_matrix((data, (rows, cols)), shape=(num_nodes, num_nodes))
+        adj_matrix = sim_edges.build_adjacency(edge_set, num_nodes)
         n_components, labels = connected_components(csgraph=adj_matrix, directed=False)
+        del adj_matrix
 
         comp_to_nodes = {}
         for i, comp_id in enumerate(labels):
@@ -171,13 +138,8 @@ class BinClusterService:
                 comp_to_nodes[comp_id] = []
             comp_to_nodes[comp_id].append(i)
 
-        comp_to_edges = {}
-        for i, j, d in edges:
-            c = labels[i]
-            if c == labels[j]:
-                if c not in comp_to_edges:
-                    comp_to_edges[c] = []
-                comp_to_edges[c].append((i, j, d))
+        # Views into one sorted permutation, not a dict of tuple lists.
+        comp_to_edges = sim_edges.group_edges_by_component(edge_set, labels)
 
         msg = f"Found {n_components} connected components. Running local HDBSCAN..."
         logging.info(f"[*] {msg}")
@@ -188,6 +150,10 @@ class BinClusterService:
         global_root_id = num_nodes
         next_cluster_id = num_nodes + 1
         comp_roots = []
+
+        # One scratch buffer for global-index -> component-local-index, reused
+        # across components.
+        gmap = np.full(num_nodes, -1, dtype=np.int32)
 
         start_fit = time.time()
 
@@ -201,22 +167,23 @@ class BinClusterService:
             sub_id_to_global = {
                 i: global_idx for i, global_idx in enumerate(comp_nodes)
             }
-            global_to_sub_id = {
-                global_idx: i for i, global_idx in enumerate(comp_nodes)
-            }
+
+            # Global index -> component-local index, vectorised.
+            comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
+            gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
+            ui = gmap[e_src]
+            vi = gmap[e_dst]
 
             if size >= 5000:
                 from scipy.sparse.linalg import svds
 
-                rows_sp, cols_sp, data_sp = [], [], []
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sim = 1.0 - d
-                        rows_sp.extend([ui, vi])
-                        cols_sp.extend([vi, ui])
-                        data_sp.extend([sim, sim])
+                sim = 1.0 - e_dist
+                rows_sp = np.concatenate([ui, vi])
+                cols_sp = np.concatenate([vi, ui])
+                data_sp = np.concatenate([sim, sim])
 
                 comp_matrix = sp.csr_matrix(
                     (data_sp, (rows_sp, cols_sp)), shape=(size, size), dtype=np.float32
@@ -238,15 +205,15 @@ class BinClusterService:
                 )
                 clusterer.fit(embeddings)
             else:
-                sub_dist = np.ones((size, size), dtype=np.float32)
+                # float64 up front: HDBSCAN's precomputed path needs float64, so
+                # building float32 and converting at fit time held both matrices
+                # alive at once. Same fix as cluster_service.
+                sub_dist = np.ones((size, size), dtype=np.float64)
                 np.fill_diagonal(sub_dist, 0)
 
-                if comp_id in comp_to_edges:
-                    for u, v, d in comp_to_edges[comp_id]:
-                        ui = global_to_sub_id[u]
-                        vi = global_to_sub_id[v]
-                        sub_dist[ui, vi] = d
-                        sub_dist[vi, ui] = d
+                if ui.size:
+                    sub_dist[ui, vi] = e_dist
+                    sub_dist[vi, ui] = e_dist
 
                 clusterer = hdbscan.HDBSCAN(
                     min_cluster_size=min(min_cluster_size, size),
@@ -256,7 +223,7 @@ class BinClusterService:
                     metric="precomputed",
                     gen_min_span_tree=True,
                 )
-                clusterer.fit(sub_dist.astype(np.float64))
+                clusterer.fit(sub_dist)
 
             local_tree_df = clusterer.condensed_tree_.to_pandas()
             if local_tree_df.empty:
@@ -559,10 +526,19 @@ class BinClusterService:
             job_service.add_log(job_id, msg)
 
         adj_sim = {i: {} for i in range(num_nodes)}
-        for u, v, d in edges:
-            sim = 1.0 - d
-            adj_sim[u][v] = sim
-            adj_sim[v][u] = sim
+        # Chunked .tolist(): element-wise NumPy iteration boxes every scalar,
+        # and converting all three arrays at once would materialise a large
+        # temporary. 1M at a time bounds it.
+        _CH = 1_000_000
+        for _s in range(0, edge_set.src.size, _CH):
+            for u, v, d in zip(
+                edge_set.src[_s : _s + _CH].tolist(),
+                edge_set.dst[_s : _s + _CH].tolist(),
+                edge_set.dist[_s : _s + _CH].tolist(),
+            ):
+                sim = 1.0 - d
+                adj_sim[u][v] = sim
+                adj_sim[v][u] = sim
 
         total_clusters = len(cluster_members)
         if job_service and job_id:

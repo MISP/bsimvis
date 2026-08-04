@@ -14,10 +14,20 @@ def create_app():
     # Disable default Flask static file caching
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
-    # Allow large JSON uploads (e.g., 1GB)
-    app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024 * 1024
-    # Increase form memory size for multi-part forms if needed
-    app.config["MAX_FORM_MEMORY_SIZE"] = 100 * 1024 * 1024 * 1024
+    # Upload caps. Both of these carried one `* 1024` more than their own
+    # comments claimed -- "1GB" was a terabyte and "100 MB" was 100 GB, so in
+    # practice a single upload was unbounded and the request body was read into
+    # memory before any handler could refuse it. Flask enforces these itself and
+    # answers 413, which is why this is the whole fix.
+    #
+    # Anything genuinely larger belongs on the chunked endpoint
+    # (/upload_chunk), which is what it exists for.
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.getenv("MAX_UPLOAD_BYTES", 1024 * 1024 * 1024)
+    )
+    app.config["MAX_FORM_MEMORY_SIZE"] = int(
+        os.getenv("MAX_FORM_MEMORY_BYTES", 100 * 1024 * 1024)
+    )
     app.config["RESTX_MASK_SWAGGER"] = False
 
     logging.basicConfig(

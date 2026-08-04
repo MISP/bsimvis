@@ -1,4 +1,5 @@
 import math
+import os
 from collections import defaultdict
 import logging
 import json
@@ -424,8 +425,16 @@ class FeatureService:
             f"[*] Starting global indexing for {len(feature_hashes)} features in {collection}"
         )
 
-        # Process in chunks to avoid blocking Kvrocks / Redis
-        chunk_size = 500
+        # Process in chunks to avoid blocking Kvrocks / Redis.
+        #
+        # This is the allocation that OOM-killed the fleet, found by measuring
+        # against stdlib-ref (419,617 pending features). Each chunk pipelines
+        # one HRANDFIELD-100-withvalues per feature and holds every response in
+        # memory at once, so peak scales with chunk_size -- NOT with the size of
+        # the pending set. At 500 the worker peaked over 3 GiB and was killed
+        # three times before the first batch ever committed. Streaming the
+        # pending set bounded the input list; this bounds the actual work.
+        chunk_size = int(os.getenv("ENRICH_CHUNK_SIZE", 100))
         denom = progress_total or len(feature_hashes)
         for i in range(0, len(feature_hashes), chunk_size):
             if job_service and job_id:
@@ -600,11 +609,14 @@ class FeatureService:
                 for func_id, ctx_entry in zip(pending_funcs, ctx_res):
                     if ctx_entry:
                         entry_decoded = json.loads(ctx_entry)
-                        source_lookup[func_id] = (
-                            entry_decoded[0]
-                            if isinstance(entry_decoded, list)
-                            else entry_decoded
-                        )
+                        # An empty list is stored for functions with no source.
+                        # `isinstance([], list)` is true, so the old form did
+                        # [][0] and raised -- one such record aborted the entire
+                        # enrichment run, which at 419k features meant the job
+                        # could never finish no matter how often it was retried.
+                        if isinstance(entry_decoded, list):
+                            entry_decoded = entry_decoded[0] if entry_decoded else {}
+                        source_lookup[func_id] = entry_decoded
                     else:
                         source_lookup[func_id] = {}
 
@@ -616,11 +628,10 @@ class FeatureService:
                 for func_id, ctx_entry in zip(func_vec, ctx_res2):
                     if ctx_entry:
                         entry_decoded = json.loads(ctx_entry)
-                        vec_meta_lookup[func_id] = (
-                            entry_decoded[0]
-                            if isinstance(entry_decoded, list)
-                            else entry_decoded
-                        )
+                        # Same empty-list guard as :source above.
+                        if isinstance(entry_decoded, list):
+                            entry_decoded = entry_decoded[0] if entry_decoded else []
+                        vec_meta_lookup[func_id] = entry_decoded
                     else:
                         vec_meta_lookup[func_id] = []
 
@@ -693,7 +704,7 @@ class FeatureService:
             job_service.update_progress(job_id, 100, "Completed feature enrichment.")
 
     def enrich_features(
-        self, collection, job_service=None, job_id=None, batch_size=5000
+        self, collection, job_service=None, job_id=None, batch_size=None
     ):
         """
         Enriches all features that were added to the pending enrichment set.
@@ -709,6 +720,11 @@ class FeatureService:
         one batch, and a rerun picks up exactly where the last one stopped.
         Removing only what we have already processed is safe under SSCAN.
         """
+        # Kept modest deliberately. The batch is only a checkpoint interval --
+        # peak memory is governed by ENRICH_CHUNK_SIZE inside
+        # index_global_features -- but a smaller batch also means a kill costs
+        # less work. 5000 checkpointed too rarely to be useful at 419k features.
+        batch_size = batch_size or int(os.getenv("ENRICH_BATCH_SIZE", 1000))
         pending_key = f"{collection}:features:pending_enrichment"
         total = self.r.scard(pending_key)
         if not total:

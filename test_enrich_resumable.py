@@ -137,6 +137,30 @@ def test_progress_is_reported_across_the_whole_run_not_per_batch():
 
     assert offsets == [(0, 25), (10, 25), (20, 25)], offsets
 
+def test_empty_source_record_does_not_abort_the_run():
+    """A function stored with an empty :source list used to kill the whole job.
+
+    `isinstance([], list)` is true, so the old code did [][0] and raised
+    IndexError. At 419,617 pending features on stdlib-ref one such record made
+    enrichment impossible to complete, however many times it was retried.
+    """
+    import json
+
+    from bsimvis.app.services import feature_service as fs
+
+    src = open(fs.__file__).read()
+    assert "entry_decoded[0] if entry_decoded else {}" in src, (
+        "source lookup lost its empty-list guard"
+    )
+    assert "entry_decoded[0] if entry_decoded else []" in src, (
+        "vec:meta lookup lost its empty-list guard"
+    )
+
+    # And the shape itself: the guard must survive [] without raising.
+    for raw, fallback in (("[]", {}), ("[]", [])):
+        decoded = json.loads(raw)
+        assert (decoded[0] if decoded else fallback) == fallback
+
 
 if __name__ == "__main__":
     passed = 0

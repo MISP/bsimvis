@@ -343,7 +343,7 @@
 
             // LLM batch: the selected rows, or this function alone when nothing
             // is selected, so the default action needs no dialog.
-            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds().length ? window.getSelectedTableIds() : [${escapeAttr(jsString(norm.id))}])`;
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${escapeAttr(jsString(norm.id))}])`;
             actionsSubmenuHtml += renderLLMSubmenu([
                 { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${llmIds} }` },
                 { label: 'Tags', icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${llmIds} }` },
@@ -417,6 +417,23 @@
                 <i class="fa-solid fa-folder-open" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Files</span>
             </div>`;
+        }
+
+        // A cell selection can hold functions the clicked row is not itself one of
+        // (both function columns of a bin diff row, which is a bin_cluster). Offer
+        // the batch on those too.
+        if (resolvedType !== 'function' && window.getSelectedTableIds) {
+            const selFuncs = window.getSelectedTableIds('function');
+            if (selFuncs.length) {
+                const ids = JSON.stringify(selFuncs);
+                const n = selFuncs.length;
+                actionsSubmenuHtml += renderLLMSubmenu([
+                    { label: `Summary (${n} selected)`, icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${ids} }` },
+                    { label: `Tags (${n} selected)`, icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${ids} }` },
+                    { label: `Summary + tags (${n} selected)`, icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ funcIds: ${ids} }` },
+                    { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ funcIds: ${ids}, askPrompt: true }` }
+                ]);
+            }
         }
 
         if (actionsSubmenuHtml) {

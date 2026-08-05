@@ -1030,12 +1030,12 @@ async function confirmAddTag(etype, eid, tag, container) {
     const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : window.getCollectionFromId(eid));
 
     let targets = [{ etype, eid, container }];
-    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
+    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds(etype) : [];
 
     if (selectedIds.includes(eid)) {
         targets = selectedIds.map(id => {
-            const row = document.querySelector(`tr[data-id="${id}"]`);
-            const targetContainer = row ? row.querySelector(`[data-etype="${etype}"][data-eid="${id}"]`) : null;
+            // Rows without a data-id (bin diff) still have their editor in the DOM.
+            const targetContainer = document.querySelector(`[data-etype="${etype}"][data-eid="${CSS.escape(id)}"]`);
             return { etype, eid: id, container: targetContainer };
         });
     }
@@ -1156,12 +1156,12 @@ async function removeTag(event, etype, eid, tag) {
     const col = colStr || (typeof getCurrentCollection === 'function' ? getCurrentCollection() : window.getCollectionFromId(eid));
 
     let targets = [{ etype, eid }];
-    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds() : [];
+    const selectedIds = (typeof getSelectedTableIds === 'function') ? getSelectedTableIds(etype) : [];
 
     if (selectedIds.includes(eid)) {
         targets = selectedIds.map(id => {
-            const row = document.querySelector(`tr[data-id="${id}"]`);
-            const targetContainer = row ? row.querySelector(`[data-etype="${etype}"][data-eid="${id}"]`) : null;
+            // Rows without a data-id (bin diff) still have their editor in the DOM.
+            const targetContainer = document.querySelector(`[data-etype="${etype}"][data-eid="${CSS.escape(id)}"]`);
             return { etype, eid: id, container: targetContainer };
         });
     }

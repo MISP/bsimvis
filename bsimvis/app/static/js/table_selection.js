@@ -13,6 +13,7 @@ class TableSelection {
         this.tbody = this.table.querySelector('tbody');
         this.selectedCells = new Set(); // Stores "row:col"
         this.selectedIds = new Set(); // Stores data-id from tr
+        this.selectedEntities = new Set(); // Stores "<etype>\0<eid>" found inside selected cells
         this.focusCell = null; // Current focused cell
         this.anchorCell = null; // Start of range selection
         this.isDragging = false;
@@ -336,6 +337,7 @@ class TableSelection {
     setSelection(r1, c1, r2, c2) {
         this.selectedCells.clear();
         this.selectedIds.clear();
+        this.selectedEntities.clear();
         const startR = Math.min(r1, r2);
         const endR = Math.max(r1, r2);
         const startC = Math.min(c1, c2);
@@ -348,6 +350,14 @@ class TableSelection {
             }
             for (let c = startC; c <= endC; c++) {
                 this.selectedCells.add(`${r}:${c}`);
+                // Rows that carry no data-id (bin-diff matched rows) — or that hold
+                // several entities side by side (function A / function B / the pair)
+                // — are resolved from the tag editors inside the selected cells.
+                const cell = row && row.children[c];
+                if (!cell) continue;
+                cell.querySelectorAll('[data-etype][data-eid]').forEach(el => {
+                    this.selectedEntities.add(`${el.dataset.etype} ${el.dataset.eid}`);
+                });
             }
         }
     }
@@ -367,6 +377,14 @@ class TableSelection {
         return Array.from(this.selectedIds);
     }
 
+    /** [{ etype, eid }] for every tag editor inside the selected cells. */
+    getSelectedEntities() {
+        return Array.from(this.selectedEntities).map(k => {
+            const i = k.indexOf('\0');
+            return { etype: k.slice(0, i), eid: k.slice(i + 1) };
+        });
+    }
+
     extendSelection(r, c) {
         this.focusCell = { r, c };
         this.setSelection(this.anchorCell.r, this.anchorCell.c, r, c);
@@ -375,6 +393,7 @@ class TableSelection {
     clearSelection() {
         this.selectedCells.clear();
         this.selectedIds.clear();
+        this.selectedEntities.clear();
         this.focusCell = null;
         this.anchorCell = null;
         this.updateVisuals();
@@ -769,11 +788,24 @@ class TableSelection {
 // `class` declarations live in script scope, not on window — export explicitly
 window.TableSelection = TableSelection;
 
-window.getSelectedTableIds = () => {
+/**
+ * Ids of the current table selection. With `etype` given, only entities of that
+ * kind come back — so selecting both function columns of a bin diff yields the
+ * two functions, and selecting the similarity column yields the pairs.
+ */
+window.getSelectedTableIds = (etype = null) => {
     const allIds = new Set();
     if (window.tableSelections) {
         window.tableSelections.forEach(ts => {
-            ts.getSelectedIds().forEach(id => allIds.add(id));
+            ts.getSelectedEntities().forEach(({ etype: t, eid }) => {
+                if (!etype || t === etype) allIds.add(eid);
+            });
+            ts.getSelectedIds().forEach(id => {
+                // Row ids carry no type of their own; keep one only when the page
+                // actually renders it as an entity of the requested kind.
+                if (etype && !document.querySelector(`[data-etype="${etype}"][data-eid="${CSS.escape(id)}"]`)) return;
+                allIds.add(id);
+            });
         });
     }
     return Array.from(allIds);

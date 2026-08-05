@@ -79,6 +79,11 @@ function renderUploadView(params) {
                             <input type="text" id="upload-tags" placeholder="Malware, Linux, MIPS..." style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
                         <div class="form-group" style="margin-bottom: 20px;">
+                            <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Archive Password</label>
+                            <input type="text" id="upload-archive-password" value="infected" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
+                            <div style="font-size: 0.7rem; color: var(--subtle); margin-top: 4px;">Zip/tar uploads are unpacked and every member analyzed.</div>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 20px;">
                             <label style="display: block; font-size: 0.75rem; color: var(--subtle); margin-bottom: 6px;">Related MD5s</label>
                             <input type="text" id="upload-related-md5" placeholder="Comma-separated MD5s" style="width: 100%; background: var(--window-tray); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 0.85rem;">
                         </div>
@@ -398,6 +403,7 @@ async function startBatchUpload() {
     }
     const tags = document.getElementById('upload-tags').value.split(',').map(t => t.trim()).filter(t => t);
     const relatedMd5s = document.getElementById('upload-related-md5').value.split(',').map(m => m.trim()).filter(m => m);
+    const archivePassword = document.getElementById('upload-archive-password').value;
     
     let currentBatchUuid = null;
 
@@ -444,6 +450,7 @@ async function startBatchUpload() {
             url.searchParams.set('min_func_len', minFuncLen);
             if (processor) url.searchParams.set('processor', processor);
             if (processor && cspec) url.searchParams.set('cspec', cspec);
+            if (archivePassword) url.searchParams.set('archive_password', archivePassword);
             tags.forEach(t => url.searchParams.append('tags', t));
             relatedMd5s.forEach(m => url.searchParams.append('related_md5', m));
 
@@ -457,7 +464,7 @@ async function startBatchUpload() {
                 if (!currentBatchUuid && data.batch_uuid) {
                     currentBatchUuid = data.batch_uuid;
                 }
-                statusEl.innerText = 'QUEUED';
+                statusEl.innerText = data.file_count > 1 ? `QUEUED (${data.file_count} in archive)` : 'QUEUED';
                 statusEl.style.color = 'var(--success)';
                 progressEl.style.width = '100%';
                 results.push(data);
@@ -482,7 +489,8 @@ async function startBatchUpload() {
     if (results.length > 0) {
         try {
             document.getElementById('global-progress-text').innerText = 'Finalizing Batch...';
-            const pipelineIds = results.map(r => r.pipeline_id);
+            // An archive upload answers with one pipeline per extracted member.
+            const pipelineIds = results.flatMap(r => r.pipeline_ids || [r.pipeline_id]);
             const finalizeRes = await fetch('/api/file/upload/batch_finalize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -495,7 +503,7 @@ async function startBatchUpload() {
             });
 
             if (finalizeRes.ok) {
-                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${results.length} binaries`, 'success');
+                if (typeof showToast === 'function') showToast(`Successfully queued master pipeline for ${pipelineIds.length} binaries`, 'success');
             } else {
                 console.error("Failed to finalize batch", await finalizeRes.text());
                 if (typeof showToast === 'function') showToast('Binaries uploaded, but master pipeline orchestration failed.', 'warning');

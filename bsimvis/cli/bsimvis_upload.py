@@ -281,6 +281,8 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 params["algo"] = args.algo
             if getattr(args, "skip_sim", False):
                 params["skip_sim"] = True
+            if getattr(args, "archive_password", None) is not None:
+                params["archive_password"] = args.archive_password
 
             api_url = f"http://{api_host}/api/file/upload"
             try:
@@ -290,11 +292,15 @@ def _perform_raw_upload(raw_bytes, file_name, args):
                 )
                 resp.raise_for_status()
                 result = resp.json()
-                pipeline_id = result.get("pipeline_id")
-                logging.info(
-                    f"[+] Upload Success on {api_host}! Pipeline ID: {pipeline_id}"
+                # An archive is unpacked server-side into one pipeline per
+                # member, so the batch has to track all of them.
+                pipeline_ids = result.get("pipeline_ids") or (
+                    [result["pipeline_id"]] if result.get("pipeline_id") else []
                 )
-                if pipeline_id:
+                logging.info(
+                    f"[+] Upload Success on {api_host}! Pipeline ID: {', '.join(pipeline_ids)}"
+                )
+                for pipeline_id in pipeline_ids:
                     pipeline_details.append(
                         {
                             "host": api_host,
@@ -778,6 +784,15 @@ def cli_main():
         "--metadata",
         metavar="FILE",
         help="Path to a metadata CSV file to enrich uploaded binaries",
+    )
+
+    parser.add_argument(
+        "--archive-password",
+        dest="archive_password",
+        metavar="PASSWORD",
+        default=None,
+        help="Password for uploaded zip archives (server default: infected). "
+        "Archives are unpacked server-side and every member analyzed.",
     )
 
     decomp_args = parser.add_argument_group("Decompilation options")

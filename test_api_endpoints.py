@@ -511,6 +511,135 @@ def test_ghidra_languages():
 
 
 # ---------------------------------------------------------------------------
+# Archive uploads: a zip/tar is unpacked and every member analyzed
+# ---------------------------------------------------------------------------
+def test_archive_upload():
+    """Uploads a zip of two binaries and checks both members get a pipeline."""
+    import io
+    import zipfile
+
+    coll = f"{COLLECTION}_archive"
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("dir/", "")
+        zf.writestr("one.bin", b"\x7fELF archive member one")
+        zf.writestr("two.bin", b"\x7fELF archive member two")
+
+    # enqueue=false so the pipelines are only registered, never handed to a
+    # worker: these members are not real binaries.
+    body = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": coll,
+            "file_name": "samples.zip",
+            "skip_sim": "true",
+            "enqueue": "false",
+        },
+        raw_body=buf.getvalue(),
+        label="POST /api/file/upload (zip with 2 members)",
+    )
+
+    check(
+        "archive upload queues one pipeline per member",
+        isinstance(body, dict) and body.get("file_count") == 2,
+        str(body)[:200],
+    )
+    check(
+        "archive upload returns every pipeline id",
+        isinstance(body, dict) and len(body.get("pipeline_ids") or []) == 2,
+        str(body)[:200],
+    )
+    check(
+        "archive members keep their own names",
+        isinstance(body, dict)
+        and sorted(f.get("file_name") for f in body.get("files") or [])
+        == ["one.bin", "two.bin"],
+        str(body)[:200],
+    )
+
+    # A .gpr.zip is a Ghidra project, so it must stay a single file.
+    gpr = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": coll,
+            "file_name": "project.gpr.zip",
+            "skip_sim": "true",
+            "enqueue": "false",
+        },
+        raw_body=buf.getvalue(),
+        label="POST /api/file/upload (.gpr.zip stays one file)",
+    )
+    check(
+        ".gpr.zip is not unpacked",
+        isinstance(gpr, dict) and "file_count" not in gpr and gpr.get("file_md5"),
+        str(gpr)[:200],
+    )
+
+    # A wrong password must fail the upload rather than queue garbage. Needs the
+    # `zip` CLI, since stdlib zipfile cannot write encrypted archives.
+    import shutil
+    import subprocess
+    import tempfile
+
+    if shutil.which("zip"):
+        with tempfile.TemporaryDirectory() as td:
+            member = os.path.join(td, "enc.bin")
+            with open(member, "wb") as fh:
+                fh.write(b"\x7fELF encrypted member")
+            zip_path = os.path.join(td, "enc.zip")
+            subprocess.run(
+                ["zip", "-P", "infected", "-j", "-q", zip_path, member], check=True
+            )
+            enc_bytes = open(zip_path, "rb").read()
+
+        bad = test_endpoint(
+            "POST",
+            "/api/file/upload",
+            params={
+                "collection": coll,
+                "file_name": "enc.zip",
+                "archive_password": "wrong",
+                "skip_sim": "true",
+                "enqueue": "false",
+            },
+            raw_body=enc_bytes,
+            expected_ok=False,
+            label="POST /api/file/upload (wrong archive password, expect 400)",
+        )
+        check(
+            "wrong archive password rejected",
+            isinstance(bad, dict) and "error" in bad,
+            str(bad)[:200],
+        )
+
+        ok = test_endpoint(
+            "POST",
+            "/api/file/upload",
+            params={
+                "collection": coll,
+                "file_name": "enc.zip",
+                "skip_sim": "true",
+                "enqueue": "false",
+            },
+            raw_body=enc_bytes,
+            label="POST /api/file/upload (encrypted zip, default password)",
+        )
+        check(
+            "encrypted zip unpacks with the default 'infected' password",
+            isinstance(ok, dict) and ok.get("file_count") == 1,
+            str(ok)[:200],
+        )
+    else:
+        print(_color("[SKIP] `zip` CLI missing – password checks skipped.", YELLOW))
+
+    requests.post(
+        f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
+    )
+
+
+# ---------------------------------------------------------------------------
 # Step 4 – Full endpoint sweep
 # ---------------------------------------------------------------------------
 def run_all_tests():
@@ -2591,5 +2720,6 @@ if __name__ == "__main__":
     test_search_filters_and_sorting()
     test_tag_vocabulary_and_llm_batch()
     test_pool_collection_equivalence()
+    test_archive_upload()
     run_all_tests()
     print_summary()

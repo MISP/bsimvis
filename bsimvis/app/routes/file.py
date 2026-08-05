@@ -1,6 +1,7 @@
 from flask import request
 import json
 import hashlib
+from bsimvis.app.services import archive_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
@@ -364,10 +365,110 @@ def upload_chunk():
         return {"error": str(e), "detail": traceback.format_exc()}, 500
 
 
+def _ingest_raw_binary(raw_bytes, file_name, collection, batch_uuid, batch_name):
+    """Stores one binary and queues its analysis pipeline.
+
+    Returns the per-file result dict, or ({"error": ...}, status) on failure.
+    Shared by plain uploads and by every member of an uploaded archive.
+    """
+    # Compute MD5
+    file_md5 = hashlib.md5(raw_bytes).hexdigest()
+
+    # Check if file is already in the collection
+    r_data = get_redis()
+    if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+        return {
+            "error": f"File with MD5 {file_md5} already exists in collection '{collection}'"
+        }, 400
+
+    # Store raw binary in Kvrocks
+    raw_file_id = f"{collection}:file:{file_md5}:raw"
+    r_data.set(raw_file_id, raw_bytes)
+
+    # Build analysis payload
+    analysis_payload = {
+        "collection": collection,
+        "raw_file_id": raw_file_id,
+        "file_md5": file_md5,
+        "file_name": file_name,
+        "batch_uuid": batch_uuid,
+        "batch_name": batch_name,
+        "tags": request.args.getlist("tags"),
+        "related_md5": request.args.getlist("related_md5"),
+        "profile": request.args.get("profile", "fast"),
+        "min_func_len": int(request.args.get("min_func_len", 10)),
+    }
+
+    # Mirror compiler/processor options if provided
+    for opt in ["processor", "cspec", "algo"]:
+        if opt in request.args:
+            analysis_payload[opt] = request.args.get(opt)
+
+    if "top_k" in request.args:
+        analysis_payload["top_k"] = int(request.args.get("top_k"))
+    if "min_score" in request.args:
+        analysis_payload["min_score"] = float(request.args.get("min_score"))
+    if "min_features" in request.args:
+        analysis_payload["min_features"] = int(request.args.get("min_features"))
+    if "skip_sim" in request.args:
+        val = request.args.get("skip_sim")
+        analysis_payload["skip_sim"] = (
+            val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
+        )
+
+    if "file_metadata_extra" in request.args:
+        analysis_payload["file_metadata_extra"] = json.loads(
+            request.args.get("file_metadata_extra")
+        )
+
+    # Trigger Pipeline: Analysis -> Indexing -> Similarity
+    pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
+
+    # Pre-register similarity jobs so the pipeline doesn't finish early
+    is_gpr_zip = file_name.endswith(".gpr.zip")
+    if not analysis_payload.get("skip_sim") and not is_gpr_zip:
+        algo = analysis_payload.get("algo")
+        build_sim_payload = {
+            "collection": collection,
+            "file_id": None,
+            "md5": file_md5,
+            "algo": algo,
+            "top_k": analysis_payload.get("top_k"),
+            "min_score": analysis_payload.get("min_score"),
+            "min_features": analysis_payload.get("min_features"),
+        }
+        if algo == "milvus_sparse" and milvus_service.enabled:
+            pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
+        pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
+        pipeline_tasks.append(
+            (
+                JobType.INDEX_SIM,
+                {"collection": collection, "md5": file_md5, "algo": algo},
+            )
+        )
+
+    # Default enqueue to true unless explicitly disabled
+    enqueue_arg = request.args.get("enqueue")
+    if enqueue_arg is not None:
+        enqueue = enqueue_arg.lower() == "true"
+    else:
+        enqueue = True
+    pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
+
+    return {
+        "status": "processing" if enqueue else "queued",
+        "file_md5": file_md5,
+        "file_name": file_name,
+        "pipeline_id": pipeline_id,
+        "batch_uuid": batch_uuid,
+        "message": "Binary uploaded. Analysis pipeline started.",
+    }
+
+
 def upload_raw_binary():
     """
-    Receives a raw binary file.
-    Stores it in Kvrocks and triggers the Ghidra analysis job.
+    Receives a raw binary file, or an archive (zip/tar) of binaries.
+    Stores each one in Kvrocks and triggers its Ghidra analysis job.
     """
     try:
         logging.info(f"[*] Raw upload request received. Args: {request.args}")
@@ -397,96 +498,51 @@ def upload_raw_binary():
             batch_uuid = uuid.uuid4().hex
         batch_name = request.args.get("batch_name", "Ghidra Batch")
 
-        # Compute MD5
-        file_md5 = hashlib.md5(raw_bytes).hexdigest()
+        if not archive_service.is_archive(raw_bytes, file_name):
+            result = _ingest_raw_binary(
+                raw_bytes, file_name, collection, batch_uuid, batch_name
+            )
+            return result
 
-        # Check if file is already in the collection
-        r_data = get_redis()
-        if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+        # Archive: every member becomes its own file in the same batch.
+        password = request.args.get(
+            "archive_password", archive_service.DEFAULT_PASSWORD
+        )
+        try:
+            members = archive_service.extract(raw_bytes, password)
+        except archive_service.ArchiveError as e:
+            return {"error": f"Could not extract archive: {e}"}, 400
+
+        if not members:
+            return {"error": "Archive contains no files"}, 400
+
+        results, errors = [], []
+        for member_name, member_bytes in members:
+            outcome = _ingest_raw_binary(
+                member_bytes, member_name, collection, batch_uuid, batch_name
+            )
+            if isinstance(outcome, tuple):
+                errors.append({"file_name": member_name, **outcome[0]})
+            else:
+                results.append(outcome)
+
+        if not results:
             return {
-                "error": f"File with MD5 {file_md5} already exists in collection '{collection}'"
+                "error": "No file in the archive could be queued",
+                "errors": errors,
             }, 400
 
-        # Store raw binary in Kvrocks
-        raw_file_id = f"{collection}:file:{file_md5}:raw"
-        r_data.set(raw_file_id, raw_bytes)
-
-        # Build analysis payload
-        analysis_payload = {
-            "collection": collection,
-            "raw_file_id": raw_file_id,
-            "file_md5": file_md5,
-            "file_name": file_name,
-            "batch_uuid": batch_uuid,
-            "batch_name": batch_name,
-            "tags": request.args.getlist("tags"),
-            "related_md5": request.args.getlist("related_md5"),
-            "profile": request.args.get("profile", "fast"),
-            "min_func_len": int(request.args.get("min_func_len", 10)),
-        }
-
-        # Mirror compiler/processor options if provided
-        for opt in ["processor", "cspec", "algo"]:
-            if opt in request.args:
-                analysis_payload[opt] = request.args.get(opt)
-
-        if "top_k" in request.args:
-            analysis_payload["top_k"] = int(request.args.get("top_k"))
-        if "min_score" in request.args:
-            analysis_payload["min_score"] = float(request.args.get("min_score"))
-        if "min_features" in request.args:
-            analysis_payload["min_features"] = int(request.args.get("min_features"))
-        if "skip_sim" in request.args:
-            val = request.args.get("skip_sim")
-            analysis_payload["skip_sim"] = (
-                val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
-            )
-
-        if "file_metadata_extra" in request.args:
-            analysis_payload["file_metadata_extra"] = json.loads(
-                request.args.get("file_metadata_extra")
-            )
-
-        # Trigger Pipeline: Analysis -> Indexing -> Similarity
-        pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
-
-        # Pre-register similarity jobs so the pipeline doesn't finish early
-        is_gpr_zip = file_name.endswith(".gpr.zip")
-        if not analysis_payload.get("skip_sim") and not is_gpr_zip:
-            algo = analysis_payload.get("algo")
-            build_sim_payload = {
-                "collection": collection,
-                "file_id": None,
-                "md5": file_md5,
-                "algo": algo,
-                "top_k": analysis_payload.get("top_k"),
-                "min_score": analysis_payload.get("min_score"),
-                "min_features": analysis_payload.get("min_features"),
-            }
-            if algo == "milvus_sparse" and milvus_service.enabled:
-                pipeline_tasks.append((JobType.SYNC_MILVUS, {"collection": collection}))
-            pipeline_tasks.append((JobType.BUILD_SIM, build_sim_payload))
-            pipeline_tasks.append(
-                (
-                    JobType.INDEX_SIM,
-                    {"collection": collection, "md5": file_md5, "algo": algo},
-                )
-            )
-
-        # Default enqueue to true unless explicitly disabled
-        enqueue_arg = request.args.get("enqueue")
-        if enqueue_arg is not None:
-            enqueue = enqueue_arg.lower() == "true"
-        else:
-            enqueue = True
-        pipeline_id = job_service.create_pipeline(pipeline_tasks, enqueue=enqueue)
-
         return {
-            "status": "processing" if enqueue else "queued",
-            "file_md5": file_md5,
-            "pipeline_id": pipeline_id,
+            "status": results[0]["status"],
+            "archive": file_name,
             "batch_uuid": batch_uuid,
-            "message": "Binary uploaded. Analysis pipeline started.",
+            "file_count": len(results),
+            "files": results,
+            "errors": errors,
+            "pipeline_id": results[0]["pipeline_id"],
+            "pipeline_ids": [r["pipeline_id"] for r in results],
+            "message": f"Archive unpacked: {len(results)} binaries queued"
+            + (f", {len(errors)} skipped" if errors else ""),
         }
 
     except Exception as e:

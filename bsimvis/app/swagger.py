@@ -767,10 +767,11 @@ class RawFileUpload(Resource):
             "min_features": "Minimum feature count required",
             "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
             "skip_sim": "Set to true to skip building similarities",
+            "archive_password": "Password for an uploaded zip archive (default: infected)",
         }
     )
     def post(self):
-        """Uploads a raw binary file for server-side analysis."""
+        """Uploads a raw binary, or a zip/tar archive whose members are each analyzed."""
         from bsimvis.app.routes.file import upload_raw_binary
 
         return upload_raw_binary()

@@ -57,8 +57,10 @@ def _already_enriched(r, collection, func_id, action):
     """
     if r.sismember(_enriched_key(collection, action), func_id):
         return True
-    return _has_llm_note(collection, func_id) if action == "notes" else _has_llm_tags(
-        collection, func_id
+    return (
+        _has_llm_note(collection, func_id)
+        if action == "notes"
+        else _has_llm_tags(collection, func_id)
     )
 
 
@@ -122,8 +124,9 @@ class LLMBatchService:
 
     # --- execution -----------------------------------------------------
 
-    def _process_one(self, collection, func_id, actions, overwrite, custom_prompt,
-                     vocabulary):
+    def _process_one(
+        self, collection, func_id, actions, overwrite, custom_prompt, vocabulary
+    ):
         """Runs one function. Returns (state, detail)."""
         from bsimvis.app.routes.llm import get_code_for_llm
 
@@ -170,9 +173,17 @@ class LLMBatchService:
 
         return "done", ", ".join(applied) if applied else None
 
-    def run_batch(self, collection, func_ids, actions, overwrite=False,
-                  custom_prompt=None, vocabulary=None, job_service=None,
-                  job_id=None):
+    def run_batch(
+        self,
+        collection,
+        func_ids,
+        actions,
+        overwrite=False,
+        custom_prompt=None,
+        vocabulary=None,
+        job_service=None,
+        job_id=None,
+    ):
         """Runs the batch, continuing past per-function failures.
 
         Returns True when the job ran to completion (even with failures), False
@@ -310,7 +321,9 @@ def _selfcheck():
         mod._remove_llm_notes = lambda c, f: notes.append(("del", f))
         mod._remove_llm_tags = lambda c, f: tags.append(("del", f))
         mod.note_service = type(
-            "N", (), {"add_note": staticmethod(lambda c, f, t, owner: notes.append((f, owner)))}
+            "N",
+            (),
+            {"add_note": staticmethod(lambda c, f, t, owner: notes.append((f, owner)))},
         )
         mod.tag_service = type(
             "T",
@@ -336,11 +349,18 @@ def _selfcheck():
         # Code fetch is stubbed by patching the late import target.
         import bsimvis.app.routes.llm as llm_routes
 
-        llm_routes.get_code_for_llm = lambda fid: ({"code": "int f(){}", "func_name": fid}, None)
+        llm_routes.get_code_for_llm = lambda fid: (
+            {"code": "int f(){}", "func_name": fid},
+            None,
+        )
 
         return svc.run_batch(
-            "col", func_ids, list(actions), overwrite=overwrite,
-            job_service=jobs, job_id="j1",
+            "col",
+            func_ids,
+            list(actions),
+            overwrite=overwrite,
+            job_service=jobs,
+            job_id="j1",
         )
 
     # Happy path: every function gets a note and its tags, marked as LLM output.

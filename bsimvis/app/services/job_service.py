@@ -341,6 +341,14 @@ class JobService:
             if status in (JobStatus.PENDING.value, JobStatus.RUNNING.value):
                 return
 
+        # Held by its own pause or an ancestor's: record that it wants to be
+        # queued and stop here. Catches the continuation case -- a paused
+        # pipeline whose running stage finishes and tries to start the next one.
+        if self.is_job_paused(job_id):
+            self.r.hdel(f"job:{job_id}", "queued")
+            self.r.hset(f"job:{job_id}", "paused_queued", "1")
+            return
+
         high_priority_types = [
             JobType.CLEAR_SIM.value,
             JobType.CLEAR_FEATURES.value,
@@ -761,6 +769,108 @@ class JobService:
             self.r.delete(PAUSE_KEY)
         return self.is_paused()
 
+    def set_job_paused(self, job_id, paused):
+        """Holds one job/group/pipeline out of scheduling, leaving the rest alone.
+
+        Stored as a field rather than a JobStatus: a paused job is still
+        pending/running and must keep aggregating into its parent's progress
+        exactly as before. A new terminal-looking status would have to be taught
+        to every status filter and rollup in the app.
+
+        Pausing pulls the paused subtree's queued work off the pending queues so
+        the freed capacity goes to other jobs immediately. Leaving it queued
+        would make workers pop it, notice the flag and push it back, burning
+        claim cycles on work that cannot run.
+        """
+        if not self.r.exists(f"job:{job_id}"):
+            return None
+        if paused:
+            self.r.hset(f"job:{job_id}", "paused", "1")
+            self._dequeue_paused_subtree(job_id)
+        else:
+            self.r.hdel(f"job:{job_id}", "paused")
+            self._requeue_paused_subtree(job_id)
+        return bool(paused)
+
+    def _dequeue_paused_subtree(self, job_id, seen=None):
+        """Takes the subtree's queued-but-not-started work off the pending queues.
+
+        Each removed job is tagged `paused_queued` so resume can put back exactly
+        what was taken. That tag is the whole point: a pipeline has many pending
+        stages but only the current one is queued, so resuming by "enqueue every
+        pending descendant" would fire the entire pipeline in parallel.
+        """
+        seen = seen if seen is not None else set()
+        if job_id in seen:
+            return
+        seen.add(job_id)
+
+        job = self.r.hgetall(f"job:{job_id}")
+        if not job:
+            return
+
+        removed = self.r.lrem("jobs:pending", 0, job_id) or 0
+        removed += self.r.lrem("jobs:pending:high", 0, job_id) or 0
+        if removed:
+            # The `queued` latch must go too, or the resume enqueue is treated as
+            # a duplicate and silently dropped -- the same trap worker._requeue hits.
+            self.r.hdel(f"job:{job_id}", "queued")
+            self.r.hset(f"job:{job_id}", "paused_queued", "1")
+
+        for tid in self._task_ids(job):
+            self._dequeue_paused_subtree(tid, seen)
+
+    def _requeue_paused_subtree(self, job_id, seen=None):
+        """Puts back exactly the work that pausing took off the queues."""
+        seen = seen if seen is not None else set()
+        if job_id in seen:
+            return
+        seen.add(job_id)
+
+        job = self.r.hgetall(f"job:{job_id}")
+        if not job:
+            return
+
+        # A job still held by an ancestor's pause stays down; the outer resume
+        # is what will release it.
+        if job.get("paused_queued") and not self.is_job_paused(job_id):
+            self.r.hdel(f"job:{job_id}", "paused_queued")
+            if job.get("status") == JobStatus.PENDING.value:
+                self.enqueue_job(job_id)
+
+        for tid in self._task_ids(job):
+            self._requeue_paused_subtree(tid, seen)
+
+    @staticmethod
+    def _task_ids(job):
+        raw = job.get("task_ids")
+        if not raw:
+            return []
+        try:
+            tids = json.loads(raw)
+            return tids if isinstance(tids, list) else []
+        except Exception:
+            return []
+
+    def is_job_paused(self, job_id):
+        """True when this job or any ancestor is paused.
+
+        Walking up is what makes pausing a group meaningful: the group itself is
+        never claimed by a worker, only its leaves are, so the leaves are where
+        the flag has to be observed. Depth is bounded by the pipeline/group
+        nesting (a handful), and the walk is capped in case parent_id ever loops.
+        """
+        seen = set()
+        while job_id and job_id not in seen:
+            seen.add(job_id)
+            job = self.r.hgetall(f"job:{job_id}")
+            if not job:
+                return False
+            if job.get("paused"):
+                return True
+            job_id = job.get("parent_id")
+        return False
+
     # ------------------------------------------------------------------
     # Task splicing
     # ------------------------------------------------------------------
@@ -968,7 +1078,9 @@ class JobService:
         # Also update updated_at
         self.r.hset(f"job:{job_id}", "updated_at", timestamp)
 
-    def update_progress(self, job_id, progress, message=None, processed=None, total=None):
+    def update_progress(
+        self, job_id, progress, message=None, processed=None, total=None
+    ):
         """Updates progress (0-100) and optionally adds a log entry.
 
         `processed`/`total` are what make the throughput fields on
@@ -1268,6 +1380,7 @@ class JobService:
                     # same type is legitimately both depending on context.
                     "tier": 2 if parent_id else 1,
                     "attempts": safe_int(job.get("attempts", 0)),
+                    "paused": bool(job.get("paused")),
                 }
             )
 

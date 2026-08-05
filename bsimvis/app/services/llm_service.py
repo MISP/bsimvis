@@ -35,7 +35,9 @@ class LLMService:
             logging.error(f"LLMService error: {e}")
             return f"Error: Could not get summary from LLM. {e}"
 
-    def summarize_and_tag(self, function_name, code, vocabulary=None, custom_prompt=None):
+    def summarize_and_tag(
+        self, function_name, code, vocabulary=None, custom_prompt=None
+    ):
         """One LLM call returning both a summary and tags.
 
         Halves the token cost versus two calls. Tags come back on a single

@@ -71,6 +71,24 @@ def get_pause_state():
     return {"paused": job_service.is_paused()}
 
 
+def pause_job(job_id):
+    """Holds one job/group/pipeline back; other jobs keep running."""
+    result = job_service.set_job_paused(job_id, True)
+    if result is None:
+        return {"error": "Job not found"}, 404
+    job_service.add_log(job_id, "Paused by user; will not be claimed until resumed.")
+    return {"paused": True, "job_id": job_id}
+
+
+def resume_job(job_id):
+    """Releases a paused job/group/pipeline back to the workers."""
+    result = job_service.set_job_paused(job_id, False)
+    if result is None:
+        return {"error": "Job not found"}, 404
+    job_service.add_log(job_id, "Resumed by user.")
+    return {"paused": False, "job_id": job_id}
+
+
 def cancel_all_jobs():
     """Cancels all pending or running jobs."""
     cancelled = job_service.cancel_all_jobs()
@@ -90,6 +108,10 @@ def _reset_job_recursive(job_id):
             "status": "pending",
             "error": "",
             "progress": 0,
+            # A user-initiated retry is exactly when the lease-expiry counter
+            # should start over; without this a job that already burned
+            # MAX_ATTEMPTS fails on its first expiry after retry.
+            "attempts": 0,
         },
     )
     # Delete (not zero) the enqueue + barrier latches: both use field-existence

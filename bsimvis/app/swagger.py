@@ -461,6 +461,33 @@ class JobCancel(Resource):
         return cancel_job(job_id)
 
 
+@ns_jobs.route("/<string:job_id>/pause")
+class JobPauseOne(Resource):
+    @ns_jobs.doc(
+        params={
+            "job_id": {
+                "description": "Job, group or pipeline UUID to hold back",
+                "example": "7b8e23af-4b2a-4e6c-8a1d-3c9f2b1a0e5d",
+            }
+        }
+    )
+    def post(self, job_id):
+        """Pauses one job/group/pipeline. Other jobs keep being processed.
+
+        A running leaf finishes first; nothing underneath the paused job is
+        claimed again until it is resumed.
+        """
+        from bsimvis.app.routes.jobs import pause_job
+
+        return pause_job(job_id)
+
+    def delete(self, job_id):
+        """Resumes a paused job/group/pipeline."""
+        from bsimvis.app.routes.jobs import resume_job
+
+        return resume_job(job_id)
+
+
 @ns_jobs.route("/<string:job_id>/retry")
 class JobRetry(Resource):
     @ns_jobs.doc(

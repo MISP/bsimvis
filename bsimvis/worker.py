@@ -227,6 +227,21 @@ class Worker:
                         logging.info(f"[-] Job {job_id} was cancelled. Skipping.")
                         continue
 
+                    # Per-job pause: the job (or a group/pipeline above it) is
+                    # held back, so put it down untouched and take the next one.
+                    # Checked here rather than at enqueue time because work
+                    # arrives on several paths (continuations, retries, spliced
+                    # chunks); the pop is the one place they all meet.
+                    if self.job_service.is_job_paused(job_id):
+                        # Raced with the pause, or was enqueued by a continuation
+                        # after it. Drop the claim without requeueing and move
+                        # straight to the next job -- no sleep, because other work
+                        # can run right now. Resume puts this back on the queue.
+                        self.r_queue.hdel(f"job:{job_id}", "queued")
+                        self.r_queue.hset(f"job:{job_id}", "paused_queued", "1")
+                        logging.info(f"[~] Job {job_id} is paused; leaving it held.")
+                        continue
+
                     # Admission control: only start if the fleet can still
                     # afford this job type's measured peak. Refused jobs go back
                     # on the queue rather than being failed.
@@ -362,7 +377,9 @@ class Worker:
             logging.warning(
                 f"[!] Ghidra analysis for {job_id} failed ({reason}), attempt {attempt}/{attempts}"
             )
-            self.job_service.add_log(job_id, f"Analysis attempt {attempt} failed ({reason}).")
+            self.job_service.add_log(
+                job_id, f"Analysis attempt {attempt} failed ({reason})."
+            )
 
         # Out of retries. Record it against the file so it is visible as
         # unanalyzed rather than silently missing from the collection.

@@ -334,11 +334,15 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
         if (status === 'cancelled') statusIcon = 'fa-ban';
         if (status === 'pending') statusIcon = 'fa-clock';
 
-        const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`;
+        const statusBadge = `<span class="job-status-badge status-${status}"><i class="fa-solid ${statusIcon}"></i> ${status.toUpperCase()}</span>`
+            + (job.paused ? ' <span class="job-status-badge" title="Held back; other jobs keep running"><i class="fa-solid fa-pause"></i> PAUSED</span>' : '');
         const createdDate = new Date(job.created_at).toLocaleString();
 
         let actions = '<div class="job-actions">';
         if (status === 'pending' || status === 'running') {
+            actions += job.paused
+                ? `<button class="job-btn-action" onclick="resumeJob(${escapeAttr(jsString(job.id))})" title="Resume Job"><i class="fa-solid fa-play"></i></button>`
+                : `<button class="job-btn-action" onclick="pauseJob(${escapeAttr(jsString(job.id))})" title="Pause Job (other jobs keep running)"><i class="fa-solid fa-pause"></i></button>`;
             actions += `<button class="job-btn-action danger" onclick="cancelJob(${escapeAttr(jsString(job.id))})" title="Cancel Job"><i class="fa-solid fa-ban"></i></button>`;
         }
         if (status === 'failed' || status === 'cancelled' || status === 'completed') {
@@ -449,6 +453,24 @@ function renderJobs(jobs, skipBackgroundFetch = false) {
 }
 
 window.renderJobs = renderJobs;
+
+async function setJobPaused(jobId, paused) {
+    try {
+        const resp = await fetch(`/api/jobs/${jobId}/pause`, { method: paused ? 'POST' : 'DELETE' });
+        if (resp.ok) {
+            if (window.refreshData) window.refreshData();
+        } else {
+            const data = await resp.json();
+            alert(`Failed to ${paused ? 'pause' : 'resume'} job: ` + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        console.error(e);
+        alert(`Error ${paused ? 'pausing' : 'resuming'} job`);
+    }
+}
+
+window.pauseJob = (jobId) => setJobPaused(jobId, true);
+window.resumeJob = (jobId) => setJobPaused(jobId, false);
 
 window.cancelJob = async function (jobId) {
     try {
@@ -658,6 +680,43 @@ window.closeJobModal = function () {
     currentActiveJobId = null;
 };
 
+// Fleet-wide pause toggle (global, not per-job — the API has no per-job pause)
+let jobsPaused = null;
+
+window.refreshPauseButton = async function (state) {
+    const btn = document.getElementById('job-pause-toggle');
+    if (!btn) return;
+    if (state === undefined) {
+        try {
+            state = (await (await fetch('/api/jobs/pause')).json()).paused;
+        } catch (e) {
+            return;
+        }
+    }
+    // Always rewrite: the settings bar re-renders the button as a placeholder,
+    // so a memoised "unchanged" skip would leave it stuck blank.
+    jobsPaused = state;
+    btn.innerHTML = state
+        ? '<i class="fa-solid fa-play"></i> Resume Workers'
+        : '<i class="fa-solid fa-pause"></i> Pause Workers';
+    btn.classList.toggle('active', !!state);
+};
+
+window.toggleJobPause = async function () {
+    const btn = document.getElementById('job-pause-toggle');
+    if (btn) btn.disabled = true;
+    try {
+        const resp = await fetch('/api/jobs/pause', { method: jobsPaused ? 'DELETE' : 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Unknown error');
+        refreshPauseButton(data.paused);
+    } catch (e) {
+        alert('Failed to toggle pause: ' + e.message);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+};
+
 // Modal and auto-refresh setups are completed below
 
 // Auto-refresh when in jobs view — skip when tab is hidden
@@ -666,6 +725,7 @@ setInterval(() => {
     const restful = (typeof parseRestfulPath === 'function') ? parseRestfulPath() : null;
     const isJobsView = (restful && restful.view === 'jobs') || window.location.pathname === '/jobs' || (window.location.hash && window.location.hash.split('?')[0] === '#jobs');
     if (isJobsView) {
+        refreshPauseButton();
         const modal = document.getElementById('job-details-modal');
         const isModalOpen = modal && modal.style.display !== 'none';
 

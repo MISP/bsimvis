@@ -1157,7 +1157,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <div style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" id="job-auto-refresh" ${localStorage.getItem('jobAutoRefresh') !== 'false' ? 'checked' : ''} onchange="localStorage.setItem('jobAutoRefresh', this.checked)" style="cursor:pointer; vertical-align:middle;">
                         <label for="job-auto-refresh" style="font-size:0.75rem; color:var(--text); cursor:pointer; font-weight:bold;">Auto-Refresh</label>
-                    </div>`;
+                    </div>
+                    <button id="job-pause-toggle" class="view-btn" onclick="toggleJobPause()" title="Pause/resume all workers (fleet-wide)">…</button>`;
             } else {
                 const viewMode = params.get('view') || 'table';
                 const poolLimit = params.get('pool_limit') || '1000000';
@@ -1215,6 +1216,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 `;
             }
             settingsEl.innerHTML = settingsHtml;
+            if (path === 'jobs' && window.refreshPauseButton) window.refreshPauseButton();
 
             const p = new URLSearchParams(params);
             let headHtml = thead.innerHTML; // Start with the <tr> built above

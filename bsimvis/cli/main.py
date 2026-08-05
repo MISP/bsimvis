@@ -483,6 +483,15 @@ def main():
         help="Path to a metadata CSV file to enrich uploaded binaries",
     )
 
+    upload_parser.add_argument(
+        "--archive-password",
+        dest="archive_password",
+        metavar="PASSWORD",
+        default=None,
+        help="Password for uploaded zip archives (server default: infected). "
+        "Archives are unpacked server-side and every member analyzed.",
+    )
+
     decomp_args = upload_parser.add_argument_group("Decompilation options")
     decomp_args.add_argument(
         "--va",

@@ -343,7 +343,7 @@
 
             // LLM batch: the selected rows, or this function alone when nothing
             // is selected, so the default action needs no dialog.
-            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${escapeAttr(jsString(norm.id))}])`;
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
             actionsSubmenuHtml += renderLLMSubmenu([
                 { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${llmIds} }` },
                 { label: 'Tags', icon: 'fa-tags', actions: "['tags']", opts: `{ funcIds: ${llmIds} }` },
@@ -425,7 +425,9 @@
         if (resolvedType !== 'function' && window.getSelectedTableIds) {
             const selFuncs = window.getSelectedTableIds('function');
             if (selFuncs.length) {
-                const ids = JSON.stringify(selFuncs);
+                // Read the selection back at click time: inlining the ids would
+                // put double quotes inside the onclick attribute.
+                const ids = "window.getSelectedTableIds('function')";
                 const n = selFuncs.length;
                 actionsSubmenuHtml += renderLLMSubmenu([
                     { label: `Summary (${n} selected)`, icon: 'fa-note-sticky', actions: "['notes']", opts: `{ funcIds: ${ids} }` },
@@ -665,7 +667,7 @@
     /** Renders the "LLM ▸" entry nested inside the Actions submenu. */
     function renderLLMSubmenu(items) {
         const entries = items.map(i => `
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${i.opts})">
+            <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${i.opts})`)}">
                 <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>${escapeHtml(i.label)}</span>
             </div>`).join('');

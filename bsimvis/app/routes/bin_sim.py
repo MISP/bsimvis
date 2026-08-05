@@ -46,10 +46,14 @@ def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
     fids = list(fids)
     pipe = r.pipeline(transaction=False)
     for fid in fids:
-        pipe.smembers(f"{cluster_coll}:{fid}:clusters" if is_pool else f"{fid}:clusters")
+        pipe.smembers(
+            f"{cluster_coll}:{fid}:clusters" if is_pool else f"{fid}:clusters"
+        )
     fid_labels, all_labels = {}, set()
     for fid, res in zip(fids, pipe.execute()):
-        labels = {c.decode() if isinstance(c, bytes) else str(c) for c in (res or set())}
+        labels = {
+            c.decode() if isinstance(c, bytes) else str(c) for c in (res or set())
+        }
         fid_labels[fid] = labels
         all_labels |= labels
 
@@ -82,11 +86,17 @@ def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
         row["is_clustered"] = best is not None
         # Cluster stats for the tooltip (distinct from the row's own avg_features).
         row["cluster_member_count"] = int(best.get("member_count", 0)) if best else 0
-        row["cluster_stability"] = float(best.get("cluster_stability", 0.0)) if best else 0.0
-        row["cluster_avg_features"] = float(best.get("avg_features", 0.0)) if best else 0.0
+        row["cluster_stability"] = (
+            float(best.get("cluster_stability", 0.0)) if best else 0.0
+        )
+        row["cluster_avg_features"] = (
+            float(best.get("avg_features", 0.0)) if best else 0.0
+        )
         # Sample member functions for the tooltip (already in cluster meta). Cross-collection
         # / pool bin-sim can't fetch them by collection at hover, so ship them with the row.
-        row["cluster_sample_functions"] = best.get("sample_functions", []) if best else []
+        row["cluster_sample_functions"] = (
+            best.get("sample_functions", []) if best else []
+        )
         row["sim_rarity"] = rarity(best)
         row["collection_rarity"] = row["sim_rarity"]
 
@@ -100,7 +110,9 @@ def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
             ),
         )
     for u in ua + ub:
-        apply(u, pick_best_cluster(fid_labels.get(u.get("func_id"), set()), cluster_meta))
+        apply(
+            u, pick_best_cluster(fid_labels.get(u.get("func_id"), set()), cluster_meta)
+        )
 
 
 def build_bin_sim():
@@ -568,7 +580,9 @@ def _page_diff(diff_data, table):
 
     page_fids = set()
     for it in page:
-        page_fids.update(x for x in (it.get("func_a"), it.get("func_b"), it.get("func_id")) if x)
+        page_fids.update(
+            x for x in (it.get("func_a"), it.get("func_b"), it.get("func_id")) if x
+        )
 
     return {
         "items": page,
@@ -677,7 +691,8 @@ def list_bin_sims():
 
 def reindex_bin_sim():
     """Trigger background job to rebuild secondary indexes for existing bin_sim docs.
-    Pass pool_id to reindex a pool (enables fast pool search) instead of a collection."""
+    Pass pool_id to reindex a pool (enables fast pool search) instead of a collection.
+    """
     data = request.json or {}
     collection = data.get("collection", "main")
     algo = data.get("algo", "unweighted_cosine")

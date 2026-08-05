@@ -339,9 +339,7 @@ class GhidraAnalyzer:
                 # For a single file
                 from ghidra.base.project import GhidraProject
 
-                with tempfile.TemporaryDirectory(
-                    prefix="bsim_"
-                ) as project_temp_dir:
+                with tempfile.TemporaryDirectory(prefix="bsim_") as project_temp_dir:
                     project = GhidraProject.createProject(
                         project_temp_dir, "TempGhidraProject", False
                     )
@@ -353,9 +351,7 @@ class GhidraAnalyzer:
                             )
                             from ghidra.program.util import DefaultLanguageService
 
-                            lang_service = (
-                                DefaultLanguageService.getLanguageService()
-                            )
+                            lang_service = DefaultLanguageService.getLanguageService()
                             lang_id = LanguageID(payload.get("processor"))
                             lang = lang_service.getLanguage(lang_id)
                             if payload.get("cspec"):
@@ -445,9 +441,7 @@ def main(argv=None):
         peak = _peak_rss()
         if peak:
             try:
-                analyzer.job_service.record_job_peak(
-                    JobType.GHIDRA_ANALYZE.value, peak
-                )
+                analyzer.job_service.record_job_peak(JobType.GHIDRA_ANALYZE.value, peak)
             except Exception as e:
                 logging.warning(f"Could not record Ghidra peak: {e}")
             logging.info(f"[#] Ghidra child peak RSS {peak / 1024**3:.2f} GiB")

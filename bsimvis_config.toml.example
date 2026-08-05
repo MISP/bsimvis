@@ -7,7 +7,8 @@
         
         # Heavy data/archive analyzers (DISABLE)
         "Apply Data Archives" = false
-        "Function ID" = false
+        "Function ID" = true
+        "Function ID.Always Apply FID Labels" = true
         
         # Stack & Variable analyzers (DISABLE)
         "Stack" = false

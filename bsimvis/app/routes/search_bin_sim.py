@@ -135,11 +135,43 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
     # --- Set-bucket (substring) filters, a/b unioned ---
     if f["file_name"]:
-        restrict(_bucket_union(r, collection, ["file_name_a", "file_name_b", "file_parent_file_name_a", "file_parent_file_name_b", "file_related_file_name_a", "file_related_file_name_b"], f["file_name"]))
+        restrict(
+            _bucket_union(
+                r,
+                collection,
+                [
+                    "file_name_a",
+                    "file_name_b",
+                    "file_parent_file_name_a",
+                    "file_parent_file_name_b",
+                    "file_related_file_name_a",
+                    "file_related_file_name_b",
+                ],
+                f["file_name"],
+            )
+        )
     if f["arch"]:
-        restrict(_bucket_union(r, collection, ["architecture_a", "architecture_b"], f["arch"]))
+        restrict(
+            _bucket_union(
+                r, collection, ["architecture_a", "architecture_b"], f["arch"]
+            )
+        )
     if f["md5"]:
-        restrict(_bucket_union(r, collection, ["md5_a", "md5_b", "file_parent_md5_a", "file_parent_md5_b", "file_related_md5_a", "file_related_md5_b"], f["md5"]))
+        restrict(
+            _bucket_union(
+                r,
+                collection,
+                [
+                    "md5_a",
+                    "md5_b",
+                    "file_parent_md5_a",
+                    "file_parent_md5_b",
+                    "file_related_md5_a",
+                    "file_related_md5_b",
+                ],
+                f["md5"],
+            )
+        )
     for tf in f["file_tag"]:
         restrict(_file_tag_union(r, collection, tf, is_pool=is_pool))
     for word in f["q"].split():
@@ -264,7 +296,9 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         page_sids = [s for s, _ in arch[offset : offset + limit]]
 
     # --- Build light docs for the page + fetch metadata for its md5s only ---
-    paged_light, page_md5s = _light_from_sids(page_sids, algo_marker, collection, is_pool)
+    paged_light, page_md5s = _light_from_sids(
+        page_sids, algo_marker, collection, is_pool
+    )
     file_meta_cache, file_funcs_count = _fetch_meta(r, page_md5s)
     return paged_light, total, file_meta_cache, file_funcs_count
 
@@ -292,7 +326,14 @@ def _light_from_sids(page_sids, algo_marker, collection, is_pool=False):
         page_md5s.add((coll_a, m_a))
         page_md5s.add((coll_b, m_b))
         paged_light.append(
-            {"sid": sid, "m_a": m_a, "m_b": m_b, "coll_a": coll_a, "coll_b": coll_b, "doc": None}
+            {
+                "sid": sid,
+                "m_a": m_a,
+                "m_b": m_b,
+                "coll_a": coll_a,
+                "coll_b": coll_b,
+                "doc": None,
+            }
         )
     return paged_light, page_md5s
 
@@ -425,7 +466,11 @@ def _pool_page(r, pool_id, algo, f):
         ld["functions_count_b"] = funcs_b
         ld["architecture_a"] = arch_a
 
-        if f["file_name"] and f["file_name"] not in name_a.lower() and f["file_name"] not in name_b.lower():
+        if (
+            f["file_name"]
+            and f["file_name"] not in name_a.lower()
+            and f["file_name"] not in name_b.lower()
+        ):
             continue
         if f["md5"] and f["md5"] not in m_a.lower() and f["md5"] not in m_b.lower():
             continue
@@ -437,15 +482,25 @@ def _pool_page(r, pool_id, algo, f):
             continue
         if f["max_score"] is not None and ld.get("score", 0) > f["max_score"]:
             continue
-        if f["min_cov"] is not None and max(ld["coverage_a"], ld["coverage_b"]) < f["min_cov"]:
+        if (
+            f["min_cov"] is not None
+            and max(ld["coverage_a"], ld["coverage_b"]) < f["min_cov"]
+        ):
             continue
-        if f["max_cov"] is not None and min(ld["coverage_a"], ld["coverage_b"]) > f["max_cov"]:
+        if (
+            f["max_cov"] is not None
+            and min(ld["coverage_a"], ld["coverage_b"]) > f["max_cov"]
+        ):
             continue
         if f["min_shared"] is not None and ld["shared_clusters"] < f["min_shared"]:
             continue
         if f["max_shared"] is not None and ld["shared_clusters"] > f["max_shared"]:
             continue
-        if f["arch"] and f["arch"] not in arch_a.lower() and f["arch"] not in arch_b.lower():
+        if (
+            f["arch"]
+            and f["arch"] not in arch_a.lower()
+            and f["arch"] not in arch_b.lower()
+        ):
             continue
         if f["min_funcs"] is not None and max(funcs_a, funcs_b) < f["min_funcs"]:
             continue
@@ -460,11 +515,16 @@ def _pool_page(r, pool_id, algo, f):
             if any(tf in combined for tf in f["exclude_file_tag"]):
                 continue
         if f["exclude_file_static_tag"]:
-            static = set(t.lower() for t in meta_a.get("tags", []) + meta_b.get("tags", []))
+            static = set(
+                t.lower() for t in meta_a.get("tags", []) + meta_b.get("tags", [])
+            )
             if any(tf in static for tf in f["exclude_file_static_tag"]):
                 continue
         if f["exclude_file_user_tag"]:
-            usr = set(t.lower() for t in meta_a.get("user_tags", []) + meta_b.get("user_tags", []))
+            usr = set(
+                t.lower()
+                for t in meta_a.get("user_tags", []) + meta_b.get("user_tags", [])
+            )
             if any(tf in usr for tf in f["exclude_file_user_tag"]):
                 continue
         filtered.append(ld)
@@ -520,7 +580,9 @@ def search_bin_sims():
         f = {
             "offset": offset,
             "limit": limit,
-            "sort_by": (request.args.get("sort_by") or request.args.get("sort") or "score").strip(),
+            "sort_by": (
+                request.args.get("sort_by") or request.args.get("sort") or "score"
+            ).strip(),
             "sort_order": request.args.get("sort_order", "desc"),
             "min_score": parse_float(request.args.get("min_score")),
             "max_score": parse_float(request.args.get("max_score")),
@@ -550,14 +612,18 @@ def search_bin_sims():
         if is_pool:
             prefix = f"global:pool:{pool_id}"
             if r.exists(f"{prefix}:idx:bin_sim:score"):
-                paged_light, total, file_meta_cache, file_funcs_count = _collection_page(
-                    r, prefix, algo, f, is_pool=True
+                paged_light, total, file_meta_cache, file_funcs_count = (
+                    _collection_page(r, prefix, algo, f, is_pool=True)
                 )
             else:
                 # Not reindexed yet -> legacy O(N) scan. Run reindex_pool_bin_sim to speed up.
-                paged_light, total, file_meta_cache, file_funcs_count = _pool_page(r, pool_id, algo, f)
+                paged_light, total, file_meta_cache, file_funcs_count = _pool_page(
+                    r, pool_id, algo, f
+                )
         else:
-            paged_light, total, file_meta_cache, file_funcs_count = _collection_page(r, collection, algo, f)
+            paged_light, total, file_meta_cache, file_funcs_count = _collection_page(
+                r, collection, algo, f
+            )
         t1 = time.perf_counter()
 
         # Batch-fetch sim docs for any page row that doesn't already carry one
@@ -613,10 +679,18 @@ def search_bin_sims():
             doc["file_tags_b"] = meta_b.get("tags", [])
             doc["file_user_tags_a"] = meta_a.get("user_tags", [])
             doc["file_user_tags_b"] = meta_b.get("user_tags", [])
-            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get("language_id", "")
-            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get("language_id", "")
-            doc["functions_count_a"] = doc.get("functions_count_a") or file_funcs_count.get((coll_a, m_a), 0)
-            doc["functions_count_b"] = doc.get("functions_count_b") or file_funcs_count.get((coll_b, m_b), 0)
+            doc["architecture_a"] = doc.get("architecture_a") or meta_a.get(
+                "language_id", ""
+            )
+            doc["architecture_b"] = doc.get("architecture_b") or meta_b.get(
+                "language_id", ""
+            )
+            doc["functions_count_a"] = doc.get(
+                "functions_count_a"
+            ) or file_funcs_count.get((coll_a, m_a), 0)
+            doc["functions_count_b"] = doc.get(
+                "functions_count_b"
+            ) or file_funcs_count.get((coll_b, m_b), 0)
             doc["compiler_a"] = meta_a.get("compiler") or meta_a.get("compiler_id", "")
             doc["compiler_b"] = meta_b.get("compiler") or meta_b.get("compiler_id", "")
             doc["entry_date_a"] = meta_a.get("entry_date", 0)
@@ -625,15 +699,29 @@ def search_bin_sims():
             normalize_tags(doc)
             normalize_tags(
                 doc,
-                tag_fields=["file_tags_a", "file_user_tags_a", "file_tags_b", "file_user_tags_b"],
+                tag_fields=[
+                    "file_tags_a",
+                    "file_user_tags_a",
+                    "file_tags_b",
+                    "file_user_tags_b",
+                ],
             )
 
             # sim-level tag filters (page-local; adjusts total like the legacy path)
-            if sim_tag_filters or exclude_sim_tag_filters or exclude_sim_static_tag_filters or exclude_sim_user_tag_filters:
-                sim_tags = set(t.lower() for t in doc.get("tags", []) + doc.get("user_tags", []))
+            if (
+                sim_tag_filters
+                or exclude_sim_tag_filters
+                or exclude_sim_static_tag_filters
+                or exclude_sim_user_tag_filters
+            ):
+                sim_tags = set(
+                    t.lower() for t in doc.get("tags", []) + doc.get("user_tags", [])
+                )
                 sim_static = set(t.lower() for t in doc.get("tags", []))
                 sim_user = set(t.lower() for t in doc.get("user_tags", []))
-                if sim_tag_filters and not all(tf in sim_tags for tf in sim_tag_filters):
+                if sim_tag_filters and not all(
+                    tf in sim_tags for tf in sim_tag_filters
+                ):
                     total -= 1
                     continue
                 if any(tf in sim_tags for tf in exclude_sim_tag_filters):

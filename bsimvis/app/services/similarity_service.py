@@ -2440,7 +2440,9 @@ class SimilarityService:
                         if not res:
                             continue
                         try:
-                            doc = json.loads(res.decode() if isinstance(res, bytes) else res)
+                            doc = json.loads(
+                                res.decode() if isinstance(res, bytes) else res
+                            )
                         except Exception:
                             continue
                         f1, f2 = doc.get("id1"), doc.get("id2")
@@ -2631,7 +2633,9 @@ class SimilarityService:
                 persist_pipe.execute()
                 persist_pipe = r.pipeline(transaction=False)
 
-        log(f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch...")
+        log(
+            f"[*] All pairs computed + saved in {time.time() - loop_t:.1f}s; flushing final batch..."
+        )
         persist_pipe.execute()
         log(
             f"Pool binary similarity build finished. Found {len(pairs)} comparisons in {time.time() - start_time:.1f}s."

@@ -194,7 +194,11 @@ def group_edges_by_component(edges, labels):
     uniq, starts = np.unique(comp, return_index=True)
     bounds = list(starts) + [comp.size]
     return {
-        int(c): (s[bounds[k] : bounds[k + 1]], d[bounds[k] : bounds[k + 1]], w[bounds[k] : bounds[k + 1]])
+        int(c): (
+            s[bounds[k] : bounds[k + 1]],
+            d[bounds[k] : bounds[k + 1]],
+            w[bounds[k] : bounds[k + 1]],
+        )
         for k, c in enumerate(uniq)
     }
 

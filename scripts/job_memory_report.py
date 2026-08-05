@@ -29,8 +29,7 @@ def main():
     budget = svc.memory_budget()
     peaks = svc.r.hgetall(MEM_PEAK_KEY) or {}
     peaks = {
-        (k.decode() if isinstance(k, bytes) else k): int(v)
-        for k, v in peaks.items()
+        (k.decode() if isinstance(k, bytes) else k): int(v) for k, v in peaks.items()
     }
 
     print(f"fleet memory budget : {gib(budget)}")

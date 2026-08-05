@@ -630,7 +630,14 @@ def similarity_search():
                     # We handle both the target name (e.g. func_tags) and common aliases
                     val = request.args.get(target_field)
 
-                    if target_field in ["file_md5", "parent_md5", "related_md5", "file_name", "parent_file_name", "related_file_name"]:
+                    if target_field in [
+                        "file_md5",
+                        "parent_md5",
+                        "related_md5",
+                        "file_name",
+                        "parent_file_name",
+                        "related_file_name",
+                    ]:
                         continue
 
                     # Alias handling
@@ -656,68 +663,82 @@ def similarity_search():
             md5_val = request.args.get("md5") or request.args.get("file_md5")
             md5_configs = []
             if md5_val:
-                md5_paths = _paths_for_source("file", "file_md5") + _paths_for_source("file", "parent_md5") + _paths_for_source("file", "related_md5")
+                md5_paths = (
+                    _paths_for_source("file", "file_md5")
+                    + _paths_for_source("file", "parent_md5")
+                    + _paths_for_source("file", "related_md5")
+                )
                 md5_configs = [([md5_val], "any_md5", md5_paths)]
 
             file_name_val = request.args.get("file_name")
             file_name_configs = []
             if file_name_val:
-                file_name_paths = _paths_for_source("file", "file_name") + _paths_for_source("file", "parent_file_name") + _paths_for_source("file", "related_file_name")
-                file_name_configs = [([file_name_val], "any_file_name", file_name_paths)]
+                file_name_paths = (
+                    _paths_for_source("file", "file_name")
+                    + _paths_for_source("file", "parent_file_name")
+                    + _paths_for_source("file", "related_file_name")
+                )
+                file_name_configs = [
+                    ([file_name_val], "any_file_name", file_name_paths)
+                ]
 
-            tag_filter_configs = md5_configs + file_name_configs + [
-                (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
-                (static_tag_filters, "static_tag", _paths("tags")),
-                (user_tag_filters, "user_tag", _paths("user_tags")),
-                (
-                    sim_tag_filters,
-                    "sim_tag",
-                    _paths_for_source("sim", "tags")
-                    + _paths_for_source("sim", "user_tags"),
-                ),
-                (
-                    sim_static_tag_filters,
-                    "sim_static_tag",
-                    _paths_for_source("sim", "tags"),
-                ),
-                (
-                    sim_user_tag_filters,
-                    "sim_user_tag",
-                    _paths_for_source("sim", "user_tags"),
-                ),
-                (
-                    func_tag_filters,
-                    "func_tag",
-                    _paths_for_source("func", "tags")
-                    + _paths_for_source("func", "user_tags"),
-                ),
-                (
-                    func_static_tag_filters,
-                    "func_static_tag",
-                    _paths_for_source("func", "tags"),
-                ),
-                (
-                    func_user_tag_filters,
-                    "func_user_tag",
-                    _paths_for_source("func", "user_tags"),
-                ),
-                (
-                    file_tag_filters,
-                    "file_tag",
-                    _paths_for_source("file", "tags")
-                    + _paths_for_source("file", "user_tags"),
-                ),
-                (
-                    file_static_tag_filters,
-                    "file_static_tag",
-                    _paths_for_source("file", "tags"),
-                ),
-                (
-                    file_user_tag_filters,
-                    "file_user_tag",
-                    _paths_for_source("file", "user_tags"),
-                ),
-            ]
+            tag_filter_configs = (
+                md5_configs
+                + file_name_configs
+                + [
+                    (tag_filters, "tag", _paths("tags") + _paths("user_tags")),
+                    (static_tag_filters, "static_tag", _paths("tags")),
+                    (user_tag_filters, "user_tag", _paths("user_tags")),
+                    (
+                        sim_tag_filters,
+                        "sim_tag",
+                        _paths_for_source("sim", "tags")
+                        + _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        sim_static_tag_filters,
+                        "sim_static_tag",
+                        _paths_for_source("sim", "tags"),
+                    ),
+                    (
+                        sim_user_tag_filters,
+                        "sim_user_tag",
+                        _paths_for_source("sim", "user_tags"),
+                    ),
+                    (
+                        func_tag_filters,
+                        "func_tag",
+                        _paths_for_source("func", "tags")
+                        + _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        func_static_tag_filters,
+                        "func_static_tag",
+                        _paths_for_source("func", "tags"),
+                    ),
+                    (
+                        func_user_tag_filters,
+                        "func_user_tag",
+                        _paths_for_source("func", "user_tags"),
+                    ),
+                    (
+                        file_tag_filters,
+                        "file_tag",
+                        _paths_for_source("file", "tags")
+                        + _paths_for_source("file", "user_tags"),
+                    ),
+                    (
+                        file_static_tag_filters,
+                        "file_static_tag",
+                        _paths_for_source("file", "tags"),
+                    ),
+                    (
+                        file_user_tag_filters,
+                        "file_user_tag",
+                        _paths_for_source("file", "user_tags"),
+                    ),
+                ]
+            )
             for tfc in tag_filter_configs:
                 if tfc[0]:
                     filter_configs.append(tfc)

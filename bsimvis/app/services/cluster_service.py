@@ -121,7 +121,9 @@ class ClusterService:
         logging.info(f"[+] {msg}")
         if job_service and job_id:
             job_service.add_log(job_id, msg)
-        mem_util.phase(f"after streaming {edge_set.n_scanned} pairs", job_service, job_id)
+        mem_util.phase(
+            f"after streaming {edge_set.n_scanned} pairs", job_service, job_id
+        )
 
         if edge_set.n_scanned == 0:
             logging.warning(f"No similarity pairs found for {collection}:{algo}")
@@ -206,7 +208,9 @@ class ClusterService:
             # component on top of the edge copy it was reading from.
             comp_nodes_arr = np.asarray(comp_nodes, dtype=np.int32)
             gmap[comp_nodes_arr] = np.arange(size, dtype=np.int32)
-            e_src, e_dst, e_dist = comp_to_edges.get(comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F))
+            e_src, e_dst, e_dist = comp_to_edges.get(
+                comp_id, (_EMPTY_I, _EMPTY_I, _EMPTY_F)
+            )
             ui = gmap[e_src]
             vi = gmap[e_dst]
 

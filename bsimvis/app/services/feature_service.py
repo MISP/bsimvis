@@ -91,9 +91,7 @@ class FeatureService:
             # 1. Fetch metadata and vector data, one round-trip per READ_BATCH
             # functions instead of two per function.
             if func_id not in batch:
-                batch = self._fetch_vec_batch(
-                    function_ids[i : i + self.READ_BATCH]
-                )
+                batch = self._fetch_vec_batch(function_ids[i : i + self.READ_BATCH])
 
             raw_meta, new_tf_data = batch.pop(func_id)
             if not raw_meta or not new_tf_data:
@@ -483,9 +481,7 @@ class FeatureService:
             # dedup). That is the common case, so batch them into one round-trip.
             small_pipe = self.r.pipeline(transaction=False)
             small_hashes = [
-                fh
-                for idx, fh in enumerate(chunk)
-                if 0 < res1[idx * 3 + 1] <= 100
+                fh for idx, fh in enumerate(chunk) if 0 < res1[idx * 3 + 1] <= 100
             ]
             for fh in small_hashes:
                 small_pipe.hgetall(f"{collection}:feature:{fh}:meta")

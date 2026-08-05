@@ -431,9 +431,7 @@ class TagService:
         # Propagate to pools, same as color/priority.
         for p_id in self.r.smembers(f"{collection}:pools"):
             p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
-            self.r.hset(
-                f"global:pool:{p_id}:tags_metadata", tag, json.dumps(meta)
-            )
+            self.r.hset(f"global:pool:{p_id}:tags_metadata", tag, json.dumps(meta))
         return True
 
     def get_llm_vocabulary(self, collection):
@@ -465,9 +463,7 @@ class TagService:
                 p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
                 mapped = to_pool_indexed_id(eid, lvl, p_id)
                 if mapped:
-                    r.srem(
-                        f"global:pool:{p_id}:idx:{lvl}:tags:{tag.lower()}", mapped
-                    )
+                    r.srem(f"global:pool:{p_id}:idx:{lvl}:tags:{tag.lower()}", mapped)
 
     def delete_tag(self, collection, tag):
         """Deletes a tag: strips it from every entity, then drops its metadata.

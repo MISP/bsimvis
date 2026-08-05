@@ -77,7 +77,7 @@ def search_files():
             val = request.args.get(arg)
             if val:
                 filters["fields"][field] = val.strip()
-                
+
         md5_val = request.args.get("md5") or request.args.get("file_md5")
         if md5_val:
             filters["fields"]["_any_md5"] = md5_val.strip()
@@ -389,7 +389,9 @@ def query_files_advanced(r, collection, filters):
     if seed_field:
         zset_key = f"{collection}:idx:file:{RANGE_FIELD_MAP[seed_field]}"
         is_min = seed_field.startswith("min_")
-        lo, hi = (fields[seed_field], "+inf") if is_min else ("-inf", fields[seed_field])
+        lo, hi = (
+            (fields[seed_field], "+inf") if is_min else ("-inf", fields[seed_field])
+        )
         candidates = {
             d.decode() if isinstance(d, bytes) else str(d)
             for d in r.zrange(zset_key, lo, hi, byscore=True)

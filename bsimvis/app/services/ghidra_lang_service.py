@@ -86,6 +86,8 @@ def validate(processor, cspec=None):
 
     if cspec and cspec not in [c["id"] for c in lang["compilers"]]:
         valid = ", ".join(c["id"] for c in lang["compilers"]) or "none"
-        return f"Compiler spec '{cspec}' is not valid for '{processor}'. Valid: {valid}."
+        return (
+            f"Compiler spec '{cspec}' is not valid for '{processor}'. Valid: {valid}."
+        )
 
     return None

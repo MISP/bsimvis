@@ -676,6 +676,36 @@ def run_all_tests():
             "GET", f"/api/jobs/{pipeline_id}", label=f"GET /api/jobs/<pipeline_id>"
         )
 
+        # Per-job pause: hold this pipeline back, confirm the flag is readable,
+        # then always resume so the suite leaves nothing stuck.
+        paused = test_endpoint(
+            "POST", f"/api/jobs/{pipeline_id}/pause", label="POST /api/jobs/<id>/pause"
+        )
+        check("pause reports paused", (paused or {}).get("paused") is True, str(paused))
+        after = test_endpoint(
+            "GET", f"/api/jobs/{pipeline_id}", label="GET /api/jobs/<id> (paused)"
+        )
+        check(
+            "paused flag visible on job",
+            str((after or {}).get("paused", "")) == "1",
+            str((after or {}).get("paused")),
+        )
+        resumed = test_endpoint(
+            "DELETE",
+            f"/api/jobs/{pipeline_id}/pause",
+            label="DELETE /api/jobs/<id>/pause",
+        )
+        check(
+            "resume clears paused", (resumed or {}).get("paused") is False, str(resumed)
+        )
+
+    test_endpoint(
+        "POST",
+        "/api/jobs/does-not-exist/pause",
+        expected_ok=False,
+        label="POST /api/jobs/<missing>/pause -> 404",
+    )
+
     # ── Batches ────────────────────────────────────────────────────────────
     print(_color("\n  [Batches]", BOLD))
     test_endpoint("GET", "/api/batch/search", params={"collection": COLLECTION})
@@ -979,7 +1009,10 @@ def run_all_tests():
         test_endpoint(
             "GET",
             "/api/notes/file/list",
-            params={"collection": COLLECTION, "file_id": f"{COLLECTION}:file:{file_md5}"},
+            params={
+                "collection": COLLECTION,
+                "file_id": f"{COLLECTION}:file:{file_md5}",
+            },
             label="GET /api/notes/file/list?file_id=<id>",
         )
 
@@ -1361,7 +1394,9 @@ def test_pool_annotation_propagation():
                 f"notes seen from pool: {pool_texts}",
             )
         else:
-            print(_color("     [SKIP] no func_id resolved – note checks skipped.", YELLOW))
+            print(
+                _color("     [SKIP] no func_id resolved – note checks skipped.", YELLOW)
+            )
 
         # ── Rebuild: mirrors must survive an index rebuild ─────────────────
         # init_pool_build() wipes the pool namespace before merging, so live
@@ -1693,8 +1728,16 @@ def _num(v):
 def _sweep_sorts(spec, ns, label):
     for field, row_field in spec["sorts"].items():
         base = dict(spec.get("base", {}), **ns)
-        desc, total = _search(spec["path"], dict(base, sort_by=field, sort_order="desc", limit=50), spec["key"])
-        asc, _ = _search(spec["path"], dict(base, sort_by=field, sort_order="asc", limit=50), spec["key"])
+        desc, total = _search(
+            spec["path"],
+            dict(base, sort_by=field, sort_order="desc", limit=50),
+            spec["key"],
+        )
+        asc, _ = _search(
+            spec["path"],
+            dict(base, sort_by=field, sort_order="asc", limit=50),
+            spec["key"],
+        )
         if len(desc) < 2:
             vprint(f"     [skip] {label} {spec['name']}: <2 rows to sort by {field}")
             continue
@@ -1709,9 +1752,13 @@ def _sweep_sorts(spec, ns, label):
                 f"desc={len(ids_d)} asc={len(ids_a)} rows",
             )
         else:
-            vprint(f"     [skip] {label} {spec['name']}: {total} rows > page, set equality N/A")
+            vprint(
+                f"     [skip] {label} {spec['name']}: {total} rows > page, set equality N/A"
+            )
         if not row_field:
-            vprint(f"     [skip] {label} {spec['name']}: {field} not exposed on the row")
+            vprint(
+                f"     [skip] {label} {spec['name']}: {field} not exposed on the row"
+            )
             continue
         if any(row_field not in row for row in desc):
             vprint(f"     [skip] {label} {spec['name']}: rows lack '{row_field}'")
@@ -1759,7 +1806,9 @@ def _sweep_ranges(spec, ns, label):
         return
     complete = total <= len(baseline)  # baseline saw everything -> exact counts hold
     for param, row_field, kind in spec.get("ranges", []):
-        vals = sorted(v for v in (_num(row.get(row_field)) for row in baseline) if v is not None)
+        vals = sorted(
+            v for v in (_num(row.get(row_field)) for row in baseline) if v is not None
+        )
         if len(vals) < 2 or vals[0] == vals[-1]:
             vprint(f"     [skip] {label} {spec['name']}: {row_field} has no spread")
             continue
@@ -1767,7 +1816,9 @@ def _sweep_ranges(spec, ns, label):
         # Several routes parse these with int(), which raises on "20.0" and makes
         # the filter silently default to off. Send integral values as integers.
         sent = int(threshold) if float(threshold).is_integer() else threshold
-        rows, f_total = _search(spec["path"], dict(base, limit=100, **{param: sent}), spec["key"])
+        rows, f_total = _search(
+            spec["path"], dict(base, limit=100, **{param: sent}), spec["key"]
+        )
         got = [v for v in (_num(row.get(row_field)) for row in rows) if v is not None]
         if kind == "min":
             bad = [v for v in got if v < threshold - 1e-6]
@@ -1808,7 +1859,9 @@ def _sweep_substr(spec, ns, label):
             vprint(f"     [skip] {label} {spec['name']}: no usable {row_field} value")
             continue
         needle = source[: max(3, len(source) // 2)]
-        rows = _search_rows(spec["path"], dict(base, limit=100, **{param: needle}), spec["key"])
+        rows = _search_rows(
+            spec["path"], dict(base, limit=100, **{param: needle}), spec["key"]
+        )
         check(
             f"{label}: {spec['name']} {param}~'{needle}' returns rows",
             bool(rows),
@@ -1851,7 +1904,11 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
     rows = _search_rows(
         "/api/function/search", dict(ns, file_user_tag=FILE_TAG, limit=50), "functions"
     )
-    check(f"{label}: function search filters by file_user_tag", bool(rows), f"{len(rows)} row(s)")
+    check(
+        f"{label}: function search filters by file_user_tag",
+        bool(rows),
+        f"{len(rows)} row(s)",
+    )
     if rows:
         # The bug this catches: the filter hits the func-level index while the
         # row's file_tags are enriched from the file doc, so the two can
@@ -1865,7 +1922,11 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
     rows = _search_rows(
         "/api/function/search", dict(ns, user_tag=FUNC_TAG, limit=50), "functions"
     )
-    check(f"{label}: function search filters by func user_tag", bool(rows), f"{len(rows)} row(s)")
+    check(
+        f"{label}: function search filters by func user_tag",
+        bool(rows),
+        f"{len(rows)} row(s)",
+    )
     if rows:
         check(
             f"{label}: function tagged on a tagged file also shows its file tags",
@@ -1908,7 +1969,9 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
         vprint(f"     [skip] {label}: no bin_sim pairs built")
         return
 
-    rows = _search_rows("/api/bin_sim/search", dict(ns, file_tag=FILE_TAG, limit=50), "results")
+    rows = _search_rows(
+        "/api/bin_sim/search", dict(ns, file_tag=FILE_TAG, limit=50), "results"
+    )
     check(
         f"{label}: bin_sim search filters by a file tag added after the build",
         bool(rows),
@@ -1924,7 +1987,9 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
             f"first pair a={rows[0].get('file_user_tags_a')} b={rows[0].get('file_user_tags_b')}",
         )
         excluded = _search_rows(
-            "/api/bin_sim/search", dict(ns, exclude_file_tag=FILE_TAG, limit=50), "results"
+            "/api/bin_sim/search",
+            dict(ns, exclude_file_tag=FILE_TAG, limit=50),
+            "results",
         )
         tagged = {row.get("_id") for row in rows}
         check(
@@ -1935,14 +2000,17 @@ def _check_namespace_filters(label, ns, bin_sim_expected=True):
         )
 
 
-
 def test_search_filters_and_sorting():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c – Filtering and sorting, collection vs pool", BOLD))
     print(_color(f"{'='*60}", CYAN))
 
     if not file_md5 or not func_id1:
-        print(_color("\n[SKIP] No file/function resolved – filter checks skipped.", YELLOW))
+        print(
+            _color(
+                "\n[SKIP] No file/function resolved – filter checks skipped.", YELLOW
+            )
+        )
         return
 
     file_entity_id = f"{COLLECTION}:file:{file_md5}"
@@ -1960,10 +2028,13 @@ def test_search_filters_and_sorting():
             )
             if isinstance(built, dict) and built.get("job_id"):
                 wait_for_pipeline(
-                    built["job_id"], banner=" STEP 3c – Wait for collection bin_sim build"
+                    built["job_id"],
+                    banner=" STEP 3c – Wait for collection bin_sim build",
                 )
         else:
-            print(_color("     [SKIP] one binary only – bin_sim checks skipped.", YELLOW))
+            print(
+                _color("     [SKIP] one binary only – bin_sim checks skipped.", YELLOW)
+            )
 
         # The full pool pipeline (sim + clustering + bin_sim), unlike step 3b:
         # here the pool's own bin_sim docs are the thing under test.
@@ -2038,7 +2109,8 @@ def test_search_filters_and_sorting():
             )
             if isinstance(reindexed, dict) and reindexed.get("job_id"):
                 wait_for_pipeline(
-                    reindexed["job_id"], banner=" STEP 3c – Wait for pool bin_sim reindex"
+                    reindexed["job_id"],
+                    banner=" STEP 3c – Wait for pool bin_sim reindex",
                 )
             _check_namespace_filters(
                 "pool (index-backed)", {"pool": FILTER_POOL_ID}, bin_sim_expected=True
@@ -2203,7 +2275,9 @@ def test_tag_vocabulary_and_llm_batch():
     print(_color(f"{'='*60}", CYAN))
 
     if not file_md5 or not func_id1:
-        print(_color("\n[SKIP] No uploaded file – tag/LLM batch checks skipped.", YELLOW))
+        print(
+            _color("\n[SKIP] No uploaded file – tag/LLM batch checks skipped.", YELLOW)
+        )
         return
 
     vocab_tag = f"vocab_{uuid.uuid4().hex[:6]}"
@@ -2212,7 +2286,12 @@ def test_tag_vocabulary_and_llm_batch():
     test_endpoint(
         "POST",
         "/api/tags/create",
-        data={"collection": COLLECTION, "tag": vocab_tag, "color": "#ff00ff", "llm": True},
+        data={
+            "collection": COLLECTION,
+            "tag": vocab_tag,
+            "color": "#ff00ff",
+            "llm": True,
+        },
         label="POST /api/tags/create",
     )
     listing = test_endpoint(
@@ -2223,8 +2302,16 @@ def test_tag_vocabulary_and_llm_batch():
     )
     check("tags/list returns the created tag", row is not None, str(row))
     if row:
-        check("created tag is flagged for LLM", row.get("llm") is True, str(row.get("llm")))
-        check("created tag has no members", row.get("total_count") == 0, str(row.get("total_count")))
+        check(
+            "created tag is flagged for LLM",
+            row.get("llm") is True,
+            str(row.get("llm")),
+        )
+        check(
+            "created tag has no members",
+            row.get("total_count") == 0,
+            str(row.get("total_count")),
+        )
 
     # Duplicate creation is refused rather than silently resetting the metadata.
     dup = test_endpoint(
@@ -2309,7 +2396,9 @@ def test_tag_vocabulary_and_llm_batch():
     )
     job_id = (started or {}).get("job_id")
     check("batch job created", bool(job_id), str(started))
-    check("batch total matches selection", (started or {}).get("total") == 1, str(started))
+    check(
+        "batch total matches selection", (started or {}).get("total") == 1, str(started)
+    )
 
     if job_id:
         status = test_endpoint("GET", f"/api/llm/batch/{job_id}")
@@ -2319,9 +2408,15 @@ def test_tag_vocabulary_and_llm_batch():
             str(status)[:200],
         )
         cancelled = test_endpoint(
-            "POST", f"/api/llm/batch/{job_id}/cancel", label="POST /api/llm/batch/<id>/cancel"
+            "POST",
+            f"/api/llm/batch/{job_id}/cancel",
+            label="POST /api/llm/batch/<id>/cancel",
         )
-        check("batch cancel accepted", (cancelled or {}).get("status") == "cancelled", str(cancelled))
+        check(
+            "batch cancel accepted",
+            (cancelled or {}).get("status") == "cancelled",
+            str(cancelled),
+        )
 
     # --- batch: filter-based selection resolves server-side ---
     filtered = test_endpoint(
@@ -2334,7 +2429,11 @@ def test_tag_vocabulary_and_llm_batch():
         },
         label="POST /api/llm/batch (filters)",
     )
-    check("filter selection resolved to functions", (filtered or {}).get("total", 0) > 0, str(filtered))
+    check(
+        "filter selection resolved to functions",
+        (filtered or {}).get("total", 0) > 0,
+        str(filtered),
+    )
     if (filtered or {}).get("job_id"):
         test_endpoint(
             "POST",
@@ -2350,7 +2449,10 @@ def test_tag_vocabulary_and_llm_batch():
         "/api/llm/batch",
         data={
             "collection": COLLECTION,
-            "func_ids": [f"{COLLECTION}:func:{file_md5}:{i:08x}" for i in range(max_batch_size() + 1)],
+            "func_ids": [
+                f"{COLLECTION}:func:{file_md5}:{i:08x}"
+                for i in range(max_batch_size() + 1)
+            ],
             "actions": ["notes"],
         },
         expected_ok=False,
@@ -2406,13 +2508,18 @@ def test_pool_collection_equivalence():
             else:
                 md5_linux = body.get("file_md5")
         _wait_all(jobs, "ingestion")
-        if not check("equivalence: both binaries ingested", bool(md5_arm and md5_linux)):
+        if not check(
+            "equivalence: both binaries ingested", bool(md5_arm and md5_linux)
+        ):
             return
 
         # ── Path A: one collection, the normal build ──────────────────────
         print(_color("\n  [Collection build]", BOLD))
         for path, payload in (
-            ("/api/similarity/build", {"collection": single, "all": True, "algo": EQ_ALGO, "top_k": 1000}),
+            (
+                "/api/similarity/build",
+                {"collection": single, "all": True, "algo": EQ_ALGO, "top_k": 1000},
+            ),
             ("/api/cluster/build", {"collection": single}),
             ("/api/bin_sim/build", {"collection": single}),
         ):
@@ -2442,8 +2549,12 @@ def test_pool_collection_equivalence():
             _wait_all([resp.json().get("job_id")], path.rsplit("/", 1)[-1])
 
         # ── Canonical map, from the single collection's cross-binary sims ──
-        single_scores = r.zrange(f"{single}:sim:score:{EQ_ALGO}", 0, -1, withscores=True)
-        pool_scores = r.zrange(f"global:pool:{eq_pool}:sim:score", 0, -1, withscores=True)
+        single_scores = r.zrange(
+            f"{single}:sim:score:{EQ_ALGO}", 0, -1, withscores=True
+        )
+        pool_scores = r.zrange(
+            f"global:pool:{eq_pool}:sim:score", 0, -1, withscores=True
+        )
 
         single_pairs = []
         for sid_b, score in single_scores:
@@ -2479,7 +2590,9 @@ def test_pool_collection_equivalence():
         pool_bs_key = (
             f"global:pool:{eq_pool}:bin_sim:{EQ_ALGO}:{b1[0]}:{b1[1]}::{b2[0]}:{b2[1]}"
         )
-        p_score = r.zscore(f"global:pool:{eq_pool}:bin_sim:score:{EQ_ALGO}", pool_bs_key)
+        p_score = r.zscore(
+            f"global:pool:{eq_pool}:bin_sim:score:{EQ_ALGO}", pool_bs_key
+        )
 
         if s_score is None or p_score is None:
             check(
@@ -2503,7 +2616,13 @@ def test_pool_collection_equivalence():
             if not diff:
                 return diff
             out = {}
-            for key in ("matched", "unique_to_a", "unique_to_b", "unclustered_a", "unclustered_b"):
+            for key in (
+                "matched",
+                "unique_to_a",
+                "unique_to_b",
+                "unclustered_a",
+                "unclustered_b",
+            ):
                 if key not in diff:
                     continue
                 items = []
@@ -2511,7 +2630,14 @@ def test_pool_collection_equivalence():
                     norm = {
                         k: v
                         for k, v in item.items()
-                        if k not in ("cluster_uuid", "cluster_id", "sim_rarity", "collection_rarity", "avg_features")
+                        if k
+                        not in (
+                            "cluster_uuid",
+                            "cluster_id",
+                            "sim_rarity",
+                            "collection_rarity",
+                            "avg_features",
+                        )
                     }
                     for fk in ("funcs_a", "funcs_b", "funcs"):
                         if norm.get(fk):
@@ -2528,7 +2654,11 @@ def test_pool_collection_equivalence():
             return out
 
         if not s_doc or not p_doc:
-            check("equivalence: bin_sim doc exists on both sides", False, f"single={bool(s_doc)} pool={bool(p_doc)}")
+            check(
+                "equivalence: bin_sim doc exists on both sides",
+                False,
+                f"single={bool(s_doc)} pool={bool(p_doc)}",
+            )
         else:
             # Pool and collection bin_sim docs use the same field names, so every
             # shared field has to agree — not just the score and the diff.
@@ -2537,8 +2667,15 @@ def test_pool_collection_equivalence():
                 "coverage_a",
                 "coverage_b",
             )
-            keep = ("md5_a", "md5_b", "algo", "diff", "shared_clusters",
-                    "unique_clusters_a", "unique_clusters_b") + floats
+            keep = (
+                "md5_a",
+                "md5_b",
+                "algo",
+                "diff",
+                "shared_clusters",
+                "unique_clusters_a",
+                "unique_clusters_b",
+            ) + floats
             n_s = {k: v for k, v in s_doc.items() if k in keep}
             n_p = {k: v for k, v in p_doc.items() if k in keep}
             n_s["diff"] = norm_diff(s_doc.get("diff"))
@@ -2550,7 +2687,11 @@ def test_pool_collection_equivalence():
             check(
                 "equivalence: bin_sim docs match (matched/unique cluster diff)",
                 n_s == n_p,
-                "" if n_s == n_p else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}",
+                (
+                    ""
+                    if n_s == n_p
+                    else f"single={_json.dumps(n_s)[:200]} pool={_json.dumps(n_p)[:200]}"
+                ),
             )
 
         # ── 3. function similarity: pairs, scores, docs ───────────────────
@@ -2559,13 +2700,17 @@ def test_pool_collection_equivalence():
             k = parse_sid(sid_b, f":sim:{EQ_ALGO}:")
             if k:
                 single_map[k] = round(score, 4)
-                single_sids[k] = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+                single_sids[k] = (
+                    sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+                )
         pool_map, pool_sids = {}, {}
         for sid_b, score in pool_scores:
             k = parse_sid(sid_b, ":sim:")
             if k:
                 pool_map[k] = round(score, 4)
-                pool_sids[k] = sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+                pool_sids[k] = (
+                    sid_b.decode() if isinstance(sid_b, bytes) else str(sid_b)
+                )
 
         s_keys, p_keys = set(single_map), set(pool_map)
         check(
@@ -2573,7 +2718,9 @@ def test_pool_collection_equivalence():
             s_keys == p_keys,
             f"{len(s_keys)} single / {len(p_keys)} pool; only-single={list(s_keys - p_keys)[:3]} only-pool={list(p_keys - s_keys)[:3]}",
         )
-        mismatched = [k for k in s_keys & p_keys if abs(single_map[k] - pool_map[k]) > 1e-4]
+        mismatched = [
+            k for k in s_keys & p_keys if abs(single_map[k] - pool_map[k]) > 1e-4
+        ]
         check(
             "equivalence: function similarity scores match",
             not mismatched,
@@ -2604,14 +2751,24 @@ def test_pool_collection_equivalence():
             out = {
                 k: v
                 for k, v in meta.items()
-                if k not in ("collection", "id", "created_at", "cluster_uuid", "cluster_id")
+                if k
+                not in ("collection", "id", "created_at", "cluster_uuid", "cluster_id")
             }
             if "sample_functions" in out:
                 samples = [
-                    {k: v for k, v in f.items() if k not in ("function_id", "collection")}
+                    {
+                        k: v
+                        for k, v in f.items()
+                        if k not in ("function_id", "collection")
+                    }
                     for f in out["sample_functions"]
                 ]
-                samples.sort(key=lambda x: (x.get("entrypoint_address", ""), x.get("file_md5", "")))
+                samples.sort(
+                    key=lambda x: (
+                        x.get("entrypoint_address", ""),
+                        x.get("file_md5", ""),
+                    )
+                )
                 out["sample_functions"] = samples
             return out
 
@@ -2619,8 +2776,12 @@ def test_pool_collection_equivalence():
             out = {}
             for cid_b in r.smembers(list_key):
                 cid = cid_b.decode() if isinstance(cid_b, bytes) else str(cid_b)
-                members = tuple(sorted(canon(m) for m in r.smembers(member_fmt.format(cid=cid))))
-                out[members] = norm_meta(_json.loads(r.get(meta_fmt.format(cid=cid)) or "{}"))
+                members = tuple(
+                    sorted(canon(m) for m in r.smembers(member_fmt.format(cid=cid)))
+                )
+                out[members] = norm_meta(
+                    _json.loads(r.get(meta_fmt.format(cid=cid)) or "{}")
+                )
             return out
 
         s_clusters = clusters_of(
@@ -2638,7 +2799,11 @@ def test_pool_collection_equivalence():
             set(s_clusters) == set(p_clusters),
             f"{len(s_clusters)} single / {len(p_clusters)} pool cluster(s)",
         )
-        meta_mismatch = [k for k in set(s_clusters) & set(p_clusters) if s_clusters[k] != p_clusters[k]]
+        meta_mismatch = [
+            k
+            for k in set(s_clusters) & set(p_clusters)
+            if s_clusters[k] != p_clusters[k]
+        ]
         check(
             "equivalence: function cluster metadata matches",
             not meta_mismatch,
@@ -2653,7 +2818,9 @@ def test_pool_collection_equivalence():
         for coll in (single, sep_arm, sep_linux):
             try:
                 resp = requests.post(
-                    f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=10
+                    f"{BASE_URL}/api/collection/delete",
+                    json={"collection": coll},
+                    timeout=10,
                 )
                 if resp.status_code == 200:
                     del_jobs.append(resp.json().get("job_id"))

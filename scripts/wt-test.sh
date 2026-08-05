@@ -19,7 +19,7 @@ APP_PORT=${APP_PORT:-5100}
 # test_pools.py was absorbed into test_api_endpoints.py (step 3d).
 export API_URL="http://localhost:$APP_PORT"   # test_api_endpoints reads this
 rc=0
-echo "=== test_api_endpoints.py ==="; uv run python test_api_endpoints.py "$@" || rc=1
+echo "=== test_api_endpoints.py ==="; uv run python scripts/test_api_endpoints.py "$@" || rc=1
 
 "$WT_ROOT/scripts/wt-teardown.sh"
 

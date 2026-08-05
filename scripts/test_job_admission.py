@@ -134,7 +134,11 @@ def test_reaper_leaves_a_live_reservation_alone():
     svc.record_job_peak("enrich_features", 3 * GB)
     svc.r.hset(
         "job:live",
-        mapping={"id": "live", "type": "enrich_features", "status": JobStatus.RUNNING.value},
+        mapping={
+            "id": "live",
+            "type": "enrich_features",
+            "status": JobStatus.RUNNING.value,
+        },
     )
     svc.r.lpush("jobs:processing", "live")
     svc.claim_lease("live", "worker-1", ttl=300)

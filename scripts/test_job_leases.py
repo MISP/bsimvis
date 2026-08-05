@@ -45,7 +45,9 @@ class FakeRedis:
         return 1
 
     def exists(self, key):
-        return 1 if key in self.strings else 0
+        # Real EXISTS is type-agnostic; checking only strings would silently
+        # report every job hash as missing.
+        return 1 if (key in self.strings or key in self.hashes) else 0
 
     # --- hashes
     def hset(self, key, field=None, value=None, mapping=None):
@@ -469,6 +471,150 @@ def test_empty_splice_is_a_no_op():
     svc.r.hset("job:pipe", "task_ids", '["a"]')
     assert svc.splice_tasks("pipe", "a", []) is True
     assert svc.r.hget("job:pipe", "task_ids") == '["a"]'
+
+
+def test_pausing_a_group_holds_back_its_children():
+    # The group is never claimed by a worker -- only its leaves are -- so the
+    # flag has to be visible from the leaf that actually gets popped.
+    svc = make_service()
+    svc.r.hset("job:grp", mapping={"status": JobStatus.RUNNING.value})
+    svc.r.hset(
+        "job:leaf", mapping={"status": JobStatus.PENDING.value, "parent_id": "grp"}
+    )
+
+    assert svc.is_job_paused("leaf") is False
+
+    svc.set_job_paused("grp", True)
+    assert svc.is_job_paused("leaf") is True
+    # An unrelated job must keep running.
+    svc.r.hset("job:other", mapping={"status": JobStatus.PENDING.value})
+    assert svc.is_job_paused("other") is False
+
+    svc.set_job_paused("grp", False)
+    assert svc.is_job_paused("leaf") is False
+
+
+def test_pausing_frees_the_queue_for_other_jobs():
+    # The point of a per-job pause: capacity goes to everything else at once,
+    # so the paused work must leave the pending queue entirely.
+    svc = make_service()
+    svc.r.hset(
+        "job:grp", mapping={"status": JobStatus.RUNNING.value, "task_ids": '["leaf"]'}
+    )
+    svc.r.hset(
+        "job:leaf", mapping={"status": JobStatus.PENDING.value, "parent_id": "grp"}
+    )
+    svc.enqueue_job("leaf")
+    svc.r.hset("job:other", mapping={"status": JobStatus.PENDING.value})
+    svc.enqueue_job("other")
+
+    svc.set_job_paused("grp", True)
+
+    pending = svc.r.lrange("jobs:pending", 0, -1)
+    assert "leaf" not in pending
+    assert "other" in pending  # untouched, workers keep eating it
+
+    svc.set_job_paused("grp", False)
+    assert "leaf" in svc.r.lrange("jobs:pending", 0, -1)
+
+
+def test_resume_requeues_only_what_pause_took():
+    # A pipeline has many pending stages but only the current one is queued.
+    # Resuming must not fire the whole pipeline in parallel.
+    svc = make_service()
+    svc.r.hset(
+        "job:pipe",
+        mapping={"status": JobStatus.RUNNING.value, "task_ids": '["s1", "s2"]'},
+    )
+    svc.r.hset(
+        "job:s1", mapping={"status": JobStatus.PENDING.value, "parent_id": "pipe"}
+    )
+    svc.r.hset(
+        "job:s2", mapping={"status": JobStatus.PENDING.value, "parent_id": "pipe"}
+    )
+    svc.enqueue_job("s1")  # only stage 1 is live
+
+    svc.set_job_paused("pipe", True)
+    assert svc.r.lrange("jobs:pending", 0, -1) == []
+
+    svc.set_job_paused("pipe", False)
+    assert svc.r.lrange("jobs:pending", 0, -1) == ["s1"]
+
+
+def test_a_continuation_under_a_paused_pipeline_does_not_queue():
+    # Stage 1 finishes while the pipeline is paused: stage 2 must not start.
+    svc = make_service()
+    svc.r.hset("job:pipe", mapping={"status": JobStatus.RUNNING.value, "paused": "1"})
+    svc.r.hset(
+        "job:s2", mapping={"status": JobStatus.PENDING.value, "parent_id": "pipe"}
+    )
+
+    svc.enqueue_job("s2")
+
+    assert svc.r.lrange("jobs:pending", 0, -1) == []
+    assert svc.r.hget("job:s2", "paused_queued") == "1"
+
+    # ...and resuming the pipeline releases it.
+    svc.r.hset("job:pipe", mapping={"task_ids": '["s2"]'})
+    svc.set_job_paused("pipe", False)
+    assert svc.r.lrange("jobs:pending", 0, -1) == ["s2"]
+
+
+def test_a_child_still_held_by_an_ancestor_stays_down():
+    # Resuming an inner group must not override the outer group's pause.
+    svc = make_service()
+    svc.r.hset("job:outer", mapping={"paused": "1", "task_ids": '["inner"]'})
+    svc.r.hset(
+        "job:inner",
+        mapping={"parent_id": "outer", "paused": "1", "task_ids": '["leaf"]'},
+    )
+    svc.r.hset(
+        "job:leaf",
+        mapping={
+            "status": JobStatus.PENDING.value,
+            "parent_id": "inner",
+            "paused_queued": "1",
+        },
+    )
+
+    svc.set_job_paused("inner", False)
+
+    assert svc.r.lrange("jobs:pending", 0, -1) == []
+    assert svc.r.hget("job:leaf", "paused_queued") == "1"
+
+
+def test_pause_on_a_missing_job_is_reported_not_invented():
+    svc = make_service()
+    assert svc.set_job_paused("ghost", True) is None
+
+
+def test_ancestor_walk_survives_a_parent_cycle():
+    svc = make_service()
+    svc.r.hset("job:a", mapping={"parent_id": "b"})
+    svc.r.hset("job:b", mapping={"parent_id": "a"})
+    assert svc.is_job_paused("a") is False
+
+
+def test_retry_resets_the_lease_attempt_counter():
+    # A job that already burned MAX_ATTEMPTS must get a fresh budget when the
+    # user retries it, or the next lease expiry fails it immediately.
+    import bsimvis.app.routes.jobs as jobs_routes
+
+    svc = make_service()
+    svc.r.hset(
+        "job:burnt",
+        mapping={"status": JobStatus.FAILED.value, "attempts": str(MAX_ATTEMPTS)},
+    )
+
+    real = jobs_routes.job_service
+    jobs_routes.job_service = svc
+    try:
+        jobs_routes._reset_job_recursive("burnt")
+    finally:
+        jobs_routes.job_service = real
+
+    assert svc.r.hget("job:burnt", "status") == JobStatus.PENDING.value
+    assert int(svc.r.hget("job:burnt", "attempts")) == 0
 
 
 if __name__ == "__main__":

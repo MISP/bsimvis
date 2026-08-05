@@ -43,7 +43,9 @@ class StubPipe:
         self._w(apply)
 
     def hset(self, key, field=None, value=None, mapping=None):
-        self._w(lambda: self.store.setdefault(key, {}).update(mapping or {field: value}))
+        self._w(
+            lambda: self.store.setdefault(key, {}).update(mapping or {field: value})
+        )
 
     def sadd(self, key, *values):
         self._w(lambda: self.store.setdefault(key, set()).update(values))
@@ -123,15 +125,18 @@ def test_batched_and_correct():
     assert len(store["main:features:pending_enrichment"]) == pool
     # L2 norm per function
     fid = fids[0]
-    assert abs(
-        store[f"{fid}:vec:norm"] ** 2 - sum(tf**2 for tf in hashes[fid].values())
-    ) < 1e-6
+    assert (
+        abs(store[f"{fid}:vec:norm"] ** 2 - sum(tf**2 for tf in hashes[fid].values()))
+        < 1e-6
+    )
 
 
 def test_missing_data_skipped():
     store = {}
     fids = ["main:function:abc:0", "main:function:abc:1"]
-    store[f"{fids[0]}:vec:meta"] = json.dumps([{"hash": "h0", "tf": 1}, {"hash": "g0", "tf": 1}])
+    store[f"{fids[0]}:vec:meta"] = json.dumps(
+        [{"hash": "h0", "tf": 1}, {"hash": "g0", "tf": 1}]
+    )
     store[f"{fids[0]}:vec:tf"] = [("h0", 1.0)]
     # fids[1] has no data at all -> must be skipped, not crash
 

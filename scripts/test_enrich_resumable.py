@@ -58,8 +58,14 @@ def patched(svc, fail_after_batches=None):
     """Replaces index_global_features with a recorder, optionally exploding."""
     calls = []
 
-    def fake_index(collection, hashes, job_service=None, job_id=None,
-                   progress_offset=0, progress_total=None):
+    def fake_index(
+        collection,
+        hashes,
+        job_service=None,
+        job_id=None,
+        progress_offset=0,
+        progress_total=None,
+    ):
         if fail_after_batches is not None and len(calls) >= fail_after_batches:
             raise MemoryError("simulated OOM kill mid-run")
         calls.append(list(hashes))
@@ -128,14 +134,21 @@ def test_progress_is_reported_across_the_whole_run_not_per_batch():
     svc = make_service(PENDING)
     offsets = []
 
-    def fake_index(collection, hashes, job_service=None, job_id=None,
-                   progress_offset=0, progress_total=None):
+    def fake_index(
+        collection,
+        hashes,
+        job_service=None,
+        job_id=None,
+        progress_offset=0,
+        progress_total=None,
+    ):
         offsets.append((progress_offset, progress_total))
 
     svc.index_global_features = fake_index
     svc.enrich_features("c", batch_size=10)
 
     assert offsets == [(0, 25), (10, 25), (20, 25)], offsets
+
 
 def test_empty_source_record_does_not_abort_the_run():
     """A function stored with an empty :source list used to kill the whole job.
@@ -149,12 +162,12 @@ def test_empty_source_record_does_not_abort_the_run():
     from bsimvis.app.services import feature_service as fs
 
     src = open(fs.__file__).read()
-    assert "entry_decoded[0] if entry_decoded else {}" in src, (
-        "source lookup lost its empty-list guard"
-    )
-    assert "entry_decoded[0] if entry_decoded else []" in src, (
-        "vec:meta lookup lost its empty-list guard"
-    )
+    assert (
+        "entry_decoded[0] if entry_decoded else {}" in src
+    ), "source lookup lost its empty-list guard"
+    assert (
+        "entry_decoded[0] if entry_decoded else []" in src
+    ), "vec:meta lookup lost its empty-list guard"
 
     # And the shape itself: the guard must survive [] without raising.
     for raw, fallback in (("[]", {}), ("[]", [])):

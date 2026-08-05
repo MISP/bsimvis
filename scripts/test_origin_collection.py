@@ -41,7 +41,8 @@ def demo():
 
     # Explicit :col: marker wins without touching redis.
     assert (
-        resolve_origin_collection("global:pool:7:col:mirai", "anything", None) == "mirai"
+        resolve_origin_collection("global:pool:7:col:mirai", "anything", None)
+        == "mirai"
     )
 
     # A real collection passes through untouched.
@@ -71,7 +72,9 @@ def demo_pool_ids():
 
     # File and function docs are shared, so their ids pass through unchanged.
     assert to_pool_indexed_id("mirai:func:abc:0x1", "func", "7") == "mirai:func:abc:0x1"
-    assert to_pool_indexed_id("mirai:file:deadbeef", "file", "7") == "mirai:file:deadbeef"
+    assert (
+        to_pool_indexed_id("mirai:file:deadbeef", "file", "7") == "mirai:file:deadbeef"
+    )
 
     # Not a sid: no pool equivalent, caller must skip it rather than index it.
     assert to_pool_indexed_id("mirai:func:abc:0x1", "sim", "7") is None

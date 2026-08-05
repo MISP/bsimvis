@@ -60,6 +60,9 @@ class FakeJobService:
     def is_paused(self):
         return False
 
+    def is_job_paused(self, job_id):
+        return False
+
     def register_worker(self, worker_id, ttl=None):
         self.registered = worker_id
 
@@ -111,7 +114,10 @@ def test_jobs_actually_reach_the_executor():
     file kept passing while executing nothing at all.
     """
     executed = []
-    drain({"a": {"type": "t", "status": "pending"}}, lambda jid, data: executed.append(jid))
+    drain(
+        {"a": {"type": "t", "status": "pending"}},
+        lambda jid, data: executed.append(jid),
+    )
     assert executed == ["a"], f"the loop never dispatched the job: {executed}"
 
 

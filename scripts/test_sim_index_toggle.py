@@ -154,8 +154,9 @@ def test_streaming_scan_indexes_each_sim_once():
         considered.append((tuple(cids1), tuple(cids2)))
         return real_pick(cids1, cids2, meta_map)
 
-    with patch.object(config_service, "get", side_effect=lambda k, d=None: d), patch.object(
-        cs, "pick_best_shared_cluster", counting_pick
+    with (
+        patch.object(config_service, "get", side_effect=lambda k, d=None: d),
+        patch.object(cs, "pick_best_shared_cluster", counting_pick),
     ):
         assert svc._update_similarity_indexing(COL, ALGO) is True
 
@@ -165,7 +166,9 @@ def test_streaming_scan_indexes_each_sim_once():
     )
 
     expected = {sid(a, b) for a, b in pairs}
-    assert set(r.hset_calls) == expected, f"missing sims: {expected ^ set(r.hset_calls)}"
+    assert (
+        set(r.hset_calls) == expected
+    ), f"missing sims: {expected ^ set(r.hset_calls)}"
     assert len(r.hset_calls) == len(expected), f"duplicate scan: {r.hset_calls}"
 
     # Tag buckets carry the same sims, under the cluster name.

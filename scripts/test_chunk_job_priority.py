@@ -53,7 +53,9 @@ def test_chunk_jobs_jump_pending_analysis():
     js.r = StubRedis()
 
     analyze_ids = [
-        js.create_job(JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": str(i)})
+        js.create_job(
+            JobType.GHIDRA_ANALYZE, {"collection": "main", "file_md5": str(i)}
+        )
         for i in range(3)
     ]
 

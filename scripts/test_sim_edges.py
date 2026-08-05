@@ -93,17 +93,13 @@ def test_matches_the_old_implementation():
     assert es.id_to_idx == ref_ids, "node numbering diverged"
     got = list(zip(es.src.tolist(), es.dst.tolist()))
     assert got == [(i, j) for i, j, _ in ref_edges]
-    np.testing.assert_allclose(
-        es.dist, [d for _, _, d in ref_edges], rtol=1e-6
-    )
+    np.testing.assert_allclose(es.dist, [d for _, _, d in ref_edges], rtol=1e-6)
 
 
 def test_min_sim_still_registers_the_node():
     """The subtle rule: a node exists even when its only edge is filtered out."""
     rows = members(PAIRS)
-    es = sim_edges.load_edges(
-        FakeZRedis(rows), "k", PREFIX, False, "coll", min_sim=0.9
-    )
+    es = sim_edges.load_edges(FakeZRedis(rows), "k", PREFIX, False, "coll", min_sim=0.9)
     ref_ids, ref_edges = reference_impl(rows, PREFIX, False, "coll", min_sim=0.9)
 
     assert es.id_to_idx == ref_ids
@@ -120,6 +116,7 @@ def test_pool_ids_are_used_verbatim():
 
 def test_custom_id_fn():
     rows = [(f"{PREFIX}collA:md5one::collB:md5two", 0.7)]
+
     def id_fn(c1, c2):
         p1, p2 = c1.split(":"), c2.split(":")
         return f"{p1[0]}:file:{p1[1]}", f"{p2[0]}:file:{p2[1]}"
@@ -260,9 +257,9 @@ def test_cohesion_matches_the_dict_on_both_branches():
 
     for size in (2, 10, 49, 50, 60):
         members_idx = list(range(size))
-        assert abs(
-            adj.cohesion_sum(members_idx) - _dict_cohesion(ref, members_idx)
-        ) < 1e-4, size
+        assert (
+            abs(adj.cohesion_sum(members_idx) - _dict_cohesion(ref, members_idx)) < 1e-4
+        ), size
 
 
 def test_duplicate_pairs_take_the_last_value_not_the_sum():

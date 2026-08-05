@@ -31,6 +31,9 @@ const AI_WIDTH = 600;
 async function showNotes(funcId, expand = true) {
     const isNewFunc = funcId !== currentNotesFuncId;
     currentNotesFuncId = funcId;
+    // ponytail: the id carries the entity kind, so derive it instead of trusting
+    // the sticky flag showFileNotes() sets (stale after navigating file -> function)
+    entityMode = String(funcId).split(':')[1] === 'file' ? 'file' : 'func';
     
     // Ensure panels exist
     createPanelsIfMissing();
@@ -58,9 +61,8 @@ async function showNotes(funcId, expand = true) {
     setupInputListeners();
 }
 
-/** Entry point for file-level notes. Sets entityMode and delegates to showNotes. */
+/** Entry point for file-level notes. entityMode is derived from the id in showNotes. */
 async function showFileNotes(fileId, expand = true) {
-    entityMode = 'file';
     await showNotes(fileId, expand);
 }
 

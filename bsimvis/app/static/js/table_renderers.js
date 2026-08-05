@@ -3,6 +3,27 @@
  * Extracted table rendering logic from dashboard.js.
  */
 
+/**
+ * Trailing "Collection" cell for pool-scoped search tables. Renders nothing
+ * outside a pool (or when the pool view is already pinned to one collection),
+ * so it stays in lockstep with the header injected in dashboard.js.
+ * Pass a second collection for pair rows (similarities).
+ */
+function renderCollectionCell(colA, colB) {
+    const { pool, collection } = getRoutingState();
+    if (!pool || collection) return '';
+    const link = c => c
+        ? `<a href="/collections/${encodeURIComponent(c)}" onclick="Nav.openPath(this.href, event)" class="clickable-count" style="color:var(--accent);">${escapeHtml(c)}</a>`
+        : '<span class="dim">---</span>';
+    const cols = (colB === undefined || colB === colA) ? [colA] : [colA, colB];
+    return `<td class="sim-cell" style="font-size:0.7rem;">
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            ${cols.map(c => `<div style="min-height:24px; display:flex; align-items:center;">${link(c)}</div>`).join('')}
+        </div>
+    </td>`;
+}
+window.renderCollectionCell = renderCollectionCell;
+
 function createNav(view, collection, params = {}) {
     let pathSegments = [];
     if (view === 'upload') {
@@ -189,7 +210,8 @@ window.TableRenderers = {
     renderFiles: function(data, clustersMap = {}) {
         const { collection } = getRoutingState();
         return data.map(f => {
-            const col = f.collection || collection; // Base collection to use if not specified
+            // Base collection: pool searches span collections, so fall back to the id prefix.
+            const col = f.collection || (f['file_id'] || '').split(':')[0] || collection;
             const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
             let targetCol = col;
             const tags = f['tags'] || [];
@@ -277,6 +299,7 @@ window.TableRenderers = {
                 <td>
                     ${EntityRenderer.renderTag('file', fileId, tags, user_tags)}
                 </td>
+                ${renderCollectionCell(col)}
             </tr>
         `;
         }).join('');
@@ -292,7 +315,7 @@ window.TableRenderers = {
             const file_md5 = f['file_md5'] || '';
             const language = f['language_id'] || '---';
             const featCount = f['bsim_features_count'] || 0;
-            const fColl = f.collection || collection;
+            const fColl = f.collection || (f['function_id'] || '').split(':')[0] || collection;
             const funcId = f['function_id'] || `${fColl}:func:${file_md5}:${entry}`;
             let targetCol = fColl;
             const rowStyle = getRowTagColor(tags, user_tags);
@@ -325,6 +348,7 @@ window.TableRenderers = {
                 <td class="sim-cell"><span class="mono" style="color:var(--accent)">${escapeHtml(language)}</span></td>
                 <td class="sim-cell"><span class="dim" style="font-size:0.7rem;">${formatDate(f['entry_date'] || f['file_date'])}</span></td>
                 <td class="sim-cell"></td>
+                ${renderCollectionCell(fColl)}
             </tr>
         `}).join('');
     },

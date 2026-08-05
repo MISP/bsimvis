@@ -186,6 +186,9 @@ function toggleFilters() {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
 }
 
+// Views whose pool-scoped results can span several collections.
+const COLLECTION_COLUMN_VIEWS = ['files', 'functions', 'function-similarity', 'binary-similarity'];
+
 const routes = {
     'collections': {
         title: 'Collections',
@@ -1072,14 +1075,20 @@ function updateUI(viewKey, collection, params, route, force = false) {
     if (pathChanged) {
         let headHtml = '<tr>';
 
+        // Pool searches span collections: append a Collection column, matching
+        // the trailing cell renderCollectionCell() emits in the row renderers.
+        const routeHeaders = (pool && !col && COLLECTION_COLUMN_VIEWS.includes(viewKey))
+            ? [...route.headers, { label: 'Collection', width: '8%' }]
+            : route.headers;
+
         const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[viewKey];
         const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
-        const hasWidths = route.headers.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
+        const hasWidths = routeHeaders.some(h => typeof h === 'object' && h.width) || hasSavedWidths;
 
         const tableLayout = hasWidths ? 'fixed' : 'auto';
         if (dataTable) dataTable.style.tableLayout = tableLayout;
         if (dataTableHeader) dataTableHeader.style.tableLayout = tableLayout;
-        route.headers.forEach(h => {
+        routeHeaders.forEach(h => {
             const label = typeof h === 'string' ? h : h.label;
             const sortKey = typeof h === 'object' ? h.sort : null;
             let width = typeof h === 'object' ? h.width : 'auto';
@@ -2202,7 +2211,9 @@ function renderTopCorrelations(items, clustersMap = {}) {
     return items.map(p => {
         const s1 = p.id1.split(':');
         const s2 = p.id2.split(':');
-        const col = s1[0];
+        // Pool pairs can cross collections, so each side keeps its own.
+        const col = p.meta1?.collection || s1[0];
+        const col2 = p.meta2?.collection || s2[0];
 
         const offset1 = s1[0] === 'idx' ? 1 : 0;
         const offset2 = s2[0] === 'idx' ? 1 : 0;
@@ -2235,7 +2246,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
             function_name: p.name2 || p.meta2?.function_name,
             function_id: p.id2,
             entrypoint_address: addr2,
-            collection: col
+            collection: col2
         };
 
         // Single best-shared cluster for the pair (empty when the two share none).
@@ -2306,7 +2317,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
             <td class="sim-cell">
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta1?.file_name)}">${EntityRenderer.renderFileName(p.meta1?.file_name, m1, col)}</div>
-                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta2?.file_name)}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col)}</div>
+                    <div style="color:var(--meta-text-muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:0.8; min-height:24px; display:flex; align-items:center;" title="${escapeAttr(p.meta2?.file_name)}">${EntityRenderer.renderFileName(p.meta2?.file_name, m2, col2)}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2318,7 +2329,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
             <td>
                 <div style="display:flex; flex-direction:column; gap:8px;">
                     <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta1?.file_md5}`, p.meta1?.file_tags || [], p.meta1?.file_user_tags || [])}</div>
-                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
+                    <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${col2}:file:${p.meta2?.file_md5}`, p.meta2?.file_tags || [], p.meta2?.file_user_tags || [])}</div>
                 </div>
             </td>
             <td class="sim-cell">
@@ -2333,6 +2344,7 @@ function renderTopCorrelations(items, clustersMap = {}) {
                     <div style="min-height:24px; display:flex; align-items:center;"><span class="dim" style="font-size:0.7rem;">${formatDate(p.meta2?.entry_date)}</span></div>
                 </div>
             </td>
+            ${window.renderCollectionCell ? window.renderCollectionCell(col, col2) : ''}
         </tr>
     `}).join('');
 }

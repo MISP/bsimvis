@@ -1733,10 +1733,11 @@ function renderBinSimPairs(items) {
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collection}:file:${item.md5_a}`, tagsA, userTagsA)}</div>
-                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collection}:file:${item.md5_b}`, tagsB, userTagsB)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collA}:file:${item.md5_a}`, tagsA, userTagsA)}</div>
+                        <div style="min-height:24px; display:flex; align-items:center;">${EntityRenderer.renderTag('file', `${collB}:file:${item.md5_b}`, tagsB, userTagsB)}</div>
                     </div>
                 </td>
+                ${window.renderCollectionCell ? window.renderCollectionCell(collA, collB) : ''}
             </tr>
         `;
     });

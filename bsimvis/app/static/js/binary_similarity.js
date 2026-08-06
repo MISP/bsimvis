@@ -513,6 +513,10 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
         if (node.groupType === 'matched') {
             const pairs = tagToMatched.get(node.tagId) || [];
             rowsToRender.push(...pairs.map(p => ({ type: 'matched', data: p })));
+            const uniqA = tagToUniqueA.get(node.tagId) || [];
+            rowsToRender.push(...uniqA.map(f => ({ type: 'uniqueA', data: f })));
+            const uniqB = tagToUniqueB.get(node.tagId) || [];
+            rowsToRender.push(...uniqB.map(f => ({ type: 'uniqueB', data: f })));
         } else if (node.groupType === 'uniqueA') {
             const funcs = tagToUniqueA.get(node.tagId) || [];
             rowsToRender.push(...funcs.map(f => ({ type: 'uniqueA', data: f })));
@@ -592,6 +596,7 @@ async function renderFileSimTable(data) {
         const getTags = (fid) => {
             const meta = binSimFullDiff.functions_metadata[fid];
             if (meta && meta.tags) {
+                if (typeof meta.tags === 'string') return [meta.tags];
                 if (Array.isArray(meta.tags) && meta.tags.length > 0) return meta.tags;
                 if (typeof meta.tags === 'object' && Object.keys(meta.tags).length > 0) return Object.keys(meta.tags);
             }

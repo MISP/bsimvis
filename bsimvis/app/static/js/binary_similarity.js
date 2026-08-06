@@ -509,27 +509,52 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
     }
 
     if (node.tagId && node.groupType && tagToMatched) {
-        const rowsToRender = [];
         if (node.groupType === 'matched') {
             const pairs = tagToMatched.get(node.tagId) || [];
-            rowsToRender.push(...pairs.map(p => ({ type: 'matched', data: p })));
             const uniqA = tagToUniqueA.get(node.tagId) || [];
-            rowsToRender.push(...uniqA.map(f => ({ type: 'uniqueA', data: f })));
             const uniqB = tagToUniqueB.get(node.tagId) || [];
-            rowsToRender.push(...uniqB.map(f => ({ type: 'uniqueB', data: f })));
+
+            if (pairs.length > 0 || uniqA.length > 0 || uniqB.length > 0) {
+                // Render matched pairs directly
+                pairs.forEach(p => out.push(renderMatchedFunctionRow(p, 'matched', depth)));
+                
+                if (pairs.length > 0 && (uniqA.length > 0 || uniqB.length > 0)) {
+                    // Create a collapsible virtual node for the unmatched ones to avoid clutter
+                    const vNode = { 
+                        name: `Unmatched (${uniqA.length + uniqB.length})`, 
+                        children: [], 
+                        a: uniqA.length, 
+                        b: uniqB.length, 
+                        sim: 0, 
+                        tagId: node.tagId, 
+                        groupType: 'unmatched_only' 
+                    };
+                    fileSimRows(vNode, path + '/unmatched', depth, out, tagToMatched, tagToUniqueA, tagToUniqueB);
+                } else if (pairs.length === 0) {
+                    // If there are ONLY unmatched functions, render them directly
+                    uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
+                    uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
+                }
+                return;
+            }
+        } else if (node.groupType === 'unmatched_only') {
+            const uniqA = tagToUniqueA.get(node.tagId) || [];
+            const uniqB = tagToUniqueB.get(node.tagId) || [];
+            uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
+            uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
+            return;
         } else if (node.groupType === 'uniqueA') {
             const funcs = tagToUniqueA.get(node.tagId) || [];
-            rowsToRender.push(...funcs.map(f => ({ type: 'uniqueA', data: f })));
+            if (funcs.length > 0) {
+                funcs.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
+                return;
+            }
         } else if (node.groupType === 'uniqueB') {
             const funcs = tagToUniqueB.get(node.tagId) || [];
-            rowsToRender.push(...funcs.map(f => ({ type: 'uniqueB', data: f })));
-        }
-        
-        if (rowsToRender.length > 0) {
-            rowsToRender.forEach((item) => {
-                out.push(renderMatchedFunctionRow(item.data, item.type, depth));
-            });
-            return;
+            if (funcs.length > 0) {
+                funcs.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
+                return;
+            }
         }
     }
 

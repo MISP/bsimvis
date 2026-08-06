@@ -14,7 +14,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bsimvis.app.services.index_config import tag_ancestors
-from bsimvis.app.services.query_syntax import parse_filter_value, resolve_targets
+from bsimvis.app.services.query_syntax import (
+    MAX_UNION_KEYS,
+    parse_filter_value,
+    resolve_targets,
+    union_buckets,
+)
 
 
 class FakeRedis:
@@ -155,6 +160,30 @@ def demo():
     # An unknown value resolves to nothing rather than to everything.
     targets, _, _ = resolve_targets(r, "main", "func", "tags", "nosuchtag")
     assert targets == []
+
+    # union_buckets must chunk, and must return the same set either way.
+    class CountingRedis(FakeRedis):
+        def __init__(self, sets):
+            super().__init__(sets)
+            self.union_calls = 0
+            self.max_keys_per_call = 0
+
+        def sunion(self, *keys):
+            self.union_calls += 1
+            self.max_keys_per_call = max(self.max_keys_per_call, len(keys))
+            out = set()
+            for k in keys:
+                out |= self.sets.get(k, set())
+            return out
+
+    n = MAX_UNION_KEYS * 2 + 5
+    big = {"k%d" % i: {"doc%d" % i} for i in range(n)}
+    cr = CountingRedis(big)
+    got = union_buckets(cr, list(big))
+    assert len(got) == n, len(got)
+    assert cr.union_calls == 3, cr.union_calls
+    assert cr.max_keys_per_call <= MAX_UNION_KEYS, cr.max_keys_per_call
+    assert union_buckets(cr, []) == set()
 
     print("query syntax self-check: ok")
 

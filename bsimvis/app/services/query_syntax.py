@@ -32,10 +32,45 @@ from bsimvis.app.services.index_config import (
     tag_ancestors,
 )
 
-# Buckets returned for one filter value. Hit only by wildcard/substring modes
-# on a large vocabulary; exact lookups return a single bucket. Well above the
-# realistic tag vocabulary, and truncation is reported rather than silent.
-MAX_TARGETS = 20000
+# Buckets returned for one filter value. Only wildcard/substring modes can
+# reach it; an exact lookup returns a single bucket regardless of vocabulary
+# size, which is what the hierarchical namespace buckets are for.
+#
+# Cost is linear and modest — 60k buckets measured at ~0.13s to scan and
+# ~0.11s to union — so this is set high enough that a real corpus does not hit
+# it, and truncation is reported when it does. Raise `search.max_filter_buckets`
+# in bsimvis_config.toml if a vocabulary ever outgrows it.
+#
+# ponytail: the practical ceiling is not this number but SUNION blocking Redis
+# for the duration; that is why the unions are chunked (see MAX_UNION_KEYS).
+DEFAULT_MAX_TARGETS = 200000
+
+# Keys per SUNION call. Redis is single-threaded, so one union over hundreds of
+# thousands of keys stalls every other client for its whole duration. Chunking
+# does not reduce the total work, it just lets other commands interleave. Match
+# the chunk size the Lua search scripts already use.
+MAX_UNION_KEYS = 5000
+
+
+def _max_targets():
+    from bsimvis.app.services.config_service import config_service
+
+    try:
+        return int(config_service.get("search.max_filter_buckets", DEFAULT_MAX_TARGETS))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_TARGETS
+
+
+def union_buckets(r, keys):
+    """SUNION over any number of keys, in chunks, as a set of decoded ids."""
+    out = set()
+    for i in range(0, len(keys), MAX_UNION_KEYS):
+        chunk = keys[i : i + MAX_UNION_KEYS]
+        if not chunk:
+            continue
+        for t in r.sunion(*chunk):
+            out.add(t.decode() if isinstance(t, bytes) else str(t))
+    return out
 
 _GLOB_META = "\\*?[]^"
 
@@ -129,7 +164,7 @@ def parse_filter_value(field, raw, default_kind="exact"):
 
 
 def resolve_targets(
-    r, col, level, field, raw, max_targets=MAX_TARGETS, default_kind="exact"
+    r, col, level, field, raw, max_targets=None, default_kind="exact"
 ):
     """Bucket values matching one filter value.
 
@@ -139,6 +174,8 @@ def resolve_targets(
     which case the result is a subset and the caller must say so.
     """
     spec = parse_filter_value(field, raw, default_kind=default_kind)
+    if max_targets is None:
+        max_targets = _max_targets()
     registry_key = f"{col}:reg:{level}:{field}"
     prefix = f"{col}:idx:{level}:{field}:"
 

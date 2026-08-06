@@ -5,7 +5,7 @@ import time
 
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.query_syntax import resolve_targets
+from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
@@ -420,9 +420,7 @@ def query_files_advanced(r, collection, filters):
         if not bucket_values:
             return set()
         prefix = f"{collection}:idx:{field_level}:{field_name}:"
-        keys = [prefix + v for v in bucket_values]
-        raw = r.smembers(keys[0]) if len(keys) == 1 else r.sunion(*keys)
-        return {t.decode() if isinstance(t, bytes) else str(t) for t in raw}
+        return union_buckets(r, [prefix + v for v in bucket_values])
 
     # Apply Metadata Filters
     for field, val in fields.items():

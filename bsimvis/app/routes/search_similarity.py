@@ -13,7 +13,7 @@ from bsimvis.app.services.index_service import (
     get_pool_id,
 )
 from bsimvis.app.services.config_service import config_service
-from bsimvis.app.services.query_syntax import resolve_targets
+from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 
 DEFAULT_LIMIT = 100  # API RESULT LIMIT
 DEFAULT_POOL_LIMIT = 1000000  # DATABASE FILTERING LIMIT
@@ -463,14 +463,9 @@ def similarity_search():
                     else:
                         # Other levels resolve straight to member ids here.
                         prefix = f"{index_col}:idx:{lvl}:{field}:"
-                        keys = [prefix + v for v in bucket_values]
-                        raw = (
-                            r.smembers(keys[0]) if len(keys) == 1 else r.sunion(*keys)
+                        targets = list(
+                            union_buckets(r, [prefix + v for v in bucket_values])
                         )
-                        targets = [
-                            (t.decode() if isinstance(t, bytes) else str(t))
-                            for t in raw
-                        ]
 
                     logging.info(
                         f"SIM SEARCH | {session_id} | Resolved {len(targets)} partial {lvl}-level targets across {len(bucket_values)} buckets for '{field}:{val}' (mode={spec.kind})"

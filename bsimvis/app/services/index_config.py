@@ -176,6 +176,76 @@ EXACT_FIELDS = {
     # "batch_uuid",
 }
 
+# Fields whose values are free text rather than a controlled vocabulary. A
+# filter on these with no wildcard means "contains", because nobody can type a
+# 200-char demangled symbol exactly. Every other field defaults to an exact
+# bucket lookup — see query_syntax.parse_filter_value().
+SUBSTRING_FIELDS = {
+    "function_name",
+    "file_name",
+    "parent_file_name",
+    "related_file_name",
+    "file_names",
+    "yara",
+    "avtype",
+    "filetype",
+    "cc_ip",
+    "cluster_name",
+    "bin_cluster_name",
+    "parameters",
+    "note_owners",
+    "inferred_yara",
+    "inferred_avtype",
+    "inferred_filetype",
+    "inferred_ccip",
+    "inferred_filename",
+    "inferred_md5",
+    "file_name_a",
+    "file_name_b",
+    "file_parent_file_name_a",
+    "file_parent_file_name_b",
+    "file_related_file_name_a",
+    "file_related_file_name_b",
+}
+
+# Hierarchical fields: values are paths, and every ancestor of a value is
+# indexed as its own bucket at write time. `lib:uclibc:0.9.30.1:seekdir` also
+# lands in `lib`, `lib:uclibc` and `lib:uclibc:0.9.30.1`, which turns the common
+# "everything under this namespace" query into a single exact bucket lookup
+# instead of a scan over the whole tag vocabulary.
+#
+# Keyed by indexed field name, so propagated variants (file_tags, func_tags)
+# must be listed explicitly. Value is the list of separators, longest first —
+# `namespace` will want ["::", "/"] when function namespaces are folded in.
+HIERARCHY_SEPARATORS = {
+    "tags": [":"],
+    "user_tags": [":"],
+    "file_tags": [":"],
+    "file_user_tags": [":"],
+    "func_tags": [":"],
+    "func_user_tags": [":"],
+}
+
+
+def tag_ancestors(field: str, value: str) -> list[str]:
+    """Ancestor bucket values for a hierarchical field value, excluding itself.
+
+    `lib:uclibc:seekdir` -> ['lib', 'lib:uclibc']. Empty for non-hierarchical
+    fields, and for values with no separator (nothing above them).
+
+    ponytail: splits on the first separator that appears rather than tokenizing
+    a grammar. Mixed-separator values (`a::b/c`) split on whichever is listed
+    first; revisit if `namespace` turns out to mix them in practice.
+    """
+    seps = HIERARCHY_SEPARATORS.get(field)
+    if not seps or not value:
+        return []
+    for sep in seps:
+        if sep in value:
+            parts = value.split(sep)
+            return [sep.join(parts[:i]) for i in range(1, len(parts))]
+    return []
+
 # Fields that are auto-analysis artifacts of clustering. Clustering runs per
 # namespace (a collection OR a pool), so these indexes belong to whichever
 # namespace produced them and must never be merged from member collections into

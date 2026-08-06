@@ -1642,7 +1642,8 @@ function applyBinSimSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     });
 

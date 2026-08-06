@@ -5,6 +5,7 @@ import time
 
 from flask import request
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.query_syntax import resolve_targets
 from bsimvis.app.services.index_service import (
     query_ids,
     parse_timestamp,
@@ -402,36 +403,26 @@ def query_files_advanced(r, collection, filters):
             for d in r.smembers(f"{collection}:all_files")
         }
 
-    # Helper: Get all doc IDs matching a substring in a specific field registry
-    def get_field_matches(field_name, search_val, field_level="file"):
-        registry_key = f"{collection}:reg:{field_level}:{field_name}"
-        val_lower = search_val.lower()
-        matching_buckets = []
-        try:
-            for bucket in r.sscan_iter(
-                registry_key, match=f"*{val_lower}*", count=1000
-            ):
-                bucket_str = (
-                    bucket.decode() if isinstance(bucket, bytes) else str(bucket)
-                )
-                if val_lower in bucket_str.lower():
-                    matching_buckets.append(bucket_str)
-        except Exception as e:
-            logging.warning(f"Registry SSCAN failed for {registry_key}: {e}")
-
-        field_candidates = set()
-        if matching_buckets:
-            if len(matching_buckets) == 1:
-                field_candidates = {
-                    t.decode() if isinstance(t, bytes) else str(t)
-                    for t in r.smembers(matching_buckets[0])
-                }
-            else:
-                field_candidates = {
-                    t.decode() if isinstance(t, bytes) else str(t)
-                    for t in r.sunion(*matching_buckets)
-                }
-        return field_candidates
+    # Helper: Get all doc IDs matching one filter value in a field registry.
+    # Match mode (exact / wildcard / substring) comes from query_syntax so this
+    # route resolves a value identically to the function and similarity routes.
+    def get_field_matches(
+        field_name, search_val, field_level="file", default_kind="exact"
+    ):
+        bucket_values, _truncated, _spec = resolve_targets(
+            r,
+            collection,
+            field_level,
+            field_name,
+            search_val,
+            default_kind=default_kind,
+        )
+        if not bucket_values:
+            return set()
+        prefix = f"{collection}:idx:{field_level}:{field_name}:"
+        keys = [prefix + v for v in bucket_values]
+        raw = r.smembers(keys[0]) if len(keys) == 1 else r.sunion(*keys)
+        return {t.decode() if isinstance(t, bytes) else str(t) for t in raw}
 
     # Apply Metadata Filters
     for field, val in fields.items():
@@ -442,7 +433,10 @@ def query_files_advanced(r, collection, filters):
 
             for f_name, targets in INDEX_CONFIG.get("file", {}).items():
                 if "file" in targets:
-                    q_matches.update(get_field_matches(f_name, val))
+                    # Free-text box: a bare word stays a substring search.
+                    q_matches.update(
+                        get_field_matches(f_name, val, default_kind="substring")
+                    )
             candidates &= q_matches
         elif field == "_any_md5":
             candidates &= (

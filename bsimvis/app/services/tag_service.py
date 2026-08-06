@@ -2,6 +2,7 @@ import json
 import random
 import logging
 from .redis_client import get_redis
+from bsimvis.app.services.index_config import tag_ancestors
 from bsimvis.app.services.index_service import (
     resolve_origin_collection,
     to_pool_indexed_id,
@@ -10,6 +11,54 @@ from bsimvis.app.services.index_service import (
 
 def _normalize_collection(collection, entity_id=None):
     return resolve_origin_collection(collection, entity_id)
+
+
+def _tag_buckets(tag_lower, field="user_tags"):
+    """The tag's own bucket plus every ancestor namespace bucket.
+
+    Tags are written straight to Redis here rather than through
+    index_service._index_tag, so the hierarchy expansion has to be mirrored —
+    otherwise a user-applied `lib:uclibc:foo` would be invisible to a
+    `func_tag=lib` lookup while an ingest-applied one is found.
+    """
+    return [tag_lower] + tag_ancestors(field, tag_lower)
+
+
+def _add_tag_buckets(r, coll, lvl, tag_lower, members, field="user_tags"):
+    if isinstance(members, str):
+        members = [members]
+    if not members:
+        return
+    registry_key = f"{coll}:reg:{lvl}:{field}"
+    for bucket_value in _tag_buckets(tag_lower, field):
+        key = f"{coll}:idx:{lvl}:{field}:{bucket_value}"
+        r.sadd(key, *members)
+        r.sadd(registry_key, key)
+
+
+def _remove_tag_buckets(r, coll, lvl, tag_lower, members, remaining, field="user_tags"):
+    """Drop members from the tag bucket, and from ancestors nothing else covers.
+
+    remaining: tags the doc still carries. Bulk callers pass None when the
+    per-doc remainder isn't known — ancestors are then left in place, which
+    keeps a namespace filter over-inclusive rather than dropping a doc that
+    still belongs there. Run the backfill script to resettle them.
+    """
+    if not members:
+        return
+    kept = set()
+    for t in remaining or []:
+        if not t:
+            continue
+        t_lower = str(t).lower()
+        kept.add(t_lower)
+        kept.update(tag_ancestors(field, t_lower))
+
+    buckets = [tag_lower] if remaining is None else _tag_buckets(tag_lower, field)
+    for bucket_value in buckets:
+        if bucket_value in kept:
+            continue
+        r.srem(f"{coll}:idx:{lvl}:{field}:{bucket_value}", *members)
 
 
 def _to_pool_ids(ids, lvl, pool_id):
@@ -129,11 +178,7 @@ class TagService:
                 if indexed_id.endswith(":meta"):
                     indexed_id = indexed_id[:-5]
 
-                index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
-                r.sadd(index_key, indexed_id)
-
-                registry_key = f"{collection}:reg:{lvl}:user_tags"
-                r.sadd(registry_key, index_key)
+                _add_tag_buckets(r, collection, lvl, tag_lower, indexed_id)
 
                 # Propagate index to all associated pools
                 associated_pools = r.smembers(f"{collection}:pools")
@@ -142,11 +187,9 @@ class TagService:
                     pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
                     if not pool_id_val:
                         continue
-                    pool_coll = f"global:pool:{p_id}"
-                    pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                    r.sadd(pool_index_key, pool_id_val)
-                    pool_registry_key = f"{pool_coll}:reg:{lvl}:user_tags"
-                    r.sadd(pool_registry_key, pool_index_key)
+                    _add_tag_buckets(
+                        r, f"global:pool:{p_id}", lvl, tag_lower, pool_id_val
+                    )
 
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="add"
@@ -193,8 +236,9 @@ class TagService:
                 if indexed_id.endswith(":meta"):
                     indexed_id = indexed_id[:-5]
 
-                index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
-                r.srem(index_key, indexed_id)
+                _remove_tag_buckets(
+                    r, collection, lvl, tag_lower, [indexed_id], user_tags
+                )
 
                 # Propagate index removal to all associated pools
                 associated_pools = r.smembers(f"{collection}:pools")
@@ -203,9 +247,14 @@ class TagService:
                     pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
                     if not pool_id_val:
                         continue
-                    pool_coll = f"global:pool:{p_id}"
-                    pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                    r.srem(pool_index_key, pool_id_val)
+                    _remove_tag_buckets(
+                        r,
+                        f"global:pool:{p_id}",
+                        lvl,
+                        tag_lower,
+                        [pool_id_val],
+                        user_tags,
+                    )
 
                 self._propagate_user_tag(
                     collection, entity_type, entity_id, tag, op="remove"
@@ -233,8 +282,6 @@ class TagService:
                 if entity_type == "function"
                 else "sim" if entity_type == "similarity" else entity_type
             )
-            registry_key = f"{collection}:reg:{lvl}:user_tags"
-            index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
 
             associated_pools = r.smembers(f"{collection}:pools")
 
@@ -255,8 +302,7 @@ class TagService:
                     self._set_doc(doc_id, data)
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
-                    r.sadd(index_key, indexed_id)
-                    r.sadd(registry_key, index_key)
+                    _add_tag_buckets(r, collection, lvl, tag_lower, indexed_id)
 
                     # Propagate to pools
                     for p_id in associated_pools:
@@ -264,11 +310,9 @@ class TagService:
                         pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
                         if not pool_id_val:
                             continue
-                        pool_coll = f"global:pool:{p_id}"
-                        pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                        r.sadd(pool_index_key, pool_id_val)
-                        pool_registry_key = f"{pool_coll}:reg:{lvl}:user_tags"
-                        r.sadd(pool_registry_key, pool_index_key)
+                        _add_tag_buckets(
+                            r, f"global:pool:{p_id}", lvl, tag_lower, pool_id_val
+                        )
 
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="add"
@@ -294,7 +338,6 @@ class TagService:
                 if entity_type == "function"
                 else "sim" if entity_type == "similarity" else entity_type
             )
-            index_key = f"{collection}:idx:{lvl}:user_tags:{tag_lower}"
             associated_pools = r.smembers(f"{collection}:pools")
 
             for eid in entity_ids:
@@ -314,7 +357,9 @@ class TagService:
                     self._set_doc(doc_id, data)
 
                     indexed_id = doc_id[:-5] if doc_id.endswith(":meta") else doc_id
-                    r.srem(index_key, indexed_id)
+                    _remove_tag_buckets(
+                        r, collection, lvl, tag_lower, [indexed_id], user_tags
+                    )
 
                     # Propagate removal to pools
                     for p_id in associated_pools:
@@ -322,9 +367,14 @@ class TagService:
                         pool_id_val = to_pool_indexed_id(indexed_id, lvl, p_id)
                         if not pool_id_val:
                             continue
-                        pool_coll = f"global:pool:{p_id}"
-                        pool_index_key = f"{pool_coll}:idx:{lvl}:user_tags:{tag_lower}"
-                        r.srem(pool_index_key, pool_id_val)
+                        _remove_tag_buckets(
+                            r,
+                            f"global:pool:{p_id}",
+                            lvl,
+                            tag_lower,
+                            [pool_id_val],
+                            user_tags,
+                        )
 
                     self._propagate_user_tag(
                         collection, entity_type, eid, tag, op="remove"
@@ -449,21 +499,34 @@ class TagService:
     def _strip_static_tag(self, collection, lvl, ids, tag):
         """Removes an analysis tag from docs and its index (no user_tags path)."""
         r = self.r
-        index_key = f"{collection}:idx:{lvl}:tags:{tag.lower()}"
+        tag_lower = tag.lower()
         for eid in ids:
             doc_id = eid if eid.endswith(":meta") else f"{eid}:meta"
+            remaining = []
             data = self._get_doc(doc_id)
             if data:
                 tags = data.get("tags")
-                if isinstance(tags, list) and tag in tags:
-                    data["tags"] = [t for t in tags if t != tag]
-                    self._set_doc(doc_id, data)
-            r.srem(index_key, eid)
+                if isinstance(tags, list):
+                    remaining = [t for t in tags if t != tag]
+                    if tag in tags:
+                        data["tags"] = remaining
+                        self._set_doc(doc_id, data)
+            _remove_tag_buckets(
+                r, collection, lvl, tag_lower, [eid], remaining, field="tags"
+            )
             for p_id in r.smembers(f"{collection}:pools"):
                 p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
                 mapped = to_pool_indexed_id(eid, lvl, p_id)
                 if mapped:
-                    r.srem(f"global:pool:{p_id}:idx:{lvl}:tags:{tag.lower()}", mapped)
+                    _remove_tag_buckets(
+                        r,
+                        f"global:pool:{p_id}",
+                        lvl,
+                        tag_lower,
+                        [mapped],
+                        remaining,
+                        field="tags",
+                    )
 
     def delete_tag(self, collection, tag):
         """Deletes a tag: strips it from every entity, then drops its metadata.
@@ -578,8 +641,6 @@ class TagService:
             md5 = indexed_id.split(":")[-1]
             for target_lvl in prop_levels:
                 target_field = resolve_target_field(src_level, target_lvl, "user_tags")
-                index_key = f"{collection}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                registry_key = f"{collection}:reg:{target_lvl}:{target_field}"
 
                 if target_lvl == "func":
                     related_ids = r.smembers(f"{collection}:idx:file:functions:{md5}")
@@ -590,29 +651,36 @@ class TagService:
 
                 if related_ids:
                     id_list = list(related_ids)
-                    if op == "add":
-                        r.sadd(index_key, *id_list)
-                        r.sadd(registry_key, index_key)
-                        for p_id in associated_pools:
-                            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
-                            pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
-                            if not pool_ids:
-                                continue
-                            pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                            pool_registry_key = (
-                                f"global:pool:{p_id}:reg:{target_lvl}:{target_field}"
+                    for coll_key in [collection] + [
+                        f"global:pool:{p.decode() if isinstance(p, bytes) else p}"
+                        for p in associated_pools
+                    ]:
+                        if coll_key == collection:
+                            ids = id_list
+                        else:
+                            ids = _to_pool_ids(
+                                id_list, target_lvl, coll_key.split(":")[-1]
                             )
-                            r.sadd(pool_index_key, *pool_ids)
-                            r.sadd(pool_registry_key, pool_index_key)
-                    else:
-                        r.srem(index_key, *id_list)
-                        for p_id in associated_pools:
-                            p_id = p_id.decode() if isinstance(p_id, bytes) else p_id
-                            pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
-                            if not pool_ids:
-                                continue
-                            pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                            r.srem(pool_index_key, *pool_ids)
+                        if not ids:
+                            continue
+                        if op == "add":
+                            _add_tag_buckets(
+                                r, coll_key, target_lvl, tag_lower, ids, target_field
+                            )
+                        else:
+                            # Per-doc remainder is unknown on a propagated
+                            # removal, so ancestors stay put — over-inclusive,
+                            # never under-inclusive. The backfill script
+                            # resettles them.
+                            _remove_tag_buckets(
+                                r,
+                                coll_key,
+                                target_lvl,
+                                tag_lower,
+                                ids,
+                                None,
+                                target_field,
+                            )
 
         elif src_level == "func":
             parts = indexed_id.split(":")
@@ -623,45 +691,42 @@ class TagService:
                         target_field = resolve_target_field(
                             src_level, target_lvl, "user_tags"
                         )
-                        index_key = (
-                            f"{collection}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                        )
-                        registry_key = f"{collection}:reg:{target_lvl}:{target_field}"
-
                         related_ids = r.smembers(
                             f"{collection}:sim:involves:func:{clean_id}"
                         )
                         if related_ids:
                             id_list = list(related_ids)
-                            if op == "add":
-                                r.sadd(index_key, *id_list)
-                                r.sadd(registry_key, index_key)
-                                for p_id in associated_pools:
-                                    p_id = (
-                                        p_id.decode()
-                                        if isinstance(p_id, bytes)
-                                        else p_id
+                            for coll_key in [collection] + [
+                                f"global:pool:{p.decode() if isinstance(p, bytes) else p}"
+                                for p in associated_pools
+                            ]:
+                                if coll_key == collection:
+                                    ids = id_list
+                                else:
+                                    ids = _to_pool_ids(
+                                        id_list, target_lvl, coll_key.split(":")[-1]
                                     )
-                                    pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
-                                    if not pool_ids:
-                                        continue
-                                    pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                                    pool_registry_key = f"global:pool:{p_id}:reg:{target_lvl}:{target_field}"
-                                    r.sadd(pool_index_key, *pool_ids)
-                                    r.sadd(pool_registry_key, pool_index_key)
-                            else:
-                                r.srem(index_key, *id_list)
-                                for p_id in associated_pools:
-                                    p_id = (
-                                        p_id.decode()
-                                        if isinstance(p_id, bytes)
-                                        else p_id
+                                if not ids:
+                                    continue
+                                if op == "add":
+                                    _add_tag_buckets(
+                                        r,
+                                        coll_key,
+                                        target_lvl,
+                                        tag_lower,
+                                        ids,
+                                        target_field,
                                     )
-                                    pool_ids = _to_pool_ids(id_list, target_lvl, p_id)
-                                    if not pool_ids:
-                                        continue
-                                    pool_index_key = f"global:pool:{p_id}:idx:{target_lvl}:{target_field}:{tag_lower}"
-                                    r.srem(pool_index_key, *pool_ids)
+                                else:
+                                    _remove_tag_buckets(
+                                        r,
+                                        coll_key,
+                                        target_lvl,
+                                        tag_lower,
+                                        ids,
+                                        None,
+                                        target_field,
+                                    )
 
 
 tag_service = TagService()

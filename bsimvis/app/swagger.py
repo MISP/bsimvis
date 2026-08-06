@@ -911,7 +911,13 @@ class FunctionSearch(Resource):
             },
             "exclude_user_tag": {"description": "Exclude functions with this user tag"},
             "exclude_func_tag": {
-                "description": "Exclude functions with this function-level tag"
+                "description": (
+                    "Exclude functions with this function-level tag. "
+                    "Matching is exact on the tag value; hierarchical tags also "
+                    "match by namespace, so `lib` excludes `lib:uclibc:seekdir`. "
+                    "Use `*` for wildcards (`lib*`, `*uclibc*`) and wrap a value "
+                    'in double quotes to keep it literal ("DIR *").'
+                )
             },
             "exclude_func_static_tag": {
                 "description": "Exclude functions with this function-level static tag"

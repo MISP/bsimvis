@@ -426,7 +426,7 @@ function tagSideCounts(row) {
     return [a, b];
 }
 
-function fileSimNode(name, children, a, b, forceSim) {
+function fileSimNode(name, children, a, b, forceSim, tagId, groupType) {
     let sim;
     if (forceSim !== undefined) {
         sim = forceSim;
@@ -435,7 +435,7 @@ function fileSimNode(name, children, a, b, forceSim) {
             ? children.reduce((s, c) => s + c.sim, 0) / children.length
             : (Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0);
     }
-    return { name, children, a, b, sim };
+    return { name, children, a, b, sim, tagId, groupType };
 }
 
 function fileSimTree(rows) {
@@ -448,7 +448,7 @@ function fileSimTree(rows) {
             if (c.tag_id && c.tag_id.split(':').length > 3) {
                 childName = c.tag_id.split(':').slice(3).join(':'); // Extract function name
             }
-            return fileSimNode(childName, [], ca, cb);
+            return fileSimNode(childName, [], ca, cb, undefined, c.tag_id);
         });
         
         let nodeName = row.name;
@@ -463,12 +463,15 @@ function fileSimTree(rows) {
             const uniqueB = kids.filter(k => k.a === 0 && k.b > 0);
             
             if (shared.length > 0) {
+                shared.forEach(k => k.groupType = 'matched');
                 groupedKids.push(fileSimNode(`Shared (${shared.length})`, shared, shared.reduce((s, k) => s + k.a, 0), shared.reduce((s, k) => s + k.b, 0), 1.0));
             }
             if (uniqueA.length > 0) {
+                uniqueA.forEach(k => k.groupType = 'uniqueA');
                 groupedKids.push(fileSimNode(`Unique to A (${uniqueA.length})`, uniqueA, uniqueA.reduce((s, k) => s + k.a, 0), 0, 0.0));
             }
             if (uniqueB.length > 0) {
+                uniqueB.forEach(k => k.groupType = 'uniqueB');
                 groupedKids.push(fileSimNode(`Unique to B (${uniqueB.length})`, uniqueB, 0, uniqueB.reduce((s, k) => s + k.b, 0), 0.0));
             }
         }
@@ -498,11 +501,32 @@ window.toggleFileSimRow = function(path) {
     if (binSimDataCache) renderFileSimTable(binSimDataCache);
 };
 
-function fileSimRows(node, path, depth, out) {
+function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUniqueB) {
     if (node.name === 'untagged' && depth === 1 && node.children.length > 0 && node.children[0].name === 'Untagged') {
         // Skip redundant 'untagged' category wrapper for the 'Untagged' node
-        node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth, out));
+        node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth, out, tagToMatched, tagToUniqueA, tagToUniqueB));
         return;
+    }
+
+    if (node.tagId && node.groupType && tagToMatched) {
+        const rowsToRender = [];
+        if (node.groupType === 'matched') {
+            const pairs = tagToMatched.get(node.tagId) || [];
+            rowsToRender.push(...pairs.map(p => ({ type: 'matched', data: p })));
+        } else if (node.groupType === 'uniqueA') {
+            const funcs = tagToUniqueA.get(node.tagId) || [];
+            rowsToRender.push(...funcs.map(f => ({ type: 'uniqueA', data: f })));
+        } else if (node.groupType === 'uniqueB') {
+            const funcs = tagToUniqueB.get(node.tagId) || [];
+            rowsToRender.push(...funcs.map(f => ({ type: 'uniqueB', data: f })));
+        }
+        
+        if (rowsToRender.length > 0) {
+            rowsToRender.forEach((item) => {
+                out.push(renderMatchedFunctionRow(item.data, item.type, depth));
+            });
+            return;
+        }
     }
 
     const hasKids = node.children.length > 0;
@@ -513,26 +537,33 @@ function fileSimRows(node, path, depth, out) {
     const pct = (node.sim * 100).toFixed(node.sim === 1 || node.sim === 0 ? 0 : 1) + '%';
     const bar = Math.round(node.sim * 100);
     out.push(`
-        <tr style="${depth === 0 ? 'font-weight:bold;' : ''}">
-            <td style="padding-left:${12 + depth * 22}px;">
+        <tr style="${depth === 0 ? 'font-weight:bold;' : ''}; border-bottom: 1px solid var(--border);">
+            <td style="padding:8px; padding-left:${12 + depth * 22}px;">
                 ${hasKids
                     ? `<span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; color:var(--subtle); margin-right:6px;">${expanded ? '▼' : '▶'}</span>`
                     : '<span style="display:inline-block; width:14px;"></span>'}
                 ${escapeHtml(node.name)}
             </td>
-            <td style="text-align:right;">${Math.round(node.a)}</td>
-            <td style="text-align:right;">${Math.round(node.b)}</td>
-            <td style="text-align:right; white-space:nowrap;">${pct}</td>
-            <td style="width:160px;">
-                <div style="background:var(--border); border-radius:3px; height:8px;">
-                    <div style="width:${bar}%; background:var(--accent); height:8px; border-radius:3px;"></div>
+            <td colspan="4" style="padding:8px;">
+                <div style="display:flex; align-items:center; gap:20px; justify-content:flex-end; color:var(--subtle);">
+                    <div title="Functions in A">A: <span style="color:var(--text);">${Math.round(node.a)}</span></div>
+                    <div title="Functions in B">B: <span style="color:var(--text);">${Math.round(node.b)}</span></div>
+                    <div style="width:160px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; font-size:0.7rem;">
+                            <span>Similarity</span>
+                            <span style="color:var(--accent); font-weight:bold;">${pct}</span>
+                        </div>
+                        <div style="background:var(--border); border-radius:3px; height:6px;">
+                            <div style="width:${bar}%; background:var(--accent); height:6px; border-radius:3px;"></div>
+                        </div>
+                    </div>
                 </div>
             </td>
         </tr>`);
-    if (expanded) node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth + 1, out));
+    if (expanded) node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth + 1, out, tagToMatched, tagToUniqueA, tagToUniqueB));
 }
 
-function renderFileSimTable(data) {
+async function renderFileSimTable(data) {
     const el = document.getElementById('bin-sim-filesim');
     if (!el) return;
     const rows = data.tags_summary || [];
@@ -540,21 +571,69 @@ function renderFileSimTable(data) {
         el.innerHTML = '<div style="color:var(--dim); text-align:center; padding:40px;">No tag data for this pair.</div>';
         return;
     }
+
+    if (!binSimFullDiff && binSimCtx) {
+        el.innerHTML = '<div style="color:var(--dim); text-align:center; padding:40px;">Loading full function data…</div>';
+        try {
+            let u = `/api/diff?collection_a=${encodeURIComponent(binSimCtx.collection)}&md5_a=${encodeURIComponent(binSimCtx.md5a)}&md5_b=${encodeURIComponent(binSimCtx.md5b)}`;
+            if (binSimCtx.collB) u += `&collection_b=${encodeURIComponent(binSimCtx.collB)}`;
+            if (binSimCtx.poolId) u += `&pool=${encodeURIComponent(binSimCtx.poolId)}`;
+            const r = await fetch(u);
+            binSimFullDiff = await r.json();
+            Object.assign(binSimDataCache.functions_metadata, binSimFullDiff.functions_metadata || {});
+        } catch (e) { console.error('filesim full diff fetch failed', e); }
+    }
+
+    const tagToMatched = new Map();
+    const tagToUniqueA = new Map();
+    const tagToUniqueB = new Map();
+    
+    if (binSimFullDiff) {
+        const getTags = (fid) => {
+            const meta = binSimFullDiff.functions_metadata[fid];
+            if (meta && meta.tags) {
+                if (Array.isArray(meta.tags) && meta.tags.length > 0) return meta.tags;
+                if (typeof meta.tags === 'object' && Object.keys(meta.tags).length > 0) return Object.keys(meta.tags);
+            }
+            return ['untagged'];
+        };
+
+        (binSimFullDiff.diff.matched || []).forEach(m => {
+            const tags = new Set([...(m.func_a ? getTags(m.func_a) : []), ...(m.func_b ? getTags(m.func_b) : [])]);
+            tags.forEach(t => {
+                if (!tagToMatched.has(t)) tagToMatched.set(t, []);
+                tagToMatched.get(t).push(m);
+            });
+        });
+        (binSimFullDiff.diff.unique_to_a || []).forEach(u => {
+            getTags(u.func_id).forEach(t => {
+                if (!tagToUniqueA.has(t)) tagToUniqueA.set(t, []);
+                tagToUniqueA.get(t).push(u);
+            });
+        });
+        (binSimFullDiff.diff.unique_to_b || []).forEach(u => {
+            getTags(u.func_id).forEach(t => {
+                if (!tagToUniqueB.has(t)) tagToUniqueB.set(t, []);
+                tagToUniqueB.get(t).push(u);
+            });
+        });
+    }
+
     const nameA = data.file_metadata_a?.file_name || 'Binary A';
     const nameB = data.file_metadata_b?.file_name || 'Binary B';
     const body = [];
     fileSimAutoExpanded = false;
-    fileSimRows(fileSimTree(rows), 'root', 0, body);
+    fileSimRows(fileSimTree(rows), 'root', 0, body, tagToMatched, tagToUniqueA, tagToUniqueB);
     fileSimAutoExpanded = true;
     el.innerHTML = `
-        <table class="bin-sim-mc-table">
+        <table class="bin-sim-mc-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
             <thead>
                 <tr>
-                    <th>Tag</th>
-                    <th style="text-align:right;" title="${escapeAttr(nameA)}">A</th>
-                    <th style="text-align:right;" title="${escapeAttr(nameB)}">B</th>
-                    <th style="text-align:right;">Similarity</th>
-                    <th></th>
+                    <th style="padding:10px;">Tag / Similarity</th>
+                    <th style="padding:10px; text-align:center;">${escapeHtml(nameA)}</th>
+                    <th style="padding:10px; text-align:center; width:50px;">Notes</th>
+                    <th style="padding:10px; text-align:center;">${escapeHtml(nameB)}</th>
+                    <th style="padding:10px; text-align:center; width:50px;">Notes</th>
                 </tr>
             </thead>
             <tbody>${body.join('')}</tbody>
@@ -1442,57 +1521,132 @@ function seedBinSimClusterSamples(cd) {
     }});
 }
 
+function buildFuncObj(fid) {
+    const parts = fid.split(':');
+    const entry = parts.pop();
+    const md5 = parts.pop();
+    parts.pop(); // type segment (func/function/idx marker)
+    const col = parts.join(':');
+
+    const meta = (binSimDataCache && binSimDataCache.functions_metadata)
+        ? binSimDataCache.functions_metadata[fid] : null;
+    const params = meta && meta.parameters
+        ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
+    return {
+        function_id: fid,
+        function_name: (meta && meta.name) ? meta.name : ('sub_' + entry),
+        return_type: (meta && meta.return_type) ? meta.return_type : 'void',
+        parameters: params,
+        namespace: (meta && meta.namespace) ? meta.namespace : '',
+        entrypoint_address: (meta && meta.entrypoint_address) ? meta.entrypoint_address : entry,
+        bsim_features_count: (meta && meta.bsim_features_count) ? meta.bsim_features_count : 0,
+        file_md5: md5,
+        collection: col,
+        tags: (meta && meta.tags) || [],
+        user_tags: (meta && meta.user_tags) || [],
+        note_owners: (meta && meta.note_owners) || [],
+        note_count: (meta && meta.note_count) || 0,
+    };
+}
+
+function renderFuncBadge(fid) {
+    const f = buildFuncObj(fid);
+    const sig = (typeof EntityRenderer !== 'undefined')
+        ? EntityRenderer.renderFunction(f, { isTable: true, hideNote: true, showActions: false })
+        : (f.function_name || fid);
+    const tagsHtml = (typeof EntityRenderer !== 'undefined')
+        ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags) : '';
+    return `
+        <div class="bsim-func-cell" style="display:flex; flex-direction:column; gap:2px; min-width:0; text-align:left; width:100%;">
+            ${sig}
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                <span class="mono dim" style="font-size:0.65rem;">@ ${f.entrypoint_address}</span>
+                ${tagsHtml}
+            </div>
+        </div>`;
+}
+
+function renderMatchedFunctionRow(m, type, depth) {
+    const noteBtn = (fid) => {
+        const fObj = buildFuncObj(fid);
+        return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${typeof EntityRenderer !== 'undefined' ? EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj }) : ''}</div>`;
+    };
+
+    let similarityHtml = '';
+    let fA = null, fB = null;
+    let col2 = '', col3 = '', col4 = '', col5 = '';
+
+    if (type === 'matched' && m.func_a && m.func_b) {
+        fA = buildFuncObj(m.func_a);
+        fB = buildFuncObj(m.func_b);
+        let diffUrl = '';
+        if (window.buildDiffUrl) {
+            diffUrl = window.buildDiffUrl(fA.function_id, fB.function_id);
+        } else {
+            let poolId = null;
+            if (window.getRoutingState && window.getRoutingState().pool) {
+                poolId = window.getRoutingState().pool;
+            } else {
+                poolId = new URLSearchParams(window.location.search).get('pool_id');
+            }
+            diffUrl = `/collections/${encodeURIComponent(fA.collection)}/files/${fA.file_md5}/functions/${fA.entrypoint_address}/vs/${encodeURIComponent(fB.collection)}/${fB.file_md5}/${fB.entrypoint_address}`;
+            if (poolId) {
+                diffUrl = `/pools/${encodeURIComponent(poolId)}` + diffUrl;
+            }
+        }
+
+        similarityHtml = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
+                    onmouseenter="showDiffPreview(${escapeAttr(jsString(fA.function_id))}, ${escapeAttr(jsString(fA.function_name || ''))}, ${escapeAttr(jsString(fB.function_id))}, ${escapeAttr(jsString(fB.function_name || ''))}, ${Number(m.similarity) || 0}, event)"
+                    onmousemove="moveCodePreview(event)"
+                    onmouseleave="hideDiffPreview(event)"
+                    onclick="Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(`Diff: ${fA.function_name} vs ${fB.function_name}`))}, type: 'diff' })"
+                    title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
+            </div>`;
+        col2 = renderFuncBadge(m.func_a);
+        col3 = noteBtn(m.func_a);
+        col4 = renderFuncBadge(m.func_b);
+        col5 = noteBtn(m.func_b);
+    } else if (type === 'uniqueA') {
+        similarityHtml = `<span class="mono" style="color:#f92672; font-weight:bold;">0%</span>`;
+        if (m.func_id) {
+            fA = buildFuncObj(m.func_id);
+            col2 = renderFuncBadge(m.func_id);
+            col3 = noteBtn(m.func_id);
+        }
+    } else if (type === 'uniqueB') {
+        similarityHtml = `<span class="mono" style="color:#66d9ef; font-weight:bold;">0%</span>`;
+        if (m.func_id) {
+            fB = buildFuncObj(m.func_id);
+            col4 = renderFuncBadge(m.func_id);
+            col5 = noteBtn(m.func_id);
+        }
+    }
+
+    return `
+        <tr style="border-bottom: 1px solid var(--border); background: var(--bg);">
+            <td style="padding:10px; padding-left:${12 + depth * 22}px;">
+                ${similarityHtml}
+            </td>
+            <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
+                ${col2}
+            </td>
+            <td style="padding:4px; vertical-align:top;">
+                ${col3}
+            </td>
+            <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
+                ${col4}
+            </td>
+            <td style="padding:4px; vertical-align:top;">
+                ${col5}
+            </td>
+        </tr>`;
+}
+
 function renderBinSimTables(isFilterChange = false) {
     if (!binSimDataCache) return;
     const data = binSimDataCache;
-
-    // Build a full function object from the enriched functions_metadata so the diff
-    // tables can reuse the same rich renderers (colored signature, tags, notes, diff
-    // buttons) as the function-search view.
-    const buildFuncObj = (fid) => {
-        const parts = fid.split(':');
-        const entry = parts.pop();
-        const md5 = parts.pop();
-        parts.pop(); // type segment (func/function/idx marker)
-        const col = parts.join(':');
-
-        const meta = (binSimDataCache && binSimDataCache.functions_metadata)
-            ? binSimDataCache.functions_metadata[fid] : null;
-        const params = meta && meta.parameters
-            ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
-        return {
-            function_id: fid,
-            function_name: (meta && meta.name) ? meta.name : ('sub_' + entry),
-            return_type: (meta && meta.return_type) ? meta.return_type : 'void',
-            parameters: params,
-            namespace: (meta && meta.namespace) ? meta.namespace : '',
-            entrypoint_address: (meta && meta.entrypoint_address) ? meta.entrypoint_address : entry,
-            bsim_features_count: (meta && meta.bsim_features_count) ? meta.bsim_features_count : 0,
-            file_md5: md5,
-            collection: col,
-            tags: (meta && meta.tags) || [],
-            user_tags: (meta && meta.user_tags) || [],
-            note_owners: (meta && meta.note_owners) || [],
-            note_count: (meta && meta.note_count) || 0,
-        };
-    };
-
-    const renderFuncBadge = (fid) => {
-        const f = buildFuncObj(fid);
-        const sig = (typeof EntityRenderer !== 'undefined')
-            ? EntityRenderer.renderFunction(f, { isTable: true, hideNote: true, showActions: false })
-            : (f.function_name || fid);
-        const tagsHtml = (typeof EntityRenderer !== 'undefined')
-            ? EntityRenderer.renderTag('function', fid, f.tags, f.user_tags) : '';
-        return `
-            <div class="bsim-func-cell" style="display:flex; flex-direction:column; gap:2px; min-width:0; text-align:left; width:100%;">
-                ${sig}
-                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <span class="mono dim" style="font-size:0.65rem;">@ ${f.entrypoint_address}</span>
-                    ${tagsHtml}
-                </div>
-            </div>`;
-    };
 
 
 

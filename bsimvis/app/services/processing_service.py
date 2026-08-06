@@ -4,6 +4,37 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
 
 
+def lib_parent(tag):
+    """File-level library tag implied by a function tag, or None.
+
+    `lib:uclibc:0.9.30.1:xdrmem_getint32` -> `lib:uclibc:0.9.30.1`: if a
+    function is a known uClibc 0.9.30.1 routine, the binary contains that
+    library. Only versioned `lib:` tags roll up -- an unversioned one names no
+    file-level fact worth indexing.
+    """
+    if not tag:
+        return None
+    parts = str(tag).split(":")
+    if parts[0] != "lib" or len(parts) < 3:
+        return None
+    if len(parts) >= 4:
+        return ":".join(parts[:3])
+    # Three parts is ambiguous: the Function ID analyzer emits `lib:name:version`
+    # for a match it could not name (FUN_*), but `lib:name:funcname` when the
+    # library itself carries no version.
+    # ponytail: digit-led means version; widen if a version ever starts with a letter.
+    return tag if parts[2][:1].isdigit() else None
+
+
+def lib_parents(tags):
+    """Distinct file-level library tags implied by a function's `tags`."""
+    if isinstance(tags, dict):
+        tags = tags.keys()
+    elif not isinstance(tags, (list, tuple, set)):
+        return set()
+    return {p for p in (lib_parent(t) for t in tags) if p}
+
+
 class ProcessingService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -195,6 +226,7 @@ class ProcessingService:
 
         # Use a single pipeline for indexing functions
         pipe = self.r.pipeline(transaction=False)
+        file_lib_tags = set()
 
         for i, func_data in enumerate(functions):
             if job_service and job_id and (i % 50 == 0 or i == total - 1):
@@ -220,6 +252,8 @@ class ProcessingService:
             for f in fields_to_copy:
                 if f in file_meta:
                     func_meta[f] = file_meta[f]
+
+            file_lib_tags |= lib_parents(func_meta.get("tags"))
 
             func_features = func_data.get("function_features", {})
             func_source = func_data.get("function_source", {})
@@ -293,7 +327,49 @@ class ProcessingService:
                 pipe.execute()
                 pipe = self.r.pipeline(transaction=False)
 
+        # Library tags seen in this chunk. A SET, not the file doc: chunks are
+        # parallel jobs and can even land before INDEX_META, so a
+        # read-modify-write of the doc here would drop tags or be overwritten.
+        # rollup_lib_tags folds it in once every chunk is done.
+        if file_lib_tags:
+            pipe.sadd(f"{collection}:file:{file_md5}:lib_tags", *file_lib_tags)
+
         pipe.execute()
+        return True
+
+    def rollup_lib_tags(self, collection, file_md5):
+        """Copies the library tags found on a file's functions onto the file.
+
+        Idempotent: re-running only ever adds what the file is missing, so it is
+        safe to call after any stage that may have added function tags.
+        """
+        acc_key = f"{collection}:file:{file_md5}:lib_tags"
+        raw = self.r.smembers(acc_key)
+        if not raw:
+            return True
+
+        derived = sorted(t.decode() if isinstance(t, bytes) else t for t in raw)
+        meta_key = f"{collection}:file:{file_md5}:meta"
+        doc_raw = self.r.get(meta_key)
+        if not doc_raw:
+            logging.warning(f"[!] rollup_lib_tags: no file meta at {meta_key}")
+            return False
+
+        data = json.loads(doc_raw)
+        tags = data.get("tags")
+        tags = list(tags) if isinstance(tags, (list, tuple)) else []
+        missing = [t for t in derived if t not in tags]
+        if not missing:
+            return True
+
+        data["tags"] = tags + missing
+        pipe = self.r.pipeline(transaction=False)
+        pipe.set(meta_key, json.dumps(data))
+        save_file(pipe, collection, file_md5, data)
+        pipe.execute()
+        logging.info(
+            f"[+] Rolled up {len(missing)} library tag(s) onto {collection}:file:{file_md5}"
+        )
         return True
 
     def delete_collection(self, collection, job_service=None, job_id=None):

@@ -453,6 +453,7 @@ def delete_file(r, coll, file_md5):
     for f in FILE_NUM_FIELDS:
         _unindex_num(pipe, coll, "file", f, base_id)
     pipe.srem(f"{coll}:all_files", base_id)
+    pipe.delete(f"{base_id}:lib_tags")
     pipe.hincrby(f"global:collection:{coll}:meta", "total_files", -1)
     pipe.execute()
 

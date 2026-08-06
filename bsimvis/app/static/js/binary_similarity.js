@@ -109,6 +109,7 @@ function renderBinarySimilarityView(params) {
                 <button class="bsim-tab" id="bin-sim-tab-btn-graph" onclick="switchBinSimTab('graph')">Function graph</button>
                 <button class="bsim-tab" id="bin-sim-tab-btn-metadata" onclick="switchBinSimTab('metadata')">Metadata</button>
                 <button class="bsim-tab" id="bin-sim-tab-btn-inferred" onclick="switchBinSimTab('inferred')">Clusters</button>
+                <button class="bsim-tab" id="bin-sim-tab-btn-filesim" onclick="switchBinSimTab('filesim')">File sim</button>
             </div>
 
             <!-- Matched functions tab -->
@@ -149,13 +150,14 @@ function renderBinarySimilarityView(params) {
                     <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
                         <button class="view-btn ${sankeyMode === 'detailed' ? 'active' : ''}" id="bsim-sankey-btn-detailed" onclick="setSankeyMode('detailed')" title="Show detailed function-level similarities">Detailed</button>
                         <button class="view-btn ${sankeyMode === 'simplified' ? 'active' : ''}" id="bsim-sankey-btn-simplified" onclick="setSankeyMode('simplified')" title="Show simplified cluster-level summary">Simplified</button>
+                        <button class="view-btn ${sankeyMode === 'tags' ? 'active' : ''}" id="bsim-sankey-btn-tags" onclick="setSankeyMode('tags')" title="Split the match by library/bundle tag, crossed with similarity">Tags</button>
                     </div>
                     <div class="view-toggle" id="bin-sim-sankey-scale-toggle" style="position:absolute; top:15px; left:210px; z-index:10; margin:0; align-items:center; padding-left:10px;">
                         <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Scale:</span>
                         <button class="view-btn ${sankeyScale === 'count' ? 'active' : ''}" id="bsim-sankey-scale-btn-count" onclick="setSankeyScale('count')" title="Scale flow by function count">Count</button>
                         <button class="view-btn ${sankeyScale === 'features' ? 'active' : ''}" id="bsim-sankey-scale-btn-features" onclick="setSankeyScale('features')" title="Scale flow by BSim feature count">Features</button>
                     </div>
-                    <div class="view-toggle" id="bin-sim-sankey-split-toggle" style="position:absolute; top:15px; left:410px; z-index:10; margin:0; align-items:center; padding-left:10px; display: ${sankeyMode === 'simplified' ? 'flex' : 'none'};">
+                    <div class="view-toggle" id="bin-sim-sankey-split-toggle" style="position:absolute; top:15px; left:410px; z-index:10; margin:0; align-items:center; padding-left:10px; display: ${sankeyMode === 'detailed' ? 'none' : 'flex'};">
                         <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Split:</span>
                         <button class="view-btn ${sankeySplit === 5 ? 'active' : ''}" onclick="setSankeySplit(5)" title="5% granularity (20 bins)">5%</button>
                         <button class="view-btn ${sankeySplit === 10 ? 'active' : ''}" onclick="setSankeySplit(10)" title="10% granularity (10 bins)">10%</button>
@@ -182,6 +184,11 @@ function renderBinarySimilarityView(params) {
             <!-- Clusters tab -->
             <div class="bsim-subtab-panel" id="bsim-panel-inferred" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
                 <div id="bin-sim-inferred-meta-container" style="color:var(--dim); text-align:center; padding:40px;">Loading clusters…</div>
+            </div>
+
+            <!-- File sim tab: tag-composition similarity, collapsible by depth -->
+            <div class="bsim-subtab-panel" id="bsim-panel-filesim" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
+                <div id="bin-sim-filesim" style="color:var(--dim); text-align:center; padding:40px;">No tag data for this pair.</div>
             </div>
         </div>
         <style>
@@ -334,6 +341,7 @@ function initResizableCards() {
             file_metadata_a: data.file_metadata_a,
             file_metadata_b: data.file_metadata_b,
             sankey: data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] },
+            tags_summary: data.tags_summary || [],
             counts,
             functions_metadata: {},
             diff: { matched: [], unique_to_a: [], unique_to_b: [] },
@@ -373,12 +381,206 @@ function initResizableCards() {
 }
 
 
+// Display name for a tag row: version-qualified, e.g. "libc 2.31" / "mirai_core".
+function tagLabel(t) {
+    const name = t.name || t.tag_id || 'untagged';
+    return t.version ? `${name} ${t.version}` : name;
+}
+
+// UX guardrail: a real corpus has a long tail of one-function libraries. Keep the
+// tags that carry the match and roll the rest into a single "other" row.
+function foldSmallTags(rows, keep = 12) {
+    if (rows.length <= keep) return rows;
+    const head = rows.slice(0, keep);
+    const tail = rows.slice(keep);
+    const other = { tag_id: 'other', name: `other (${tail.length} tags)`, version: '', bins: {} };
+    ['matched_weight','matched_count','unique_weight_a','unique_weight_b','unique_count_a','unique_count_b','contribution_pct','coverage_pct_a','coverage_pct_b'].forEach(k => {
+        other[k] = tail.reduce((s, r) => s + (r[k] || 0), 0);
+    });
+    other.score = other.matched_weight > 0
+        ? tail.reduce((s, r) => s + (r.score || 0) * (r.matched_weight || 0), 0) / other.matched_weight
+        : 0;
+    tail.forEach(r => Object.keys(r.bins || {}).forEach(k => {
+        const acc = other.bins[k] || (other.bins[k] = [0, 0, 0, 0]);
+        for (let j = 0; j < 4; j++) acc[j] += r.bins[k][j] || 0;
+    }));
+    head.push(other);
+    return head;
+}
+
+// ---- File sim tab -------------------------------------------------------
+// Composition similarity: how much of the same *stuff* the two binaries carry,
+// tag by tag, independent of how well individual functions matched. A leaf tag
+// scores min(count_a, count_b) / max(count_a, count_b) — "A has 2 libc funcs,
+// B has 4" -> 50%. A category is the mean of its children, so a category with
+// one perfect and one absent library reads 50%, not "mostly fine".
+// ponytail: counts, not feature weights. Switch to weight_* if count proves noisy.
+
+// Functions carrying this tag on each side = matched (from the bins) + unique.
+function tagSideCounts(row) {
+    let a = row.unique_count_a || 0, b = row.unique_count_b || 0;
+    Object.keys(row.bins || {}).forEach(k => {
+        a += row.bins[k][0] || 0;
+        b += row.bins[k][2] || 0;
+    });
+    return [a, b];
+}
+
+function fileSimNode(name, children, a, b, forceSim) {
+    let sim;
+    if (forceSim !== undefined) {
+        sim = forceSim;
+    } else {
+        sim = children.length
+            ? children.reduce((s, c) => s + c.sim, 0) / children.length
+            : (Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0);
+    }
+    return { name, children, a, b, sim };
+}
+
+function fileSimTree(rows) {
+    const byType = new Map();
+    (rows || []).forEach(row => {
+        const [a, b] = tagSideCounts(row);
+        const kids = (row.children || []).map(c => {
+            const [ca, cb] = tagSideCounts(c);
+            let childName = c.version || c.name;
+            if (c.tag_id && c.tag_id.split(':').length > 3) {
+                childName = c.tag_id.split(':').slice(3).join(':'); // Extract function name
+            }
+            return fileSimNode(childName, [], ca, cb);
+        });
+        
+        let nodeName = row.name;
+        if (row.version) nodeName += ' ' + row.version;
+        
+        const trueSim = kids.length ? kids.reduce((s, c) => s + c.sim, 0) / kids.length : (Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0);
+        
+        const groupedKids = [];
+        if (kids.length > 0) {
+            const shared = kids.filter(k => k.a > 0 && k.b > 0);
+            const uniqueA = kids.filter(k => k.a > 0 && k.b === 0);
+            const uniqueB = kids.filter(k => k.a === 0 && k.b > 0);
+            
+            if (shared.length > 0) {
+                groupedKids.push(fileSimNode(`Shared (${shared.length})`, shared, shared.reduce((s, k) => s + k.a, 0), shared.reduce((s, k) => s + k.b, 0), 1.0));
+            }
+            if (uniqueA.length > 0) {
+                groupedKids.push(fileSimNode(`Unique to A (${uniqueA.length})`, uniqueA, uniqueA.reduce((s, k) => s + k.a, 0), 0, 0.0));
+            }
+            if (uniqueB.length > 0) {
+                groupedKids.push(fileSimNode(`Unique to B (${uniqueB.length})`, uniqueB, 0, uniqueB.reduce((s, k) => s + k.b, 0), 0.0));
+            }
+        }
+        
+        const node = fileSimNode(nodeName, groupedKids, a, b, trueSim);
+        const type = row.type || 'other';
+        if (!byType.has(type)) byType.set(type, []);
+        byType.get(type).push(node);
+    });
+    const cats = [...byType.entries()].map(([type, kids]) => fileSimNode(
+        type,
+        kids.sort((x, y) => y.sim - x.sim),
+        kids.reduce((s, k) => s + k.a, 0),
+        kids.reduce((s, k) => s + k.b, 0),
+    ));
+    return fileSimNode('Similarity', cats.sort((x, y) => y.sim - x.sim), 0, 0);
+}
+
+// Paths of expanded subtrees. Everything else is collapsed.
+const fileSimExpanded = new Set();
+// Auto-expand depth 0 once
+let fileSimAutoExpanded = false;
+
+window.toggleFileSimRow = function(path) {
+    if (fileSimExpanded.has(path)) fileSimExpanded.delete(path);
+    else fileSimExpanded.add(path);
+    if (binSimDataCache) renderFileSimTable(binSimDataCache);
+};
+
+function fileSimRows(node, path, depth, out) {
+    if (node.name === 'untagged' && depth === 1 && node.children.length > 0 && node.children[0].name === 'Untagged') {
+        // Skip redundant 'untagged' category wrapper for the 'Untagged' node
+        node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth, out));
+        return;
+    }
+
+    const hasKids = node.children.length > 0;
+    if (depth === 0 && !fileSimAutoExpanded) {
+        fileSimExpanded.add(path);
+    }
+    const expanded = fileSimExpanded.has(path);
+    const pct = (node.sim * 100).toFixed(node.sim === 1 || node.sim === 0 ? 0 : 1) + '%';
+    const bar = Math.round(node.sim * 100);
+    out.push(`
+        <tr style="${depth === 0 ? 'font-weight:bold;' : ''}">
+            <td style="padding-left:${12 + depth * 22}px;">
+                ${hasKids
+                    ? `<span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; color:var(--subtle); margin-right:6px;">${expanded ? '▼' : '▶'}</span>`
+                    : '<span style="display:inline-block; width:14px;"></span>'}
+                ${escapeHtml(node.name)}
+            </td>
+            <td style="text-align:right;">${Math.round(node.a)}</td>
+            <td style="text-align:right;">${Math.round(node.b)}</td>
+            <td style="text-align:right; white-space:nowrap;">${pct}</td>
+            <td style="width:160px;">
+                <div style="background:var(--border); border-radius:3px; height:8px;">
+                    <div style="width:${bar}%; background:var(--accent); height:8px; border-radius:3px;"></div>
+                </div>
+            </td>
+        </tr>`);
+    if (expanded) node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth + 1, out));
+}
+
+function renderFileSimTable(data) {
+    const el = document.getElementById('bin-sim-filesim');
+    if (!el) return;
+    const rows = data.tags_summary || [];
+    if (!rows.length) {
+        el.innerHTML = '<div style="color:var(--dim); text-align:center; padding:40px;">No tag data for this pair.</div>';
+        return;
+    }
+    const nameA = data.file_metadata_a?.file_name || 'Binary A';
+    const nameB = data.file_metadata_b?.file_name || 'Binary B';
+    const body = [];
+    fileSimAutoExpanded = false;
+    fileSimRows(fileSimTree(rows), 'root', 0, body);
+    fileSimAutoExpanded = true;
+    el.innerHTML = `
+        <table class="bin-sim-mc-table">
+            <thead>
+                <tr>
+                    <th>Tag</th>
+                    <th style="text-align:right;" title="${escapeAttr(nameA)}">A</th>
+                    <th style="text-align:right;" title="${escapeAttr(nameB)}">B</th>
+                    <th style="text-align:right;">Similarity</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>${body.join('')}</tbody>
+        </table>`;
+}
+
+// Aggregate a tag's fixed 5% server bins up to the currently selected split.
+// Returns Map<groupIdx, [count_a, weight_a, count_b, weight_b]>.
+function tagBinGroups(t, perGroup) {
+    const groups = new Map();
+    Object.keys(t.bins || {}).forEach(k => {
+        const g = Math.floor(parseInt(k, 10) / perGroup);
+        const acc = groups.get(g) || [0, 0, 0, 0];
+        const b = t.bins[k];
+        for (let j = 0; j < 4; j++) acc[j] += b[j] || 0;
+        groups.set(g, acc);
+    });
+    return groups;
+}
+
 async function renderBinaryDiffSankey(data) {
     const container = document.getElementById('bin-sim-sankey');
     if (!container) return;
 
     // Detailed mode needs per-function ids/names → lazy-fetch the full diff once.
-    if (sankeyMode !== 'simplified' && !binSimFullDiff && binSimCtx) {
+    if (sankeyMode === 'detailed' && !binSimFullDiff && binSimCtx) {
         container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">Loading detailed graph…</div>';
         try {
             let u = `/api/diff?collection_a=${encodeURIComponent(binSimCtx.collection)}&md5_a=${encodeURIComponent(binSimCtx.md5a)}&md5_b=${encodeURIComponent(binSimCtx.md5b)}`;
@@ -391,7 +593,8 @@ async function renderBinaryDiffSankey(data) {
     container.innerHTML = '';
 
     // Data source: compact projection for simplified, full diff for detailed.
-    const isDetailed = sankeyMode !== 'simplified';
+    const isDetailed = sankeyMode === 'detailed';
+    const isTagMode = sankeyMode === 'tags' && (data.tags_summary || []).length > 0;
     const src = isDetailed
         ? (binSimFullDiff && binSimFullDiff.diff ? binSimFullDiff.diff : { matched: [], unique_to_a: [], unique_to_b: [] })
         : (data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] });
@@ -415,8 +618,22 @@ async function renderBinaryDiffSankey(data) {
     const rawUniqueA = src.unique_to_a || [];
     const rawUniqueB = src.unique_to_b || [];
     
+    // Tag mode's node count is driven by the tag rows, not the cluster rows, so the
+    // canvas has to be measured from them or every column gets squeezed into the
+    // height budget for 10 nodes.
+    const tagRows = isTagMode ? foldSmallTags(data.tags_summary || []) : [];
+    const tagPerGroup = Math.max(1, Math.round(sankeySplit / 5));   // server bins are 5% wide
+
     let maxNodesInColumn = 10;
-    if (sankeyMode !== 'simplified') {
+    if (isTagMode) {
+        let middle = 0;
+        tagRows.forEach(t => {
+            middle += tagBinGroups(t, tagPerGroup).size;
+            if ((t.unique_weight_a || 0) > 0) middle += 1;   // its own unmatched node
+            if ((t.unique_weight_b || 0) > 0) middle += 1;
+        });
+        maxNodesInColumn = Math.max(tagRows.length, middle, 10);
+    } else if (isDetailed) {
         const groupA_count = rawMatched.filter(m => m.func_a).length +
                              rawUniqueA.filter(u => u.func_id).length;
         const groupB_count = rawMatched.filter(m => m.func_b).length +
@@ -477,61 +694,7 @@ async function renderBinaryDiffSankey(data) {
     const uniqueARank = new Map(sortedUniqueA.map((u, idx) => [u.cluster_uuid, idx]));
     const uniqueBRank = new Map(sortedUniqueB.map((u, idx) => [u.cluster_uuid, idx]));
 
-    if (sankeyMode === 'simplified') {
-        const sortCol = (binSimSortState.matched && binSimSortState.matched.col) || 'similarity';
-        const groupCol = sortCol === 'cluster_name' ? 'similarity' : sortCol;
-
-        let minVal = 0.0;
-        let maxVal = 1.0;
-        if (groupCol === 'avg_features') {
-            const vals = sortedMatched.map(m => m[groupCol] || 0);
-            minVal = vals.length > 0 ? Math.min(...vals) : 0;
-            maxVal = vals.length > 0 ? Math.max(...vals) : 100;
-            if (minVal === maxVal) {
-                maxVal = minVal + 10;
-            }
-        }
-
-        const step = sankeySplit;
-        const numBins = Math.round(100 / step);
-        const bins = Array.from({ length: numBins }, (_, i) => ({
-            binIdx: i,
-            clusters: [],
-            totalA: 0,
-            totalB: 0,
-            sumCohesion: 0,
-            sumWeights: 0
-        }));
-
-        sortedMatched.forEach(m => {
-            const val = m[groupCol] || 0;
-            let fraction = (val - minVal) / (maxVal - minVal);
-            if (fraction < 0) fraction = 0;
-            if (fraction > 1) fraction = 1;
-            
-            let binIdx = Math.floor(fraction * numBins);
-            if (binIdx >= numBins) binIdx = numBins - 1;
-            
-            // Compact rows carry inlined feature counts (feat_a/feat_b); no func ids here.
-            const wVal = (f) => sankeyScale === 'features' ? Math.max(1, f || 1) : 1;
-            const wA = wVal(m.feat_a);
-            const wB = wVal(m.feat_b);
-            const similarity = m.similarity || 0;
-
-            bins[binIdx].clusters.push(m);
-            bins[binIdx].totalA += wA;
-            bins[binIdx].totalB += wB;
-            bins[binIdx].sumCohesion += similarity * (wA + wB);
-            bins[binIdx].sumWeights += (wA + wB);
-        });
-
-        let totalMatchedA = 0;
-        let totalMatchedB = 0;
-        bins.forEach(b => {
-            totalMatchedA += b.totalA;
-            totalMatchedB += b.totalB;
-        });
-
+    if (!isDetailed) {
         const uVal = (u) => sankeyScale === 'features' ? Math.max(1, u.feat || 1) : 1;
         let totalUniqueA = 0;
         sortedUniqueA.forEach(u => { totalUniqueA += uVal(u); });
@@ -541,86 +704,205 @@ async function renderBinaryDiffSankey(data) {
 
         const metricSuffix = sankeyScale === 'features' ? 'feats' : 'funcs';
 
-        const getBinName = (binIdx, countText, prefix) => {
-            const stepVal = (maxVal - minVal) / numBins;
-            const low = minVal + binIdx * stepVal;
-            const high = minVal + (binIdx + 1) * stepVal;
-            
-            let label = '';
-            if (groupCol === 'similarity' || groupCol === 'cohesion' || groupCol === 'sim_rarity') {
-                const lowPct = Math.round(low * 100);
-                const highPct = Math.round(high * 100);
-                const colName = groupCol === 'similarity' ? 'Similarity' : (groupCol === 'cohesion' ? 'Cohesion' : 'Rarity');
-                if (prefix === 'a') {
-                    label = `${filenameA} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
-                } else if (prefix === 'b') {
-                    label = `${filenameB} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
-                } else {
-                    label = `Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
+        if (isTagMode) {
+            // Tag mode crosses both axes: one row per tag (libc, mirai_core, ...), each
+            // split across similarity bins, so a library that matches poorly is visibly
+            // different from one that matches perfectly.
+            const perGroup = tagPerGroup;
+            const fmt = (v) => (v % 1 !== 0 ? v.toFixed(1) : String(v));
+            // Server bins are [count_a, weight_a, count_b, weight_b]; each side is
+            // tracked separately because a match need not be tagged the same on both.
+            const slot = { a: 0, b: 2 };
+            const binVal = (b, side) => b[slot[side] + (sankeyScale === 'features' ? 1 : 0)] || 0;
+
+            tagRows.forEach((t, i) => {
+                const label = tagLabel(t);
+                const score = t.score || 0;
+                const tagColor = `hsl(${score * 120}, var(--color-s-med), var(--color-l-dim))`;
+
+                const uniqA = sankeyScale === 'features' ? (t.unique_weight_a || 0) : (t.unique_count_a || 0);
+                const uniqB = sankeyScale === 'features' ? (t.unique_weight_b || 0) : (t.unique_count_b || 0);
+
+                const groups = tagBinGroups(t, perGroup);
+
+                let totalA = uniqA, totalB = uniqB;
+                groups.forEach(b => { totalA += binVal(b, 'a'); totalB += binVal(b, 'b'); });
+                if (totalA <= 0 && totalB <= 0) return;
+
+                let nodeA = null;
+                if (totalA > 0) {
+                    nodeA = getNode(`tag_a_${i}`, `${filenameA} · ${label} (${fmt(totalA)} ${metricSuffix}, ${(t.coverage_pct_a || 0).toFixed(0)}% of ${filenameA})`, tagColor);
+                    nodeA.alignOverride = 0;
+                    nodeA.cohesion = score;
                 }
-            } else {
-                const lowNum = Math.round(low);
-                const highNum = Math.round(high);
-                const colName = 'Avg Feat';
-                if (prefix === 'a') {
-                    label = `${filenameA} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
-                } else if (prefix === 'b') {
-                    label = `${filenameB} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
-                } else {
-                    label = `Matched ${colName} ${lowNum}-${highNum} (${countText})`;
+                let nodeB = null;
+                if (totalB > 0) {
+                    nodeB = getNode(`tag_b_${i}`, `${filenameB} · ${label} (${fmt(totalB)} ${metricSuffix}, ${(t.coverage_pct_b || 0).toFixed(0)}% of ${filenameB})`, tagColor);
+                    nodeB.alignOverride = 2;
+                    nodeB.cohesion = score;
+                }
+
+                Array.from(groups.keys()).sort((x, y) => y - x).forEach(g => {
+                    const b = groups.get(g);
+                    const vA = binVal(b, 'a');
+                    const vB = binVal(b, 'b');
+                    if (vA <= 0 && vB <= 0) return;
+                    const lo = g * perGroup * 5;
+                    const hi = Math.min(100, lo + perGroup * 5);
+                    const mid = (lo + hi) / 200;
+                    const mNode = getNode(
+                        `tag_c_${i}_${g}`,
+                        `${label} ${lo}%-${hi}% (${fmt(Math.max(b[0], b[2]))} funcs)`,
+                        `hsl(${mid * 120}, var(--color-s-med), var(--color-l-dim))`
+                    );
+                    mNode.alignOverride = 1;
+                    mNode.cohesion = mid;
+                    if (nodeA && vA > 0) links.push({ source: nodeA.index, target: mNode.index, value: vA });
+                    if (nodeB && vB > 0) links.push({ source: mNode.index, target: nodeB.index, value: vB });
+                });
+
+                // Unmatched mass gets its OWN node per tag, not one shared bucket:
+                // the whole point of the row is to see how much of this tag matched
+                // and how much did not, scaled against each other.
+                if (nodeA && uniqA > 0) {
+                    const n = getNode(`tag_ua_${i}`, `${label} unmatched in ${filenameA} (${fmt(uniqA)} ${metricSuffix})`, '#f92672');
+                    n.alignOverride = 1;
+                    links.push({ source: nodeA.index, target: n.index, value: uniqA });
+                }
+                if (nodeB && uniqB > 0) {
+                    const n = getNode(`tag_ub_${i}`, `${label} unmatched in ${filenameB} (${fmt(uniqB)} ${metricSuffix})`, '#66d9ef');
+                    n.alignOverride = 1;
+                    links.push({ source: n.index, target: nodeB.index, value: uniqB });
+                }
+            });
+        } else {
+            const sortCol = (binSimSortState.matched && binSimSortState.matched.col) || 'similarity';
+            const groupCol = sortCol === 'cluster_name' ? 'similarity' : sortCol;
+
+            let minVal = 0.0;
+            let maxVal = 1.0;
+            if (groupCol === 'avg_features') {
+                const vals = sortedMatched.map(m => m[groupCol] || 0);
+                minVal = vals.length > 0 ? Math.min(...vals) : 0;
+                maxVal = vals.length > 0 ? Math.max(...vals) : 100;
+                if (minVal === maxVal) {
+                    maxVal = minVal + 10;
                 }
             }
-            return label;
-        };
 
-        bins.forEach(b => {
-            if (b.clusters.length === 0) return;
+            const step = sankeySplit;
+            const numBins = Math.round(100 / step);
+            const bins = Array.from({ length: numBins }, (_, i) => ({
+                binIdx: i,
+                clusters: [],
+                totalA: 0,
+                totalB: 0,
+                sumCohesion: 0,
+                sumWeights: 0
+            }));
 
-            const binAvgCohesion = b.sumWeights > 0 ? (b.sumCohesion / b.sumWeights) : (b.binIdx * (step / 100) + (step / 200));
-            const binColor = `hsl(${binAvgCohesion * 120}, var(--color-s-med), var(--color-l-dim))`;
+            sortedMatched.forEach(m => {
+                const val = m[groupCol] || 0;
+                let fraction = (val - minVal) / (maxVal - minVal);
+                if (fraction < 0) fraction = 0;
+                if (fraction > 1) fraction = 1;
+                
+                let binIdx = Math.floor(fraction * numBins);
+                if (binIdx >= numBins) binIdx = numBins - 1;
+                
+                const wValMatch = (f) => sankeyScale === 'features' ? Math.max(1, f || 1) : 1;
+                const wA = wValMatch(m.feat_a);
+                const wB = wValMatch(m.feat_b);
+                const similarity = m.similarity || 0;
 
-            let binNodeA = null;
-            if (b.totalA > 0) {
-                const binNodeAId = `simplified_a_matched_bin_${b.binIdx}`;
-                binNodeA = getNode(binNodeAId, getBinName(b.binIdx, `${b.totalA} ${metricSuffix}`, 'a'), binColor);
-                binNodeA.alignOverride = 0;
-                binNodeA.cohesion = binAvgCohesion;
-            }
+                bins[binIdx].clusters.push(m);
+                bins[binIdx].totalA += wA;
+                bins[binIdx].totalB += wB;
+                bins[binIdx].sumCohesion += similarity * (wA + wB);
+                bins[binIdx].sumWeights += (wA + wB);
+            });
 
-            const binNodeId = `simplified_c_matched_bin_${b.binIdx}`;
-            const binNode = getNode(
-                binNodeId, 
-                getBinName(b.binIdx, `${b.clusters.length} clusters`, 'c'), 
-                binColor
-            );
-            binNode.alignOverride = 1;
-            binNode.cohesion = binAvgCohesion;
+            const getBinName = (binIdx, countText, prefix) => {
+                const stepVal = (maxVal - minVal) / numBins;
+                const low = minVal + binIdx * stepVal;
+                const high = minVal + (binIdx + 1) * stepVal;
+                
+                let label = '';
+                if (groupCol === 'similarity' || groupCol === 'cohesion' || groupCol === 'sim_rarity') {
+                    const lowPct = Math.round(low * 100);
+                    const highPct = Math.round(high * 100);
+                    const colName = groupCol === 'similarity' ? 'Similarity' : (groupCol === 'cohesion' ? 'Cohesion' : 'Rarity');
+                    if (prefix === 'a') {
+                        label = `${filenameA} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
+                    } else if (prefix === 'b') {
+                        label = `${filenameB} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
+                    } else {
+                        label = `Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
+                    }
+                } else {
+                    const lowNum = Math.round(low);
+                    const highNum = Math.round(high);
+                    const colName = 'Avg Feat';
+                    if (prefix === 'a') {
+                        label = `${filenameA} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
+                    } else if (prefix === 'b') {
+                        label = `${filenameB} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
+                    } else {
+                        label = `Matched ${colName} ${lowNum}-${highNum} (${countText})`;
+                    }
+                }
+                return label;
+            };
 
-            let binNodeB = null;
-            if (b.totalB > 0) {
-                const binNodeBId = `simplified_b_matched_bin_${b.binIdx}`;
-                binNodeB = getNode(binNodeBId, getBinName(b.binIdx, `${b.totalB} ${metricSuffix}`, 'b'), binColor);
-                binNodeB.alignOverride = 2;
-                binNodeB.cohesion = binAvgCohesion;
-            }
+            bins.forEach(b => {
+                if (b.clusters.length === 0) return;
 
-            if (binNodeA) {
-                links.push({ source: binNodeA.index, target: binNode.index, value: b.totalA });
-            }
-            if (binNodeB) {
-                links.push({ source: binNode.index, target: binNodeB.index, value: b.totalB });
-            }
-        });
+                const binAvgCohesion = b.sumWeights > 0 ? (b.sumCohesion / b.sumWeights) : (b.binIdx * (step / 100) + (step / 200));
+                const binColor = `hsl(${binAvgCohesion * 120}, var(--color-s-med), var(--color-l-dim))`;
+
+                let binNodeA = null;
+                if (b.totalA > 0) {
+                    const binNodeAId = `simplified_a_matched_bin_${b.binIdx}`;
+                    binNodeA = getNode(binNodeAId, getBinName(b.binIdx, `${b.totalA} ${metricSuffix}`, 'a'), binColor);
+                    binNodeA.alignOverride = 0;
+                    binNodeA.cohesion = binAvgCohesion;
+                }
+
+                const binNodeId = `simplified_c_matched_bin_${b.binIdx}`;
+                const binNode = getNode(
+                    binNodeId, 
+                    getBinName(b.binIdx, `${b.clusters.length} clusters`, 'c'), 
+                    binColor
+                );
+                binNode.alignOverride = 1;
+                binNode.cohesion = binAvgCohesion;
+
+                let binNodeB = null;
+                if (b.totalB > 0) {
+                    const binNodeBId = `simplified_b_matched_bin_${b.binIdx}`;
+                    binNodeB = getNode(binNodeBId, getBinName(b.binIdx, `${b.totalB} ${metricSuffix}`, 'b'), binColor);
+                    binNodeB.alignOverride = 2;
+                    binNodeB.cohesion = binAvgCohesion;
+                }
+
+                if (binNodeA) {
+                    links.push({ source: binNodeA.index, target: binNode.index, value: b.totalA });
+                }
+                if (binNodeB) {
+                    links.push({ source: binNode.index, target: binNodeB.index, value: b.totalB });
+                }
+            });
+        }
 
         let nodeA_unique, nodeC_uniqueA, nodeC_uniqueB, nodeB_unique;
-        if (totalUniqueA > 0) {
+        if (!isTagMode && totalUniqueA > 0) {
             nodeA_unique = getNode('simplified_a_unique', `${filenameA} Unmatched (${totalUniqueA} ${metricSuffix})`, '#f92672');
             nodeA_unique.alignOverride = 0;
             nodeC_uniqueA = getNode('simplified_c_uniqueA', `Unmatched to ${filenameA} (${sortedUniqueA.length})`, '#f92672');
             nodeC_uniqueA.alignOverride = 1;
             links.push({ source: nodeA_unique.index, target: nodeC_uniqueA.index, value: totalUniqueA });
         }
-        if (totalUniqueB > 0) {
+        if (!isTagMode && totalUniqueB > 0) {
             nodeC_uniqueB = getNode('simplified_c_uniqueB', `Unmatched to ${filenameB} (${sortedUniqueB.length})`, '#66d9ef');
             nodeC_uniqueB.alignOverride = 1;
             nodeB_unique = getNode('simplified_b_unique', `${filenameB} Unmatched (${totalUniqueB} ${metricSuffix})`, '#66d9ef');
@@ -722,6 +1004,20 @@ async function renderBinaryDiffSankey(data) {
         .extent([[marginX, 10], [width - marginX, height - 10]])
         .nodeSort((a, b) => {
             const getNodeSortRank = (n) => {
+                if (n.id.startsWith('tag_')) {
+                    // tag_<a|b|c|ua|ub>_<tagIdx>[_<binGroup>]
+                    const m = n.id.match(/^tag_(a|b|c|ua|ub)_(\d+)(?:_(\d+))?$/);
+                    if (m) {
+                        const kind = m[1];
+                        const tagIdx = parseInt(m[2], 10);
+                        const type = kind === 'a' ? 0 : (kind === 'b' ? 2 : 1);
+                        // Within a tag: best-matching bins first, unmatched last.
+                        let sub = 0;
+                        if (kind === 'c') sub = 100 - parseInt(m[3] || '0', 10);
+                        else if (kind === 'ua' || kind === 'ub') sub = 500;
+                        return { type: type, rank: tagIdx * 1000 + sub };
+                    }
+                }
                 if (n.id.startsWith('simplified_')) {
                     const binMatch = n.id.match(/_bin_(\d+)/);
                     let rank = 0;
@@ -1559,13 +1855,15 @@ window.setSankeyMode = function(mode) {
     sankeyMode = mode;
     const btnDet = document.getElementById('bsim-sankey-btn-detailed');
     const btnSimp = document.getElementById('bsim-sankey-btn-simplified');
+    const btnTags = document.getElementById('bsim-sankey-btn-tags');
     if (btnDet && btnSimp) {
         btnDet.classList.toggle('active', mode === 'detailed');
         btnSimp.classList.toggle('active', mode === 'simplified');
     }
+    if (btnTags) btnTags.classList.toggle('active', mode === 'tags');
     const splitToggle = document.getElementById('bin-sim-sankey-split-toggle');
     if (splitToggle) {
-        splitToggle.style.display = mode === 'simplified' ? 'flex' : 'none';
+        splitToggle.style.display = mode === 'detailed' ? 'none' : 'flex';
     }
     if (binSimDataCache) {
         renderBinaryDiffSankey(binSimDataCache);
@@ -1827,7 +2125,7 @@ function renderBinSimStrip(containerId, m, fileId) {
 }
 
 // ---- Tab switching: Matched / Unmatched / Graph / Metadata / Inferred ----
-const BIN_SIM_TABS = ['matched', 'unmatched', 'graph', 'metadata', 'inferred'];
+const BIN_SIM_TABS = ['matched', 'unmatched', 'graph', 'metadata', 'inferred', 'filesim'];
 
 // push=true (a real click) writes the tab into the URL hash so it lands in
 // browser history; Back/forward then fires hashchange and re-selects the tab.
@@ -1844,6 +2142,7 @@ window.switchBinSimTab = function(tab, push = true) {
         renderBinaryDiffSankey(binSimDataCache);
     }
     if ((tab === 'metadata' || tab === 'inferred') && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
+    if (tab === 'filesim' && binSimDataCache) renderFileSimTable(binSimDataCache);
 
     if (push && location.hash.slice(1) !== tab) {
         // pushState (not location.hash=) so the app's hashchange ROUTER doesn't

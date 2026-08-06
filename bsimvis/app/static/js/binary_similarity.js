@@ -537,12 +537,7 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
                 }
                 return;
             }
-        } else if (node.groupType === 'unmatched_only') {
-            const uniqA = tagToUniqueA.get(node.tagId) || [];
-            const uniqB = tagToUniqueB.get(node.tagId) || [];
-            uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
-            uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
-            return;
+
         } else if (node.groupType === 'uniqueA') {
             const funcs = tagToUniqueA.get(node.tagId) || [];
             if (funcs.length > 0) {
@@ -558,7 +553,7 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
         }
     }
 
-    const hasKids = node.children.length > 0;
+    const hasKids = node.children.length > 0 || node.groupType === 'unmatched_only';
     if (depth === 0 && !fileSimAutoExpanded) {
         fileSimExpanded.add(path);
     }
@@ -590,6 +585,13 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
             </td>
         </tr>`);
     if (expanded) node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth + 1, out, tagToMatched, tagToUniqueA, tagToUniqueB));
+    
+    if (expanded && node.tagId && node.groupType === 'unmatched_only') {
+        const uniqA = tagToUniqueA.get(node.tagId) || [];
+        const uniqB = tagToUniqueB.get(node.tagId) || [];
+        uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth + 1)));
+        uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth + 1)));
+    }
 }
 
 async function renderFileSimTable(data) {

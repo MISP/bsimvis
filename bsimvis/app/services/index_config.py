@@ -15,6 +15,8 @@ bin_sim level uses native fields only (no propagation to other levels).
 File metadata is denormalized directly into the bin_sim index at build time.
 """
 
+import re
+
 INDEX_CONFIG = {
     "file": {
         "file_name": ["file", "func", "sim"],  # propagated to sim for fast lookup
@@ -216,7 +218,7 @@ SUBSTRING_FIELDS = {
 #
 # Keyed by indexed field name, so propagated variants (file_tags, func_tags)
 # must be listed explicitly. Value is the list of separators, longest first —
-# `namespace` will want ["::", "/"] when function namespaces are folded in.
+# `::` must precede `:` or it would split into empty segments.
 HIERARCHY_SEPARATORS = {
     "tags": [":"],
     "user_tags": [":"],
@@ -224,7 +226,21 @@ HIERARCHY_SEPARATORS = {
     "file_user_tags": [":"],
     "func_tags": [":"],
     "func_user_tags": [":"],
+    # Function namespaces mix all three in one value, e.g.
+    # `crypto/elliptic::crypto/elliptic.initP256`.
+    "namespace": ["::", "/", "."],
 }
+
+_HIERARCHY_SPLIT_RE = {}
+
+
+def _hierarchy_splitter(seps):
+    """Compiled alternation over the separators, longest first."""
+    key = tuple(seps)
+    if key not in _HIERARCHY_SPLIT_RE:
+        pattern = "|".join(re.escape(s) for s in sorted(seps, key=len, reverse=True))
+        _HIERARCHY_SPLIT_RE[key] = re.compile("(" + pattern + ")")
+    return _HIERARCHY_SPLIT_RE[key]
 
 
 def tag_ancestors(field: str, value: str) -> list[str]:
@@ -233,18 +249,26 @@ def tag_ancestors(field: str, value: str) -> list[str]:
     `lib:uclibc:seekdir` -> ['lib', 'lib:uclibc']. Empty for non-hierarchical
     fields, and for values with no separator (nothing above them).
 
-    ponytail: splits on the first separator that appears rather than tokenizing
-    a grammar. Mixed-separator values (`a::b/c`) split on whichever is listed
-    first; revisit if `namespace` turns out to mix them in practice.
+    Splits on any configured separator, not just the first one present, because
+    a single namespace mixes them: `crypto/elliptic::crypto/elliptic.initP256`
+    yields `crypto`, `crypto/elliptic`, `crypto/elliptic::crypto` and
+    `crypto/elliptic::crypto/elliptic`. Each ancestor keeps the original
+    separators, so it is a real prefix of the value rather than a normalized
+    form of it.
     """
     seps = HIERARCHY_SEPARATORS.get(field)
     if not seps or not value:
         return []
-    for sep in seps:
-        if sep in value:
-            parts = value.split(sep)
-            return [sep.join(parts[:i]) for i in range(1, len(parts))]
-    return []
+
+    # Keeps the separators as capture groups: [seg, sep, seg, sep, seg, ...]
+    parts = _hierarchy_splitter(seps).split(value)
+    ancestors = []
+    prefix = parts[0]
+    for i in range(1, len(parts) - 1, 2):
+        if prefix:
+            ancestors.append(prefix)
+        prefix += parts[i] + parts[i + 1]
+    return ancestors
 
 # Fields that are auto-analysis artifacts of clustering. Clustering runs per
 # namespace (a collection OR a pool), so these indexes belong to whichever

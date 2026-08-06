@@ -85,6 +85,21 @@ def demo():
     # Non-hierarchical fields are left alone.
     assert tag_ancestors("function_name", "a:b") == []
 
+    # Function namespaces mix `::`, `/` and `.` inside a single value.
+    assert tag_ancestors("namespace", "crypto/elliptic::crypto/elliptic.initP256") == [
+        "crypto",
+        "crypto/elliptic",
+        "crypto/elliptic::crypto",
+        "crypto/elliptic::crypto/elliptic",
+    ]
+    # `::` wins over a bare `:` — splitting must not produce empty segments.
+    assert tag_ancestors("namespace", "std::vector") == ["std"]
+    assert tag_ancestors("namespace", "main") == []
+    # Every ancestor is a genuine prefix of the value, separators included.
+    value = "a/b::c.d"
+    for ancestor in tag_ancestors("namespace", value):
+        assert value.startswith(ancestor), ancestor
+
     # --- resolution against an index --------------------------------------
     sets = {}
     for i, leaf in enumerate(

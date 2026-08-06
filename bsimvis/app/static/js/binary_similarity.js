@@ -383,7 +383,7 @@ function initResizableCards() {
 
 // Display name for a tag row: version-qualified, e.g. "libc 2.31" / "mirai_core".
 function tagLabel(t) {
-    const name = t.name || t.tag_id || 'untagged';
+    const name = t.name || t.tag_id || 'original_code';
     return t.version ? `${name} ${t.version}` : name;
 }
 
@@ -474,6 +474,18 @@ function fileSimTree(rows) {
                 uniqueB.forEach(k => k.groupType = 'uniqueB');
                 groupedKids.push(fileSimNode(`Unique to B (${uniqueB.length})`, uniqueB, 0, uniqueB.reduce((s, k) => s + k.b, 0), 0.0));
             }
+        } else if (row.tag_id === 'original_code') {
+            // "Original Code" has no sub-tags (children), but we still want it to display the matched/unique functions.
+            // Create dummy 'matched', 'uniqueA', 'uniqueB' nodes so fileSimRows will render them.
+            if (row.matched_count > 0) {
+                groupedKids.push(fileSimNode(`Shared (${Math.round(row.matched_count)})`, [], row.matched_count, row.matched_count, 1.0, row.tag_id, 'matched'));
+            }
+            if (row.unique_count_a > 0) {
+                groupedKids.push(fileSimNode(`Unique to A (${Math.round(row.unique_count_a)})`, [], row.unique_count_a, 0, 0.0, row.tag_id, 'uniqueA'));
+            }
+            if (row.unique_count_b > 0) {
+                groupedKids.push(fileSimNode(`Unique to B (${Math.round(row.unique_count_b)})`, [], 0, row.unique_count_b, 0.0, row.tag_id, 'uniqueB'));
+            }
         }
         
         const node = fileSimNode(nodeName, groupedKids, a, b, trueSim);
@@ -502,8 +514,8 @@ window.toggleFileSimRow = function(path) {
 };
 
 function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUniqueB) {
-    if (node.name === 'untagged' && depth === 1 && node.children.length > 0 && node.children[0].name === 'Untagged') {
-        // Skip redundant 'untagged' category wrapper for the 'Untagged' node
+    if (node.name === 'original_code' && depth === 1 && node.children.length > 0 && node.children[0].name === 'Original Code') {
+        // Skip redundant 'original_code' category wrapper for the 'Original Code' node
         node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth, out, tagToMatched, tagToUniqueA, tagToUniqueB));
         return;
     }
@@ -511,8 +523,13 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
     if (node.tagId && node.groupType && tagToMatched) {
         if (node.groupType === 'matched') {
             const pairs = tagToMatched.get(node.tagId) || [];
-            const uniqA = tagToUniqueA.get(node.tagId) || [];
-            const uniqB = tagToUniqueB.get(node.tagId) || [];
+            let uniqA = tagToUniqueA.get(node.tagId) || [];
+            let uniqB = tagToUniqueB.get(node.tagId) || [];
+            
+            if (node.tagId === 'original_code') {
+                uniqA = [];
+                uniqB = [];
+            }
 
             if (pairs.length > 0 || uniqA.length > 0 || uniqB.length > 0) {
                 if (pairs.length > 0 && (uniqA.length > 0 || uniqB.length > 0)) {
@@ -520,14 +537,42 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
                     const unmatchedExpanded = fileSimExpanded.has(unmatchedPath);
                     pairs.forEach((p, index) => {
                         let btn = '';
-                        if (index === pairs.length - 1) {
+                        let isLast = index === pairs.length - 1;
+                        if (isLast) {
                             btn = `<span onclick="toggleFileSimRow(${escapeAttr(jsString(unmatchedPath))})" style="cursor:pointer; user-select:none; display:inline-block; padding:2px 8px; border-radius:12px; background:var(--bg-alt); border:1px solid var(--border); font-size:0.75rem; color:var(--subtle); white-space:nowrap; margin-left:8px;">${unmatchedExpanded ? '▼' : '▶'} And ${uniqA.length + uniqB.length} unmatched duplicates</span>`;
                         }
-                        out.push(renderMatchedFunctionRow(p, 'matched', depth, btn));
+                        let rowHtml = renderMatchedFunctionRow(p, 'matched', depth, btn);
+                        if (isLast && unmatchedExpanded) {
+                            rowHtml = rowHtml.replace('border-bottom: 1px solid var(--border);', 'border-bottom: none;');
+                        }
+                        out.push(rowHtml);
                     });
                     if (unmatchedExpanded) {
-                        uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth + 1)));
-                        uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth + 1)));
+                        out.push(`
+                        <tr>
+                            <td colspan="5" style="padding:0; border-bottom:1px solid var(--border);">
+                                <div style="margin: 0 10px 10px 40px; padding: 10px; background: var(--bg-alt); border-radius: 6px; border: 1px solid var(--border); border-left: 4px solid var(--accent);">
+                                    <div style="font-size:0.75rem; color:var(--subtle); margin-bottom:8px; text-transform:uppercase; font-weight:bold;">Unmatched Duplicates</div>
+                                    <table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
+                                        <tbody>
+                        `);
+                        uniqA.forEach(f => {
+                            let r = renderMatchedFunctionRow(f, 'uniqueA', 0);
+                            r = r.replace('border-bottom: 1px solid var(--border); background: var(--bg);', 'border-bottom: 1px solid var(--border); background: transparent;');
+                            out.push(r);
+                        });
+                        uniqB.forEach(f => {
+                            let r = renderMatchedFunctionRow(f, 'uniqueB', 0);
+                            r = r.replace('border-bottom: 1px solid var(--border); background: var(--bg);', 'border-bottom: 1px solid var(--border); background: transparent;');
+                            out.push(r);
+                        });
+                        out.push(`
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                        `);
                     }
                 } else if (pairs.length === 0) {
                     // Only unmatched functions
@@ -622,7 +667,7 @@ async function renderFileSimTable(data) {
                 if (Array.isArray(meta.tags) && meta.tags.length > 0) return meta.tags;
                 if (typeof meta.tags === 'object' && Object.keys(meta.tags).length > 0) return Object.keys(meta.tags);
             }
-            return ['untagged'];
+            return ['original_code'];
         };
 
         (binSimFullDiff.diff.matched || []).forEach(m => {

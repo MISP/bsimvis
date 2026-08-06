@@ -7,6 +7,10 @@ let metaHighlightMode = 'different';
 let sankeyMode = 'simplified';
 let sankeyScale = 'count';
 let sankeySplit = 10;
+// File sim tab: table (tag tree) or sankey (tag flow). See "File sim tab" below.
+let fileSimView = 'table';      // 'table' | 'sankey'
+let fileSimScale = 'count';     // 'count' | 'features'
+let fileSimDepth = 2;           // default namespace frontier: 1=type, 2=library, 3=version
 let binSimSortState = {
     matched: { col: 'similarity', dir: -1 },
     uniqueA: { col: 'cohesion', dir: -1 },
@@ -188,7 +192,28 @@ function renderBinarySimilarityView(params) {
 
             <!-- File sim tab: tag-composition similarity, collapsible by depth -->
             <div class="bsim-subtab-panel" id="bsim-panel-filesim" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
+                <div style="display:flex; align-items:center; gap:14px; flex-shrink:0; flex-wrap:wrap;">
+                    <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
+                        <button class="view-btn ${fileSimView === 'table' ? 'active' : ''}" id="bsim-filesim-view-btn-table" onclick="setFileSimView('table')" title="Tag composition as a collapsible table">Table</button>
+                        <button class="view-btn ${fileSimView === 'sankey' ? 'active' : ''}" id="bsim-filesim-view-btn-sankey" onclick="setFileSimView('sankey')" title="Tag composition as a Shared / Unique flow graph">Sankey</button>
+                    </div>
+                    <div class="view-toggle" id="bin-sim-filesim-scale-toggle" style="margin:0; align-items:center; display:${fileSimView === 'sankey' ? 'flex' : 'none'};">
+                        <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Scale:</span>
+                        <button class="view-btn ${fileSimScale === 'count' ? 'active' : ''}" id="bsim-filesim-scale-btn-count" onclick="setFileSimScale('count')" title="Scale flow by function count">Count</button>
+                        <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
+                    </div>
+                    <div class="view-toggle" id="bin-sim-filesim-depth-toggle" style="margin:0; align-items:center; display:${fileSimView === 'sankey' ? 'flex' : 'none'};">
+                        <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Group:</span>
+                        <button class="view-btn ${fileSimDepth === 1 ? 'active' : ''}" onclick="setFileSimDepth(1)" title="One node per tag namespace (lib, stdlib, ...)">Namespace</button>
+                        <button class="view-btn ${fileSimDepth === 2 ? 'active' : ''}" onclick="setFileSimDepth(2)" title="One node per library (lib:libc)">Library</button>
+                        <button class="view-btn ${fileSimDepth === 3 ? 'active' : ''}" onclick="setFileSimDepth(3)" title="One node per library version (lib:libc:2.31)">Version</button>
+                        <span style="font-size:0.68rem; color:var(--dim); margin-left:10px; font-family:sans-serif;">click a tag node to expand ▸ · shift-click to fold it up</span>
+                    </div>
+                </div>
                 <div id="bin-sim-filesim" style="color:var(--dim); text-align:center; padding:40px;">No tag data for this pair.</div>
+                <div id="bin-sim-filesim-sankey-card" style="display:none; position:relative; width:100%; flex:1; min-height:420px; border:1px solid var(--border); background:var(--bg); border-radius:8px; flex-direction:column; overflow:hidden;">
+                    <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
+                </div>
             </div>
         </div>
         <style>
@@ -720,6 +745,328 @@ async function renderFileSimTable(data) {
             <tbody>${body.join('')}</tbody>
         </table>`;
 }
+
+// ---- File sim tab: sankey view ------------------------------------------
+// Same tag composition as the table, drawn as flow. Deliberately stops at
+// Shared / Unique to A / Unique to B per tag -- function-level detail is the
+// Function graph tab's job. Depth is a namespace frontier over the tag ids
+// (`lib:libc:2.31`), so a whole namespace or a whole library folds to one node.
+
+// Per-node frontier override: ns key -> 'open' | 'closed'. Empty = follow fileSimDepth.
+const fileSimNsOverride = new Map();
+
+// Synthetic buckets have no namespace structure; everything else is type:name:version.
+function fileSimNsPath(tagId) {
+    if (!tagId) return ['unknown'];
+    if (tagId === 'original_code' || tagId === 'tag_mismatch' || tagId === 'other') return [tagId];
+    return tagId.split(':').slice(0, 3);
+}
+
+function fileSimNsLabel(parts) {
+    if (parts.length === 1) {
+        if (parts[0] === 'original_code') return 'Original Code';
+        if (parts[0] === 'tag_mismatch') return 'Tag mismatch';
+        return parts[0];
+    }
+    return parts.slice(1).join(' ');
+}
+
+// A tag row's four masses, in whichever metric is selected. Shared mass is
+// per-side on purpose: a match need not be tagged the same on both binaries,
+// so A's shared count and B's shared count can differ.
+function fileSimRowMass(row, scale) {
+    if (scale === 'features') {
+        return [row.weight_a || 0, row.weight_b || 0, row.unique_weight_a || 0, row.unique_weight_b || 0];
+    }
+    let sa = 0, sb = 0;
+    Object.keys(row.bins || {}).forEach(k => {
+        sa += row.bins[k][0] || 0;
+        sb += row.bins[k][2] || 0;
+    });
+    return [sa, sb, row.unique_count_a || 0, row.unique_count_b || 0];
+}
+
+// Fold the tag rows onto the current frontier: descend while a node is open,
+// stop at the first closed one. That node is what the graph draws.
+function fileSimSankeyGroups(rows, scale) {
+    const groups = new Map();
+    (rows || []).forEach(row => {
+        const parts = fileSimNsPath(row.tag_id);
+        let depth = parts.length;
+        for (let d = 1; d <= parts.length; d++) {
+            const key = parts.slice(0, d).join(':');
+            const ov = fileSimNsOverride.get(key);
+            const open = ov === 'open' || (ov !== 'closed' && d < fileSimDepth);
+            if (!open) { depth = d; break; }
+        }
+        const key = parts.slice(0, depth).join(':');
+        let g = groups.get(key);
+        if (!g) {
+            g = {
+                key, label: fileSimNsLabel(parts.slice(0, depth)), depth,
+                sharedA: 0, sharedB: 0, uniqA: 0, uniqB: 0,
+                cohNum: 0, cohDen: 0, tags: 0, expandable: false,
+            };
+            groups.set(key, g);
+        }
+        const [sa, sb, ua, ub] = fileSimRowMass(row, scale);
+        g.sharedA += sa; g.sharedB += sb; g.uniqA += ua; g.uniqB += ub;
+        g.cohNum += (row.score || 0) * (row.matched_weight || 0);
+        g.cohDen += row.matched_weight || 0;
+        g.tags += 1;
+        if (parts.length > depth) g.expandable = true;
+    });
+    return [...groups.values()]
+        .filter(g => g.sharedA + g.sharedB + g.uniqA + g.uniqB > 0)
+        .sort((x, y) => (y.sharedA + y.sharedB + y.uniqA + y.uniqB) - (x.sharedA + x.sharedB + x.uniqA + x.uniqB));
+}
+
+// Click on a tag node: drill into it. Shift-click (or a click on a node that has
+// nothing left to expand) folds it back into its parent namespace, so `lib:libc`
+// collapses into `lib`. Depth buttons reset every override.
+window.toggleFileSimNs = function(key, expandable, foldUp) {
+    if (expandable && !foldUp) {
+        fileSimNsOverride.set(key, 'open');
+    } else {
+        const parts = key.split(':');
+        if (parts.length < 2) return;          // top-level leaf: nothing to fold into
+        fileSimNsOverride.delete(key);
+        fileSimNsOverride.set(parts.slice(0, -1).join(':'), 'closed');
+    }
+    if (binSimDataCache) renderFileSimSankey(binSimDataCache);
+};
+
+function renderFileSimSankey(data) {
+    const container = document.getElementById('bin-sim-filesim-sankey');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const groups = fileSimSankeyGroups(data.tags_summary || [], fileSimScale);
+    if (!groups.length) {
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No tag data for this pair.</div>';
+        return;
+    }
+
+    const filenameA = data.file_metadata_a?.file_name || 'A';
+    const filenameB = data.file_metadata_b?.file_name || 'B';
+    const suffix = fileSimScale === 'features' ? 'feats' : 'funcs';
+    const fmt = (v) => (v % 1 !== 0 ? v.toFixed(1) : String(Math.round(v)));
+
+    const nodes = [];
+    const links = [];
+    const addNode = (id, name, color, extra) => {
+        const n = Object.assign({ id, name, color, index: nodes.length }, extra || {});
+        nodes.push(n);
+        return n;
+    };
+
+    groups.forEach((g, i) => {
+        const totalA = g.sharedA + g.uniqA;
+        const totalB = g.sharedB + g.uniqB;
+        // Composition similarity, same measure as the table: how evenly the tag's
+        // mass is carried by both binaries.
+        const comp = Math.max(totalA, totalB) > 0 ? Math.min(totalA, totalB) / Math.max(totalA, totalB) : 0;
+        const score = g.cohDen > 0 ? g.cohNum / g.cohDen : 0;
+        const tagColor = `hsl(${comp * 120}, var(--color-s-med), var(--color-l-dim))`;
+        const marker = g.expandable ? ' ▸' : '';
+
+        // Each side is split by category at the source: a tag's shared mass and its
+        // unmatched mass are separate side nodes. One node fanning out into both
+        // reads as "all of original_code is shared AND unique", which it is not.
+        const stat = `Composition: ${(comp * 100).toFixed(0)}%  ·  Match quality: ${(score * 100).toFixed(0)}%\n${g.tags} tag${g.tags === 1 ? '' : 's'} folded`;
+        const sColor = `hsl(${score * 120}, var(--color-s-med), var(--color-l-dim))`;
+
+        if (g.sharedA > 0 || g.sharedB > 0) {
+            const mid = addNode(`fsk_s_${i}`, `${g.label} shared (${fmt(Math.max(g.sharedA, g.sharedB))} ${suffix})`, sColor, {
+                align: 1, tagIdx: i, sort: i * 10,
+                tip: `${g.label} · shared\n${filenameA}: ${fmt(g.sharedA)} ${suffix}\n${filenameB}: ${fmt(g.sharedB)} ${suffix}\nMatch quality: ${(score * 100).toFixed(0)}%`,
+            });
+            if (g.sharedA > 0) {
+                const n = addNode(`fsk_as_${i}`, `${g.label}${marker} shared (${fmt(g.sharedA)} ${suffix})`, tagColor, {
+                    align: 0, tagIdx: i, sort: i * 10, tagKey: g.key, expandable: g.expandable,
+                    tip: `${filenameA} · ${g.label} — matched\n${fmt(g.sharedA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
+                });
+                links.push({ source: n.index, target: mid.index, value: g.sharedA });
+            }
+            if (g.sharedB > 0) {
+                const n = addNode(`fsk_bs_${i}`, `${g.label}${marker} shared (${fmt(g.sharedB)} ${suffix})`, tagColor, {
+                    align: 2, tagIdx: i, sort: i * 10, tagKey: g.key, expandable: g.expandable,
+                    tip: `${filenameB} · ${g.label} — matched\n${fmt(g.sharedB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
+                });
+                links.push({ source: mid.index, target: n.index, value: g.sharedB });
+            }
+        }
+        if (g.uniqA > 0) {
+            const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, '#f92672', {
+                align: 1, tagIdx: i, sort: i * 10 + 1, tip: `${g.label}\nUnique to ${filenameA}: ${fmt(g.uniqA)} ${suffix}`,
+            });
+            const n = addNode(`fsk_au_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqA)} ${suffix})`, '#f92672', {
+                align: 0, tagIdx: i, sort: i * 10 + 1, tagKey: g.key, expandable: g.expandable,
+                tip: `${filenameA} · ${g.label} — unmatched\n${fmt(g.uniqA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
+            });
+            links.push({ source: n.index, target: mid.index, value: g.uniqA });
+        }
+        if (g.uniqB > 0) {
+            const mid = addNode(`fsk_ub_${i}`, `${g.label} only in ${filenameB} (${fmt(g.uniqB)} ${suffix})`, '#66d9ef', {
+                align: 1, tagIdx: i, sort: i * 10 + 2, tip: `${g.label}\nUnique to ${filenameB}: ${fmt(g.uniqB)} ${suffix}`,
+            });
+            const n = addNode(`fsk_bu_${i}`, `${g.label}${marker} unmatched (${fmt(g.uniqB)} ${suffix})`, '#66d9ef', {
+                align: 2, tagIdx: i, sort: i * 10 + 2, tagKey: g.key, expandable: g.expandable,
+                tip: `${filenameB} · ${g.label} — unmatched\n${fmt(g.uniqB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
+            });
+            links.push({ source: mid.index, target: n.index, value: g.uniqB });
+        }
+    });
+
+    if (!links.length) {
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">Not enough data for graph</div>';
+        return;
+    }
+
+    // Every column now carries up to 2-3 nodes per tag, so the height budget comes
+    // from the fullest column, not from the tag count.
+    const perColumn = [0, 1, 2].map(a => nodes.filter(n => n.align === a).length);
+    const maxNodesInColumn = Math.max(...perColumn, 6);
+    const width = container.clientWidth || 800;
+    const padding = maxNodesInColumn > 30 ? 3 : 10;
+    const height = Math.max(container.clientHeight || 400, maxNodesInColumn * (padding + 12) + 40);
+
+    const svg = d3.select(container).append('svg').attr('width', width).attr('height', height);
+    const zoomG = svg.append('g');
+
+    const gap = Math.max(3, Math.min(padding, Math.floor((height - 40) / (maxNodesInColumn + 1))));
+    const sankey = d3.sankey()
+        .nodeWidth(15)
+        .nodePadding(gap)
+        .nodeAlign(n => n.align)
+        // Tag order first, then shared / unique-A / unique-B within a tag, in every
+        // column -- so a tag's three rows sit at the same height on both sides.
+        .nodeSort((a, b) => (a.sort || 0) - (b.sort || 0))
+        .extent([[25, 10], [width - 25, height - 10]]);
+
+    let graph;
+    try {
+        graph = sankey({
+            nodes: nodes.map(d => Object.assign({}, d)),
+            links: links.map(d => Object.assign({}, d)),
+        });
+    } catch (e) {
+        console.error('file sim sankey layout failed', e);
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--danger);">Graph layout error</div>';
+        return;
+    }
+
+    // d3-sankey pads every node equally, which makes a tag's shared and unmatched
+    // rows look like two unrelated tags. Re-stack each column with no gap inside a
+    // tag and the full gap between tags: one visually contiguous block per tag,
+    // still split by category. Heights are untouched, and every link spans a whole
+    // node face, so nothing needs re-linking. Dropping gaps only shrinks a column,
+    // so this can never overflow the extent.
+    [0, 1, 2].forEach(col => {
+        const colNodes = graph.nodes.filter(n => n.align === col).sort((a, b) => a.y0 - b.y0);
+        let y = 10;
+        colNodes.forEach((n, k) => {
+            if (k > 0 && n.tagIdx !== colNodes[k - 1].tagIdx) y += gap;
+            const h = n.y1 - n.y0;
+            n.y0 = y;
+            n.y1 = y + h;
+            y += h;
+        });
+    });
+
+    zoomG.append('g').selectAll('path')
+        .data(graph.links)
+        .enter().append('path')
+        .attr('d', d => {
+            const x0 = d.source.x1, x1 = d.target.x0;
+            const x2 = x0 + (x1 - x0) * 0.4, x3 = x0 + (x1 - x0) * 0.6;
+            return `M ${x0},${d.source.y0}
+                    C ${x2},${d.source.y0} ${x3},${d.target.y0} ${x1},${d.target.y0}
+                    L ${x1},${d.target.y1}
+                    C ${x3},${d.target.y1} ${x2},${d.source.y1} ${x0},${d.source.y1}
+                    Z`;
+        })
+        .attr('fill', d => d.target.color || 'var(--text)')
+        .style('fill-opacity', 0.4)
+        .on('mouseenter', function () { d3.select(this).style('fill-opacity', 0.75); })
+        .on('mouseleave', function () { d3.select(this).style('fill-opacity', 0.4); })
+        .append('title')
+        .text(d => `${d.source.name}\n  ↓\n${d.target.name}\n${fmt(d.value)} ${suffix}`);
+
+    const node = zoomG.append('g').selectAll('.node')
+        .data(graph.nodes)
+        .enter().append('g')
+        .attr('class', 'node')
+        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+
+    node.append('rect')
+        .attr('height', d => Math.max(1, d.y1 - d.y0))
+        .attr('width', sankey.nodeWidth())
+        .attr('fill', d => d.color)
+        .attr('stroke', 'var(--border)')
+        .attr('stroke-width', '0.5px')
+        .attr('opacity', 0.6)
+        .style('cursor', d => (d.tagKey ? 'pointer' : 'default'))
+        .on('click', (event, d) => { if (d.tagKey) window.toggleFileSimNs(d.tagKey, d.expandable, event.shiftKey); })
+        .append('title')
+        .text(d => d.tip || d.name);
+
+    node.append('text')
+        .attr('x', d => (d.align === 2 ? -6 : 6 + sankey.nodeWidth()))
+        .attr('y', d => (d.y1 - d.y0) / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', d => (d.align === 2 ? 'end' : 'start'))
+        .text(d => d.name)
+        .attr('fill', 'var(--text)')
+        .attr('font-size', '9px')
+        .attr('opacity', 0.75)
+        .attr('font-family', 'sans-serif')
+        .style('cursor', d => (d.tagKey ? 'pointer' : 'default'))
+        .on('click', (event, d) => { if (d.tagKey) window.toggleFileSimNs(d.tagKey, d.expandable, event.shiftKey); });
+}
+
+// Table / sankey switch for the File sim tab.
+function renderFileSim(data) {
+    const tableEl = document.getElementById('bin-sim-filesim');
+    const card = document.getElementById('bin-sim-filesim-sankey-card');
+    const isSankey = fileSimView === 'sankey';
+    ['bin-sim-filesim-scale-toggle', 'bin-sim-filesim-depth-toggle'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = isSankey ? 'flex' : 'none';
+    });
+    ['table', 'sankey'].forEach(v => {
+        const b = document.getElementById(`bsim-filesim-view-btn-${v}`);
+        if (b) b.classList.toggle('active', fileSimView === v);
+    });
+    if (tableEl) tableEl.style.display = isSankey ? 'none' : '';
+    if (card) card.style.display = isSankey ? 'flex' : 'none';
+    if (isSankey) renderFileSimSankey(data);
+    else renderFileSimTable(data);
+}
+
+window.setFileSimView = function(view) {
+    fileSimView = view;
+    if (binSimDataCache) renderFileSim(binSimDataCache);
+};
+
+window.setFileSimScale = function(scale) {
+    fileSimScale = scale;
+    ['count', 'features'].forEach(s => {
+        const b = document.getElementById(`bsim-filesim-scale-btn-${s}`);
+        if (b) b.classList.toggle('active', scale === s);
+    });
+    if (binSimDataCache) renderFileSimSankey(binSimDataCache);
+};
+
+window.setFileSimDepth = function(depth) {
+    fileSimDepth = depth;
+    fileSimNsOverride.clear();   // a global depth pick overrides every per-node choice
+    const toggle = document.getElementById('bin-sim-filesim-depth-toggle');
+    if (toggle) toggle.querySelectorAll('.view-btn').forEach(btn => {
+        btn.classList.toggle('active', (btn.getAttribute('onclick') || '').includes(`(${depth})`));
+    });
+    if (binSimDataCache) renderFileSimSankey(binSimDataCache);
+};
 
 // Aggregate a tag's fixed 5% server bins up to the currently selected split.
 // Returns Map<groupIdx, [count_a, weight_a, count_b, weight_b]>.
@@ -2378,7 +2725,7 @@ window.switchBinSimTab = function(tab, push = true) {
         renderBinaryDiffSankey(binSimDataCache);
     }
     if ((tab === 'metadata' || tab === 'inferred') && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
-    if (tab === 'filesim' && binSimDataCache) renderFileSimTable(binSimDataCache);
+    if (tab === 'filesim' && binSimDataCache) renderFileSim(binSimDataCache);
 
     if (push && location.hash.slice(1) !== tab) {
         // pushState (not location.hash=) so the app's hashchange ROUTER doesn't

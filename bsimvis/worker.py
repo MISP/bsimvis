@@ -486,9 +486,14 @@ class Worker:
             else:
                 return False
 
-            return self.feature_service.index_functions(
+            ok = self.feature_service.index_functions(
                 collection, function_ids, self.job_service, job_id
             )
+            # Last stage that is guaranteed to run after every INDEX_FUNCTIONS
+            # chunk, so it is where the functions' library tags become file tags.
+            if ok and md5:
+                self.processing_service.rollup_lib_tags(collection, md5)
+            return ok
 
         elif jtype == JobType.SYNC_MILVUS.value:
             from bsimvis.app.services.milvus_service import milvus_service

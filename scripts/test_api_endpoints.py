@@ -2850,6 +2850,207 @@ def test_pool_collection_equivalence():
 
 
 # ---------------------------------------------------------------------------
+# Step 4c – Library tags roll up from functions to their file
+#
+# Tagging a function `lib:uclibc:0.9.30.1:xdrmem_getint32` means the binary
+# contains uClibc 0.9.30.1, so the file must carry `lib:uclibc:0.9.30.1`.
+# Seeded synthetically because the roll-up rules have to hold whether or not
+# Ghidra's Function ID databases happen to match anything in the test corpus;
+# the uploaded collection is then checked for consistency on top.
+# ---------------------------------------------------------------------------
+def test_lib_tag_rollup():
+    import subprocess
+    from bsimvis.app.services.redis_client import get_redis
+    from backfill_lib_file_tags import file_lib_tags
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4c – Function library tags roll up to the file", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"{COLLECTION}_libtag"
+    md5 = "0" * 32
+    file_id = f"{coll}:file:{md5}"
+
+    seeded = {
+        "00401000": ["lib:uclibc:0.9.30.1:xdrmem_getint32"],
+        # `ambiguous` is still evidence the library is present, and a second
+        # library in the same file must not shadow the first.
+        "00401100": ["lib:uclibc:0.9.30.1:ambiguous", "lib:musl:1.2.4"],
+        # Neither rolls up: an unversioned lib tag names a function, not a
+        # library build, and a plain tag is not a library at all.
+        "00401200": ["lib:zlib:deflate", "crypto"],
+    }
+    expected = {"lib:uclibc:0.9.30.1", "lib:musl:1.2.4"}
+
+    try:
+        r.set(
+            f"{file_id}:meta",
+            json.dumps(
+                {
+                    "file_md5": md5,
+                    "file_name": "synthetic_libtag",
+                    "type": "file",
+                    "collection": coll,
+                    "file_id": file_id,
+                    "tags": ["preexisting"],
+                }
+            ),
+        )
+        r.sadd(f"{coll}:all_files", file_id)
+        for addr, tags in seeded.items():
+            func_id = f"{coll}:func:{md5}:{addr}"
+            r.set(
+                f"{func_id}:meta",
+                json.dumps({"function_name": f"f_{addr}", "tags": tags}),
+            )
+            r.sadd(f"{coll}:idx:file:functions:{md5}", func_id)
+
+        check(
+            "derives only versioned lib: tags from function tags",
+            file_lib_tags(r, coll, md5) == expected,
+            f"got {sorted(file_lib_tags(r, coll, md5))}, want {sorted(expected)}",
+        )
+
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "backfill_lib_file_tags.py")
+        proc = subprocess.run(
+            [sys.executable, script, "--collection", coll],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        check(
+            "backfill script exits cleanly",
+            proc.returncode == 0,
+            (proc.stderr or proc.stdout)[-400:],
+        )
+
+        doc = r.get(f"{file_id}:meta")
+        tags = json.loads(doc.decode() if isinstance(doc, bytes) else doc).get("tags")
+        check(
+            "backfill adds the library tags to the file doc",
+            expected <= set(tags or []),
+            f"file tags: {tags}",
+        )
+        check(
+            "backfill keeps the file's pre-existing tags",
+            "preexisting" in (tags or []),
+            f"file tags: {tags}",
+        )
+        check(
+            "backfill does not roll up unversioned or non-lib tags",
+            not ({"lib:zlib:deflate", "crypto"} & set(tags or [])),
+            f"file tags: {tags}",
+        )
+        check(
+            "rolled-up tag is searchable at the file level",
+            r.sismember(f"{coll}:idx:file:tags:lib:uclibc:0.9.30.1", file_id),
+            f"{coll}:idx:file:tags:lib:uclibc:0.9.30.1",
+        )
+
+        # Idempotent: a second run must not duplicate anything.
+        subprocess.run(
+            [sys.executable, script, "--collection", coll],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        doc2 = r.get(f"{file_id}:meta")
+        tags2 = json.loads(doc2.decode() if isinstance(doc2, bytes) else doc2).get(
+            "tags"
+        )
+        check(
+            "backfill is idempotent",
+            tags2 == tags,
+            f"first: {tags} / second: {tags2}",
+        )
+
+        # Ingest path: INDEX_FUNCTIONS accumulates, INDEX_FEATURES folds in.
+        # Driven directly because Ghidra's Function ID databases match nothing
+        # in the test corpus, so an upload alone never exercises this.
+        from bsimvis.app.services.processing_service import ProcessingService
+
+        ing_md5 = "1" * 32
+        ing_id = f"{coll}:file:{ing_md5}"
+        r.set(
+            f"{ing_id}:meta",
+            json.dumps({"file_md5": ing_md5, "type": "file", "file_id": ing_id}),
+        )
+        r.sadd(f"{coll}:all_files", ing_id)
+        svc = ProcessingService(r)
+        svc.index_functions(
+            coll,
+            None,
+            functions_list=[
+                {
+                    "function_metadata": {
+                        "function_name": f"f_{addr}",
+                        "full_id": f"{ing_md5}:#{ing_md5}::f_{addr}:@{addr}",
+                        "tags": tags,
+                    }
+                }
+                for addr, tags in seeded.items()
+            ],
+            file_meta={"file_md5": ing_md5},
+            file_md5=ing_md5,
+        )
+        check(
+            "INDEX_FUNCTIONS accumulates the library tags of its chunk",
+            {
+                _s_tag.decode() if isinstance(_s_tag, bytes) else _s_tag
+                for _s_tag in r.smembers(f"{ing_id}:lib_tags")
+            }
+            == expected,
+            f"{ing_id}:lib_tags",
+        )
+        svc.rollup_lib_tags(coll, ing_md5)
+        ing_doc = r.get(f"{ing_id}:meta")
+        ing_tags = json.loads(
+            ing_doc.decode() if isinstance(ing_doc, bytes) else ing_doc
+        ).get("tags")
+        check(
+            "ingest path tags the file with its functions' libraries",
+            set(ing_tags or []) == expected,
+            f"file tags: {ing_tags}",
+        )
+
+        # And the real uploaded collection must already satisfy the same rule
+        # through the ingest path (no-op when Function ID matched nothing).
+        missing = []
+        found_any = False
+        for raw_fid in r.smembers(f"{COLLECTION}:all_files"):
+            fid = raw_fid.decode() if isinstance(raw_fid, bytes) else raw_fid
+            f_md5 = fid.split(":")[-1]
+            derived = file_lib_tags(r, COLLECTION, f_md5)
+            if not derived:
+                continue
+            found_any = True
+            f_doc = r.get(f"{fid}:meta")
+            if not f_doc:
+                continue
+            f_tags = set(
+                json.loads(f_doc.decode() if isinstance(f_doc, bytes) else f_doc).get(
+                    "tags"
+                )
+                or []
+            )
+            if derived - f_tags:
+                missing.append(f"{f_md5}: {sorted(derived - f_tags)}")
+        check(
+            "uploaded collection: every function library tag reached its file",
+            not missing,
+            "; ".join(missing)
+            if missing
+            else ("checked live files" if found_any else "no Function ID lib matches"),
+        )
+    finally:
+        keys = list(r.scan_iter(match=f"{coll}:*", count=1000))
+        if keys:
+            r.delete(*keys)
+
+
+# ---------------------------------------------------------------------------
 # Step 5 – Print summary
 # ---------------------------------------------------------------------------
 def print_summary():
@@ -2904,5 +3105,6 @@ if __name__ == "__main__":
     test_tag_vocabulary_and_llm_batch()
     test_pool_collection_equivalence()
     test_archive_upload()
+    test_lib_tag_rollup()
     run_all_tests()
     print_summary()

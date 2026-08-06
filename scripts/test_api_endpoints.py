@@ -980,7 +980,23 @@ def run_all_tests():
 
     # ── Binary Similarity ──────────────────────────────────────────────────
     print(_color("\n  [Binary Similarity]", BOLD))
-    test_endpoint("GET", "/api/bin_sim/search", params={"collection": COLLECTION})
+    bs_search = test_endpoint("GET", "/api/bin_sim/search", params={"collection": COLLECTION})
+    if bs_search and bs_search.get("results"):
+        first_pair = bs_search["results"][0]
+        check(
+            "Binary similarity doc contains tags_summary list",
+            "tags_summary" in first_pair and isinstance(first_pair["tags_summary"], list),
+            "Checking for tags_summary list in the diff document"
+        )
+        if first_pair.get("tags_summary"):
+            tag_elem = first_pair["tags_summary"][0]
+            check(
+                "tags_summary element contains fractional split fields",
+                all(k in tag_elem for k in ("tag_id", "score", "contribution_pct",
+                                            "coverage_pct_a", "coverage_pct_b", "bins")),
+                "Fields: tag_id, score, contribution_pct, coverage_pct_a/b, bins"
+            )
+
     if file_md5:
         test_endpoint(
             "GET",

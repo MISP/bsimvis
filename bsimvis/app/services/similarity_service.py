@@ -2195,6 +2195,7 @@ class SimilarityService:
         import math
         import time
         from collections import defaultdict
+        from bsimvis.app.services.bin_sim_tags import TagSplit, normalize_tags, load_tag_meta
 
         pool = pool_service.get_pool(pool_id)
         if not pool:
@@ -2391,6 +2392,15 @@ class SimilarityService:
                             pass
                     func_meta_cache[fid] = m if isinstance(m, dict) else {}
 
+        # Normalize each function's tags once here, not once per matched edge.
+        fid_tags = {}
+        for fid, m in func_meta_cache.items():
+            tags = normalize_tags(m.get("tags"))
+            if tags:
+                fid_tags[fid] = tags
+
+        tag_meta_cache = load_tag_meta(r, f"global:pool:{pool_id}") if fid_tags else {}
+
         # 3. Generate Pairs (all combinations cross-collection/in pool)
         pairs = []
         for i in range(len(binaries)):
@@ -2525,6 +2535,8 @@ class SimilarityService:
             sum_weighted_cohesion = 0.0
             sum_weights = 0.0
 
+            tag_split = TagSplit(fid_tags)
+
             for fid_a, fid_b, score in edges:
                 if fid_a not in assigned_a and fid_b not in assigned_b:
                     assigned_a.add(fid_a)
@@ -2555,6 +2567,8 @@ class SimilarityService:
                     sum_weighted_cohesion += score * f_features
                     sum_weights += f_features
 
+                    tag_split.add_match(fid_a, fid_b, score, f_features_a, f_features_b)
+
             # Unique/Unmatched functions logic
             all_funcs_a_total = binary_fids[b1]
             all_funcs_b_total = binary_fids[b2]
@@ -2564,9 +2578,22 @@ class SimilarityService:
 
             unique_to_a = [unique_entry[(coll_a, fid)] for fid in sorted(unassigned_a)]
             sum_weights += sum(unique_feat[(coll_a, fid)] for fid in unassigned_a)
+            for fid in unassigned_a:
+                tag_split.add_unique(fid, unique_feat[(coll_a, fid)], "a")
 
             unique_to_b = [unique_entry[(coll_b, fid)] for fid in sorted(unassigned_b)]
             sum_weights += sum(unique_feat[(coll_b, fid)] for fid in unassigned_b)
+            for fid in unassigned_b:
+                tag_split.add_unique(fid, unique_feat[(coll_b, fid)], "b")
+
+            total_weight_a = sum(unique_feat[(coll_a, f)] for f in all_funcs_a_total)
+            total_weight_b = sum(unique_feat[(coll_b, f)] for f in all_funcs_b_total)
+
+            tags_summary = (
+                tag_split.summary(total_weight_a, total_weight_b, tag_meta_cache)
+                if fid_tags
+                else []
+            )
 
             # `algo` is a provenance tag, not a choice of file score: the score is
             # always the feature-weighted cohesion mean, as at collection level.
@@ -2605,6 +2632,7 @@ class SimilarityService:
                 "unclustered_a": len(unique_to_a),
                 "unclustered_b": len(unique_to_b),
                 "computed_at": now,
+                "tags_summary": tags_summary,
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,

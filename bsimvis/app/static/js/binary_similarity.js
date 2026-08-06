@@ -478,13 +478,16 @@ function fileSimTree(rows) {
             // "Original Code" has no sub-tags (children), but we still want it to display the matched/unique functions.
             // Create dummy 'matched', 'uniqueA', 'uniqueB' nodes so fileSimRows will render them.
             if (row.matched_count > 0) {
-                groupedKids.push(fileSimNode(`Shared (${Math.round(row.matched_count)})`, [], row.matched_count, row.matched_count, 1.0, row.tag_id, 'matched'));
+                const leaf = fileSimNode('dummy', [], 0, 0, undefined, row.tag_id, 'matched');
+                groupedKids.push(fileSimNode(`Shared (${Math.round(row.matched_count)})`, [leaf], row.matched_count, row.matched_count, 1.0));
             }
             if (row.unique_count_a > 0) {
-                groupedKids.push(fileSimNode(`Unique to A (${Math.round(row.unique_count_a)})`, [], row.unique_count_a, 0, 0.0, row.tag_id, 'uniqueA'));
+                const leaf = fileSimNode('dummy', [], 0, 0, undefined, row.tag_id, 'uniqueA');
+                groupedKids.push(fileSimNode(`Unique to A (${Math.round(row.unique_count_a)})`, [leaf], row.unique_count_a, 0, 0.0));
             }
             if (row.unique_count_b > 0) {
-                groupedKids.push(fileSimNode(`Unique to B (${Math.round(row.unique_count_b)})`, [], 0, row.unique_count_b, 0.0, row.tag_id, 'uniqueB'));
+                const leaf = fileSimNode('dummy', [], 0, 0, undefined, row.tag_id, 'uniqueB');
+                groupedKids.push(fileSimNode(`Unique to B (${Math.round(row.unique_count_b)})`, [leaf], 0, row.unique_count_b, 0.0));
             }
         }
         
@@ -607,13 +610,19 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
     const expanded = fileSimExpanded.has(path);
     const pct = (node.sim * 100).toFixed(node.sim === 1 || node.sim === 0 ? 0 : 1) + '%';
     const bar = Math.round(node.sim * 100);
+    
+    let displayName = escapeHtml(node.name);
+    if (node.name.startsWith('Shared (')) displayName = `<span style="color:var(--success); font-weight:bold;">${displayName}</span>`;
+    else if (node.name.startsWith('Unique to A (')) displayName = `<span style="color:var(--token-instruction); font-weight:bold;">${displayName}</span>`;
+    else if (node.name.startsWith('Unique to B (')) displayName = `<span style="color:var(--accent); font-weight:bold;">${displayName}</span>`;
+
     out.push(`
         <tr style="${depth === 0 ? 'font-weight:bold;' : ''}; border-bottom: 1px solid var(--border);">
             <td style="padding:8px; padding-left:${12 + depth * 22}px;">
                 ${hasKids
                     ? `<span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; color:var(--subtle); margin-right:6px;">${expanded ? '▼' : '▶'}</span>`
                     : '<span style="display:inline-block; width:14px;"></span>'}
-                ${escapeHtml(node.name)}
+                ${displayName}
             </td>
             <td colspan="4" style="padding:8px;">
                 <div style="display:flex; align-items:center; gap:20px; justify-content:flex-end; color:var(--subtle);">

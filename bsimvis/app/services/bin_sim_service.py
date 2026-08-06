@@ -4,6 +4,7 @@ import logging
 import math
 from collections import defaultdict
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.bin_sim_tags import TagSplit, normalize_tags, load_tag_meta
 
 
 def _index_bin_sim_pair(pipe, collection, sid, doc, file_meta_a=None, file_meta_b=None):
@@ -309,6 +310,15 @@ class BinSimService:
                             pass
                     func_meta_cache[fid] = m if isinstance(m, dict) else {}
 
+        # Normalize each function's tags once here, not once per matched edge.
+        fid_tags = {}
+        for fid, m in func_meta_cache.items():
+            tags = normalize_tags(m.get("tags"))
+            if tags:
+                fid_tags[fid] = tags
+
+        tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
+
         # 4. Generate Pairs
         pairs = []
         if md5_a and md5_b:
@@ -418,6 +428,8 @@ class BinSimService:
             sum_weighted_cohesion = 0.0
             sum_weights = 0.0
 
+            tag_split = TagSplit(fid_tags)
+
             # Match greedily
             for fid_a, fid_b, score in edges:
                 if fid_a not in assigned_a and fid_b not in assigned_b:
@@ -447,6 +459,8 @@ class BinSimService:
                     sum_weighted_cohesion += score * f_features
                     sum_weights += f_features
 
+                    tag_split.add_match(fid_a, fid_b, score, f_features_a, f_features_b)
+
             all_funcs_a_total = binary_fids[m_a]
             all_funcs_b_total = binary_fids[m_b]
 
@@ -469,6 +483,7 @@ class BinSimService:
                     }
                 )
                 sum_weights += f_features
+                tag_split.add_unique(fid, f_features, "a")
 
             unique_to_b = []
             for fid in sorted(list(unassigned_b)):
@@ -486,6 +501,7 @@ class BinSimService:
                     }
                 )
                 sum_weights += f_features
+                tag_split.add_unique(fid, f_features, "b")
 
             score_unweighted = (
                 sum_weighted_cohesion / sum_weights if sum_weights > 0 else 0.0
@@ -496,6 +512,25 @@ class BinSimService:
             )
             cov_b = (
                 len(assigned_b) / len(all_funcs_b_total) if all_funcs_b_total else 0.0
+            )
+
+            # Coverage is against each binary's whole mass, so "libc covers 40% of A"
+            # means 40% of everything A contains, matched or not.
+            def _total_weight(fids):
+                return sum(
+                    float(func_meta_cache.get(f, {}).get("bsim_features_count", 1.0))
+                    or 1.0
+                    for f in fids
+                )
+
+            tags_summary = (
+                tag_split.summary(
+                    _total_weight(all_funcs_a_total),
+                    _total_weight(all_funcs_b_total),
+                    tag_meta_cache,
+                )
+                if fid_tags
+                else []
             )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"
@@ -518,6 +553,7 @@ class BinSimService:
                 "unclustered_a": len(unique_to_a),
                 "unclustered_b": len(unique_to_b),
                 "computed_at": int(time.time() * 1000),
+                "tags_summary": tags_summary,
                 "diff": {
                     "matched": diff_matched,
                     "unique_to_a": unique_to_a,

@@ -1650,7 +1650,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const isEx = f.startsWith('exclude_');
                 const baseType = isEx ? f.substring(8) : f;
                 values.forEach(v => {
-                    if (v) createTagCard(col.key, baseType, v, isEx);
+                    if (!v) return;
+                    const parsed = unquoteFilterValue(v);
+                    createTagCard(col.key, baseType, parsed.value, isEx, parsed.literal);
                 });
             });
         });
@@ -1826,7 +1828,8 @@ function applyAdvancedFuncSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     });
 
@@ -1932,7 +1935,8 @@ function applySimSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     });
 
@@ -2016,7 +2020,8 @@ function applyAdvancedFileSearch() {
             const val = card.dataset.value;
             const isEx = card.dataset.exclude === 'true';
             const key = (isEx ? 'exclude_' : '') + type;
-            params.append(key, val);
+            // Quote unless the user hand-typed a wildcard (see quoteFilterValue).
+            params.append(key, quoteFilterValue(val, card.dataset.literal !== 'false'));
         });
     }
 
@@ -2085,7 +2090,7 @@ function applyAdvancedFeatureSearch() {
     navigate(viewKey, params);
 }
 
-function createTagCard(columnId, type, value, isExclude = false) {
+function createTagCard(columnId, type, value, isExclude = false, literal = true) {
     const container = document.getElementById(`tag-container-${columnId}`);
     if (!container) return;
 
@@ -2097,6 +2102,7 @@ function createTagCard(columnId, type, value, isExclude = false) {
     card.dataset.value = value;
     card.dataset.type = type;
     card.dataset.exclude = isExclude;
+    card.dataset.literal = literal;
 
     card.innerHTML = `
         <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
@@ -2120,7 +2126,7 @@ function handleTagAdd(event, columnId) {
         const val = event.target.value.replace(',', '').trim();
         if (val) {
             let type = (columnId === 'sim' ? 'sim_tag' : (columnId === 'func' ? 'func_tag' : 'file_tag'));
-            createTagCard(columnId, type, val);
+            createTagCard(columnId, type, val, false, false);
             event.target.value = '';
             triggerTagSearch();
         }

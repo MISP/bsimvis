@@ -14,6 +14,7 @@ import json
 import datetime
 
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.index_config import tag_ancestors
 
 
 def normalize_tags(data, tag_fields=None):
@@ -207,16 +208,22 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
     for v in values:
         if v is None or v == "":
             continue
-        # Standardized Bucket: {col}:idx:{level}:{field}:{value}
-        bucket_key = f"{coll}:idx:{level}:{field}:{str(v).lower()}"
-        pipe.sadd(bucket_key, doc_id)
-        # Standardized Registry: {coll}:reg:{level}:{field} (points to many buckets)
+        v_lower = str(v).lower()
         registry_key = f"{coll}:reg:{level}:{field}"
-        if seen is None:
-            pipe.sadd(registry_key, bucket_key)
-        elif (registry_key, bucket_key) not in seen:
-            pipe.sadd(registry_key, bucket_key)
-            seen.add((registry_key, bucket_key))
+
+        # The value itself plus, for hierarchical fields, every ancestor path.
+        # Indexing `lib` and `lib:uclibc` as real buckets is what lets a
+        # namespace filter be one exact lookup instead of a vocabulary scan.
+        for bucket_value in [v_lower] + tag_ancestors(field, v_lower):
+            # Standardized Bucket: {col}:idx:{level}:{field}:{value}
+            bucket_key = f"{coll}:idx:{level}:{field}:{bucket_value}"
+            pipe.sadd(bucket_key, doc_id)
+            # Standardized Registry: {coll}:reg:{level}:{field} (many buckets)
+            if seen is None:
+                pipe.sadd(registry_key, bucket_key)
+            elif (registry_key, bucket_key) not in seen:
+                pipe.sadd(registry_key, bucket_key)
+                seen.add((registry_key, bucket_key))
 
         # AUTO-DISCOVERY: Ensure tags are registered in global metadata
         if "tags" in field:
@@ -238,8 +245,14 @@ def _index_tag(pipe, coll, level, field, value, doc_id, seen=None):
             pipe.hsetnx(meta_key, str(v), default_meta)
 
 
-def _unindex_tag(pipe, coll, level, field, value, doc_id):
-    """Remove doc_id from the tag set for field=value."""
+def _unindex_tag(pipe, coll, level, field, value, doc_id, remaining=None):
+    """Remove doc_id from the tag set for field=value.
+
+    remaining: the values of this field the doc still carries after the removal.
+    Ancestor buckets are shared, so dropping `lib:uclibc:seekdir` must not pull
+    the doc out of `lib:uclibc` while it still holds `lib:uclibc:telldir`.
+    Callers that delete the whole doc pass nothing and every ancestor goes.
+    """
     if value is None:
         return
     if isinstance(value, list):
@@ -251,11 +264,23 @@ def _unindex_tag(pipe, coll, level, field, value, doc_id):
                 values.append(v)
     else:
         values = [value]
+
+    kept = set()
+    for v in remaining or []:
+        if v is None or v == "":
+            continue
+        v_lower = str(v).lower()
+        kept.add(v_lower)
+        kept.update(tag_ancestors(field, v_lower))
+
     for v in values:
         if v is None or v == "":
             continue
-        bucket_key = f"{coll}:idx:{level}:{field}:{str(v).lower()}"
-        pipe.srem(bucket_key, doc_id)
+        v_lower = str(v).lower()
+        for bucket_value in [v_lower] + tag_ancestors(field, v_lower):
+            if bucket_value in kept:
+                continue
+            pipe.srem(f"{coll}:idx:{level}:{field}:{bucket_value}", doc_id)
 
 
 def _index_num(pipe, coll, level, field, value, doc_id):

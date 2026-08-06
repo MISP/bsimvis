@@ -73,3 +73,11 @@
         "-XX:MinHeapFreeRatio=10",
         "-XX:MaxHeapFreeRatio=30",
     ]
+
+[search]
+# Maximum index buckets one wildcard/substring filter may resolve to. Exact
+# filters ignore it — they touch a single bucket. Results are still correct
+# when it is hit, just a subset, and the response says so via
+# `filter_truncated`. Cost is linear: ~0.13s scan + ~0.11s union per 60k
+# buckets.
+max_filter_buckets = 200000

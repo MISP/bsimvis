@@ -13,6 +13,27 @@ function escapeAttr(value) {
     return escapeHtml(value);
 }
 
+// Filter values: an unquoted `*` is a wildcard on the backend, quotes make the
+// whole value literal. Values that come from data (a tag chip, an autocomplete
+// pick, a value restored from the URL) must be quoted, or a return type like
+// `DIR *` would be read as a pattern. Only what the user typed by hand keeps
+// its wildcards.
+function quoteFilterValue(value, literal = true) {
+    const s = String(value ?? '');
+    if (!literal && s.includes('*')) return s;
+    return '"' + s.replace(/"/g, '\\"') + '"';
+}
+
+// Inverse, for showing a value back to the user. Returns the bare text and
+// whether it had been quoted.
+function unquoteFilterValue(value) {
+    const s = String(value ?? '');
+    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
+        return { value: s.slice(1, -1).replace(/\\"/g, '"'), literal: true };
+    }
+    return { value: s, literal: false };
+}
+
 function jsString(value) {
     return JSON.stringify(String(value ?? ''))
         .replace(/</g, '\\u003C')

@@ -13,6 +13,7 @@ from bsimvis.app.services.index_service import (
     get_pool_id,
 )
 from bsimvis.app.services.lua_manager import lua_manager
+from bsimvis.app.services.query_syntax import resolve_targets
 
 DEFAULT_LIMIT = 100
 DEFAULT_POOL_LIMIT = 1000000
@@ -104,8 +105,14 @@ def search_functions():
 
         r = get_redis()
 
-        def get_group_targets(lvl, val, allowed_fields=None):
-            from bsimvis.app.services.index_config import INDEX_CONFIG, EXACT_FIELDS
+        # Match mode chosen per filter value, echoed in the response so a query
+        # that resolved differently than the user expected is visible instead of
+        # silently returning the wrong set.
+        filter_modes = []
+        filter_truncated = [False]
+
+        def get_group_targets(lvl, val, allowed_fields=None, default_kind="exact"):
+            from bsimvis.app.services.index_config import INDEX_CONFIG
 
             if not allowed_fields:
                 # Dynamically discover all fields allowed at this level from config
@@ -123,45 +130,18 @@ def search_functions():
                 # Deduplicate
                 allowed_fields = list(set(allowed_fields))
 
-            val_lower = val.lower()
             matches = []
-
             for field in allowed_fields:
-                registry_key = f"{col}:reg:{lvl}:{field}"
-                if r.exists(registry_key):
-                    matching_buckets = []
-
-                    # Check for perfect match fields
-                    if field in EXACT_FIELDS:
-                        target_bucket = f"{col}:idx:{lvl}:{field}:{val_lower}"
-                        if r.sismember(registry_key, target_bucket):
-                            matching_buckets = [target_bucket]
-                    else:
-                        try:
-                            for bucket in r.sscan_iter(
-                                registry_key, match=f"*{val_lower}*", count=1000
-                            ):
-                                bucket_str = (
-                                    bucket.decode()
-                                    if isinstance(bucket, bytes)
-                                    else str(bucket)
-                                )
-                                if val_lower in bucket_str.lower():
-                                    matching_buckets.append(bucket_str)
-                        except Exception as e:
-                            logging.warning(f"SSCAN failed for {registry_key}: {e}")
-
-                    targets = []
-                    if matching_buckets:
-                        prefix = f"{col}:idx:{lvl}:{field}:"
-                        targets = [
-                            b[len(prefix) :]
-                            for b in matching_buckets
-                            if b.startswith(prefix)
-                        ]
-
-                    if targets:
-                        matches.append((lvl, targets, field))
+                targets, truncated, spec = resolve_targets(
+                    r, col, lvl, field, val, default_kind=default_kind
+                )
+                if truncated:
+                    filter_truncated[0] = True
+                if targets:
+                    entry = spec.as_dict()
+                    entry.update({"level": lvl, "field": field})
+                    filter_modes.append(entry)
+                    matches.append((lvl, targets, field))
             return matches
 
         groups_raw = []
@@ -184,10 +164,14 @@ def search_functions():
                         pass
 
                 total_weight += weight
+                # No slice here. Capping the bucket list silently dropped
+                # documents out of both filters and exclusions; the bound now
+                # lives in query_syntax.resolve_targets, which reports when it
+                # is hit. The Lua side already chunks SUNION at 5000 keys.
                 normalized_subs.append(
                     {
                         "level": lvl,
-                        "targets": targets[:1000],
+                        "targets": targets,
                         "field": field,
                     }
                 )
@@ -436,7 +420,8 @@ def search_functions():
             for word in [w for w in search_q.split() if w.strip()]:
                 all_matches = []
                 for lvl in all_levels:
-                    matches = get_group_targets(lvl, word)
+                    # Free-text box: a bare word stays a substring search.
+                    matches = get_group_targets(lvl, word, default_kind="substring")
                     if matches:
                         all_matches.extend(matches)
 
@@ -669,6 +654,8 @@ def search_functions():
             "offset": offset,
             "limit": limit,
             "pool_truncated": pool_truncated,
+            "filter_truncated": filter_truncated[0],
+            "filters": filter_modes,
             "clusters": clusters_response,
             "functions": functions_list,
             "collection": col,

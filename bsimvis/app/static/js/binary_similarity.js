@@ -515,25 +515,27 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
             const uniqB = tagToUniqueB.get(node.tagId) || [];
 
             if (pairs.length > 0 || uniqA.length > 0 || uniqB.length > 0) {
-                // Render matched pairs directly
-                pairs.forEach(p => out.push(renderMatchedFunctionRow(p, 'matched', depth)));
-                
                 if (pairs.length > 0 && (uniqA.length > 0 || uniqB.length > 0)) {
-                    // Create a collapsible virtual node for the unmatched ones to avoid clutter
-                    const vNode = { 
-                        name: `Unmatched (${uniqA.length + uniqB.length})`, 
-                        children: [], 
-                        a: uniqA.length, 
-                        b: uniqB.length, 
-                        sim: 0, 
-                        tagId: node.tagId, 
-                        groupType: 'unmatched_only' 
-                    };
-                    fileSimRows(vNode, path + '/unmatched', depth, out, tagToMatched, tagToUniqueA, tagToUniqueB);
+                    const unmatchedPath = path + '/unmatched';
+                    const unmatchedExpanded = fileSimExpanded.has(unmatchedPath);
+                    pairs.forEach((p, index) => {
+                        let btn = '';
+                        if (index === pairs.length - 1) {
+                            btn = `<span onclick="toggleFileSimRow(${escapeAttr(jsString(unmatchedPath))})" style="cursor:pointer; user-select:none; display:inline-block; padding:2px 8px; border-radius:12px; background:var(--bg-alt); border:1px solid var(--border); font-size:0.75rem; color:var(--subtle); white-space:nowrap; margin-left:8px;">${unmatchedExpanded ? '▼' : '▶'} And ${uniqA.length + uniqB.length} unmatched duplicates</span>`;
+                        }
+                        out.push(renderMatchedFunctionRow(p, 'matched', depth, btn));
+                    });
+                    if (unmatchedExpanded) {
+                        uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth + 1)));
+                        uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth + 1)));
+                    }
                 } else if (pairs.length === 0) {
-                    // If there are ONLY unmatched functions, render them directly
+                    // Only unmatched functions
                     uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
                     uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
+                } else {
+                    // Only matched functions
+                    pairs.forEach(p => out.push(renderMatchedFunctionRow(p, 'matched', depth)));
                 }
                 return;
             }
@@ -553,57 +555,38 @@ function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUn
         }
     }
 
-    const hasKids = node.children.length > 0 || node.groupType === 'unmatched_only';
+    const hasKids = node.children.length > 0;
     if (depth === 0 && !fileSimAutoExpanded) {
         fileSimExpanded.add(path);
     }
     const expanded = fileSimExpanded.has(path);
     const pct = (node.sim * 100).toFixed(node.sim === 1 || node.sim === 0 ? 0 : 1) + '%';
     const bar = Math.round(node.sim * 100);
-    if (node.groupType === 'unmatched_only') {
-        out.push(`
-            <tr style="border-bottom: 1px solid var(--border); background:var(--bg-alt);">
-                <td colspan="5" style="padding:12px; text-align:center; font-size:0.85rem; color:var(--subtle);">
-                    <span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; display:inline-block; padding:4px 12px; border-radius:12px; background:var(--bg); border:1px solid var(--border);">
-                        ${expanded ? '▼' : '▶'} And ${node.a + node.b} unmatched duplicates
-                    </span>
-                </td>
-            </tr>
-        `);
-    } else {
-        out.push(`
-            <tr style="${depth === 0 ? 'font-weight:bold;' : ''}; border-bottom: 1px solid var(--border);">
-                <td style="padding:8px; padding-left:${12 + depth * 22}px;">
-                    ${hasKids
-                        ? `<span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; color:var(--subtle); margin-right:6px;">${expanded ? '▼' : '▶'}</span>`
-                        : '<span style="display:inline-block; width:14px;"></span>'}
-                    ${escapeHtml(node.name)}
-                </td>
-                <td colspan="4" style="padding:8px;">
-                    <div style="display:flex; align-items:center; gap:20px; justify-content:flex-end; color:var(--subtle);">
-                        <div title="Functions in A">A: <span style="color:var(--text);">${Math.round(node.a)}</span></div>
-                        <div title="Functions in B">B: <span style="color:var(--text);">${Math.round(node.b)}</span></div>
-                        <div style="width:160px;">
-                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; font-size:0.7rem;">
-                                <span>Similarity</span>
-                                <span style="color:var(--accent); font-weight:bold;">${pct}</span>
-                            </div>
-                            <div style="background:var(--border); border-radius:3px; height:6px;">
-                                <div style="width:${bar}%; background:var(--accent); height:6px; border-radius:3px;"></div>
-                            </div>
+    out.push(`
+        <tr style="${depth === 0 ? 'font-weight:bold;' : ''}; border-bottom: 1px solid var(--border);">
+            <td style="padding:8px; padding-left:${12 + depth * 22}px;">
+                ${hasKids
+                    ? `<span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; color:var(--subtle); margin-right:6px;">${expanded ? '▼' : '▶'}</span>`
+                    : '<span style="display:inline-block; width:14px;"></span>'}
+                ${escapeHtml(node.name)}
+            </td>
+            <td colspan="4" style="padding:8px;">
+                <div style="display:flex; align-items:center; gap:20px; justify-content:flex-end; color:var(--subtle);">
+                    <div title="Functions in A">A: <span style="color:var(--text);">${Math.round(node.a)}</span></div>
+                    <div title="Functions in B">B: <span style="color:var(--text);">${Math.round(node.b)}</span></div>
+                    <div style="width:160px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; font-size:0.7rem;">
+                            <span>Similarity</span>
+                            <span style="color:var(--accent); font-weight:bold;">${pct}</span>
+                        </div>
+                        <div style="background:var(--border); border-radius:3px; height:6px;">
+                            <div style="width:${bar}%; background:var(--accent); height:6px; border-radius:3px;"></div>
                         </div>
                     </div>
-                </td>
-            </tr>`);
-    }
+                </div>
+            </td>
+        </tr>`);
     if (expanded) node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth + 1, out, tagToMatched, tagToUniqueA, tagToUniqueB));
-    
-    if (expanded && node.tagId && node.groupType === 'unmatched_only') {
-        const uniqA = tagToUniqueA.get(node.tagId) || [];
-        const uniqB = tagToUniqueB.get(node.tagId) || [];
-        uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth + 1)));
-        uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth + 1)));
-    }
 }
 
 async function renderFileSimTable(data) {
@@ -1610,7 +1593,7 @@ function renderFuncBadge(fid) {
         </div>`;
 }
 
-function renderMatchedFunctionRow(m, type, depth) {
+function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
     const noteBtn = (fid) => {
         const fObj = buildFuncObj(fid);
         return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${typeof EntityRenderer !== 'undefined' ? EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj }) : ''}</div>`;
@@ -1647,6 +1630,7 @@ function renderMatchedFunctionRow(m, type, depth) {
                     onmouseleave="hideDiffPreview(event)"
                     onclick="Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(`Diff: ${fA.function_name} vs ${fB.function_name}`))}, type: 'diff' })"
                     title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
+                ${extraHtml}
             </div>`;
         col2 = renderFuncBadge(m.func_a);
         col3 = noteBtn(m.func_a);

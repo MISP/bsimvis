@@ -222,9 +222,24 @@ def _swap_side_keys(d):
         d[key], d[twin] = d[twin], d[key]
 
 
+def _flip_tag_row(row):
+    """Mirror one tags_summary row, recursively through its version children."""
+    _swap_side_keys(row)
+    # `bins` values are positional [count_a, weight_a, count_b, weight_b], so the
+    # generic `_a`/`_b` key swap above cannot reach them.
+    for b in (row.get("bins") or {}).values():
+        if isinstance(b, list) and len(b) == 4:
+            b[0], b[1], b[2], b[3] = b[2], b[3], b[0], b[1]
+    for child in row.get("children") or []:
+        _flip_tag_row(child)
+
+
 def _flip_diff_sides(diff_data):
     """Mirror a stored bin_sim doc so side A becomes side B and vice versa."""
     _swap_side_keys(diff_data)
+    # tags_summary is a list, so it is invisible to the top-level key swap.
+    for row in diff_data.get("tags_summary") or []:
+        _flip_tag_row(row)
     diff = diff_data.get("diff")
     if not isinstance(diff, dict):
         return
@@ -463,6 +478,7 @@ def _sankey_summary(diff_data):
             "score",
             "file_metadata_a",
             "file_metadata_b",
+            "tags_summary",
         )
     }
     out["counts"] = {

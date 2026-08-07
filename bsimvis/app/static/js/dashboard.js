@@ -2050,6 +2050,12 @@ window.applyJobSearch = applyJobSearch;
 
 
 function triggerTagSearch() {
+    // The bin-sim detail table filters its own rows in place; it must not fall
+    // through to the binary-similarity LIST search, which navigates.
+    if (document.getElementById('tag-container-bsim-sim')) {
+        binSimFilterChange(true);
+        return;
+    }
     const { viewKey } = getRoutingState();
     if (viewKey === 'function-similarity') debouncedSearch(applySimSearch);
     else if (viewKey === 'binary-similarity') debouncedSearch(applyBinSimSearch);

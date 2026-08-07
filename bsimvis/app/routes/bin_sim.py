@@ -435,7 +435,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # only the page (+ its function metadata). Absent `table` → full doc (back-compat).
     table = request.args.get("table")
     if table in ("matched", "unique_to_a", "unique_to_b", "all"):
-        return _page_diff(diff_data, table)
+        return _page_diff(diff_data, table, r, coll_a, algo, pool_id)
 
     # Change 4: compact projection for the simplified Sankey — cluster fields + the few
     # numerics its binning needs, feature counts inlined, NO names/tags/notes. Lets the
@@ -507,6 +507,57 @@ def _sankey_summary(diff_data):
     return out
 
 
+def _sim_pair_sid(fid_a, fid_b, collection, algo, pool_id):
+    """Key of the function-level similarity doc a matched row came from.
+
+    Every matched row IS one of those docs — bin_sim_service builds the diff by
+    intersecting them (bin_sim_service.py:383) — so the pair's own tags, the ones
+    the function-similarity view edits, are readable from here. Mirrors how
+    similarity_service writes the key (similarity_service.py:1074): larger fid
+    first, collection pairs stripped of their `<coll>:func:` prefix.
+    """
+    if not fid_a or not fid_b:
+        return None
+    a, b = (fid_a, fid_b) if fid_a > fid_b else (fid_b, fid_a)
+    if pool_id:
+        return f"global:pool:{pool_id}:sim:{a}::{b}"
+    prefix = f"{collection}:func:"
+    strip = lambda f: f[len(prefix) :] if f.startswith(prefix) else f  # noqa: E731
+    return f"{collection}:sim:{algo}:{strip(a)}::{strip(b)}"
+
+
+def _fetch_sim_tags(r, sids):
+    """sid -> (tags, user_tags) for the similarity docs named."""
+    sids = [s for s in dict.fromkeys(sids) if s]
+    if not sids:
+        return {}
+    pipe = r.pipeline(transaction=False)
+    for s in sids:
+        pipe.get(s)
+    out = {}
+    for s, raw in zip(sids, pipe.execute()):
+        if not raw:
+            continue
+        doc = json.loads(raw) if not isinstance(raw, dict) else raw
+        if isinstance(doc, str):
+            doc = json.loads(doc)
+        if not isinstance(doc, dict):
+            continue
+        normalize_tags(doc)
+        out[s] = (doc.get("tags") or [], doc.get("user_tags") or [])
+    return out
+
+
+def _sim_tag_match(pair_tags, needles):
+    """True when every needle matches a tag, namespace prefixes included.
+
+    Same rule as the tree's scope (`lib` catches `lib:libc:2.31`), so typing a
+    namespace in the tag filter behaves the way clicking one in the tree does.
+    """
+    have = [str(t).lower() for t in pair_tags]
+    return all(any(t == n or t.startswith(n + ":") for t in have) for n in needles)
+
+
 def _fnum(name):
     v = request.args.get(name)
     try:
@@ -532,9 +583,7 @@ def _diff_rows(diff_data, table):
         state = next(s for s, t in _STATES.items() if t == table)
         return [dict(r, state=state) for r in diff.get(table, [])]
     return [
-        dict(r, state=state)
-        for state, t in _STATES.items()
-        for r in diff.get(t, [])
+        dict(r, state=state) for state, t in _STATES.items() for r in diff.get(t, [])
     ]
 
 
@@ -592,19 +641,26 @@ def _collapse_by_name(rows, fmeta):
     out = singles
     for key, members in groups.items():
         _, best = max(members, key=rank)
-        out.append(
-            (members[0][0], dict(best, n_copies=len(members), fold_name=key))
-        )
+        out.append((members[0][0], dict(best, n_copies=len(members), fold_name=key)))
     out.sort(key=lambda p: p[0])
     return [r for _, r in out]
 
 
-def _page_diff(diff_data, table):
+def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=None):
     """Filter + sort + slice one diff table, returning only the requested page.
     Ports the former client-side applyFilters/sortItems (binary_similarity.js). [[Change 4]]
     """
     rows = _diff_rows(diff_data, table)
     fmeta = diff_data.get("functions_metadata", {})
+
+    # The pair's own key, so the row can carry the pair's tags and be tagged back.
+    # Pure string work, so it costs nothing to do for every row.
+    if r is not None:
+        for it in rows:
+            if it.get("state") == "matched":
+                it["sid"] = _sim_pair_sid(
+                    it.get("func_a"), it.get("func_b"), collection, algo, pool_id
+                )
 
     q = (request.args.get("q") or "").strip().lower()
     cl_q = (request.args.get("cl_q") or "").strip().lower()
@@ -678,6 +734,37 @@ def _page_diff(diff_data, table):
 
     filtered = [it for it in rows if keep(it)]
 
+    # Similarity-tag filter. Kept out of `keep` because it is the one filter that
+    # needs a Redis read: only the rows that survive everything else are looked up,
+    # and only when the filter is actually set. Unmatched rows have no pair, so a
+    # similarity-tag filter excludes them by construction.
+    # ponytail: one GET per surviving matched row; add a tag->sid index if a
+    # filter over a very large diff turns out to be slow.
+    sim_tags = [
+        t.strip().lower()
+        for t in (request.args.get("sim_tags") or "").split(",")
+        if t.strip()
+    ]
+    sim_tags_not = [
+        t.strip().lower()
+        for t in (request.args.get("sim_tags_not") or "").split(",")
+        if t.strip()
+    ]
+    sim_tag_cache = {}
+    if r is not None and (sim_tags or sim_tags_not):
+        sim_tag_cache = _fetch_sim_tags(r, [it.get("sid") for it in filtered])
+
+        def tag_keep(it):
+            static, user = sim_tag_cache.get(it.get("sid"), ([], []))
+            have = list(static) + list(user)
+            if sim_tags and not _sim_tag_match(have, sim_tags):
+                return False
+            if sim_tags_not and any(_sim_tag_match(have, [n]) for n in sim_tags_not):
+                return False
+            return True
+
+        filtered = [it for it in filtered if tag_keep(it)]
+
     # Collapse before sorting and paging: the page must hold whole names, and the
     # representative each fold picks is what the sort then ranks. `name=` is the
     # expansion request for one fold, so it never re-collapses.
@@ -714,6 +801,17 @@ def _page_diff(diff_data, table):
     except (TypeError, ValueError):
         limit = 100
     page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
+
+    # Pair tags for the page only — the rows the client is about to draw.
+    if r is not None:
+        missing = [
+            it["sid"] for it in page if it.get("sid") and it["sid"] not in sim_tag_cache
+        ]
+        sim_tag_cache.update(_fetch_sim_tags(r, missing))
+        for it in page:
+            static, user = sim_tag_cache.get(it.get("sid"), ([], []))
+            it["tags"] = list(static)
+            it["user_tags"] = list(user)
 
     page_fids = set()
     for it in page:

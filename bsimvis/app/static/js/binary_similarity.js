@@ -1042,10 +1042,17 @@ function fileSimTableHeadHtml() {
             <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>
         </tr>
         <tr class="filter-row">
-            <th><div style="display:flex; align-items:center; gap:2px;" onclick="event.stopPropagation()">
-                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-                <span class="dim" style="font-size:0.6rem">-</span>
-                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+            <th style="position:relative;"><div style="display:flex; flex-direction:column; gap:3px;" onclick="event.stopPropagation()">
+                <div style="display:flex; align-items:center; gap:2px;">
+                    <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+                    <span class="dim" style="font-size:0.6rem">-</span>
+                    <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+                </div>
+                <div class="tag-filter-container" id="tag-container-bsim-sim">
+                    <input type="text" class="tag-filter-add" placeholder="+ Sim tag"
+                           onkeydown="binSimSimTagAdd(event)"
+                           onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bsim-sim', 'sim_tag', val, false, false); this.value=''; binSimFilterChange(true); })">
+                </div>
             </div></th>
             <th colspan="4"><div onclick="event.stopPropagation()">
                 <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
@@ -1055,8 +1062,10 @@ function fileSimTableHeadHtml() {
 
 function fileSimMoreRowHtml(key, st, indent) {
     if (st.items.length >= st.total) return '';
+    // Keyed so Enter can be pressed on it again and again: the row comes back at a
+    // new index after each page, and the focus has to follow it there.
     return `
-        <tr><td colspan="5" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
+        <tr data-rowkey="more:${escapeAttr(key)}"><td colspan="5" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
             <span class="bsim-fold-pill" onclick="loadMoreFileSimRows(${escapeAttr(jsString(key))})">
                 ▼ Load ${Math.min(BINSIM_LIMIT, st.total - st.items.length)} more
             </span>
@@ -1071,7 +1080,7 @@ function fileSimGroupRows(nodes, depth, out) {
         const open = fileSimTreeOpen.has(node.id);
         const hasKids = (node.children || []).length > 0;
         out.push(`
-            <tr class="bsim-grp-row" onclick="toggleFileSimNode(${escapeAttr(jsString(node.id))})">
+            <tr class="bsim-grp-row" data-rowkey="${escapeAttr(node.id)}" onclick="toggleFileSimNode(${escapeAttr(jsString(node.id))})">
                 <td colspan="5" style="padding-left:${10 + depth * 18}px;">
                     <div style="display:flex; align-items:center; gap:10px;">
                         <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
@@ -1139,6 +1148,9 @@ function renderFileSimTable() {
         if (countEl) countEl.textContent = `${scope.length} tag groups`;
     }
     tbody.innerHTML = out.join('');
+    // Same cell selection, arrow/shift navigation and copy as every other table.
+    // The constructor is idempotent per table element.
+    if (window.TableSelection) new window.TableSelection('bin-sim-table-matched-table');
 }
 
 // ---- The same rows as a graph -------------------------------------------
@@ -1640,6 +1652,7 @@ function binSimFilterChange(shouldApply = false) {
         const el = document.getElementById(`bsim-flt-matched-${k}`);
         if (el) window[`bsim-flt-matched-${k}-val`] = el.value;
     });
+    readFileSimSimTags();
     if (window._binSimFilterTimer) clearTimeout(window._binSimFilterTimer);
     window._binSimFilterTimer = setTimeout(reloadFileSimRows, shouldApply ? 0 : 300);
 }
@@ -1650,6 +1663,7 @@ function restoreFileSimFilters() {
         const v = window[`bsim-flt-matched-${k}-val`];
         if (el && v) el.value = v;
     });
+    fileSimSimTags.forEach(t => createTagCard('bsim-sim', 'sim_tag', t.value, t.exclude, false));
 }
 
 // Tree folding is untouched -- only the rows are stale. Dropping the page state
@@ -1741,6 +1755,11 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
             }
         }
 
+        // The row IS a function-similarity pair, so it carries that pair's tags —
+        // the same editor, on the same entity, as the function-similarity view.
+        const simTags = (typeof EntityRenderer !== 'undefined' && m.sid)
+            ? EntityRenderer.renderTag('similarity', m.sid, m.tags || [], m.user_tags || [])
+            : '';
         similarityHtml = `
             <div style="display:flex; align-items:center; gap:8px;">
                 <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
@@ -1750,7 +1769,8 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
                     onclick="Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(`Diff: ${fA.function_name} vs ${fB.function_name}`))}, type: 'diff' })"
                     title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
                 ${extraHtml}
-            </div>`;
+            </div>
+            ${simTags}`;
         col2 = renderFuncBadge(m.func_a);
         col3 = noteBtn(m.func_a);
         col4 = renderFuncBadge(m.func_b);
@@ -1771,8 +1791,18 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
         }
     }
 
+    // data-id is what the selection re-finds a focused row by after a re-render,
+    // and what bulk actions resolve the row to: the pair for a match, the lone
+    // function otherwise.
+    const rowId = (type === 'matched') ? (m.sid || '') : (m.func_id || '');
+    const ctxData = (type === 'matched' && m.sid)
+        ? { sid: m.sid, id1: m.func_a, id2: m.func_b, score: m.similarity }
+        : null;
+    const ctxAttr = ctxData
+        ? ` data-entity-data='${escapeAttr(JSON.stringify(ctxData))}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)"`
+        : '';
     return `
-        <tr style="border-bottom: 1px solid var(--border); background: var(--bg);">
+        <tr style="border-bottom: 1px solid var(--border); background: var(--bg);" data-id="${escapeAttr(rowId)}"${ctxAttr}>
             <td style="padding:10px; padding-left:${12 + depth * 22}px;">
                 ${similarityHtml}
             </td>
@@ -1791,12 +1821,43 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
         </tr>`;
 }
 
+// The similarity tag filter is the same tag-card widget the other views use. The
+// cards live in the table header, which is rebuilt whenever the sort changes, so
+// what they hold is mirrored here and put back afterwards.
+let fileSimSimTags = [];
+
+function readFileSimSimTags() {
+    const c = document.getElementById('tag-container-bsim-sim');
+    if (c) {
+        fileSimSimTags = Array.from(c.querySelectorAll('.tag-filter-card')).map(el => ({
+            value: el.dataset.value,
+            exclude: el.dataset.exclude === 'true',
+        }));
+    }
+    return fileSimSimTags;
+}
+
+window.binSimSimTagAdd = function(event) {
+    if (event.key !== 'Enter' && event.key !== ',') return;
+    event.preventDefault();
+    const val = event.target.value.replace(',', '').trim();
+    if (!val) return;
+    createTagCard('bsim-sim', 'sim_tag', val, false, false);
+    event.target.value = '';
+    binSimFilterChange(true);
+};
+
 function binSimFilterParams(prefix) {
     const val = (id) => (document.getElementById(id)?.value || '').trim();
     const p = {};
     const q = val(`bsim-flt-${prefix}-q`);
     if (q) p.q = q;
     if (prefix === 'matched') {
+        const simTags = readFileSimSimTags();
+        const inc = simTags.filter(t => !t.exclude).map(t => t.value);
+        const exc = simTags.filter(t => t.exclude).map(t => t.value);
+        if (inc.length) p.sim_tags = inc.join(',');
+        if (exc.length) p.sim_tags_not = exc.join(',');
         const na = val('bsim-flt-matched-note-a'); if (na) p.note_a = na;
         const nb = val('bsim-flt-matched-note-b'); if (nb) p.note_b = nb;
         const smin = val('bsim-flt-matched-coh-min'); if (smin) p.sim_min = smin;

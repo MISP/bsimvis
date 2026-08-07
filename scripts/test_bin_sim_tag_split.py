@@ -7,6 +7,7 @@ fid -> tags map, and _page_diff is pure filtering over a diff dict + query args.
 Run: python3 scripts/test_bin_sim_tag_split.py
 """
 
+import json
 import os
 import sys
 
@@ -22,7 +23,7 @@ from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     parse_tag_id,
     tag_parent,
 )
-from bsimvis.app.routes.bin_sim import _page_diff  # noqa: E402
+from bsimvis.app.routes.bin_sim import _page_diff, _sim_pair_sid  # noqa: E402
 
 
 def by_id(rows):
@@ -300,6 +301,88 @@ def test_sort_applies_to_fold_representatives():
     r = page("collapse=name&sort_col=similarity&sort_dir=desc")
     sims = [i.get("similarity") or 0 for i in r["items"]]
     assert sims == sorted(sims, reverse=True), sims
+
+
+# ---------------------------------------------------------------------------
+# Similarity tags on the matched rows: a matched row IS a function-similarity
+# pair, so it carries that pair's own tags and can be filtered by them.
+# ---------------------------------------------------------------------------
+
+
+class _FakePipe:
+    def __init__(self, docs):
+        self.docs, self.keys = docs, []
+
+    def get(self, k):
+        self.keys.append(k)
+
+    def execute(self):
+        out = [self.docs.get(k) for k in self.keys]
+        self.keys = []
+        return out
+
+
+class _FakeRedis:
+    """Just enough of the client for the pair lookups: pipelined GETs."""
+
+    def __init__(self, docs):
+        self.docs = docs
+
+    def pipeline(self, transaction=False):
+        return _FakePipe(self.docs)
+
+
+# fa1 < fb1, and the key puts the larger fid first (similarity_service.py:1061).
+_PAIR_DOCS = {
+    "main:sim:uc:fb1::fa1": json.dumps({"tags": ["crypto"], "user_tags": ["bookmark"]}),
+    "main:sim:uc:fb2::fa2": json.dumps({"tags": [], "user_tags": ["lib:libc:review"]}),
+    # fb3::fa3 deliberately absent: a pair with no doc must still page fine.
+}
+
+
+def tag_page(qs=""):
+    with _APP.test_request_context("/?" + qs):
+        return _page_diff(_DIFF, "all", _FakeRedis(_PAIR_DOCS), "main", "uc", None)
+
+
+def test_pair_sid_matches_how_similarity_writes_it():
+    # Larger fid first, collection prefix stripped.
+    assert _sim_pair_sid("main:func:aa", "main:func:bb", "main", "uc", None) == (
+        "main:sim:uc:bb::aa"
+    )
+    assert _sim_pair_sid("main:func:bb", "main:func:aa", "main", "uc", None) == (
+        "main:sim:uc:bb::aa"
+    ), "order of the arguments must not matter"
+    # Pools keep whole function ids under their own namespace.
+    assert _sim_pair_sid("c:func:aa", "c:func:bb", "main", "uc", "p1") == (
+        "global:pool:p1:sim:c:func:bb::c:func:aa"
+    )
+    assert _sim_pair_sid("fa1", None, "main", "uc", None) is None
+
+
+def test_matched_rows_carry_the_pairs_tags():
+    items = {i.get("sid"): i for i in tag_page("state=matched")["items"]}
+    assert items["main:sim:uc:fb1::fa1"]["tags"] == ["crypto"]
+    assert items["main:sim:uc:fb1::fa1"]["user_tags"] == ["bookmark"]
+    # A pair with no stored doc reads as untagged rather than failing.
+    assert items["main:sim:uc:fb3::fa3"]["tags"] == []
+
+
+def test_similarity_tag_filter():
+    assert tag_page("sim_tags=crypto")["total"] == 1
+    assert tag_page("sim_tags=bookmark")["total"] == 1, "user tags count too"
+    # Namespace prefix, same rule as the tree's scope.
+    assert tag_page("sim_tags=lib")["total"] == 1
+    assert tag_page("sim_tags=lib:libc:review")["total"] == 1
+    assert tag_page("sim_tags=nope")["total"] == 0
+    # Unmatched rows have no pair, so a similarity-tag filter excludes them.
+    assert all(i["state"] == "matched" for i in tag_page("sim_tags=crypto")["items"])
+
+
+def test_similarity_tag_exclude():
+    # 7 rows total, one of which carries `crypto`.
+    assert tag_page("sim_tags_not=crypto")["total"] == 6
+    assert tag_page("sim_tags=crypto&sim_tags_not=bookmark")["total"] == 0
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ class TableSelection {
         this.selectedIds = new Set(); // Stores data-id from tr
         this.selectedEntities = new Set(); // Stores "<etype>\0<eid>" found inside selected cells
         this.focusCell = null; // Current focused cell
+        this.focusKey = null; // data-id of the focused row, to refind it after a re-render
         this.anchorCell = null; // Start of range selection
         this.isDragging = false;
         this.cellModeActive = false; // Whether we are in grid-selection mode
@@ -50,9 +51,76 @@ class TableSelection {
 
         // Observer to handle dynamic content
         this.observer = new MutationObserver(() => {
-            this.clearSelection();
+            this.refreshAfterRender();
         });
         this.observer.observe(this.tbody, { childList: true });
+    }
+
+    /** Rows that span the grid hold one wide cell; the widest row sets the width. */
+    colCount() {
+        let n = 0;
+        for (const tr of this.tbody.children) n = Math.max(n, tr.children.length);
+        return n;
+    }
+
+    /**
+     * The cell a column index lands on. A row that spans the grid (a group header,
+     * a "load more" row) has a single wide cell, so an index past its end resolves
+     * to that cell rather than to nothing — which keeps the focused column
+     * remembered while arrowing through such a row, the way a spreadsheet does.
+     */
+    cellAt(r, c) {
+        const row = this.tbody.children[r];
+        if (!row || !row.children.length) return null;
+        return row.children[Math.min(c, row.children.length - 1)];
+    }
+
+    /**
+     * What a click or Enter on a cell should trigger: a link or handler inside the
+     * cell, else one anywhere in its row, else the row's own handler — group header
+     * rows carry their expand/collapse on the `<tr>` itself.
+     */
+    activationTarget(r, c) {
+        const tr = this.tbody.children[r];
+        if (!tr) return null;
+        const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
+        const cell = this.cellAt(r, c);
+        return (cell && cell.querySelector(selector))
+            || tr.querySelector(selector)
+            || (tr.getAttribute('onclick') ? tr : null);
+    }
+
+    /**
+     * What identifies a row across a re-render. `data-id` is an entity the row
+     * stands for and feeds bulk actions; `data-rowkey` is identity only, for rows
+     * that are not an entity at all (a group header).
+     */
+    rowKey(tr) {
+        return (tr && (tr.dataset.rowkey || tr.dataset.id)) || null;
+    }
+
+    /**
+     * A re-render replaces every row. Keyboard work — expand a group, then keep
+     * arrowing from where you were — only survives that if the focused row can be
+     * found again, so rows carrying a stable `data-id` keep their focus and
+     * anything else clears as before.
+     */
+    refreshAfterRender() {
+        const key = this.focusKey;
+        if (!key) {
+            this.clearSelection();
+            return;
+        }
+        const r = Array.from(this.tbody.children).findIndex(tr => this.rowKey(tr) === key);
+        if (r < 0) {
+            this.clearSelection();
+            return;
+        }
+        const c = this.focusCell ? this.focusCell.c : 0;
+        this.anchorCell = { r, c };
+        this.focusCell = { r, c };
+        this.setSelection(r, c, r, c);
+        this.updateVisuals();
     }
 
     getCellInfo(target) {
@@ -188,20 +256,9 @@ class TableSelection {
                     this.setSelection(this.tempFocus.r, this.tempFocus.c, this.tempFocus.r, this.tempFocus.c);
                     this.updateVisuals();
 
-                    const tr = this.tbody.children[this.tempFocus.r];
-                    if (tr) {
-                        const clickedCell = tr.children[this.tempFocus.c];
-                        const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
-                        let link = clickedCell ? clickedCell.querySelector(selector) : null;
-                        if (!link) {
-                            link = tr.querySelector(selector);
-                        }
-                        
-                        if (link) {
-                            if (e.target !== link && !link.contains(e.target)) {
-                                link.click();
-                            }
-                        }
+                    const link = this.activationTarget(this.tempFocus.r, this.tempFocus.c);
+                    if (link && e.target !== link && !link.contains(e.target)) {
+                        link.click();
                     }
                 }
             }
@@ -212,8 +269,10 @@ class TableSelection {
     }
 
     handleKeyDown(e) {
-        // Bail out if this instance's table is no longer in the live DOM (stale SPA instance)
-        if (!this.tbody || !this.tbody.isConnected) {
+        // Bail out if this instance's table is no longer in the live DOM (stale SPA
+        // instance), or is on a panel/tab that is currently hidden — arrow keys go
+        // to the table you can see, without having to click it first.
+        if (!this.tbody || !this.tbody.isConnected || !this.table.offsetParent) {
             return;
         }
 
@@ -264,25 +323,15 @@ class TableSelection {
         if (e.key === 'Enter') {
             if (this.focusCell) {
                 e.preventDefault();
-                const tr = this.tbody.children[this.focusCell.r];
-                if (tr) {
-                    const clickedCell = tr.children[this.focusCell.c];
-                    const selector = 'a[href]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn), [onclick]:not(.remove-tag-btn):not(.btn-action):not(.btn-copy):not(.btn)';
-                    let link = clickedCell ? clickedCell.querySelector(selector) : null;
-                    if (!link) {
-                        link = tr.querySelector(selector);
-                    }
-                    if (link) {
-                        link.click();
-                    }
-                }
+                const target = this.activationTarget(this.focusCell.r, this.focusCell.c);
+                if (target) target.click();
             }
             return;
         }
 
         const rows = this.tbody.children.length;
         if (rows === 0) return;
-        const cols = this.tbody.children[0].children.length;
+        const cols = this.colCount();
 
         if (!this.focusCell) {
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
@@ -353,7 +402,7 @@ class TableSelection {
                 // Rows that carry no data-id (bin-diff matched rows) — or that hold
                 // several entities side by side (function A / function B / the pair)
                 // — are resolved from the tag editors inside the selected cells.
-                const cell = row && row.children[c];
+                const cell = this.cellAt(r, c);
                 if (!cell) continue;
                 cell.querySelectorAll('[data-etype][data-eid]').forEach(el => {
                     this.selectedEntities.add(`${el.dataset.etype} ${el.dataset.eid}`);
@@ -365,7 +414,7 @@ class TableSelection {
     selectAll() {
         const rows = this.tbody.children.length;
         if (rows === 0) return;
-        const cols = this.tbody.children[0].children.length;
+        const cols = this.colCount();
 
         this.anchorCell = { r: 0, c: 0 };
         this.focusCell = { r: rows - 1, c: cols - 1 };
@@ -417,13 +466,10 @@ class TableSelection {
             if (r > maxR) maxR = r;
             if (c < minC) minC = c;
             if (c > maxC) maxC = c;
-            
-            const row = this.tbody.children[r];
-            if (row) {
-                const cell = row.children[c];
-                if (cell) {
-                    cell.classList.add('selected-cell');
-                }
+
+            const cell = this.cellAt(r, c);
+            if (cell) {
+                cell.classList.add('selected-cell');
             }
         });
 
@@ -432,7 +478,7 @@ class TableSelection {
             const row = this.tbody.children[r];
             if (!row) continue;
             for (let c = minC; c <= maxC; c++) {
-                const cell = row.children[c];
+                const cell = this.cellAt(r, c);
                 if (!cell) continue;
                 if (r === minR) cell.classList.add('sel-t');
                 if (r === maxR) cell.classList.add('sel-b');
@@ -443,23 +489,35 @@ class TableSelection {
 
         const focusRow = this.focusCell ? this.tbody.children[this.focusCell.r] : null;
         if (focusRow) {
-            const focusCell = focusRow.children[this.focusCell.c];
+            const focusCell = this.cellAt(this.focusCell.r, this.focusCell.c);
             if (focusCell) {
                 focusCell.classList.add('focused-cell');
             }
         }
+        // Remembered here rather than at every move: this runs after each focus
+        // change, and it is the last chance to read the row before a re-render
+        // replaces it. See refreshAfterRender.
+        this.focusKey = this.rowKey(focusRow);
     }
 
     scrollIntoView() {
         if (!this.focusCell) return;
-        const row = this.tbody.children[this.focusCell.r];
-        if (!row) return;
-        const cell = row.children[this.focusCell.c];
+        const cell = this.cellAt(this.focusCell.r, this.focusCell.c);
         if (!cell) return;
 
         const rect = cell.getBoundingClientRect();
-        // Scroll the body wrap div (parent of the body table)
-        const container = document.getElementById('table-body-wrap') || this.table.parentElement;
+        // The table's own scroll box. Found by walking up rather than by id: the
+        // main table's wrap is always in the DOM, so any other table that named it
+        // would scroll the wrong view.
+        let container = this.table.parentElement;
+        for (let el = container; el && el !== document.body; el = el.parentElement) {
+            const oy = getComputedStyle(el).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight) {
+                container = el;
+                break;
+            }
+        }
+        if (!container) return;
         const containerRect = container.getBoundingClientRect();
 
         if (rect.top < containerRect.top) {

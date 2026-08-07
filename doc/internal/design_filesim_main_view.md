@@ -189,9 +189,19 @@ Computed **server-side**. `_page_diff` (`bin_sim.py:505`) already does
 filter + sort + paginate over the three tables; this extends it rather than
 adding a path.
 
-The Sankey stays a `Table / Sankey` view toggle and follows the tree selection —
-select libc, see libc's flow. Its existing depth/frontier control operates
-within the scope.
+### Table / Graph
+
+All / Matched / Unmatched each read either as rows or as the same rows drawn as
+flow, behind a `View: Table / Graph` toggle. The graph is fed by the page the
+table already fetched, so the tab's state filter and the tree's scope carry over
+for free — select libc on Unmatched, see libc's unmatched functions.
+
+The graph draws **function to function, with no cluster column**. The old
+Function graph tab routed every match through a cluster node (and had Detailed /
+Simplified / Tags modes on top of it), which said nothing the matched pair did
+not already say; unmatched functions flow to a single `No match in <file>` node
+instead. The sidebar's Function graph entry is gone with it — the graph is a way
+of reading a tab, not a page of its own.
 
 ## Backend work
 
@@ -237,6 +247,9 @@ grouped table renderer, group/fold expansion state.
   by the name-keyed fold
 - The `unique_to_a` / `unique_to_b` split table bodies, subsumed by the `state`
   column
+- The cluster Sankey (`renderBinaryDiffSankey`, its Detailed / Simplified / Tags
+  modes, the split control, and the cluster tooltip plumbing), replaced by the
+  function-to-function graph behind the Table / Graph toggle
 
 Net line count is expected to fall.
 

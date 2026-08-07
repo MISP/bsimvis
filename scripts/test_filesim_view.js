@@ -35,12 +35,14 @@ function el(id) {
 el('bin-sim-table-matched').previousElementSibling = el('bin-sim-thead');
 
 const chain = new Proxy(function () {}, { get: () => chain, apply: () => chain });
+let captured = null;
 const d3Stub = {
     select: () => chain,
     sankey: () => {
         const layout = (g) => {
             g.nodes.forEach(n => Object.assign(n, { x0: 0, x1: 15, y0: 0, y1: 10 }));
             g.links.forEach(l => { l.source = g.nodes[l.source]; l.target = g.nodes[l.target]; });
+            captured = g;
             return g;
         };
         ['nodeWidth', 'nodePadding', 'nodeAlign', 'nodeSort', 'extent'].forEach(k => { layout[k] = () => layout; });
@@ -68,11 +70,14 @@ const fetchStub = async (url) => {
 
 const load = new Function(
     'window', 'document', 'd3', 'fetch', 'escapeHtml', 'escapeAttr', 'jsString', 'EntityRenderer',
+    'location', 'history',
     `${src}
     return {
         setCache: (c) => { binSimDataCache = c; binSimCtx = { collection: 'c', md5a: 'a', md5b: 'b' }; },
         setTab: (t) => { fileSimTab = t; },
         renderFileSimTree, renderFileSimSummary, renderFileSimTable,
+        switchTab: window.switchBinSimTab,
+        setView: window.setFileSimView,
         expandAll: window.expandAllFileSimNodes,
         collapseAll: window.collapseAllFileSimNodes,
         selectNode: window.selectFileSimNode,
@@ -87,7 +92,9 @@ const M = load(
     (s) => String(s),
     (s) => `"${s}"`,
     (s) => `'${s}'`,
-    new Proxy({}, { get: () => (() => '') })
+    new Proxy({}, { get: () => (() => '') }),
+    { hash: '', pathname: '/x', search: '' },
+    { pushState() {} }
 );
 
 const tag = (type, name, ver, a, b, extra) => Object.assign({
@@ -166,5 +173,32 @@ setTimeout(() => {
     assert.ok(fetchCalls.every(u => u.includes('collapse=name')), 'rows are requested folded by name');
     assert.ok(fetchCalls.some(u => u.includes('tags=')), 'rows are requested tag-scoped');
     console.log('ok  table groups, fold pill, paging');
-    console.log('OK: file sim view render paths');
+
+    // ---- switching tab reloads the rows ---------------------------------
+    // Pages are cached per tree node; the tab is what sets the `state` filter,
+    // so reusing a cached page across tabs showed the previous tab's rows.
+    const beforeSwitch = fetchCalls.length;
+    M.switchTab('matched');
+    setTimeout(() => {
+        const refetch = fetchCalls.slice(beforeSwitch);
+        assert.ok(refetch.length, 'switching tab refetches instead of reusing the cache');
+        assert.ok(refetch.every(u => u.includes('state=matched')), 'refetch carries the new tab state');
+        console.log('ok  tab switch invalidates the cached pages');
+
+        // ---- the graph is the same rows, function to function ------------
+        M.setView('graph');
+        setTimeout(() => {
+            assert.ok(captured, 'graph view builds a sankey');
+            const ids = captured.nodes.map(n => n.id);
+            assert.ok(ids.every(id => /^(a_|b_|none_)/.test(id)), `only function / no-match nodes: ${ids}`);
+            assert.ok(!ids.some(id => /cluster/i.test(id)), 'no cluster column');
+            // A match links one side straight to the other.
+            assert.ok(
+                captured.links.some(l => l.source.id === 'a_fa1' && l.target.id === 'b_fb1'),
+                'matched row links func A directly to func B'
+            );
+            console.log('ok  graph view: direct function-to-function flow');
+            console.log('OK: file sim view render paths');
+        }, 50);
+    }, 50);
 }, 50);

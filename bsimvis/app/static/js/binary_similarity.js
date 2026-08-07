@@ -4,10 +4,7 @@ let binSimDataCache = null;
 let binSimMetaCtx = null;
 let binSimMetaCache = null;
 let metaHighlightMode = 'different';
-let sankeyMode = 'simplified';
-let sankeyScale = 'count';
-let sankeySplit = 10;
-// The Sankey lives under the Summary rollup rather than behind a view toggle,
+// The composition Sankey lives under the Summary rollup rather than behind a view toggle,
 // and folds with the tree, so neither a view nor a depth setting is needed.
 let fileSimScale = 'count';     // 'count' | 'features'
 // One table now, so one sort state. Keyed `matched` for continuity with the
@@ -16,41 +13,10 @@ let binSimSortState = {
     matched: { col: 'similarity', dir: -1 },
 };
 
-// Change 4 (frontend): server-paged tables. Sankey uses the compact view; tables load
-// pages on demand. binSimFullDiff is lazily fetched only for the detailed Sankey.
+// Change 4 (frontend): server-paged tables. The compact summary payload feeds the
+// tree and the composition flow; rows are paged in on demand.
 const BINSIM_LIMIT = 100;
 let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
-let binSimFullDiff = null;   // full diff, fetched only when detailed Sankey is opened
-function openClusterView(uuid, name, event) {
-    const { collection: col } = getRoutingState();
-    const url = Nav.buildUIUrl(col, ['search', 'functions']) + `?cluster_uuid=${encodeURIComponent(uuid)}`;
-    Nav.openPath(url, event, { title: `Cluster: ${name}`, type: 'cluster' });
-}
-window.openClusterView = openClusterView;
-
-function handleIframeMouseLeave(event) {
-    const relatedTarget = event.relatedTarget;
-    const isIframe = window.parent && (window.parent !== window) && window.parent.showClusterTableTooltipFromIframe;
-    const parentWin = isIframe ? window.parent : window;
-    const tooltip = parentWin.document.getElementById('hierarchy-tooltip');
-    if (tooltip) {
-        if (tooltip === relatedTarget || tooltip.contains(relatedTarget)) {
-            return;
-        }
-        const rect = tooltip.getBoundingClientRect();
-        const iframeRect = (isIframe && window.frameElement) ? window.frameElement.getBoundingClientRect() : { left: 0, top: 0 };
-        const parentX = event.clientX + iframeRect.left;
-        const parentY = event.clientY + iframeRect.top;
-        if (parentX >= rect.left - 5 && parentX <= rect.right + 5 && parentY >= rect.top - 5 && parentY <= rect.bottom + 5) {
-            return;
-        }
-    }
-    if (isIframe) {
-        window.parent.hideClusterTableTooltipFromIframe();
-    } else if (window.hideClusterTableTooltip) {
-        window.hideClusterTableTooltip();
-    }
-}
 
 function renderBinarySimilarityView(params) {
     const container = document.getElementById('binary-similarity-container');
@@ -114,7 +80,6 @@ function renderBinarySimilarityView(params) {
                     <div id="bsim-tree" class="bsim-tree"></div>
                     <div class="bsim-side-sep"></div>
                     <div class="bsim-side-nav">
-                        <div class="bsim-nav-item" id="bsim-nav-graph" onclick="switchBinSimTab('graph')">Function graph</div>
                         <div class="bsim-nav-item" id="bsim-nav-metadata" onclick="switchBinSimTab('metadata')">Metadata</div>
                         <div class="bsim-nav-item" id="bsim-nav-inferred" onclick="switchBinSimTab('inferred')">Clusters</div>
                     </div>
@@ -152,20 +117,28 @@ function renderBinarySimilarityView(params) {
                     </div>
 
                     <!-- The one function table. All / Matched / Unmatched differ only
-                         by the state filter they send. -->
+                         by the state filter they send, and each of them reads either
+                         as rows or as the same rows drawn as flow. -->
                     <div class="bsim-subtab-panel" id="bsim-panel-table" style="flex:1; min-height:0; display:none; flex-direction:column;">
                         <div style="display:flex; align-items:center; gap:10px; padding:0 0 8px 0; flex-shrink:0; flex-wrap:wrap;">
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
-                                <span class="bsim-ctl-label">Group by:</span>
-                                <button class="view-btn active" id="bsim-group-btn-auto" onclick="setFileSimGroupBy('auto')" title="Group by tag when the selection spans more than one">Auto</button>
-                                <button class="view-btn" id="bsim-group-btn-tag" onclick="setFileSimGroupBy('tag')" title="Always group by tag">Tag</button>
-                                <button class="view-btn" id="bsim-group-btn-none" onclick="setFileSimGroupBy('none')" title="One flat list">None</button>
+                                <span class="bsim-ctl-label">View:</span>
+                                <button class="view-btn active" id="bsim-view-btn-table" onclick="setFileSimView('table')" title="Function rows">Table</button>
+                                <button class="view-btn" id="bsim-view-btn-graph" onclick="setFileSimView('graph')" title="The same rows drawn as flow, function to function">Graph</button>
                             </div>
-                            <button class="view-btn" onclick="expandAllFileSimNodes()" title="Expand every tag group (also expands the tree)">Expand all</button>
-                            <button class="view-btn" onclick="collapseAllFileSimNodes()" title="Collapse every tag group (also collapses the tree)">Collapse all</button>
+                            <div id="bsim-table-controls" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
+                                    <span class="bsim-ctl-label">Group by:</span>
+                                    <button class="view-btn active" id="bsim-group-btn-auto" onclick="setFileSimGroupBy('auto')" title="Group by tag when the selection spans more than one">Auto</button>
+                                    <button class="view-btn" id="bsim-group-btn-tag" onclick="setFileSimGroupBy('tag')" title="Always group by tag">Tag</button>
+                                    <button class="view-btn" id="bsim-group-btn-none" onclick="setFileSimGroupBy('none')" title="One flat list">None</button>
+                                </div>
+                                <button class="view-btn" onclick="expandAllFileSimNodes()" title="Expand every tag group (also expands the tree)">Expand all</button>
+                                <button class="view-btn" onclick="collapseAllFileSimNodes()" title="Collapse every tag group (also collapses the tree)">Collapse all</button>
+                            </div>
                             <span id="bsim-table-count" style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;"></span>
                         </div>
-                        <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
+                        <div class="resizable-card" id="bsim-table-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
                             <div class="bin-sim-table-scroll" style="flex:1; overflow:auto;">
                                 <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                                     <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
@@ -173,31 +146,10 @@ function renderBinarySimilarityView(params) {
                                 </table>
                             </div>
                         </div>
+                        <div class="resizable-card" id="bsim-fngraph-card" style="border:1px solid var(--border); border-radius:8px; background:var(--bg); display:none; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
+                            <div id="bsim-fngraph" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
+                        </div>
                     </div>
-
-            <!-- Graph sub-tab -->
-            <div class="bsim-subtab-panel" id="bsim-panel-graph" style="flex:1; min-height:0; display:none; flex-direction:column;">
-                <div id="bin-sim-sankey-card" style="position:relative; width:100%; flex:1; min-height:200px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                    <div class="view-toggle" id="bin-sim-sankey-mode-toggle" style="position:absolute; top:15px; left:15px; z-index:10; margin:0; align-items:center;">
-                        <button class="view-btn ${sankeyMode === 'detailed' ? 'active' : ''}" id="bsim-sankey-btn-detailed" onclick="setSankeyMode('detailed')" title="Show detailed function-level similarities">Detailed</button>
-                        <button class="view-btn ${sankeyMode === 'simplified' ? 'active' : ''}" id="bsim-sankey-btn-simplified" onclick="setSankeyMode('simplified')" title="Show simplified cluster-level summary">Simplified</button>
-                        <button class="view-btn ${sankeyMode === 'tags' ? 'active' : ''}" id="bsim-sankey-btn-tags" onclick="setSankeyMode('tags')" title="Split the match by library/bundle tag, crossed with similarity">Tags</button>
-                    </div>
-                    <div class="view-toggle" id="bin-sim-sankey-scale-toggle" style="position:absolute; top:15px; left:210px; z-index:10; margin:0; align-items:center; padding-left:10px;">
-                        <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Scale:</span>
-                        <button class="view-btn ${sankeyScale === 'count' ? 'active' : ''}" id="bsim-sankey-scale-btn-count" onclick="setSankeyScale('count')" title="Scale flow by function count">Count</button>
-                        <button class="view-btn ${sankeyScale === 'features' ? 'active' : ''}" id="bsim-sankey-scale-btn-features" onclick="setSankeyScale('features')" title="Scale flow by BSim feature count">Features</button>
-                    </div>
-                    <div class="view-toggle" id="bin-sim-sankey-split-toggle" style="position:absolute; top:15px; left:410px; z-index:10; margin:0; align-items:center; padding-left:10px; display: ${sankeyMode === 'detailed' ? 'none' : 'flex'};">
-                        <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Split:</span>
-                        <button class="view-btn ${sankeySplit === 5 ? 'active' : ''}" onclick="setSankeySplit(5)" title="5% granularity (20 bins)">5%</button>
-                        <button class="view-btn ${sankeySplit === 10 ? 'active' : ''}" onclick="setSankeySplit(10)" title="10% granularity (10 bins)">10%</button>
-                        <button class="view-btn ${sankeySplit === 20 ? 'active' : ''}" onclick="setSankeySplit(20)" title="20% granularity (5 bins)">20%</button>
-                        <button class="view-btn ${sankeySplit === 25 ? 'active' : ''}" onclick="setSankeySplit(25)" title="25% granularity (4 bins)">25%</button>
-                    </div>
-                    <div id="bin-sim-sankey" style="flex:1; width:100%; min-height:0; overflow-y:auto; position:relative;"></div>
-                </div>
-            </div>
 
             <!-- Metadata tab -->
             <div class="bsim-subtab-panel" id="bsim-panel-metadata" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
@@ -361,8 +313,8 @@ function initResizableCards() {
                 const deltaY = moveEvent.clientY - startY;
                 card.style.height = `${Math.max(200, Math.min(1000, startHeight + deltaY))}px`;
                 
-                if (card.id === 'bin-sim-sankey-card' && binSimDataCache) {
-                    renderBinaryDiffSankey(binSimDataCache);
+                if (card.id === 'bsim-fngraph-card' && binSimDataCache) {
+                    renderFileSimGraph();
                 }
             };
             
@@ -428,20 +380,17 @@ function initResizableCards() {
             collection, md5a, md5b, collB: collB || collection, poolId, loaded: false,
         };
 
-        // Cache: compact summary + Sankey; tables load their rows via paging. diff{} is
-        // filled incrementally per table page; functions_metadata merged across pages.
+        // Cache: the compact summary only; tables and the function graph load their
+        // rows via paging, merging functions_metadata across pages.
         binSimCtx = { collection, md5a, md5b, collB: collB || collection, poolId };
-        binSimFullDiff = null;
         const counts = data.counts || { matched: 0, unique_to_a: 0, unique_to_b: 0 };
         binSimDataCache = {
             score: data.score,
             file_metadata_a: data.file_metadata_a,
             file_metadata_b: data.file_metadata_b,
-            sankey: data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] },
             tags_summary: data.tags_summary || [],
             counts,
             functions_metadata: {},
-            diff: { matched: [], unique_to_a: [], unique_to_b: [] },
         };
         // A fresh pair starts unscoped, at the root of the tree.
         fileSimSelection = new Set();
@@ -459,10 +408,8 @@ function initResizableCards() {
         if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
         if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
-        // Tree + Summary render from the compact payload alone; the table pages
-        // itself once a tab that needs rows is shown.
-        renderBinaryDiffSankey(binSimDataCache);
-
+        // Tree + Summary render from the compact payload alone; the table and the
+        // function graph page themselves once a tab that needs rows is shown.
         // Restore the tab from the URL hash (e.g. after a Back navigation).
         applyBinSimTabFromHash();
 
@@ -481,33 +428,6 @@ function initResizableCards() {
     }
 }
 
-
-// Display name for a tag row: version-qualified, e.g. "libc 2.31" / "mirai_core".
-function tagLabel(t) {
-    const name = t.name || t.tag_id || 'original_code';
-    return t.version ? `${name} ${t.version}` : name;
-}
-
-// UX guardrail: a real corpus has a long tail of one-function libraries. Keep the
-// tags that carry the match and roll the rest into a single "other" row.
-function foldSmallTags(rows, keep = 12) {
-    if (rows.length <= keep) return rows;
-    const head = rows.slice(0, keep);
-    const tail = rows.slice(keep);
-    const other = { tag_id: 'other', name: `other (${tail.length} tags)`, version: '', bins: {} };
-    ['matched_weight','matched_count','unique_weight_a','unique_weight_b','unique_count_a','unique_count_b','contribution_pct','coverage_pct_a','coverage_pct_b'].forEach(k => {
-        other[k] = tail.reduce((s, r) => s + (r[k] || 0), 0);
-    });
-    other.score = other.matched_weight > 0
-        ? tail.reduce((s, r) => s + (r.score || 0) * (r.matched_weight || 0), 0) / other.matched_weight
-        : 0;
-    tail.forEach(r => Object.keys(r.bins || {}).forEach(k => {
-        const acc = other.bins[k] || (other.bins[k] = [0, 0, 0, 0]);
-        for (let j = 0; j < 4; j++) acc[j] += r.bins[k][j] || 0;
-    }));
-    head.push(other);
-    return head;
-}
 
 // ---- File sim: the main view --------------------------------------------
 // A tag tree on the left scopes the detail pane on the right. The tree answers
@@ -545,6 +465,8 @@ let fileSimSelection = new Set();
 let fileSimTreeOpen = new Set(['root', 'libraries', 'bundles']);
 // 'summary' | 'all' | 'matched' | 'unmatched' -- the right pane's tabs.
 let fileSimTab = 'summary';
+// How All / Matched / Unmatched draw the same rows: as a table or as flow.
+let fileSimView = 'table';     // 'table' | 'graph'
 let fileSimGroupBy = 'auto';   // 'auto' | 'tag' | 'none'
 // Expanded duplicate folds, by key.
 let fileSimOpenFolds = new Set();
@@ -724,7 +646,7 @@ window.collapseAllFileSimNodes = function() {
 function onFileSimFoldChange() {
     renderFileSimTree();
     if (fileSimTab === 'summary') renderFileSimSummary();
-    else renderFileSimTable();
+    else renderFileSimRows();
 }
 
 // ---- Tree rendering ------------------------------------------------------
@@ -1016,7 +938,7 @@ async function loadFileSimRows(key, prefixes, { reset = false } = {}) {
     if (reset) { st.items = []; st.offset = 0; st.total = 0; st.loaded = false; }
     if (st.loaded && st.items.length >= st.total && st.total > 0) return;
     st.loading = true;
-    renderFileSimTable();
+    renderFileSimRows();
     try {
         const data = await fileSimFetchRows(prefixes, { offset: st.offset });
         st.items = st.items.concat(data.items || []);
@@ -1029,7 +951,7 @@ async function loadFileSimRows(key, prefixes, { reset = false } = {}) {
     } finally {
         st.loading = false;
     }
-    renderFileSimTable();
+    renderFileSimRows();
 }
 
 window.loadMoreFileSimRows = function(key) {
@@ -1219,6 +1141,170 @@ function renderFileSimTable() {
     tbody.innerHTML = out.join('');
 }
 
+// ---- The same rows as a graph -------------------------------------------
+// Function to function, no cluster in between: a match is a pair, and routing it
+// through a cluster node said nothing the pair did not already say. The rows are
+// the table's rows, so the tab's state filter and the tree's scope carry over.
+
+function fileSimFuncLabel(fid) {
+    const meta = (binSimDataCache && binSimDataCache.functions_metadata) || {};
+    const m = meta[fid];
+    return (m && m.name) ? m.name : ('@' + String(fid).split(':').pop());
+}
+
+function renderFileSimGraph() {
+    const host = document.getElementById('bsim-fngraph');
+    if (!host) return;
+    const st = fileSimRowState('');
+    if (!st.loaded && !st.loading) loadFileSimRows('', fileSimScopePrefixes());
+    const countEl = document.getElementById('bsim-table-count');
+    if (countEl) countEl.textContent = st.total ? `${st.items.length} of ${st.total} names` : '';
+
+    const msg = (text) => {
+        host.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">${text}</div>`;
+    };
+    if (st.loading && !st.items.length) return msg('Loading…');
+    if (!st.items.length) return msg('No functions match this scope.');
+
+    const data = binSimDataCache || {};
+    const nameA = data.file_metadata_a?.file_name || 'A';
+    const nameB = data.file_metadata_b?.file_name || 'B';
+
+    const nodes = [];
+    const index = new Map();
+    const addNode = (id, name, color, side) => {
+        if (!index.has(id)) {
+            index.set(id, nodes.length);
+            nodes.push({ id, name, color, side });
+        }
+        return index.get(id);
+    };
+    const links = [];
+
+    st.items.forEach(r => {
+        // A folded row stands for every copy of that name, so it flows that thick.
+        const value = r.n_copies || 1;
+        if (r.state === 'matched' && r.func_a && r.func_b) {
+            const sim = r.similarity || 0;
+            const color = `hsl(${sim * 120}, var(--color-s-med), var(--color-l-dim))`;
+            links.push({
+                source: addNode('a_' + r.func_a, fileSimFuncLabel(r.func_a), color, 0),
+                target: addNode('b_' + r.func_b, fileSimFuncLabel(r.func_b), color, 1),
+                value, tip: `${fileSimFuncLabel(r.func_a)} → ${fileSimFuncLabel(r.func_b)}\nSimilarity: ${(sim * 100).toFixed(1)}%${value > 1 ? `\n${value} copies` : ''}`,
+            });
+        } else if (r.state === 'uniq_a' && r.func_id) {
+            links.push({
+                source: addNode('a_' + r.func_id, fileSimFuncLabel(r.func_id), '#f92672', 0),
+                target: addNode('none_b', `No match in ${nameB}`, '#f92672', 1),
+                value, tip: `${fileSimFuncLabel(r.func_id)}\nOnly in ${nameA}`,
+            });
+        } else if (r.state === 'uniq_b' && r.func_id) {
+            links.push({
+                source: addNode('none_a', `No match in ${nameA}`, '#66d9ef', 0),
+                target: addNode('b_' + r.func_id, fileSimFuncLabel(r.func_id), '#66d9ef', 1),
+                value, tip: `${fileSimFuncLabel(r.func_id)}\nOnly in ${nameB}`,
+            });
+        }
+    });
+
+    if (!links.length) return msg('Not enough data for graph');
+
+    host.innerHTML = '';
+    const perSide = [0, 1].map(s => nodes.filter(n => n.side === s).length);
+    const maxNodes = Math.max(...perSide, 6);
+    const width = host.clientWidth || 800;
+    const padding = maxNodes > 40 ? 2 : 8;
+    const height = Math.max(host.clientHeight || 400, maxNodes * (padding + 10) + 40);
+
+    const svg = d3.select(host).append('svg').attr('width', width).attr('height', height);
+    const g = svg.append('g');
+
+    const sankey = d3.sankey()
+        .nodeWidth(14)
+        .nodePadding(padding)
+        .nodeAlign(n => n.side)
+        .extent([[25, 10], [width - 25, height - 10]]);
+
+    let graph;
+    try {
+        graph = sankey({
+            nodes: nodes.map(d => Object.assign({}, d)),
+            links: links.map(d => Object.assign({}, d)),
+        });
+    } catch (e) {
+        console.error('file sim function graph layout failed', e);
+        return msg('Graph layout error');
+    }
+
+    g.append('g').selectAll('path')
+        .data(graph.links)
+        .enter().append('path')
+        .attr('d', d => {
+            const x0 = d.source.x1, x1 = d.target.x0;
+            const x2 = x0 + (x1 - x0) * 0.4, x3 = x0 + (x1 - x0) * 0.6;
+            return `M ${x0},${d.source.y0}
+                    C ${x2},${d.source.y0} ${x3},${d.target.y0} ${x1},${d.target.y0}
+                    L ${x1},${d.target.y1}
+                    C ${x3},${d.target.y1} ${x2},${d.source.y1} ${x0},${d.source.y1}
+                    Z`;
+        })
+        .attr('fill', d => d.target.color || 'var(--text)')
+        .style('fill-opacity', 0.4)
+        .on('mouseenter', function () { d3.select(this).style('fill-opacity', 0.75); })
+        .on('mouseleave', function () { d3.select(this).style('fill-opacity', 0.4); })
+        .append('title')
+        .text(d => d.tip || `${d.source.name}\n  ↓\n${d.target.name}`);
+
+    const node = g.append('g').selectAll('.node')
+        .data(graph.nodes)
+        .enter().append('g')
+        .attr('class', 'node')
+        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+
+    node.append('rect')
+        .attr('height', d => Math.max(1, d.y1 - d.y0))
+        .attr('width', sankey.nodeWidth())
+        .attr('fill', d => d.color)
+        .attr('stroke', 'var(--border)')
+        .attr('stroke-width', '0.5px')
+        .attr('opacity', 0.6)
+        .append('title')
+        .text(d => d.name);
+
+    node.append('text')
+        .attr('x', d => (d.side === 1 ? -6 : 6 + sankey.nodeWidth()))
+        .attr('y', d => (d.y1 - d.y0) / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', d => (d.side === 1 ? 'end' : 'start'))
+        .text(d => d.name)
+        .attr('fill', 'var(--text)')
+        .attr('font-size', '9px')
+        .attr('opacity', 0.75)
+        .attr('font-family', 'sans-serif');
+}
+
+// Table or graph: same rows, so anything that changes them renders through here
+// instead of each caller knowing which of the two is on screen.
+function renderFileSimRows() {
+    if (fileSimView === 'graph') renderFileSimGraph();
+    else renderFileSimTable();
+}
+
+// The graph draws the flat scope, so grouping controls have nothing to say in it.
+// ponytail: graph pages with the table (100 names); Load more is the table's.
+window.setFileSimView = function(view) {
+    fileSimView = view;
+    ['table', 'graph'].forEach(v => {
+        const btn = document.getElementById(`bsim-view-btn-${v}`);
+        if (btn) btn.classList.toggle('active', v === view);
+        const card = document.getElementById(v === 'table' ? 'bsim-table-card' : 'bsim-fngraph-card');
+        if (card) card.style.display = (v === view) ? 'flex' : 'none';
+    });
+    const ctl = document.getElementById('bsim-table-controls');
+    if (ctl) ctl.style.display = view === 'graph' ? 'none' : 'flex';
+    renderFileSimRows();
+};
+
 // ---- Entry point ---------------------------------------------------------
 
 function renderFileSim(data) {
@@ -1226,7 +1312,7 @@ function renderFileSim(data) {
     renderFileSimTree();
     renderFileSimChips();
     if (fileSimTab === 'summary') renderFileSimSummary();
-    else renderFileSimTable();
+    else renderFileSimRows();
 }
 
 // ---- File sim tab: sankey view ------------------------------------------
@@ -1535,757 +1621,6 @@ window.setFileSimScale = function(scale) {
 // The Namespace / Library / Version depth buttons are gone: depth is now the
 // tree's folding, and Expand all / Collapse all cover what the presets did.
 
-// Aggregate a tag's fixed 5% server bins up to the currently selected split.
-// Returns Map<groupIdx, [count_a, weight_a, count_b, weight_b]>.
-function tagBinGroups(t, perGroup) {
-    const groups = new Map();
-    Object.keys(t.bins || {}).forEach(k => {
-        const g = Math.floor(parseInt(k, 10) / perGroup);
-        const acc = groups.get(g) || [0, 0, 0, 0];
-        const b = t.bins[k];
-        for (let j = 0; j < 4; j++) acc[j] += b[j] || 0;
-        groups.set(g, acc);
-    });
-    return groups;
-}
-
-async function renderBinaryDiffSankey(data) {
-    const container = document.getElementById('bin-sim-sankey');
-    if (!container) return;
-
-    // Detailed mode needs per-function ids/names → lazy-fetch the full diff once.
-    if (sankeyMode === 'detailed' && !binSimFullDiff && binSimCtx) {
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">Loading detailed graph…</div>';
-        try {
-            let u = `/api/diff?collection_a=${encodeURIComponent(binSimCtx.collection)}&md5_a=${encodeURIComponent(binSimCtx.md5a)}&md5_b=${encodeURIComponent(binSimCtx.md5b)}`;
-            if (binSimCtx.collB) u += `&collection_b=${encodeURIComponent(binSimCtx.collB)}`;
-            if (binSimCtx.poolId) u += `&pool=${encodeURIComponent(binSimCtx.poolId)}`;
-            const r = await fetch(u);
-            binSimFullDiff = await r.json();
-        } catch (e) { console.error('detailed sankey fetch failed', e); }
-    }
-    container.innerHTML = '';
-
-    // Data source: compact projection for simplified, full diff for detailed.
-    const isDetailed = sankeyMode === 'detailed';
-    const isTagMode = sankeyMode === 'tags' && (data.tags_summary || []).length > 0;
-    const src = isDetailed
-        ? (binSimFullDiff && binSimFullDiff.diff ? binSimFullDiff.diff : { matched: [], unique_to_a: [], unique_to_b: [] })
-        : (data.sankey || { matched: [], unique_to_a: [], unique_to_b: [] });
-    const funcsMeta = isDetailed ? (binSimFullDiff && binSimFullDiff.functions_metadata) : null;
-
-    const detailedBtn = document.getElementById('bsim-sankey-btn-detailed');
-    if (detailedBtn) {
-        detailedBtn.disabled = false;
-        detailedBtn.classList.remove('disabled');
-        detailedBtn.title = "Show detailed function-level similarities";
-        detailedBtn.style.opacity = 1.0;
-        detailedBtn.style.cursor = 'pointer';
-    }
-
-    const filenameA = data.file_metadata_a?.file_name || 'A';
-    const filenameB = data.file_metadata_b?.file_name || 'B';
-    
-    const width = container.clientWidth;
-    
-    const rawMatched = src.matched || [];
-    const rawUniqueA = src.unique_to_a || [];
-    const rawUniqueB = src.unique_to_b || [];
-    
-    // Tag mode's node count is driven by the tag rows, not the cluster rows, so the
-    // canvas has to be measured from them or every column gets squeezed into the
-    // height budget for 10 nodes.
-    const tagRows = isTagMode ? foldSmallTags(data.tags_summary || []) : [];
-    const tagPerGroup = Math.max(1, Math.round(sankeySplit / 5));   // server bins are 5% wide
-
-    let maxNodesInColumn = 10;
-    if (isTagMode) {
-        let middle = 0;
-        tagRows.forEach(t => {
-            middle += tagBinGroups(t, tagPerGroup).size;
-            if ((t.unique_weight_a || 0) > 0) middle += 1;   // its own unmatched node
-            if ((t.unique_weight_b || 0) > 0) middle += 1;
-        });
-        maxNodesInColumn = Math.max(tagRows.length, middle, 10);
-    } else if (isDetailed) {
-        const groupA_count = rawMatched.filter(m => m.func_a).length +
-                             rawUniqueA.filter(u => u.func_id).length;
-        const groupB_count = rawMatched.filter(m => m.func_b).length +
-                             rawUniqueB.filter(u => u.func_id).length;
-        const cluster_count = rawMatched.length + rawUniqueA.length + rawUniqueB.length;
-        maxNodesInColumn = Math.max(groupA_count, groupB_count, cluster_count, 10);
-    }
-    
-    const padding = maxNodesInColumn > 30 ? 2 : 8;
-    const minHeightNeeded = maxNodesInColumn * (padding + 10) + 50;
-    const height = Math.max(container.clientHeight || 400, minHeightNeeded);
-    
-    const svg = d3.select('#bin-sim-sankey').append('svg')
-        .attr('width', width)
-        .attr('height', height);
-        
-    const zoomG = svg.append('g');
-        
-    // Build Nodes and Links
-    const nodesMap = new Map();
-    const links = [];
-    const funcParentMap = new Map();
-    
-    const getNode = (id, name, color, funcs = []) => {
-        if (!nodesMap.has(id)) {
-            nodesMap.set(id, { id, name, color, funcs, index: nodesMap.size });
-        }
-        return nodesMap.get(id);
-    };
-    
-    const getFuncValue = (fid) => {
-        if (sankeyScale === 'features') {
-            const meta = funcsMeta ? funcsMeta[fid] : null;
-            return Math.max(1, (meta && meta.bsim_features_count) ? parseInt(meta.bsim_features_count) : 1);
-        }
-        return 1;
-    };
-
-    const sumFuncsValue = (funcs) => {
-        return (funcs || []).reduce((sum, fid) => sum + getFuncValue(fid), 0);
-    };
-
-    const getFuncDisplayName = (fid) => {
-        const meta = funcsMeta ? funcsMeta[fid] : null;
-        if (meta && meta.name) {
-            return meta.name;
-        }
-        const parts = fid.split(':');
-        return '@' + parts.pop();
-    };
-
-    // Sankey shows the full aggregate (server-computed); table filters apply to tables only.
-    const sortedMatched = rawMatched;
-    const sortedUniqueA = rawUniqueA;
-    const sortedUniqueB = rawUniqueB;
-
-    const matchedRank = new Map(sortedMatched.map((m, idx) => [m.cluster_uuid, idx]));
-    const uniqueARank = new Map(sortedUniqueA.map((u, idx) => [u.cluster_uuid, idx]));
-    const uniqueBRank = new Map(sortedUniqueB.map((u, idx) => [u.cluster_uuid, idx]));
-
-    if (!isDetailed) {
-        const uVal = (u) => sankeyScale === 'features' ? Math.max(1, u.feat || 1) : 1;
-        let totalUniqueA = 0;
-        sortedUniqueA.forEach(u => { totalUniqueA += uVal(u); });
-
-        let totalUniqueB = 0;
-        sortedUniqueB.forEach(u => { totalUniqueB += uVal(u); });
-
-        const metricSuffix = sankeyScale === 'features' ? 'feats' : 'funcs';
-
-        if (isTagMode) {
-            // Tag mode crosses both axes: one row per tag (libc, mirai_core, ...), each
-            // split across similarity bins, so a library that matches poorly is visibly
-            // different from one that matches perfectly.
-            const perGroup = tagPerGroup;
-            const fmt = (v) => (v % 1 !== 0 ? v.toFixed(1) : String(v));
-            // Server bins are [count_a, weight_a, count_b, weight_b]; each side is
-            // tracked separately because a match need not be tagged the same on both.
-            const slot = { a: 0, b: 2 };
-            const binVal = (b, side) => b[slot[side] + (sankeyScale === 'features' ? 1 : 0)] || 0;
-
-            tagRows.forEach((t, i) => {
-                const label = tagLabel(t);
-                const score = t.score || 0;
-                const tagColor = `hsl(${score * 120}, var(--color-s-med), var(--color-l-dim))`;
-
-                const uniqA = sankeyScale === 'features' ? (t.unique_weight_a || 0) : (t.unique_count_a || 0);
-                const uniqB = sankeyScale === 'features' ? (t.unique_weight_b || 0) : (t.unique_count_b || 0);
-
-                const groups = tagBinGroups(t, perGroup);
-
-                let totalA = uniqA, totalB = uniqB;
-                groups.forEach(b => { totalA += binVal(b, 'a'); totalB += binVal(b, 'b'); });
-                if (totalA <= 0 && totalB <= 0) return;
-
-                let nodeA = null;
-                if (totalA > 0) {
-                    nodeA = getNode(`tag_a_${i}`, `${filenameA} · ${label} (${fmt(totalA)} ${metricSuffix}, ${(t.coverage_pct_a || 0).toFixed(0)}% of ${filenameA})`, tagColor);
-                    nodeA.alignOverride = 0;
-                    nodeA.cohesion = score;
-                }
-                let nodeB = null;
-                if (totalB > 0) {
-                    nodeB = getNode(`tag_b_${i}`, `${filenameB} · ${label} (${fmt(totalB)} ${metricSuffix}, ${(t.coverage_pct_b || 0).toFixed(0)}% of ${filenameB})`, tagColor);
-                    nodeB.alignOverride = 2;
-                    nodeB.cohesion = score;
-                }
-
-                Array.from(groups.keys()).sort((x, y) => y - x).forEach(g => {
-                    const b = groups.get(g);
-                    const vA = binVal(b, 'a');
-                    const vB = binVal(b, 'b');
-                    if (vA <= 0 && vB <= 0) return;
-                    const lo = g * perGroup * 5;
-                    const hi = Math.min(100, lo + perGroup * 5);
-                    const mid = (lo + hi) / 200;
-                    const mNode = getNode(
-                        `tag_c_${i}_${g}`,
-                        `${label} ${lo}%-${hi}% (${fmt(Math.max(b[0], b[2]))} funcs)`,
-                        `hsl(${mid * 120}, var(--color-s-med), var(--color-l-dim))`
-                    );
-                    mNode.alignOverride = 1;
-                    mNode.cohesion = mid;
-                    if (nodeA && vA > 0) links.push({ source: nodeA.index, target: mNode.index, value: vA });
-                    if (nodeB && vB > 0) links.push({ source: mNode.index, target: nodeB.index, value: vB });
-                });
-
-                // Unmatched mass gets its OWN node per tag, not one shared bucket:
-                // the whole point of the row is to see how much of this tag matched
-                // and how much did not, scaled against each other.
-                if (nodeA && uniqA > 0) {
-                    const n = getNode(`tag_ua_${i}`, `${label} unmatched in ${filenameA} (${fmt(uniqA)} ${metricSuffix})`, '#f92672');
-                    n.alignOverride = 1;
-                    links.push({ source: nodeA.index, target: n.index, value: uniqA });
-                }
-                if (nodeB && uniqB > 0) {
-                    const n = getNode(`tag_ub_${i}`, `${label} unmatched in ${filenameB} (${fmt(uniqB)} ${metricSuffix})`, '#66d9ef');
-                    n.alignOverride = 1;
-                    links.push({ source: n.index, target: nodeB.index, value: uniqB });
-                }
-            });
-        } else {
-            const sortCol = (binSimSortState.matched && binSimSortState.matched.col) || 'similarity';
-            const groupCol = sortCol === 'cluster_name' ? 'similarity' : sortCol;
-
-            let minVal = 0.0;
-            let maxVal = 1.0;
-            if (groupCol === 'avg_features') {
-                const vals = sortedMatched.map(m => m[groupCol] || 0);
-                minVal = vals.length > 0 ? Math.min(...vals) : 0;
-                maxVal = vals.length > 0 ? Math.max(...vals) : 100;
-                if (minVal === maxVal) {
-                    maxVal = minVal + 10;
-                }
-            }
-
-            const step = sankeySplit;
-            const numBins = Math.round(100 / step);
-            const bins = Array.from({ length: numBins }, (_, i) => ({
-                binIdx: i,
-                clusters: [],
-                totalA: 0,
-                totalB: 0,
-                sumCohesion: 0,
-                sumWeights: 0
-            }));
-
-            sortedMatched.forEach(m => {
-                const val = m[groupCol] || 0;
-                let fraction = (val - minVal) / (maxVal - minVal);
-                if (fraction < 0) fraction = 0;
-                if (fraction > 1) fraction = 1;
-                
-                let binIdx = Math.floor(fraction * numBins);
-                if (binIdx >= numBins) binIdx = numBins - 1;
-                
-                const wValMatch = (f) => sankeyScale === 'features' ? Math.max(1, f || 1) : 1;
-                const wA = wValMatch(m.feat_a);
-                const wB = wValMatch(m.feat_b);
-                const similarity = m.similarity || 0;
-
-                bins[binIdx].clusters.push(m);
-                bins[binIdx].totalA += wA;
-                bins[binIdx].totalB += wB;
-                bins[binIdx].sumCohesion += similarity * (wA + wB);
-                bins[binIdx].sumWeights += (wA + wB);
-            });
-
-            const getBinName = (binIdx, countText, prefix) => {
-                const stepVal = (maxVal - minVal) / numBins;
-                const low = minVal + binIdx * stepVal;
-                const high = minVal + (binIdx + 1) * stepVal;
-                
-                let label = '';
-                if (groupCol === 'similarity' || groupCol === 'cohesion' || groupCol === 'sim_rarity') {
-                    const lowPct = Math.round(low * 100);
-                    const highPct = Math.round(high * 100);
-                    const colName = groupCol === 'similarity' ? 'Similarity' : (groupCol === 'cohesion' ? 'Cohesion' : 'Rarity');
-                    if (prefix === 'a') {
-                        label = `${filenameA} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
-                    } else if (prefix === 'b') {
-                        label = `${filenameB} Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
-                    } else {
-                        label = `Matched ${colName} ${lowPct}%-${highPct}% (${countText})`;
-                    }
-                } else {
-                    const lowNum = Math.round(low);
-                    const highNum = Math.round(high);
-                    const colName = 'Avg Feat';
-                    if (prefix === 'a') {
-                        label = `${filenameA} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
-                    } else if (prefix === 'b') {
-                        label = `${filenameB} Matched ${colName} ${lowNum}-${highNum} (${countText})`;
-                    } else {
-                        label = `Matched ${colName} ${lowNum}-${highNum} (${countText})`;
-                    }
-                }
-                return label;
-            };
-
-            bins.forEach(b => {
-                if (b.clusters.length === 0) return;
-
-                const binAvgCohesion = b.sumWeights > 0 ? (b.sumCohesion / b.sumWeights) : (b.binIdx * (step / 100) + (step / 200));
-                const binColor = `hsl(${binAvgCohesion * 120}, var(--color-s-med), var(--color-l-dim))`;
-
-                let binNodeA = null;
-                if (b.totalA > 0) {
-                    const binNodeAId = `simplified_a_matched_bin_${b.binIdx}`;
-                    binNodeA = getNode(binNodeAId, getBinName(b.binIdx, `${b.totalA} ${metricSuffix}`, 'a'), binColor);
-                    binNodeA.alignOverride = 0;
-                    binNodeA.cohesion = binAvgCohesion;
-                }
-
-                const binNodeId = `simplified_c_matched_bin_${b.binIdx}`;
-                const binNode = getNode(
-                    binNodeId, 
-                    getBinName(b.binIdx, `${b.clusters.length} clusters`, 'c'), 
-                    binColor
-                );
-                binNode.alignOverride = 1;
-                binNode.cohesion = binAvgCohesion;
-
-                let binNodeB = null;
-                if (b.totalB > 0) {
-                    const binNodeBId = `simplified_b_matched_bin_${b.binIdx}`;
-                    binNodeB = getNode(binNodeBId, getBinName(b.binIdx, `${b.totalB} ${metricSuffix}`, 'b'), binColor);
-                    binNodeB.alignOverride = 2;
-                    binNodeB.cohesion = binAvgCohesion;
-                }
-
-                if (binNodeA) {
-                    links.push({ source: binNodeA.index, target: binNode.index, value: b.totalA });
-                }
-                if (binNodeB) {
-                    links.push({ source: binNode.index, target: binNodeB.index, value: b.totalB });
-                }
-            });
-        }
-
-        let nodeA_unique, nodeC_uniqueA, nodeC_uniqueB, nodeB_unique;
-        if (!isTagMode && totalUniqueA > 0) {
-            nodeA_unique = getNode('simplified_a_unique', `${filenameA} Unmatched (${totalUniqueA} ${metricSuffix})`, '#f92672');
-            nodeA_unique.alignOverride = 0;
-            nodeC_uniqueA = getNode('simplified_c_uniqueA', `Unmatched to ${filenameA} (${sortedUniqueA.length})`, '#f92672');
-            nodeC_uniqueA.alignOverride = 1;
-            links.push({ source: nodeA_unique.index, target: nodeC_uniqueA.index, value: totalUniqueA });
-        }
-        if (!isTagMode && totalUniqueB > 0) {
-            nodeC_uniqueB = getNode('simplified_c_uniqueB', `Unmatched to ${filenameB} (${sortedUniqueB.length})`, '#66d9ef');
-            nodeC_uniqueB.alignOverride = 1;
-            nodeB_unique = getNode('simplified_b_unique', `${filenameB} Unmatched (${totalUniqueB} ${metricSuffix})`, '#66d9ef');
-            nodeB_unique.alignOverride = 2;
-            links.push({ source: nodeC_uniqueB.index, target: nodeB_unique.index, value: totalUniqueB });
-        }
-    } else {
-        // 1. Matched Clusters
-        sortedMatched.forEach(m => {
-            const similarity = m.similarity || 0;
-            const cColor = `hsl(${similarity * 120}, var(--color-s-med), var(--color-l-dim))`;
-            const cNode = getNode('cluster_' + m.cluster_uuid, m.cluster_name, cColor);
-            cNode.cohesion = m.cohesion || 0;
-            cNode.cluster_uuid = m.cluster_uuid;
-            cNode.cluster_name = m.cluster_name;
-            cNode.size = 2;
-            cNode.stability = 1.0;
-            cNode.avg_features = m.avg_features || 0;
-
-            if (m.func_a) {
-                const fNodeId = 'funcgroup_a_' + m.cluster_uuid;
-                funcParentMap.set(fNodeId, m.cluster_uuid);
-                const fNode = getNode(fNodeId, [getFuncDisplayName(m.func_a)], cColor, [m.func_a]);
-                fNode.cohesion = m.cohesion || 0;
-                links.push({ source: fNode.index, target: cNode.index, value: getFuncValue(m.func_a) });
-            }
-
-            if (m.func_b) {
-                const fNodeId = 'funcgroup_b_' + m.cluster_uuid;
-                funcParentMap.set(fNodeId, m.cluster_uuid);
-                const fNode = getNode(fNodeId, [getFuncDisplayName(m.func_b)], cColor, [m.func_b]);
-                fNode.cohesion = m.cohesion || 0;
-                links.push({ source: cNode.index, target: fNode.index, value: getFuncValue(m.func_b) });
-            }
-        });
-        
-        // 2. Unmatched to A Functions
-        sortedUniqueA.forEach(u => {
-            const targetNodeId = u.is_clustered ? ('cluster_' + u.cluster_uuid) : 'unclustered_a_group';
-            const targetNodeName = u.is_clustered ? u.cluster_name : 'Unclustered';
-            const cNode = getNode(targetNodeId, targetNodeName, '#f92672');
-            cNode.cluster_uuid = u.is_clustered ? u.cluster_uuid : '';
-            cNode.cluster_name = targetNodeName;
-            cNode.size = (cNode.size || 0) + 1;
-            cNode.stability = 1.0;
-            cNode.cohesion = u.cohesion || 0;
-            cNode.avg_features = u.avg_features || 0;
-
-            if (u.func_id) {
-                const fNodeId = 'funcgroup_a_' + (u.is_clustered ? u.cluster_uuid : u.func_id);
-                funcParentMap.set(fNodeId, u.is_clustered ? u.cluster_uuid : 'unclustered_a_group');
-                const fNode = getNode(fNodeId, [getFuncDisplayName(u.func_id)], '#f92672', [u.func_id]);
-                links.push({ source: fNode.index, target: cNode.index, value: getFuncValue(u.func_id) });
-            }
-        });
-        
-        // 3. Unmatched to B Functions
-        sortedUniqueB.forEach(u => {
-            const targetNodeId = u.is_clustered ? ('cluster_' + u.cluster_uuid) : 'unclustered_b_group';
-            const targetNodeName = u.is_clustered ? u.cluster_name : 'Unclustered';
-            const cNode = getNode(targetNodeId, targetNodeName, '#66d9ef');
-            cNode.cluster_uuid = u.is_clustered ? u.cluster_uuid : '';
-            cNode.cluster_name = targetNodeName;
-            cNode.size = (cNode.size || 0) + 1;
-            cNode.stability = 1.0;
-            cNode.cohesion = u.cohesion || 0;
-            cNode.avg_features = u.avg_features || 0;
-
-            if (u.func_id) {
-                const fNodeId = 'funcgroup_b_' + (u.is_clustered ? u.cluster_uuid : u.func_id);
-                funcParentMap.set(fNodeId, u.is_clustered ? u.cluster_uuid : 'unclustered_b_group');
-                const fNode = getNode(fNodeId, [getFuncDisplayName(u.func_id)], '#66d9ef', [u.func_id]);
-                links.push({ source: cNode.index, target: fNode.index, value: getFuncValue(u.func_id) });
-            }
-        });
-    }
-    
-    const nodes = Array.from(nodesMap.values());
-    
-    if (nodes.length === 0 || links.length === 0) {
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">Not enough data for graph</div>';
-        return;
-    }
-    
-    const maxPaddingLimit = maxNodesInColumn > 30 ? 2 : 8;
-    const dynamicPadding = Math.max(2, Math.min(maxPaddingLimit, Math.floor((height - 50) / (maxNodesInColumn + 1))));
-
-    const marginX = 25;
-
-    const sankey = d3.sankey()
-        .nodeWidth(15)
-        .nodePadding(dynamicPadding)
-        .nodeAlign((node) => {
-            if (node.alignOverride !== undefined) return node.alignOverride;
-            if (node.id.startsWith('funcgroup_a_')) return 0;
-            if (node.id.startsWith('funcgroup_b_')) return 2;
-            return 1; // cluster_
-        })
-        .extent([[marginX, 10], [width - marginX, height - 10]])
-        .nodeSort((a, b) => {
-            const getNodeSortRank = (n) => {
-                if (n.id.startsWith('tag_')) {
-                    // tag_<a|b|c|ua|ub>_<tagIdx>[_<binGroup>]
-                    const m = n.id.match(/^tag_(a|b|c|ua|ub)_(\d+)(?:_(\d+))?$/);
-                    if (m) {
-                        const kind = m[1];
-                        const tagIdx = parseInt(m[2], 10);
-                        const type = kind === 'a' ? 0 : (kind === 'b' ? 2 : 1);
-                        // Within a tag: best-matching bins first, unmatched last.
-                        let sub = 0;
-                        if (kind === 'c') sub = 100 - parseInt(m[3] || '0', 10);
-                        else if (kind === 'ua' || kind === 'ub') sub = 500;
-                        return { type: type, rank: tagIdx * 1000 + sub };
-                    }
-                }
-                if (n.id.startsWith('simplified_')) {
-                    const binMatch = n.id.match(/_bin_(\d+)/);
-                    let rank = 0;
-                    if (binMatch) {
-                        const binIdx = parseInt(binMatch[1]);
-                        const sortDir = (binSimSortState.matched && binSimSortState.matched.dir) !== undefined 
-                            ? binSimSortState.matched.dir 
-                            : -1;
-                        const numBins = Math.round(100 / sankeySplit);
-                        rank = sortDir === -1 ? ((numBins - 1) - binIdx) : binIdx;
-                    } else {
-                        const isMatched = n.id.includes('_matched');
-                        rank = isMatched ? 0 : (n.id.includes('uniqueA') ? 100 : 200);
-                    }
-                    const type = n.id.includes('_a_') ? 0 : (n.id.includes('_c_') ? 1 : 2);
-                    return { type: type, rank: rank };
-                }
-                
-                if (n.id.startsWith('cluster_')) {
-                    const uuid = n.id.replace('cluster_', '');
-                    if (matchedRank.has(uuid)) return { type: 0, rank: matchedRank.get(uuid) };
-                    if (uniqueARank.has(uuid)) return { type: 1, rank: uniqueARank.get(uuid) };
-                    if (uniqueBRank.has(uuid)) return { type: 2, rank: uniqueBRank.get(uuid) };
-                    return { type: 3, rank: 999 };
-                }
-                
-                if (n.id.startsWith('funcgroup_a_')) {
-                    const parentUuid = funcParentMap.get(n.id);
-                    if (matchedRank.has(parentUuid)) return { type: 0, rank: matchedRank.get(parentUuid) };
-                    if (uniqueARank.has(parentUuid)) return { type: 1, rank: uniqueARank.get(parentUuid) };
-                    return { type: 3, rank: 999 };
-                }
-                
-                if (n.id.startsWith('funcgroup_b_')) {
-                    const parentUuid = funcParentMap.get(n.id);
-                    if (matchedRank.has(parentUuid)) return { type: 0, rank: matchedRank.get(parentUuid) };
-                    if (uniqueBRank.has(parentUuid)) return { type: 2, rank: uniqueBRank.get(parentUuid) };
-                    return { type: 3, rank: 999 };
-                }
-                return { type: 3, rank: 999 };
-            };
-            
-            const rA = getNodeSortRank(a);
-            const rB = getNodeSortRank(b);
-            if (rA.type !== rB.type) {
-                return rA.type - rB.type;
-            }
-            return rA.rank - rB.rank;
-        });
-        
-    let graph;
-    try {
-        graph = sankey({
-            nodes: nodes.map(d => Object.assign({}, d)),
-            links: links.map(d => Object.assign({}, d))
-        });
-    } catch(e) {
-        console.error("Sankey layout failed", e);
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--danger);">Graph layout error</div>';
-        return;
-    }
-    
-    // Add Links
-    zoomG.append("g")
-        .selectAll("path")
-        .data(graph.links)
-        .enter().append("path")
-        .attr("d", d => {
-            const x0 = d.source.x1;
-            const x1 = d.target.x0;
-            const x2 = x0 + (x1 - x0) * 0.4;
-            const x3 = x0 + (x1 - x0) * 0.6;
-            
-            const y0_top = d.source.y0;
-            const y0_bot = d.source.y1;
-            const y1_top = d.target.y0;
-            const y1_bot = d.target.y1;
-            
-            return `M ${x0},${y0_top}
-                    C ${x2},${y0_top} ${x3},${y1_top} ${x1},${y1_top}
-                    L ${x1},${y1_bot}
-                    C ${x3},${y1_bot} ${x2},${y0_bot} ${x0},${y0_bot}
-                    Z`;
-        })
-        .attr("stroke", "none")
-        .attr("stroke-width", 0)
-        .attr("fill", d => d.target.color || 'var(--text)')
-        .style("fill-opacity", 0.4)
-        .style("cursor", d => (d.source.id.startsWith('funcgroup_') || d.target.id.startsWith('funcgroup_')) ? "pointer" : "default")
-        .on("mouseenter", function(event, d) { 
-            d3.select(this).style("fill-opacity", 0.8);
-            const sourceIsFuncGroup = d.source.id.startsWith('funcgroup_');
-            const targetIsFuncGroup = d.target.id.startsWith('funcgroup_');
-            const isDetailedLink = sourceIsFuncGroup || targetIsFuncGroup;
-            if (isDetailedLink) {
-                const funcNode = sourceIsFuncGroup ? d.source : d.target;
-                const clusterNode = sourceIsFuncGroup ? d.target : d.source;
-                const funcsList = funcNode.funcs || [];
-                
-                const customMembers = funcsList.map(fid => {
-                    const meta = (binSimDataCache && binSimDataCache.functions_metadata) ? binSimDataCache.functions_metadata[fid] : null;
-                    const parts = fid.split(':');
-                    const entry = parts.pop();
-                    const md5 = parts.pop();
-                    const function_name = meta && meta.name ? meta.name : ('sub_' + entry);
-                    const return_type = meta && meta.return_type ? meta.return_type : 'void';
-                    const parameters = meta && meta.parameters ? (Array.isArray(meta.parameters) ? meta.parameters : [meta.parameters]) : [];
-                    const bsim_features_count = meta && meta.bsim_features_count ? parseInt(meta.bsim_features_count) : 0;
-                    const namespace = meta && meta.namespace ? meta.namespace : '';
-                    const entrypoint_address = meta && meta.entrypoint_address ? meta.entrypoint_address : ('0x' + entry);
-                    
-                    return {
-                        function_id: fid,
-                        function_name: function_name,
-                        return_type: return_type,
-                        parameters: parameters,
-                        bsim_features_count: bsim_features_count,
-                        namespace: namespace,
-                        entrypoint_address: entrypoint_address
-                    };
-                });
-                
-                if (window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) {
-                    const cleanName = clusterNode.cluster_name.replace(/'/g, "\\'");
-                    window.parent.showClusterTableTooltipFromIframe(
-                        window.name, 
-                        clusterNode.cluster_uuid + '_path_' + funcNode.id, 
-                        cleanName + ' (Path Functions)', 
-                        customMembers.length, 
-                        1.0, 
-                        clusterNode.cohesion || 0, 
-                        clusterNode.avg_features || 0, 
-                        event,
-                        customMembers
-                    );
-                } else if (window.showClusterTableTooltip) {
-                    const cleanName = clusterNode.cluster_name.replace(/'/g, "\\'");
-                    window.showClusterTableTooltip(
-                        event,
-                        clusterNode.cluster_uuid + '_path_' + funcNode.id, 
-                        cleanName + ' (Path Functions)', 
-                        customMembers.length, 
-                        1.0, 
-                        clusterNode.cohesion || 0, 
-                        clusterNode.avg_features || 0, 
-                        customMembers
-                    );
-                }
-            }
-        })
-        .on("mousemove", function(event) {
-            if (window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) {
-                window.parent.moveClusterTableTooltipFromIframe(window.name, event);
-            } else if (window.moveClusterTableTooltip) {
-                window.moveClusterTableTooltip(event);
-            }
-        })
-        .on("mouseleave", function(event) { 
-            d3.select(this).style("fill-opacity", 0.4); 
-            handleIframeMouseLeave(event);
-        })
-        .append("title")
-        .text(d => {
-            const formatNodeName = (node) => {
-                if (Array.isArray(node.name)) {
-                    const V = sumFuncsValue(node.funcs);
-                    const suffix = sankeyScale === 'features' ? 'feats' : 'funcs';
-                    return `${node.funcs.length} Functions (Total: ${V} ${suffix}):\n${node.name.map((n, idx) => `  - ${n} (${getFuncValue(node.funcs[idx])} ${suffix})`).join('\n')}`;
-                }
-                const suffix = sankeyScale === 'features' ? 'feats' : 'funcs';
-                return `${node.name} (${d.value} ${suffix})`;
-            };
-            return `${formatNodeName(d.source)}\n  ↓\n${formatNodeName(d.target)}`;
-        });
-        
-    // Add Nodes
-    const node = zoomG.append("g")
-        .selectAll(".node")
-        .data(graph.nodes)
-        .enter().append("g")
-        .attr("class", "node")
-        .attr("transform", d => `translate(${d.x0},${d.y0})`);
-        
-    node.each(function(d) {
-        const el = d3.select(this);
-        const height = d.y1 - d.y0;
-        const width = sankey.nodeWidth();
-        
-        if (d.id.startsWith('funcgroup_') && d.funcs && d.funcs.length > 0) {
-            const V = sumFuncsValue(d.funcs);
-            let currentY = 0;
-            
-            d.funcs.forEach((fid, idx) => {
-                const val = getFuncValue(fid);
-                const h = height * (val / V);
-                
-                el.append("rect")
-                    .attr("y", currentY)
-                    .attr("height", h)
-                    .attr("width", width)
-                    .attr("fill", d.color)
-                    .attr("stroke", "var(--border)")
-                    .attr("stroke-width", "0.5px")
-                    .attr("opacity", 0.6);
-                    
-                const name = d.name[idx];
-                el.append("text")
-                    .attr("x", d.id.startsWith('funcgroup_b_') ? -6 : 6 + width)
-                    .attr("y", currentY + h / 2)
-                    .attr("dy", "0.35em")
-                    .attr("text-anchor", d.id.startsWith('funcgroup_b_') ? "end" : "start")
-                    .text(name)
-                    .attr("fill", "var(--text)")
-                    .attr("font-size", "8px")
-                    .attr("font-weight", "normal")
-                    .attr("opacity", 0.7)
-                    .attr("font-family", "sans-serif");
-                    
-                currentY += h;
-            });
-            
-            const metricSuffix = sankeyScale === 'features' ? 'feats' : 'funcs';
-            const cohesionText = (d.cohesion !== undefined) ? ` [Cohesion: ${d.cohesion.toFixed(2)}]` : '';
-            el.append("title")
-                .text(`${d.funcs.length} Functions (Total: ${V} ${metricSuffix})${cohesionText}:\n` + 
-                      d.funcs.map((fid, idx) => `  - ${d.name[idx]} (${getFuncValue(fid)} ${metricSuffix})`).join('\n'));
-        } else {
-            if (d.id.startsWith('cluster_')) {
-                el.style("cursor", "pointer")
-                  .on("mouseenter", function(event) {
-                      if (window.parent && window.parent.showClusterTableTooltipFromIframe && window.parent !== window) {
-                          const cleanName = d.cluster_name.replace(/'/g, "\\'");
-                          window.parent.showClusterTableTooltipFromIframe(
-                              window.name, 
-                              d.cluster_uuid, 
-                              cleanName, 
-                              d.size, 
-                              d.stability || 1.0, 
-                              d.cohesion || 0, 
-                              d.avg_features || 0, 
-                              event
-                          );
-                      } else if (window.showClusterTableTooltip) {
-                          const cleanName = d.cluster_name.replace(/'/g, "\\'");
-                          window.showClusterTableTooltip(
-                              event,
-                              d.cluster_uuid, 
-                              cleanName, 
-                              d.size, 
-                              d.stability || 1.0, 
-                              d.cohesion || 0, 
-                              d.avg_features || 0
-                          );
-                      }
-                  })
-                  .on("mousemove", function(event) {
-                      if (window.parent && window.parent.moveClusterTableTooltipFromIframe && window.parent !== window) {
-                          window.parent.moveClusterTableTooltipFromIframe(window.name, event);
-                      } else if (window.moveClusterTableTooltip) {
-                          window.moveClusterTableTooltip(event);
-                      }
-                  })
-                  .on("mouseleave", handleIframeMouseLeave)
-                  .on("click", function(event) {
-                      const cleanName = d.cluster_name.replace(/'/g, "\\'");
-                      openClusterView(d.cluster_uuid, cleanName, event);
-                  });
-            }
-
-            el.append("rect")
-                .attr("height", height)
-                .attr("width", width)
-                .attr("fill", d.color)
-                .attr("stroke", "var(--border)")
-                .attr("stroke-width", "0.5px")
-                .attr("opacity", 0.6)
-                .append("title")
-                .text(`${d.name}${d.cohesion !== undefined ? `\nCohesion: ${d.cohesion.toFixed(2)}` : ''}\n${sankeyScale === 'features' ? 'Features' : 'Functions'}: ${d.value}`);
-                
-            el.append("text")
-                .attr("x", d.id.startsWith('func_b_') || d.id.startsWith('funcgroup_b_') || d.id.startsWith('simplified_b_') ? -6 : 6 + width)
-                .attr("y", height / 2)
-                .attr("dy", "0.35em")
-                .attr("text-anchor", d.id.startsWith('func_b_') || d.id.startsWith('funcgroup_b_') || d.id.startsWith('simplified_b_') ? "end" : "start")
-                .text(d.name)
-                .attr("fill", "var(--text)")
-                .attr("font-size", "8px")
-                .attr("font-weight", "normal")
-                .attr("opacity", 0.7)
-                .attr("font-family", "sans-serif");
-        }
-    });
-}
-
 // There is one table now, so sorting always means the same thing. The header is
 // rebuilt in place rather than re-rendered so the filter inputs keep focus.
 function setBinSimSort(table, col) {
@@ -2317,29 +1652,19 @@ function restoreFileSimFilters() {
     });
 }
 
-// Any change to sort or filters invalidates every already-fetched page: rows
-// that were in a group may no longer belong there.
-function reloadFileSimRows() {
-    // Folding is untouched -- only the rows are stale. Dropping the page state
-    // makes every open node re-fetch on the next render.
+// Tree folding is untouched -- only the rows are stale. Dropping the page state
+// makes every open node re-fetch on the next render.
+function dropFileSimRowCache() {
     fileSimRows = {};
     fileSimFoldRows = {};
     fileSimOpenFolds.clear();
-    renderFileSimTable();
 }
 
-// Pre-seed the shared cluster tooltip cache with sample members shipped on the row, so the
-// tooltip renders them directly instead of fetching by collection (which fails for
-// cross-collection / pool bin-sim). No-op when the cluster has no samples. [[dynamic]]
-function seedBinSimClusterSamples(cd) {
-    if (!cd || !cd.cluster_uuid || !cd.sample_functions || !cd.sample_functions.length) return;
-    if (!window.clusterTooltipMockCache) return;
-    window.clusterTooltipMockCache.set(cd.cluster_uuid, { data: {
-        uuid: cd.cluster_uuid, name: cd.cluster_name,
-        size: Number(cd.member_count || 0), stability: Number(cd.cluster_stability || 0),
-        cohesion: Number(cd.cohesion_score || 0), avg_features: Number(cd.avg_features || 0),
-        runtime_members: cd.sample_functions, scrollOffset: 0
-    }});
+// Any change to sort or filters invalidates every already-fetched page: rows
+// that were in a group may no longer belong there.
+function reloadFileSimRows() {
+    dropFileSimRowCache();
+    renderFileSimRows();
 }
 
 function buildFuncObj(fid) {
@@ -2486,54 +1811,6 @@ function binSimFilterParams(prefix) {
     const rmax = val(`bsim-flt-${prefix}-rar-max`); if (rmax) p.rar_max = rmax;
     return p;
 }
-
-window.setSankeyMode = function(mode) {
-    sankeyMode = mode;
-    const btnDet = document.getElementById('bsim-sankey-btn-detailed');
-    const btnSimp = document.getElementById('bsim-sankey-btn-simplified');
-    const btnTags = document.getElementById('bsim-sankey-btn-tags');
-    if (btnDet && btnSimp) {
-        btnDet.classList.toggle('active', mode === 'detailed');
-        btnSimp.classList.toggle('active', mode === 'simplified');
-    }
-    if (btnTags) btnTags.classList.toggle('active', mode === 'tags');
-    const splitToggle = document.getElementById('bin-sim-sankey-split-toggle');
-    if (splitToggle) {
-        splitToggle.style.display = mode === 'detailed' ? 'none' : 'flex';
-    }
-    if (binSimDataCache) {
-        renderBinaryDiffSankey(binSimDataCache);
-    }
-};
-
-window.setSankeySplit = function(split) {
-    sankeySplit = split;
-    const splitToggle = document.getElementById('bin-sim-sankey-split-toggle');
-    if (splitToggle) {
-        const buttons = splitToggle.querySelectorAll('.view-btn');
-        buttons.forEach(btn => {
-            const clickAttr = btn.getAttribute('onclick') || '';
-            const isTarget = clickAttr.includes(`(${split})`);
-            btn.classList.toggle('active', isTarget);
-        });
-    }
-    if (binSimDataCache) {
-        renderBinaryDiffSankey(binSimDataCache);
-    }
-};
-
-window.setSankeyScale = function(scale) {
-    sankeyScale = scale;
-    const btnCount = document.getElementById('bsim-sankey-scale-btn-count');
-    const btnFeat = document.getElementById('bsim-sankey-scale-btn-features');
-    if (btnCount && btnFeat) {
-        btnCount.classList.toggle('active', scale === 'count');
-        btnFeat.classList.toggle('active', scale === 'features');
-    }
-    if (binSimDataCache) {
-        renderBinaryDiffSankey(binSimDataCache);
-    }
-};
 
 function applyBinSimSearch() {
     if (window.filterDebounceTimer) clearTimeout(window.filterDebounceTimer);
@@ -2727,7 +2004,7 @@ window.refreshFunctionRow = async function(funcId) {
                 note_owners: f.note_owners || [],
                 note_count: f.note_count || 0
             };
-            renderFileSimTable();
+            renderFileSimRows();
         }
     } catch (e) {
         console.error("Failed to refresh function note badge in comparison view:", e);
@@ -2761,11 +2038,11 @@ function renderBinSimStrip(containerId, m, fileId) {
     `;
 }
 
-// ---- Tab switching: Matched / Unmatched / Graph / Metadata / Inferred ----
+// ---- Tab switching: Summary / All / Matched / Unmatched / Metadata / Clusters ----
 // Detail tabs (scoped by the tree) and sidebar pages (not scoped). Both live in
 // the same hash so Back/forward restores either.
 const BIN_SIM_DETAIL_TABS = ['summary', 'all', 'matched', 'unmatched'];
-const BIN_SIM_NAV_PAGES = ['graph', 'metadata', 'inferred'];
+const BIN_SIM_NAV_PAGES = ['metadata', 'inferred'];
 const BIN_SIM_TABS = BIN_SIM_DETAIL_TABS.concat(BIN_SIM_NAV_PAGES);
 
 // Which DOM panel backs each tab. All / Matched / Unmatched share one panel --
@@ -2781,7 +2058,13 @@ function binSimPanelFor(tab) {
 window.switchBinSimTab = function(tab, push = true) {
     if (!BIN_SIM_TABS.includes(tab)) tab = 'summary';
     const isNav = BIN_SIM_NAV_PAGES.includes(tab);
-    if (!isNav) fileSimTab = tab;
+    // Pages are cached per tree node, not per tab, and each tab sends a different
+    // `state` filter -- so a tab change makes every fetched page stale. Without
+    // this the table kept showing whatever the previous tab had loaded.
+    if (!isNav) {
+        if (tab !== fileSimTab) dropFileSimRowCache();
+        fileSimTab = tab;
+    }
 
     const shown = binSimPanelFor(tab);
     ['summary', 'table', 'filesim'].concat(BIN_SIM_NAV_PAGES).forEach(p => {
@@ -2800,10 +2083,6 @@ window.switchBinSimTab = function(tab, push = true) {
     // scope you were reading is still there when you come back.
     const sidebar = document.getElementById('bsim-sidebar');
     if (sidebar) sidebar.classList.toggle('nav-active', isNav);
-    // Sankey needs a visible (non-zero) container to size itself; render on show.
-    if (tab === 'graph' && binSimDataCache) {
-        renderBinaryDiffSankey(binSimDataCache);
-    }
     if ((tab === 'metadata' || tab === 'inferred') && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
     if (!isNav && binSimDataCache) renderFileSim(binSimDataCache);
 

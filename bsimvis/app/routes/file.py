@@ -457,6 +457,7 @@ def _ingest_raw_binary(
     if parent_md5:
         extra_meta["parent_md5"] = parent_md5
         extra_meta["parent_file_name"] = parent_file_name
+        extra_meta["path_in_parent"] = file_name
     if root_md5:
         extra_meta["root_md5"] = root_md5
     if extra_meta:

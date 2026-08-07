@@ -182,8 +182,9 @@ class ProcessingService:
         # nothing.
         parent_md5 = coll_file_meta.get("parent_md5")
         if parent_md5:
+            path = coll_file_meta.get("path_in_parent") or coll_file_meta.get("file_name", "")
             lineage_service.record(
-                collection, parent_md5, file_md5, coll_file_meta.get("file_name", "")
+                collection, parent_md5, file_md5, path
             )
         lineage_service.record_function_count(collection, file_md5, num_functions)
 

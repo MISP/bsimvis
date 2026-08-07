@@ -864,13 +864,15 @@ def _lineage_nodes(collection, edges, r):
     for edge in edges:
         pipe.get(f"{collection}:file:{edge['md5']}:meta")
         # Lets a tree row know whether it expands without a round trip per node.
-        pipe.scard(f"{collection}:lineage:children:{edge['md5']}")
+        # SMEMBERS, not SCARD: the set holds more than one spelling per edge.
+        pipe.smembers(f"{collection}:lineage:children:{edge['md5']}")
     containers = lineage_service.container_md5s(collection, r)
 
     results = pipe.execute()
     nodes = []
     for i, edge in enumerate(edges):
-        raw, child_count = results[2 * i], results[2 * i + 1]
+        raw = results[2 * i]
+        child_count = lineage_service.count_members(results[2 * i + 1])
         meta = {}
         if raw:
             try:

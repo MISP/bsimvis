@@ -59,13 +59,40 @@ def record(coll, parent_md5, child_md5, path="", r=None):
     pipe.execute()
 
 
+def _path_rank(path):
+    """How much a path says about where the file sat. Deeper and longer wins."""
+    return (path.count("/"), len(path))
+
+
 def _edges(key, r):
-    out = []
+    """One edge per related file, however many spellings the set holds.
+
+    The same containment is recorded from two places: the unpack route knows
+    the full archive path (`lib/armeabi/libfoo.so`), the indexer only ever has
+    the file name (`libfoo.so`). Both land in the set as separate members, so
+    without this the same child is listed -- and counted -- twice. The most
+    specific path wins; the rest are the same edge said less precisely.
+    """
+    best = {}
     for m in r.smembers(key):
         md5, _, path = _txt(m).partition("|")
-        if md5:
-            out.append({"md5": md5, "path": path})
-    return sorted(out, key=lambda e: (e["path"], e["md5"]))
+        if not md5:
+            continue
+        if md5 not in best or _path_rank(path) > _path_rank(best[md5]):
+            best[md5] = path
+    return sorted(
+        ({"md5": md5, "path": path} for md5, path in best.items()),
+        key=lambda e: (e["path"], e["md5"]),
+    )
+
+
+def count_members(members):
+    """Distinct related files in a raw children/parents set.
+
+    For callers that pulled the set through a pipeline and only want its size:
+    SCARD would count the duplicate spellings that _edges() collapses.
+    """
+    return len({_txt(m).partition("|")[0] for m in (members or ())})
 
 
 def children(coll, md5, r=None):
@@ -114,10 +141,18 @@ def forget(coll, md5, r=None):
     r = r or get_redis()
     former_parents = parents(coll, md5, r)
     pipe = r.pipeline(transaction=False)
+
+    # Every stored spelling has to go, not just the one _edges() picked, or the
+    # losing member survives as an edge to a file that no longer exists.
+    def drop_from(key):
+        for m in r.smembers(key):
+            if _txt(m).partition("|")[0] == md5:
+                pipe.srem(key, _txt(m))
+
     for edge in children(coll, md5, r):
-        pipe.srem(_key(coll, "parents", edge["md5"]), f"{md5}|{edge['path']}")
+        drop_from(_key(coll, "parents", edge["md5"]))
     for edge in former_parents:
-        pipe.srem(_key(coll, "children", edge["md5"]), f"{md5}|{edge['path']}")
+        drop_from(_key(coll, "children", edge["md5"]))
         pipe.hdel(_key(coll, "funcs", edge["md5"]), md5)
     pipe.delete(_key(coll, "children", md5))
     pipe.delete(_key(coll, "parents", md5))
@@ -223,7 +258,9 @@ def demo():
     record(coll, so, nested, "libfoo.so.unpacked", r)
     record(coll, apk, apk, "self", r)  # self-edge, must be ignored
 
-    assert [e["md5"] for e in children(coll, apk, r)] == [dex, so], children(coll, apk, r)
+    assert [e["md5"] for e in children(coll, apk, r)] == [dex, so], children(
+        coll, apk, r
+    )
     assert children(coll, apk, r)[0]["path"] == "classes.dex"
     assert [e["md5"] for e in parents(coll, nested, r)] == [so]
     assert {e["md5"] for e in descendants(coll, apk, r)} == {dex, so, nested}
@@ -234,12 +271,38 @@ def demo():
     record(coll, other, dex, "classes.dex", r)
     assert {e["md5"] for e in parents(coll, dex, r)} == {apk, other}
 
+    # The same edge recorded again under a less specific path is still one
+    # edge, and it keeps the path that says the most.
+    record(coll, apk, so, "libfoo.so", r)
+    assert [e["md5"] for e in children(coll, apk, r)] == [dex, so], children(
+        coll, apk, r
+    )
+    assert [e["path"] for e in children(coll, apk, r) if e["md5"] == so] == [
+        "lib/arm64-v8a/libfoo.so"
+    ]
+    assert count_members(r.smembers(_key(coll, "children", apk))) == 2
+    assert [e["md5"] for e in parents(coll, so, r)] == [apk]
+
+    # Forgetting a twice-recorded child takes every spelling with it, or the
+    # loser survives as an edge pointing at a file that is gone.
+    twin = "t" * 32
+    record(coll, apk, twin, "res/twin.so", r)
+    record(coll, apk, twin, "twin.so", r)
+    assert count_members(r.smembers(_key(coll, "children", apk))) == 3
+    forget(coll, twin, r)
+    assert not [
+        m for m in r.smembers(_key(coll, "children", apk)) if _txt(m).startswith(twin)
+    ]
+    assert count_members(r.smembers(_key(coll, "children", apk))) == 2
+
     # Counts roll up only into containers, and re-recording does not double.
     mark_container(coll, apk, r)
     record_function_count(coll, dex, 10, r)
     record_function_count(coll, nested, 5, r)
     record_function_count(coll, nested, 5, r)
-    assert subtree_function_count(coll, apk, r) == 15, subtree_function_count(coll, apk, r)
+    assert subtree_function_count(coll, apk, r) == 15, subtree_function_count(
+        coll, apk, r
+    )
     assert subtree_function_count(coll, so, r) == 0  # not a container, not restated
 
     for m in (apk, other, dex, so, nested):

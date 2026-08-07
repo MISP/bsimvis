@@ -208,21 +208,118 @@ window.TableRenderers = {
     // ... renderFiles (needs update)
 
     /**
-     * `opts.depth` > 0 renders the row as an injected lineage child: indented,
-     * labelled with its path inside its container. Depth 0 rows that came out
-     * of a container instead name that container underneath the file name, so
-     * a filtered search (a bookmark, a tag) says what the hit sits in rather
-     * than showing a bare extracted file with no context.
+     * A page of file rows, drawn as containment trees.
      *
-     * Every row the server returned is rendered. A match is a match even when
-     * its container also matched and sits on the same page; hiding it there
-     * made "shown / total" lie and dropped the row the filter was about.
+     * Every match is rendered exactly once, underneath the container it came
+     * out of. Whether the container matched the filter too makes no difference
+     * to where the child sits: if the container is on the page it becomes the
+     * child's parent row, and if it is not, a context row standing for it is
+     * drawn instead. So a filtered search never yields a file floating free of
+     * its archive, and never yields the same file in two places.
+     *
+     * `opts.injected` renders the given rows flat at `opts.depth` instead --
+     * that is the path Lineage.toggleRow() uses for rows it splices in by hand.
      */
     renderFiles: function(data, clustersMap = {}, opts = {}) {
-        const { collection } = getRoutingState();
-        const depth = opts.depth || 0;
+        if (opts.injected) {
+            return TableRenderers._fileRows(data, clustersMap, opts.depth || 0, opts.parentMd5, true);
+        }
+        return TableRenderers._fileForest(data, clustersMap);
+    },
 
-        return data.map(f => {
+    /**
+     * Groups a page into trees, then walks them in the order the server sent.
+     * A parent that is itself on the page anchors its children; a parent that
+     * is not gets one context row, shared by all of its matches.
+     */
+    _fileForest: function(data, clustersMap) {
+        const onPage = new Map(data.map(f => [f['file_md5'], f]));
+        const kids = new Map();      // on-page parent md5 -> its matching children
+        const absent = new Map();    // off-page parent md5 -> context row + children
+
+        for (const f of data) {
+            const p = f['parent_md5'];
+            if (!p || p === f['file_md5']) continue;
+            if (onPage.has(p)) {
+                if (!kids.has(p)) kids.set(p, []);
+                kids.get(p).push(f);
+            } else {
+                if (!absent.has(p)) {
+                    absent.set(p, { file_md5: p, file_name: f['parent_file_name'] || p, rows: [] });
+                }
+                absent.get(p).rows.push(f);
+            }
+        }
+
+        const drawn = new Set();
+        const subtree = (f, depth) => {
+            if (drawn.has(f['file_md5'])) return '';
+            drawn.add(f['file_md5']);
+            let out = TableRenderers._fileRows([f], clustersMap, depth, f['parent_md5']);
+            for (const c of (kids.get(f['file_md5']) || [])) out += subtree(c, depth + 1);
+            return out;
+        };
+
+        let html = '';
+        for (const f of data) {
+            if (drawn.has(f['file_md5'])) continue;
+            const p = f['parent_md5'];
+            if (p && onPage.has(p)) continue;        // drawn under its parent instead
+            if (p) {
+                const group = absent.get(p);
+                if (group.drawn) continue;
+                group.drawn = true;
+                html += TableRenderers._contextRow(group, f);
+                for (const c of group.rows) html += subtree(c, 1);
+            } else {
+                html += subtree(f, 0);
+            }
+        }
+        // A parent_md5 cycle would leave rows unreachable from any root.
+        for (const f of data) {
+            if (!drawn.has(f['file_md5'])) html += subtree(f, 0);
+        }
+        return html;
+    },
+
+    /**
+     * Stands in for a container that holds matches but did not match itself.
+     * Identity only -- it is context, not a result -- and it expands like any
+     * other container row.
+     */
+    _contextRow: function(group, child) {
+        const { collection } = getRoutingState();
+        const col = child['collection'] || (child['file_id'] || '').split(':')[0] || collection;
+        const name = escapeHtml(middleTruncate(group.file_name, 46));
+        return `
+            <tr class="sim-row lineage-context-row" style="font-size:0.75rem; opacity:0.8;"
+                data-lineage-depth="0" data-lineage-md5="${escapeAttr(group.file_md5)}"
+                data-lineage-col="${escapeAttr(col)}" data-lineage-open="0">
+                <td class="sim-cell">
+                    <div class="lineage-cell">
+                        ${Lineage.toggleButton(group.rows.length)}
+                        <i class="fa-solid fa-box-archive dim" title="Container of the matches below" style="font-size:0.7rem;"></i>
+                        <b class="lineage-link" title="${escapeAttr(group.file_name)}"
+                            onclick="openFileDetails(${escapeAttr(jsString(col))}, ${escapeAttr(jsString(group.file_md5))}, ${escapeAttr(jsString(group.file_name))}, event)">${name}</b>
+                        <span class="dim" style="font-size:0.65rem;">contains ${group.rows.length} match${group.rows.length === 1 ? '' : 'es'}</span>
+                    </div>
+                </td>
+                <td class="sim-cell">${EntityRenderer.renderMd5(group.file_md5, { full: true })}</td>
+                <td class="sim-cell"></td>
+                <td class="sim-cell"></td>
+                <td class="sim-cell"></td>
+                <td class="sim-cell"></td>
+                <td class="sim-cell"></td>
+                <td class="sim-cell"></td>
+                <td class="sim-cell"></td>
+                ${renderCollectionCell(col)}
+            </tr>`;
+    },
+
+    /** The file rows themselves, all at one depth under one parent. */
+    _fileRows: function(rows, clustersMap, depth, parentMd5, injected) {
+        const { collection } = getRoutingState();
+        return rows.map(f => {
             // Base collection: pool searches span collections, so fall back to the id prefix.
             const col = f.collection || (f['file_id'] || '').split(':')[0] || collection;
             const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
@@ -241,17 +338,19 @@ window.TableRenderers = {
                 ? Lineage.nodeName(f, targetCol, { max: 40 })
                 : `<b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(f['file_md5']))}, ${escapeAttr(jsString(f['file_name'] || ''))}, event)">${escapeHtml(f['file_name'])}</b>`;
 
-            const contextHtml = depth > 0
-                ? Lineage.pathLabel(f, 38)
-                : (f['parent_md5']
-                    ? `<div class="lineage-path" title="${escapeAttr(f['parent_file_name'] || f['parent_md5'])}">in <b class="lineage-link" onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(f['parent_md5']))}, ${escapeAttr(jsString(f['parent_file_name'] || ''))}, event)">${escapeHtml(middleTruncate(f['parent_file_name'] || f['parent_md5'], 38))}</b></div>`
-                    : '');
+            // The row above already names the container, so all that is left to
+            // say is where inside it the file sat. Only lineage rows carry that.
+            const contextHtml = depth > 0 ? Lineage.pathLabel(f, 38) : '';
 
-            // Depth 0 anchors the lineage tree: injected child rows carry a
-            // higher depth, which is how collapsing knows where to stop.
+            // Depth 0 anchors the lineage tree: nested rows carry a higher
+            // depth, which is how collapsing knows where to stop. data-lineage-
+            // parent is what stops an expand from re-adding a child already
+            // drawn under this same container.
             return `
             <tr class="sim-row${depth > 0 ? ' lineage-row' : ''}" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
                 data-lineage-depth="${depth}" data-lineage-md5="${escapeAttr(f['file_md5'])}"
+                data-lineage-parent="${escapeAttr(parentMd5 || f['parent_md5'] || '')}"
+                ${injected ? 'data-lineage-injected="1"' : ''}
                 data-lineage-col="${escapeAttr(targetCol)}" data-lineage-open="0"
                 data-entity-data='${escapeAttr(JSON.stringify({
                     md5: f['file_md5'],

@@ -77,9 +77,18 @@ window.Lineage = {
         try {
             const data = await this.fetch(row.dataset.lineageCol, row.dataset.lineageMd5);
             const depth = Number(row.dataset.lineageDepth || 0) + 1;
-            const html = (data.children || [])
-                .map(node => this._childRow(node, row.dataset.lineageCol, depth))
-                .join('') || this._noteRow(depth, 'No contained files.');
+            const md5 = row.dataset.lineageMd5;
+            // Children that matched the search are already drawn under this
+            // row. Expanding adds the rest of the container, not a second copy
+            // of what is on screen.
+            const shown = new Set(
+                [...(row.closest('table')?.querySelectorAll(`tr[data-lineage-parent="${CSS.escape(md5)}"]`) || [])]
+                    .map(tr => tr.dataset.lineageMd5)
+            );
+            const missing = (data.children || []).filter(node => !shown.has(node.file_md5));
+            const html = missing
+                .map(node => this._childRow(node, row.dataset.lineageCol, depth, md5))
+                .join('') || this._noteRow(depth, shown.size ? 'Nothing else contained.' : 'No contained files.');
             row.insertAdjacentHTML('afterend', html);
             row.dataset.lineageOpen = '1';
             if (icon) icon.className = 'fa-solid fa-chevron-down';
@@ -94,13 +103,17 @@ window.Lineage = {
         }
     },
 
-    /** Drops the injected subtree: every following row deeper than this one. */
+    /**
+     * Drops the injected subtree: every following row deeper than this one
+     * that this expansion put there. Rows the search itself returned stay --
+     * collapsing a container must not hide a result.
+     */
     _collapse(row) {
         const depth = Number(row.dataset.lineageDepth || 0);
         let next = row.nextElementSibling;
         while (next && Number(next.dataset.lineageDepth || 0) > depth) {
             const after = next.nextElementSibling;
-            next.remove();
+            if (next.dataset.lineageInjected === '1') next.remove();
             next = after;
         }
         row.dataset.lineageOpen = '0';
@@ -114,12 +127,12 @@ window.Lineage = {
      * is rendered by the same function, so the two can't drift apart and a
      * child stops looking like a stripped-down version of its own file.
      */
-    _childRow(node, collection, depth) {
-        return renderFiles([{ ...node, collection }], {}, { depth });
+    _childRow(node, collection, depth, parentMd5) {
+        return renderFiles([{ ...node, collection }], {}, { depth, parentMd5, injected: true });
     },
 
     _noteRow(depth, text) {
-        return `<tr class="lineage-row" data-lineage-depth="${depth}">
+        return `<tr class="lineage-row" data-lineage-depth="${depth}" data-lineage-injected="1">
             <td class="sim-cell dim" colspan="100" style="padding-left:${depth * 18 + 24}px; font-size:0.7rem;">${text}</td>
         </tr>`;
     },

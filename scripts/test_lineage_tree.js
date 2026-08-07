@@ -1,9 +1,10 @@
-// Self-check for the containment tree in lineage.js.
+// Self-check for the containment trees: the panel tree in lineage.js and the
+// file-list forest in table_renderers.js.
 //
-// The two things worth pinning: a container nested in a container is drawn
-// open, one indent level deeper than its parent (renderTree's `childrenOf`
-// recursion), and the walk that collects those nested levels terminates on a
-// cycle instead of spinning.
+// What is pinned here: a container nested in a container is drawn open one
+// indent deeper (renderTree's `childrenOf` recursion), the walk collecting
+// those levels terminates on a cycle, and a page of search hits groups into
+// trees where every match appears exactly once, under its container.
 // Run: node scripts/test_lineage_tree.js
 const fs = require('fs');
 const assert = require('assert');
@@ -82,3 +83,81 @@ const serve = graph => setFetch(async url => {
 
     console.log('lineage tree self-check OK');
 })();
+
+// --- the file list forest ----------------------------------------------
+// Grouping only. _fileRows is stubbed to "md5@depth<parent" so the assertions
+// read as the row order and nesting the page ends up with.
+const trFile = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/table_renderers.js', 'utf8');
+// Everything up to the window.* aliases at the end; those assume the object
+// is a browser global, which it is not inside a function scope.
+const trSrc = trFile.slice(0, trFile.indexOf('window.renderCollections'));
+const TableRenderers = new Function(`
+    // window.TableRenderers = {...} makes a bare global in a browser; the
+    // renderers call each other through it, so mirror that here.
+    let TableRenderers;
+    const window = {
+        set TableRenderers(v) { TableRenderers = v; },
+        get TableRenderers() { return TableRenderers; },
+    };
+    const getRoutingState = () => ({ collection: 'coll', pool: null });
+    const escapeHtml = v => String(v ?? '');
+    const escapeAttr = v => String(v ?? '');
+    const jsString = v => JSON.stringify(String(v ?? ''));
+    const middleTruncate = v => String(v ?? '');
+    const formatDate = () => '';
+    const getRowTagColor = () => '';
+    const EntityRenderer = { renderMd5: m => m, renderTag: () => '', renderFileNoteButton: () => '', renderClusterCard: () => '' };
+    const Lineage = { toggleButton: () => '', pathLabel: () => '', nodeName: n => n.file_name };
+    ${trSrc}
+    ; return window.TableRenderers;`
+)();
+
+TableRenderers._fileRows = (rows, map, depth, parentMd5) =>
+    rows.map(f => `${f.file_md5}@${depth}<${parentMd5 || ''};`).join('');
+TableRenderers._contextRow = group => `ctx:${group.file_md5}(${group.rows.length});`;
+
+const row = (md5, parent) => ({ file_md5: md5, file_name: md5, parent_md5: parent, parent_file_name: parent });
+const forest = data => TableRenderers._fileForest(data, {}).split(';').filter(Boolean);
+
+// The container matched too: its children hang off it, and only off it.
+assert.deepStrictEqual(
+    forest([row('apk'), row('dex', 'apk'), row('so', 'apk')]),
+    ['apk@0<', 'dex@1<apk', 'so@1<apk'],
+    'matches nest under an on-page container'
+);
+
+// The container did not match: one context row stands in, shared by both hits.
+assert.deepStrictEqual(
+    forest([row('dex', 'apk'), row('so', 'apk')]),
+    ['ctx:apk(2)', 'dex@1<apk', 'so@1<apk'],
+    'a container that is off the page still gets drawn, once'
+);
+
+// Two levels: apk > inner.zip > leaf.so, all three on the page.
+assert.deepStrictEqual(
+    forest([row('apk'), row('inner', 'apk'), row('leaf', 'inner')]),
+    ['apk@0<', 'inner@1<apk', 'leaf@2<inner'],
+    'nesting follows the whole chain'
+);
+
+// Server order decides where a group lands, and unrelated roots keep theirs.
+assert.deepStrictEqual(
+    forest([row('lone'), row('so', 'apk'), row('other')]),
+    ['lone@0<', 'ctx:apk(1)', 'so@1<apk', 'other@0<'],
+    'a group is drawn where its first match sorted'
+);
+
+// Every row appears exactly once, whatever the shape.
+const messy = [row('apk'), row('dex', 'apk'), row('x', 'gone'), row('y', 'gone'), row('root')];
+const drawn = forest(messy).filter(s => !s.startsWith('ctx:')).map(s => s.split('@')[0]);
+assert.deepStrictEqual(drawn.slice().sort(), ['apk', 'dex', 'root', 'x', 'y'], 'nothing is dropped');
+assert.strictEqual(new Set(drawn).size, drawn.length, 'nothing is drawn twice');
+
+// A parent_md5 cycle must still render both rows, once each.
+const cycle = forest([{ ...row('a', 'b') }, { ...row('b', 'a') }]);
+assert.deepStrictEqual(cycle.map(s => s.split('@')[0]).sort(), ['a', 'b'], 'a cycle still renders');
+
+// A row that claims itself as its own parent is a root, not a loop.
+assert.deepStrictEqual(forest([row('self', 'self')]), ['self@0<self'], 'a self-parent is ignored');
+
+console.log('file forest self-check OK');

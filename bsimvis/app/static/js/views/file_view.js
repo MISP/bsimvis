@@ -20,6 +20,7 @@ window.FileView = {
         this.functions = [];
         this.clusters = {};
         this.funcClusters = {};
+        this.file = null;
         this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
@@ -67,6 +68,7 @@ window.FileView = {
                 <i class="fa-solid fa-spinner fa-spin"></i> Loading Binary Details...
             </div>
             <div id="file-view-content" style="display: none; flex:1; overflow-y:auto; padding: 0 0 20px 0;">
+                <div id="file-lineage-breadcrumb"></div>
                 <div id="file-title-strip" class="bin-sim-strip" style="margin-bottom: 20px; cursor: context-menu;"
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                     <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
@@ -89,6 +91,8 @@ window.FileView = {
                                 <!-- Reused comparison table layout here -->
                             </div>
                         </div>
+
+                        <div id="file-lineage-panel"></div>
 
                         <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                             <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
@@ -178,6 +182,14 @@ window.FileView = {
             window.filenameCache[file.file_md5] = fileName;
             document.getElementById('file-title-text').innerText = fileName;
             document.getElementById('file-md5-text').innerText = `(MD5: ${file.file_md5})`;
+
+            // buildFunctionsQuery and the lineage panel both need the raw doc.
+            this.file = file;
+            if (file.is_container) {
+                document.getElementById('file-md5-text').insertAdjacentHTML('beforebegin',
+                    `<span class="badge" title="Container: holds code but is not code itself. Its function count is the total of everything below it."
+                        style="font-size:0.7rem; margin-right:8px;"><i class="fa-solid fa-box-archive"></i> Container</span>`);
+            }
 
             // Pre-populate functions count
             document.getElementById('functions-count').innerText = file.function_count || 0;
@@ -450,6 +462,10 @@ window.FileView = {
                 });
             }
 
+            // Breadcrumb and containment panel; not awaited, they only fill
+            // their own containers and must not hold up the rest of the view.
+            this.loadLineage(collection, file_md5);
+
             // Silently fetch functions so they're ready when switching tabs
             this.loadFunctionsTable();
 
@@ -471,6 +487,40 @@ window.FileView = {
         } catch (err) {
             console.error(err);
             document.getElementById('file-view-loader').innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color:#f92672;"></i> ${err.message}`;
+        }
+    },
+
+    /**
+     * Containment breadcrumb + "Extracted from / Contains" panel.
+     *
+     * Siblings need one extra lookup per parent: the lineage of a file lists
+     * its parents, not its parents' other children. A file usually has one
+     * parent, and multi-parent means the same child sitting in two archives,
+     * so the neighbours are grouped per parent rather than merged.
+     */
+    async loadLineage(collection, file_md5) {
+        const crumbEl = document.getElementById('file-lineage-breadcrumb');
+        const panelEl = document.getElementById('file-lineage-panel');
+        if (!crumbEl || !panelEl) return;
+        try {
+            const lin = await Lineage.fetch(collection, file_md5);
+            if (!this.container) return;   // view was destroyed mid-flight
+
+            const siblingsByParent = {};
+            await Promise.all((lin.parents || []).map(async p => {
+                if (!p.exists) return;
+                try {
+                    siblingsByParent[p.file_md5] = (await Lineage.fetch(collection, p.file_md5)).children || [];
+                } catch (e) {
+                    console.error(e);
+                }
+            }));
+            if (!this.container) return;
+
+            crumbEl.innerHTML = Lineage.renderBreadcrumb(lin, collection);
+            panelEl.innerHTML = Lineage.renderPanel(lin, collection, siblingsByParent);
+        } catch (e) {
+            console.error(e);
         }
     },
 
@@ -542,7 +592,15 @@ window.FileView = {
         const file_md5 = this.params.md5 || this.params.file_md5;
         const apiParams = (window.getApiParams || window.parent.getApiParams)(collection);
         const p = new URLSearchParams(apiParams);
-        p.set('file_md5', file_md5);
+        // A container has no functions of its own, so file_md5= would show an
+        // empty tab. Unpacking stops at MAX_DEPTH=2: root_md5 covers a whole
+        // upload, and md5 (file_md5 OR parent_md5) covers a mid-tree subtree,
+        // so between them every container's subtree is reachable.
+        if (this.file && this.file.is_container) {
+            p.set(this.file.root_md5 ? 'md5' : 'root_md5', file_md5);
+        } else {
+            p.set('file_md5', file_md5);
+        }
         p.set('offset', offset);
         p.set('limit', this.FUNC_PAGE_SIZE);
         p.set('sort_by', this.sortState.col);
@@ -656,10 +714,13 @@ window.FileView = {
             const funcName = f.function_name || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
-            const funcId = f.function_id || `${fColl}:func:${file_md5}:${entry}`;
+            // A container's tab lists its whole subtree, so the owning file is
+            // per row, not the file being viewed.
+            const fMd5 = f.file_md5 || file_md5;
+            const funcId = f.function_id || `${fColl}:func:${fMd5}:${entry}`;
             // renderFunction/context menu read these off the object; the search API may omit them
             f.collection = fColl;
-            f.file_md5 = f.file_md5 || file_md5;
+            f.file_md5 = fMd5;
             f.function_id = funcId;
 
             // Notes
@@ -677,10 +738,17 @@ window.FileView = {
             if (window.getRoutingState && window.getRoutingState().pool) {
                 poolId = window.getRoutingState().pool;
             }
-            let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${file_md5}/functions/${entry}`;
+            let detailUrl = `/collections/${encodeURIComponent(fColl)}/files/${fMd5}/functions/${entry}`;
             if (poolId) {
                 detailUrl = `/pools/${encodeURIComponent(poolId)}` + detailUrl;
             }
+
+            // Only meaningful for a container, where each row came out of a
+            // different extracted file.
+            const originHtml = fMd5 === file_md5 ? '' : `
+                <div class="lineage-path" style="margin-top:2px;">
+                    from <b class="lineage-link" onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(fColl))}, ${escapeAttr(jsString(fMd5))}, ${escapeAttr(jsString(f.file_name || ''))}, event)">${escapeHtml(middleTruncate(f.file_name || fMd5, 40))}</b>
+                </div>`;
 
             return `
                 <tr class="sim-row" style="font-size: 0.75rem;" data-id="${funcId}"
@@ -688,6 +756,7 @@ window.FileView = {
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                     <td class="sim-cell" style="min-width:300px;">
                         ${window.EntityRenderer ? window.EntityRenderer.renderFunction(f, { hideNote: true }) : funcName}
+                        ${originHtml}
                     </td>
                     <td>
                         <a class="mono" href="${detailUrl}" onclick="event.preventDefault(); Nav.openPath(${escapeAttr(jsString(detailUrl))}, event);" style="color:var(--accent); text-decoration:none;">@ ${entry}</a>
@@ -751,6 +820,7 @@ window.FileView = {
         this.functions = [];
         this.clusters = {};
         this.funcClusters = {};
+        this.file = null;
         this.funcPage = { total: null, loading: false, reqId: 0 };
         this.functionsLoaded = false;
     }

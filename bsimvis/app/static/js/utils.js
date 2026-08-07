@@ -55,6 +55,17 @@ function safeCssColor(value, fallback = '#66d9ef') {
     return fallback;
 }
 
+// Elides the middle of a long string, keeping both ends readable. Archive
+// paths differ at the tail ("lib/armeabi-v7a/libfoo.so"), so a plain
+// text-overflow ellipsis would cut off the part that identifies the file.
+function middleTruncate(value, max = 40) {
+    const s = String(value ?? '');
+    if (s.length <= max) return s;
+    const head = Math.ceil((max - 1) / 2);
+    return s.slice(0, head) + '…' + s.slice(s.length - (max - 1 - head));
+}
+window.middleTruncate = middleTruncate;
+
 function formatDate(iso) {
     if (!iso || iso === 'N/A') return '---';
     if (typeof iso === 'string' && /^\d+$/.test(iso)) {

@@ -168,6 +168,10 @@ def search_files():
                 pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters")
             else:
                 pipe.smembers(f"{doc_id}:bin_clusters")
+            # Whether this row can be expanded into a lineage subtree. Counted
+            # here rather than guessed from tags: a packed executable is not a
+            # container yet still holds children.
+            pipe.scard(f"{actual_col}:lineage:children:{md5}")
 
         results = pipe.execute()
         t2 = time.perf_counter()
@@ -177,9 +181,10 @@ def search_files():
         # First pass: collect results and unique cluster IDs
         raw_files_data = []
         for i, doc_id in enumerate(paged_ids):
-            res = results[3 * i]
-            func_count = results[3 * i + 1]
-            cluster_res = results[3 * i + 2]
+            res = results[4 * i]
+            func_count = results[4 * i + 1]
+            cluster_res = results[4 * i + 2]
+            child_count = results[4 * i + 3]
 
             if not res:
                 continue
@@ -188,7 +193,11 @@ def search_files():
             if isinstance(data, str):
                 data = json.loads(data)
 
-            data["function_count"] = func_count
+            # A container has no functions of its own; its stored count is the
+            # rolled-up subtree total that lineage_service restates.
+            if not data.get("is_container"):
+                data["function_count"] = func_count
+            data["child_count"] = child_count or 0
             data["file_id"] = doc_id
             cluster_ids = (
                 list(cluster_res) if isinstance(cluster_res, (list, set)) else []
@@ -550,11 +559,13 @@ def get_file_details(collection, file_md5):
         pipe.get(f"{file_id}:meta")
         pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
         pipe.smembers(clusters_key)
+        pipe.scard(f"{sub_collection}:lineage:children:{file_md5}")
         results = pipe.execute()
 
         res = results[0]
         func_count = results[1]
         cluster_res = results[2]
+        child_count = results[3]
 
         if not res:
             return {"error": "File not found"}, 404
@@ -563,7 +574,10 @@ def get_file_details(collection, file_md5):
         if isinstance(data, str):
             data = json.loads(data)
 
-        data["function_count"] = func_count
+        # See search_files(): a container's own count is the subtree roll-up.
+        if not data.get("is_container"):
+            data["function_count"] = func_count
+        data["child_count"] = child_count or 0
         data["file_id"] = f"{collection}:file:{file_md5}"
 
         if pool_id:

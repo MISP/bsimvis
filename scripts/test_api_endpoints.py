@@ -1046,6 +1046,40 @@ def test_lineage():
         str(listing)[:250],
     )
 
+    # The file list draws its expand toggle from child_count, so a row has to
+    # say whether it opens without the UI guessing from tags.
+    apk_row = next(
+        (f for f in (listing or {}).get("files") or [] if f.get("file_md5") == apk_md5),
+        {},
+    )
+    check(
+        "a container row carries the child count that drives the tree toggle",
+        apk_row.get("child_count") == 2 and apk_row.get("is_container") is True,
+        str(apk_row)[:250],
+    )
+
+    details = test_endpoint(
+        "GET",
+        f"/api/file/details/{apk_md5}",
+        params={"collection": coll},
+        label="GET /api/file/details/<md5> (container)",
+    )
+    check(
+        "the file view is told the file is a container and how much it holds",
+        isinstance(details, dict)
+        and details.get("file", {}).get("is_container") is True
+        and details["file"].get("child_count") == 2,
+        str(details)[:250],
+    )
+
+    # Nested tree rows need the same signal per lineage node: a node that holds
+    # nothing gets no toggle of its own.
+    check(
+        "a lineage node reports its own child count for nested expansion",
+        all(c.get("child_count") == 0 for c in (down or {}).get("children", [])),
+        str((down or {}).get("children"))[:250],
+    )
+
     requests.post(
         f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
     )

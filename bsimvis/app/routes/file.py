@@ -861,10 +861,14 @@ def _lineage_nodes(collection, edges, r):
     pipe = r.pipeline(transaction=False)
     for edge in edges:
         pipe.get(f"{collection}:file:{edge['md5']}:meta")
+        # Lets a tree row know whether it expands without a round trip per node.
+        pipe.scard(f"{collection}:lineage:children:{edge['md5']}")
     containers = lineage_service.container_md5s(collection, r)
 
+    results = pipe.execute()
     nodes = []
-    for edge, raw in zip(edges, pipe.execute()):
+    for i, edge in enumerate(edges):
+        raw, child_count = results[2 * i], results[2 * i + 1]
         meta = {}
         if raw:
             try:
@@ -880,6 +884,7 @@ def _lineage_nodes(collection, edges, r):
                 "file_name": meta.get("file_name") or edge["path"] or edge["md5"],
                 "exists": bool(raw),
                 "is_container": edge["md5"] in containers,
+                "child_count": child_count or 0,
                 "function_count": meta.get("function_count", 0),
                 "filetype": meta.get("filetype", ""),
                 "tags": meta.get("tags", []),

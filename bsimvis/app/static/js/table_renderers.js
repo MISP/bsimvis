@@ -222,8 +222,12 @@ window.TableRenderers = {
 
             const clusters = (Array.isArray(f['bin_clusters']) ? f['bin_clusters'] : []).map(cid => clustersMap[cid]).filter(Boolean);
 
+            // Depth 0 anchors the lineage tree: injected child rows carry a
+            // higher depth, which is how collapsing knows where to stop.
             return `
             <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
+                data-lineage-depth="0" data-lineage-md5="${escapeAttr(f['file_md5'])}"
+                data-lineage-col="${escapeAttr(targetCol)}" data-lineage-open="0"
                 data-entity-data='${escapeAttr(JSON.stringify({
                     md5: f['file_md5'],
                     file_name: f['file_name'],
@@ -232,7 +236,9 @@ window.TableRenderers = {
                 }))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                 <td class="sim-cell">
-                    <div style="display:inline-flex; align-items:center; gap:8px;">
+                    <div class="lineage-cell">
+                        ${Lineage.toggleButton(f['child_count'])}
+                        ${f['is_container'] ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
                         <b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(f['file_md5']))}, ${escapeAttr(jsString(f['file_name'] || ''))}, event)">${escapeHtml(f['file_name'])}</b>
                     </div>
                 </td>

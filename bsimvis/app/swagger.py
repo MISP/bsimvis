@@ -161,6 +161,16 @@ bulk_metadata_propagate_model = api.model(
     },
 )
 
+stage_metadata_model = api.model(
+    "StageBatchMetadata",
+    {
+        "batch_uuid": fields.String(required=True, description="Batch UUID"),
+        "updates": fields.Raw(
+            required=True, description="Mapping of MD5 to metadata dictionary"
+        ),
+    },
+)
+
 # Similarity Models
 similarity_build_model = api.model(
     "SimilarityBuild",
@@ -840,6 +850,23 @@ class FileMetadata(Resource):
         from bsimvis.app.routes.file import update_file_metadata
 
         return update_file_metadata(file_md5)
+
+
+@ns_file.route("/metadata/stage")
+class BatchMetadataStage(Resource):
+    @ns_file.doc(
+        description=(
+            "Stages a batch's MD5 -> metadata map. Uploads in that batch resolve "
+            "their own metadata by hash, including binaries that only exist after "
+            "server-side unpacking (archive members, UPX payloads, GPR programs)."
+        )
+    )
+    @ns_file.expect(stage_metadata_model)
+    def post(self):
+        """Stages a batch's MD5 -> metadata map for the ingest path."""
+        from bsimvis.app.routes.file import stage_batch_metadata
+
+        return stage_batch_metadata()
 
 
 @ns_file.route("/metadata/propagate")

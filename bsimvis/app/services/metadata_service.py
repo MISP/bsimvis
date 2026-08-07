@@ -18,6 +18,46 @@ from bsimvis.app.services.bin_sim_service import (
 from bsimvis.app.services.config_service import config_service
 
 
+# `upload --metadata` matches CSV rows by md5, but unpacking only happens on the
+# server: the md5 of an archive member or a UPX-unpacked payload does not exist
+# until after the upload. So the whole map is staged once per batch and each blob
+# looks itself up as it is ingested, instead of the client guessing which rows
+# will be needed. Expires on its own -- a batch that never finishes must not leave
+# the CSV sitting in the datastore forever.
+STAGED_METADATA_TTL = 7 * 24 * 3600
+
+
+def _staged_key(batch_uuid):
+    return f"metadata_staged:{batch_uuid}"
+
+
+def stage_metadata(batch_uuid, updates, r=None):
+    """Store a batch's md5 -> metadata map for the ingest path to resolve."""
+    r = r or get_redis()
+    if not batch_uuid or not updates:
+        return 0
+    r.hset(
+        _staged_key(batch_uuid),
+        mapping={str(k): json.dumps(v) for k, v in updates.items()},
+    )
+    r.expire(_staged_key(batch_uuid), STAGED_METADATA_TTL)
+    return len(updates)
+
+
+def staged_metadata(batch_uuid, file_md5, r=None):
+    """This blob's own staged CSV row, or None."""
+    if not batch_uuid or not file_md5:
+        return None
+    r = r or get_redis()
+    raw = r.hget(_staged_key(batch_uuid), str(file_md5))
+    if not raw:
+        return None
+    try:
+        return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+    except ValueError:
+        return None
+
+
 class MetadataService:
     def __init__(self, r=None):
         self.r = r or get_redis()

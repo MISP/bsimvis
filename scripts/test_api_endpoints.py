@@ -950,6 +950,36 @@ def test_lineage():
         str(down)[:250],
     )
 
+    # The same containment recorded a second time under a less specific path --
+    # what the indexer does, since it only ever knows the file name. It is one
+    # edge, so it must stay one child, keeping the path that says the most.
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            **common,
+            "file_name": "libfoo.so",
+            "parent_md5": apk_md5,
+        },
+        raw_body=b"\x7fELF lineage native lib",
+        label="POST /api/file/upload (same child, path-less edge)",
+    )
+    again = test_endpoint(
+        "GET",
+        f"/api/file/{apk_md5}/lineage",
+        params={"collection": coll},
+        label="GET /api/file/<md5>/lineage (after a duplicate edge)",
+    )
+    dup_paths = sorted(
+        c.get("path_in_parent") for c in (again or {}).get("children", [])
+    )
+    check(
+        "an edge recorded twice stays one child, on its fullest path",
+        dup_paths == ["classes.dex", "lib/arm64-v8a/libfoo.so"]
+        and (again or {}).get("child_count") == 2,
+        str(dup_paths)[:250],
+    )
+
     up = test_endpoint(
         "GET",
         f"/api/file/{dex_md5}/lineage",

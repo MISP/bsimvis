@@ -4,6 +4,7 @@ import re
 import time
 
 from flask import request
+from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.query_syntax import resolve_targets, union_buckets
 from bsimvis.app.services.index_service import (
@@ -170,8 +171,9 @@ def search_files():
                 pipe.smembers(f"{doc_id}:bin_clusters")
             # Whether this row can be expanded into a lineage subtree. Counted
             # here rather than guessed from tags: a packed executable is not a
-            # container yet still holds children.
-            pipe.scard(f"{actual_col}:lineage:children:{md5}")
+            # container yet still holds children. SMEMBERS, not SCARD -- the
+            # set holds more than one spelling of the same edge.
+            pipe.smembers(f"{actual_col}:lineage:children:{md5}")
 
         results = pipe.execute()
         t2 = time.perf_counter()
@@ -184,7 +186,7 @@ def search_files():
             res = results[4 * i]
             func_count = results[4 * i + 1]
             cluster_res = results[4 * i + 2]
-            child_count = results[4 * i + 3]
+            child_count = lineage_service.count_members(results[4 * i + 3])
 
             if not res:
                 continue
@@ -559,13 +561,13 @@ def get_file_details(collection, file_md5):
         pipe.get(f"{file_id}:meta")
         pipe.scard(f"{sub_collection}:idx:file:functions:{file_md5}")
         pipe.smembers(clusters_key)
-        pipe.scard(f"{sub_collection}:lineage:children:{file_md5}")
+        pipe.smembers(f"{sub_collection}:lineage:children:{file_md5}")
         results = pipe.execute()
 
         res = results[0]
         func_count = results[1]
         cluster_res = results[2]
-        child_count = results[3]
+        child_count = lineage_service.count_members(results[3])
 
         if not res:
             return {"error": "File not found"}, 404

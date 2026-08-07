@@ -269,6 +269,12 @@ class GhidraAnalyzer:
                     Path(gpr_path).parent, Path(gpr_path).stem
                 )
                 pipeline_ids = []
+                # A project holds many programs but the upload carried one CSV
+                # row, keyed by the .gpr.zip's md5. Its facts still apply to
+                # every program in it; its `file_name` does not -- forcing it
+                # would store all of them under the archive's name.
+                if isinstance(payload.get("file_metadata_extra"), dict):
+                    payload["file_metadata_extra"].pop("file_name", None)
                 try:
                     root_folder = project.getProjectData().getRootFolder()
                     files = self._collect_project_files(root_folder)

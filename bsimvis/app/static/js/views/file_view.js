@@ -518,14 +518,18 @@ window.FileView = {
             if (!this.container) return;   // view was destroyed mid-flight
 
             const siblingsByParent = {};
-            await Promise.all((lin.parents || []).map(async p => {
-                if (!p.exists) return;
-                try {
-                    siblingsByParent[p.file_md5] = (await Lineage.fetch(collection, p.file_md5)).children || [];
-                } catch (e) {
-                    console.error(e);
-                }
-            }));
+            const [, subtrees] = await Promise.all([
+                Promise.all((lin.parents || []).map(async p => {
+                    if (!p.exists) return;
+                    try {
+                        siblingsByParent[p.file_md5] = (await Lineage.fetch(collection, p.file_md5)).children || [];
+                    } catch (e) {
+                        console.error(e);
+                    }
+                })),
+                // A container nested in this one is shown already expanded.
+                Lineage.fetchSubtrees(collection, lin.children || []),
+            ]);
             if (!this.container) return;
 
             crumbEl.innerHTML = Lineage.renderBreadcrumb(lin, collection);
@@ -536,7 +540,7 @@ window.FileView = {
                 }
             }
             if (childrenEl) {
-                childrenEl.innerHTML = Lineage.renderChildren(lin, collection);
+                childrenEl.innerHTML = Lineage.renderChildren(lin, collection, subtrees);
                 if (window.TableSelection) {
                     childrenEl.querySelectorAll('.data-table').forEach(t => { if (t.id) new window.TableSelection(t.id); });
                 }
@@ -556,7 +560,7 @@ window.FileView = {
         const panel = document.getElementById(`file-panel-${tabId}`);
         if (panel) panel.style.display = 'block';
 
-        if (tabId === 'functions') {
+        if (tabId === 'functions' && !this.functionsLoaded) {
             this.loadFunctionsTable();
         }
 
@@ -654,7 +658,10 @@ window.FileView = {
 
     async loadFunctionsTable({ reset = false } = {}) {
         if (this.funcPage.loading && !reset) return;
-        if (!reset && this.functionsLoaded) return;
+        // No `functionsLoaded` guard here: this is also the "load the next page"
+        // entry point for the infinite scroll. Having everything already is what
+        // the total check below covers; callers that only want the first page
+        // check functionsLoaded themselves.
         if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
 
         const tbody = document.getElementById('file-functions-tbody');

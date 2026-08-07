@@ -578,6 +578,7 @@ def test_archive_upload():
         raw_body=buf.getvalue(),
         label="POST /api/file/upload (zip + --metadata row)",
     )
+
     def _job(job_id):
         return requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=30).json()
 
@@ -590,9 +591,7 @@ def test_archive_upload():
     check(
         "inherited metadata does not rename archive members",
         len(analyze_payloads) == 2
-        and all(
-            "file_name" not in p["file_metadata_extra"] for p in analyze_payloads
-        )
+        and all("file_name" not in p["file_metadata_extra"] for p in analyze_payloads)
         and sorted(p.get("file_name") for p in analyze_payloads)
         == ["one.bin", "two.bin"],
         str(analyze_payloads)[:300],
@@ -937,7 +936,9 @@ def test_lineage():
         and down["file"].get("file_name") == "app.apk",
         str(down)[:250],
     )
-    child_paths = sorted(c.get("path_in_parent") for c in (down or {}).get("children", []))
+    child_paths = sorted(
+        c.get("path_in_parent") for c in (down or {}).get("children", [])
+    )
     check(
         "container lists its children with their path inside it",
         child_paths == ["classes.dex", "lib/arm64-v8a/libfoo.so"],
@@ -968,6 +969,32 @@ def test_lineage():
         isinstance(up, dict)
         and [a.get("file_md5") for a in up.get("ancestors", [])] == [apk_md5],
         str(up)[:250],
+    )
+    # A lineage node is rendered by the same row renderer as a search hit, so
+    # it has to carry the same document, not a hand-picked handful of fields.
+    lineage_only = {
+        "file_md5",
+        "file_id",
+        "collection",
+        "path_in_parent",
+        "file_name",
+        "exists",
+        "is_container",
+        "child_count",
+        "function_count",
+        "filetype",
+        "tags",
+        "user_tags",
+    }
+    parent = (up or {}).get("parents", [{}])[0]
+    check(
+        "a lineage node carries the whole file document",
+        parent.get("file_id") == f"{coll}:file:{apk_md5}"
+        and parent.get("collection") == coll
+        and isinstance(parent.get("tags"), list)
+        and isinstance(parent.get("user_tags"), list)
+        and bool(set(parent) - lineage_only),
+        str(parent)[:250],
     )
 
     # The same member inside a second container: the upload is rejected as a
@@ -1021,7 +1048,11 @@ def test_lineage():
         params={"collection": coll},
         label="GET /api/file/<md5>/lineage (declared parent)",
     )
-    parent0 = (dangling or {}).get("parents", [{}])[0] if (dangling or {}).get("parents") else {}
+    parent0 = (
+        (dangling or {}).get("parents", [{}])[0]
+        if (dangling or {}).get("parents")
+        else {}
+    )
     check(
         "a declared container that was never uploaded is flagged, not hidden",
         parent0.get("file_md5") == "0" * 32
@@ -1040,9 +1071,7 @@ def test_lineage():
     check(
         "container is visible in the file list",
         isinstance(listing, dict)
-        and any(
-            f.get("file_md5") == apk_md5 for f in (listing.get("files") or [])
-        ),
+        and any(f.get("file_md5") == apk_md5 for f in (listing.get("files") or [])),
         str(listing)[:250],
     )
 
@@ -3400,7 +3429,9 @@ def test_lib_tag_rollup():
         )
         check(
             "backfill rolls up neither versions nor non-lib tags",
-            not ({"lib:uclibc:0.9.30.1", "lib:zlib:deflate", "crypto"} & set(tags or [])),
+            not (
+                {"lib:uclibc:0.9.30.1", "lib:zlib:deflate", "crypto"} & set(tags or [])
+            ),
             f"file tags: {tags}",
         )
         check(

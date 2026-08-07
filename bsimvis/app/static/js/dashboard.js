@@ -1104,7 +1104,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const currentSort = params.get('sort_by');
                 const currentOrder = params.get('sort_order') || 'desc';
                 const icon = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-                headHtml += `<th ${style} class="sortable resizable-th" data-label="${escapeAttr(label)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
+                headHtml += `<th ${style} class="sortable resizable-th" data-label="${escapeAttr(label)}" data-sort="${escapeAttr(sortKey)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
             } else {
                 headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
             }
@@ -1132,15 +1132,13 @@ function updateUI(viewKey, collection, params, route, force = false) {
         // Surgical Sort Icon Update
         const currentSort = params.get('sort_by');
         const currentOrder = params.get('sort_order') || 'desc';
+        // ponytail: read the key off data-sort, not out of the onclick string —
+        // the quoting there is escapeAttr(jsString(...))'s business, not ours.
         thead.querySelectorAll('th.sortable').forEach(th => {
-            const onclickStr = th.getAttribute('onclick') || '';
-            const match = onclickStr.match(/toggleSort\('([^']+)'\)/);
-            if (match) {
-                const sortKey = match[1];
-                const small = th.querySelector('small');
-                if (small) {
-                    small.innerText = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-                }
+            const sortKey = th.dataset.sort;
+            const small = th.querySelector('small');
+            if (sortKey && small) {
+                small.innerText = (currentSort === sortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
             }
         });
     }

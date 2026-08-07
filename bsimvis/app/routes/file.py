@@ -2,6 +2,7 @@ from flask import request
 import json
 import hashlib
 from bsimvis.app.services import archive_service, lineage_service, unpack_service
+from bsimvis.app.services.index_service import normalize_tags
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
@@ -876,9 +877,17 @@ def _lineage_nodes(collection, edges, r):
                 meta = json.loads(raw)
             except (ValueError, TypeError):
                 meta = {}
-        nodes.append(
+        # The whole stored document, not a hand-picked subset: a lineage row is
+        # rendered by the same row renderer as a search hit, so it needs the
+        # same fields (language, yara/avtype/filetype, batch, dates, tags...).
+        # ponytail: bin_clusters live in their own set and are left out — the
+        # cluster cell stays empty on lineage rows until someone needs it.
+        node = dict(meta)
+        node.update(
             {
                 "file_md5": edge["md5"],
+                "file_id": f"{collection}:file:{edge['md5']}",
+                "collection": collection,
                 "path_in_parent": edge["path"],
                 # Falling back to the path keeps a dangling node labelled with
                 # something a human recognises instead of a bare hash.
@@ -888,9 +897,12 @@ def _lineage_nodes(collection, edges, r):
                 "child_count": child_count or 0,
                 "function_count": meta.get("function_count", 0),
                 "filetype": meta.get("filetype", ""),
-                "tags": meta.get("tags", []),
             }
         )
+        # `tags` is a comma-separated string on older documents; the tag
+        # renderer only understands lists.
+        normalize_tags(node)
+        nodes.append(node)
     return nodes
 
 

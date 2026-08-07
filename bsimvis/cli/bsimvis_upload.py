@@ -611,6 +611,28 @@ def main(args):
         except Exception as e:
             logging.error(f"[!] Failed to parse metadata file {args.metadata}: {e}")
 
+    # Stage the whole map once per run. Rows are matched by md5, and unpacking
+    # happens server-side, so the hashes of archive members, UPX payloads and
+    # GPR programs do not exist yet here -- the server resolves them itself as
+    # each one is ingested.
+    if args.metadata_dict and not getattr(args, "local_analysis", False):
+        for api_host in args.hosts:
+            try:
+                resp = requests.post(
+                    f"http://{api_host}/api/file/metadata/stage",
+                    json={
+                        "batch_uuid": args.batch_uuid,
+                        "updates": args.metadata_dict,
+                    },
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                logging.info(
+                    f"[i] Staged {len(args.metadata_dict)} metadata rows on {api_host}"
+                )
+            except Exception as e:
+                logging.error(f"[!] Could not stage metadata on {api_host}: {e}")
+
     logging.info(f"[i] Processing targets using profile: {args.profile}")
     print(
         f"[i] Uploading to collections {args.collections} on hosts {args.hosts} with batch uuid {args.batch_uuid}"

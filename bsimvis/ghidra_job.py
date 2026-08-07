@@ -35,6 +35,7 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.lua_manager import lua_manager
 from bsimvis.app.services.ghidra_service import ghidra_service
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.metadata_service import staged_metadata
 
 
 def _peak_rss():
@@ -303,9 +304,22 @@ class GhidraAnalyzer:
                                 payload.get("profile", "fast"),
                                 force_reanalysis=False,
                             )
+                            # The programs inside a project never pass through
+                            # the upload route, so this is the only place their
+                            # own staged CSV row can be picked up.
+                            prog_payload = payload
+                            own_meta = staged_metadata(
+                                payload.get("batch_uuid"), binary_md5, r=self.r_data
+                            )
+                            if own_meta:
+                                prog_payload = dict(payload)
+                                prog_payload["file_metadata_extra"] = {
+                                    **(payload.get("file_metadata_extra") or {}),
+                                    **own_meta,
+                                }
                             pipe_id = self._stream_program_chunks(
                                 program,
-                                payload,
+                                prog_payload,
                                 hosts,
                                 job_id,
                                 splice_into_parent=True,

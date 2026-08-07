@@ -515,6 +515,7 @@ def test_ghidra_languages():
 # ---------------------------------------------------------------------------
 def test_archive_upload():
     """Uploads a zip of two binaries and checks both members get a pipeline."""
+    import hashlib
     import io
     import zipfile
 
@@ -605,6 +606,67 @@ def test_archive_upload():
         str(analyze_payloads)[:300],
     )
 
+    # Staged rows are matched per binary. A member's md5 only exists after the
+    # server unpacks, so the whole map is staged once per batch and each blob
+    # looks itself up: an exact match beats the container's inherited row, name
+    # included, because it was matched against this file.
+    one_md5 = hashlib.md5(b"\x7fELF archive member one").hexdigest()
+    stage_batch = str(uuid.uuid4())
+    staged = test_endpoint(
+        "POST",
+        "/api/file/metadata/stage",
+        data={
+            "batch_uuid": stage_batch,
+            "updates": {
+                one_md5: {"file_name": "member_one_real.bin", "yara": ["yara_own"]}
+            },
+        },
+        label="POST /api/file/metadata/stage",
+    )
+    check(
+        "staging accepts the batch map",
+        isinstance(staged, dict) and staged.get("staged") == 1,
+        str(staged)[:200],
+    )
+    staged_body = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": f"{coll}_staged",
+            "file_name": "feedname.bin",
+            "batch_uuid": stage_batch,
+            "skip_sim": "true",
+            "enqueue": "false",
+            "file_metadata_extra": json.dumps(
+                {"file_name": "feedname.bin", "yara": ["yara_from_zip"]}
+            ),
+        },
+        raw_body=buf.getvalue(),
+        label="POST /api/file/upload (zip, member has a staged row)",
+    )
+    by_md5 = {}
+    for pid in (staged_body or {}).get("pipeline_ids") or []:
+        for tid in (_job(pid) or {}).get("task_ids") or []:
+            payload = (_job(tid) or {}).get("payload") or {}
+            if "file_metadata_extra" in payload:
+                by_md5[payload.get("file_md5")] = payload
+    own = by_md5.get(one_md5) or {}
+    other = next((p for m, p in by_md5.items() if m != one_md5), {})
+    check(
+        "a member's own staged row wins over the container's",
+        (own.get("file_metadata_extra") or {}).get("yara") == ["yara_own"]
+        and (own.get("file_metadata_extra") or {}).get("file_name")
+        == "member_one_real.bin"
+        and own.get("file_name") == "member_one_real.bin",
+        str(own)[:300],
+    )
+    check(
+        "a member with no staged row still inherits the container's",
+        (other.get("file_metadata_extra") or {}).get("yara") == ["yara_from_zip"]
+        and other.get("file_name") == "two.bin",
+        str(other)[:300],
+    )
+
     # A .gpr.zip is a Ghidra project, so it must stay a single file.
     gpr = test_endpoint(
         "POST",
@@ -681,7 +743,7 @@ def test_archive_upload():
     else:
         print(_color("[SKIP] `zip` CLI missing – password checks skipped.", YELLOW))
 
-    for name in (coll, f"{coll}_meta"):
+    for name in (coll, f"{coll}_meta", f"{coll}_staged"):
         requests.post(
             f"{BASE_URL}/api/collection/delete", json={"collection": name}, timeout=60
         )

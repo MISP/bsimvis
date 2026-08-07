@@ -5,6 +5,7 @@ from bsimvis.app.services import archive_service, unpack_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
+from bsimvis.app.services.metadata_service import stage_metadata, staged_metadata
 import logging
 import uuid
 
@@ -435,6 +436,18 @@ def _ingest_raw_binary(
             # this every member of an archive is stored under the container's
             # name and they become indistinguishable.
             extra_meta.pop("file_name", None)
+
+    # This blob's own CSV row, if the batch staged one. Unpacking happens here,
+    # so a member's md5 is only knowable now -- an exact match beats whatever
+    # was inherited from the container, name included, because it was matched
+    # against this file rather than the thing it arrived in.
+    own_meta = staged_metadata(batch_uuid, file_md5)
+    if own_meta:
+        extra_meta.update(own_meta)
+        if "file_name" in own_meta:
+            file_name = own_meta["file_name"]
+            analysis_payload["file_name"] = file_name
+
     # parent_md5 / parent_file_name are already declared index fields at the
     # file, func and sim levels, so lineage rides the existing metadata merge
     # in ghidra_job._stream_program_chunks -- no schema change needed.
@@ -619,7 +632,13 @@ def upload_raw_binary():
         )
 
         # A plain binary keeps the flat single-file response it always had.
-        if len(results) == 1 and not errors and results[0]["file_name"] == file_name:
+        # Keyed on the md5, not the name: a staged CSV row may rename the
+        # upload, and that must not turn it into an archive response.
+        if (
+            len(results) == 1
+            and not errors
+            and results[0]["file_md5"] == hashlib.md5(raw_bytes).hexdigest()
+        ):
             return results[0]
 
         if not results:
@@ -769,6 +788,35 @@ def update_file_metadata(file_md5):
 
     except Exception as e:
         logging.error(f"Failed to update file metadata: {e}")
+        return {"error": str(e)}, 500
+
+
+def stage_batch_metadata():
+    """
+    Stages a batch's md5 -> metadata map so the ingest path can resolve each
+    binary -- including ones that only exist after server-side unpacking -- by
+    its own hash rather than the uploaded container's.
+    """
+    try:
+        data = request.json or {}
+        batch_uuid = data.get("batch_uuid")
+        updates = data.get("updates", {})
+
+        if not batch_uuid:
+            return {"error": "Missing batch_uuid"}, 400
+        if not isinstance(updates, dict) or not updates:
+            return {"error": "Missing updates mapping"}, 400
+
+        count = stage_metadata(batch_uuid, updates)
+        return {
+            "status": "ok",
+            "batch_uuid": batch_uuid,
+            "staged": count,
+            "message": f"Staged metadata for {count} hashes.",
+        }
+
+    except Exception as e:
+        logging.error(f"Failed to stage batch metadata: {e}")
         return {"error": str(e)}, 500
 
 

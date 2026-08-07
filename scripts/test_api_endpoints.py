@@ -558,6 +558,53 @@ def test_archive_upload():
         str(body)[:200],
     )
 
+    # `upload --metadata` matches its CSV row against the md5 of the *upload*,
+    # so on a member that row is inherited, not matched: its facts still apply,
+    # its `file_name` does not -- ghidra_job would otherwise store every member
+    # under the container's name and they become indistinguishable.
+    meta_body = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": f"{coll}_meta",
+            "file_name": "feedname.bin",
+            "skip_sim": "true",
+            "enqueue": "false",
+            "file_metadata_extra": json.dumps(
+                {"file_name": "feedname.bin", "yara": ["yara_from_zip"]}
+            ),
+        },
+        raw_body=buf.getvalue(),
+        label="POST /api/file/upload (zip + --metadata row)",
+    )
+    def _job(job_id):
+        return requests.get(f"{BASE_URL}/api/jobs/{job_id}", timeout=30).json()
+
+    analyze_payloads = []
+    for pid in (meta_body or {}).get("pipeline_ids") or []:
+        for tid in (_job(pid) or {}).get("task_ids") or []:
+            payload = (_job(tid) or {}).get("payload") or {}
+            if "file_metadata_extra" in payload:
+                analyze_payloads.append(payload)
+    check(
+        "inherited metadata does not rename archive members",
+        len(analyze_payloads) == 2
+        and all(
+            "file_name" not in p["file_metadata_extra"] for p in analyze_payloads
+        )
+        and sorted(p.get("file_name") for p in analyze_payloads)
+        == ["one.bin", "two.bin"],
+        str(analyze_payloads)[:300],
+    )
+    check(
+        "inherited metadata still reaches archive members",
+        all(
+            p["file_metadata_extra"].get("yara") == ["yara_from_zip"]
+            for p in analyze_payloads
+        ),
+        str(analyze_payloads)[:300],
+    )
+
     # A .gpr.zip is a Ghidra project, so it must stay a single file.
     gpr = test_endpoint(
         "POST",
@@ -634,9 +681,10 @@ def test_archive_upload():
     else:
         print(_color("[SKIP] `zip` CLI missing – password checks skipped.", YELLOW))
 
-    requests.post(
-        f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
-    )
+    for name in (coll, f"{coll}_meta"):
+        requests.post(
+            f"{BASE_URL}/api/collection/delete", json={"collection": name}, timeout=60
+        )
 
 
 def test_unpack_upload():

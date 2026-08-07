@@ -428,6 +428,13 @@ def _ingest_raw_binary(
     extra_meta = {}
     if "file_metadata_extra" in request.args:
         extra_meta = json.loads(request.args.get("file_metadata_extra"))
+        if parent_md5:
+            # `upload --metadata` matched that CSV row against the md5 of the
+            # *upload*, so on an unpacked child it is inherited, not matched.
+            # Its facts still describe the sample; its name does not -- without
+            # this every member of an archive is stored under the container's
+            # name and they become indistinguishable.
+            extra_meta.pop("file_name", None)
     # parent_md5 / parent_file_name are already declared index fields at the
     # file, func and sim levels, so lineage rides the existing metadata merge
     # in ghidra_job._stream_program_chunks -- no schema change needed.

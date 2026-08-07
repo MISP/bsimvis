@@ -1,10 +1,15 @@
 import logging
 import math
+import re
 from flask import request
 from flask_restx import abort
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags
+from bsimvis.app.services.bin_sim_tags import (
+    TAG_UNTAGGED,
+    normalize_tags as tag_ids,
+)
 from bsimvis.app.services.cluster_utils import (
     pick_best_shared_cluster,
     pick_best_cluster,
@@ -380,6 +385,14 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
                     except ValueError:
                         pass
                 if isinstance(meta, dict):
+                    # index_service.normalize_tags drops any non-list `tags` to [],
+                    # which silently erases the {tag_id: confidence} shape that
+                    # build_bin_sim itself reads (bin_sim_service.py:316). Left as
+                    # was, the tree counts a function under libc while every table
+                    # shows it as Original. Keep the raw value and resolve it with
+                    # the tag-aware normalizer; fall back to the legacy
+                    # comma-string handling that index_service does do.
+                    raw_tags = meta.get("tags")
                     normalize_tags(meta)
                     funcs_metadata[fid] = {
                         "name": meta.get("function_name"),
@@ -388,7 +401,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
                         "namespace": meta.get("namespace"),
                         "entrypoint_address": meta.get("entrypoint_address")
                         or fid.split(":")[-1],
-                        "tags": meta.get("tags", []),
+                        "tags": sorted(tag_ids(raw_tags)) or meta.get("tags", []),
                         "user_tags": meta.get("user_tags", []),
                         "note_owners": meta.get("note_owners", []),
                         "note_count": meta.get("note_count", 0),
@@ -421,7 +434,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # Change 4: when a table is requested, filter/sort/paginate server-side and return
     # only the page (+ its function metadata). Absent `table` → full doc (back-compat).
     table = request.args.get("table")
-    if table in ("matched", "unique_to_a", "unique_to_b"):
+    if table in ("matched", "unique_to_a", "unique_to_b", "all"):
         return _page_diff(diff_data, table)
 
     # Change 4: compact projection for the simplified Sankey — cluster fields + the few
@@ -502,11 +515,95 @@ def _fnum(name):
         return None
 
 
+# The File sim view browses one table with a `state` column rather than three
+# tables, so Matched / Unmatched / All are the same request with a different
+# `state` filter. Rows are tagged with their origin on the way out.
+_STATES = {"matched": "matched", "uniq_a": "unique_to_a", "uniq_b": "unique_to_b"}
+
+# Ghidra's auto-generated names. Two functions both called FUN_00401234 are not
+# two copies of one function, so these never fold together.
+_DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
+
+
+def _diff_rows(diff_data, table):
+    """Rows of one diff table, or of all three unioned, each tagged with `state`."""
+    diff = diff_data.get("diff", {})
+    if table != "all":
+        state = next(s for s, t in _STATES.items() if t == table)
+        return [dict(r, state=state) for r in diff.get(table, [])]
+    return [
+        dict(r, state=state)
+        for state, t in _STATES.items()
+        for r in diff.get(t, [])
+    ]
+
+
+def _row_tags(item, fmeta):
+    """Tag ids attributed to a row, unioned over whichever sides it has.
+
+    Each side falls back to `original_code` on its own, matching how the tag
+    split attributes mass (bin_sim_tags.py:121): a match between a tagged and an
+    untagged function belongs to both buckets, not to neither.
+    """
+    tags = set()
+    for fid in (item.get("func_a"), item.get("func_b"), item.get("func_id")):
+        if not fid:
+            continue
+        own = set(tag_ids((fmeta.get(fid) or {}).get("tags")))
+        tags |= own or {TAG_UNTAGGED}
+    return tags
+
+
+def _fold_key(item, fmeta):
+    """Name that folds duplicate copies together, or None to stand alone.
+
+    A-side name wins so a stripped-A / symbolized-B pair folds under the symbol
+    that actually names it.
+    """
+    for fid in (item.get("func_a"), item.get("func_id"), item.get("func_b")):
+        if not fid:
+            continue
+        name = (fmeta.get(fid) or {}).get("name") or ""
+        if name and not _DEFAULT_NAME.match(name):
+            return name
+    return None
+
+
+def _collapse_by_name(rows, fmeta):
+    """One row per distinct function name, carrying `n_copies`.
+
+    Paging over rows would let a name's copies straddle a page boundary, and any
+    sort other than by name would scatter them so the UI could never fold them.
+    Paging over names cannot. The representative is the best matched copy, so the
+    folded row shows the strongest evidence rather than an arbitrary one.
+    """
+    singles, groups = [], {}
+    for idx, it in enumerate(rows):
+        key = _fold_key(it, fmeta)
+        if key is None:
+            singles.append((idx, dict(it, n_copies=1)))
+        else:
+            groups.setdefault(key, []).append((idx, it))
+
+    def rank(pair):
+        it = pair[1]
+        return (it.get("state") == "matched", it.get("similarity") or 0.0)
+
+    out = singles
+    for key, members in groups.items():
+        _, best = max(members, key=rank)
+        out.append(
+            (members[0][0], dict(best, n_copies=len(members), fold_name=key))
+        )
+    out.sort(key=lambda p: p[0])
+    return [r for _, r in out]
+
+
 def _page_diff(diff_data, table):
     """Filter + sort + slice one diff table, returning only the requested page.
     Ports the former client-side applyFilters/sortItems (binary_similarity.js). [[Change 4]]
     """
-    rows = diff_data.get("diff", {}).get(table, [])
+    rows = _diff_rows(diff_data, table)
     fmeta = diff_data.get("functions_metadata", {})
 
     q = (request.args.get("q") or "").strip().lower()
@@ -517,6 +614,14 @@ def _page_diff(diff_data, table):
     sim_min, sim_max = _fnum("sim_min"), _fnum("sim_max")
     feat_min, feat_max = _fnum("feat_min"), _fnum("feat_max")
     rar_min, rar_max = _fnum("rar_min"), _fnum("rar_max")
+
+    # Tree scope. Prefix match so selecting `lib:libc:2.31` catches every
+    # `lib:libc:2.31:memcpy` under it, which is the same rollup rule the tag
+    # summary uses (bin_sim_tags.py:52).
+    tag_scope = [t for t in (request.args.get("tags") or "").split(",") if t.strip()]
+    tag_scope = [t.strip() for t in tag_scope]
+    states = {s for s in (request.args.get("state") or "").split(",") if s.strip()}
+    fold_name = request.args.get("name")
 
     def haystack(fid):
         m = fmeta.get(fid, {})
@@ -533,6 +638,16 @@ def _page_diff(diff_data, table):
         fids = [x for x in (item.get("func_a"), item.get("func_b")) if x] or (
             [item["func_id"]] if item.get("func_id") else []
         )
+        if states and item.get("state") not in states:
+            return False
+        if tag_scope:
+            tags = _row_tags(item, fmeta)
+            if not any(
+                t == p or t.startswith(p + ":") for t in tags for p in tag_scope
+            ):
+                return False
+        if fold_name is not None and _fold_key(item, fmeta) != fold_name:
+            return False
         if q and not any(q in haystack(f) for f in fids):
             return False
         if cl_q and cl_q not in (item.get("cluster_name") or "unclustered").lower():
@@ -562,6 +677,12 @@ def _page_diff(diff_data, table):
         return True
 
     filtered = [it for it in rows if keep(it)]
+
+    # Collapse before sorting and paging: the page must hold whole names, and the
+    # representative each fold picks is what the sort then ranks. `name=` is the
+    # expansion request for one fold, so it never re-collapses.
+    if request.args.get("collapse") == "name" and fold_name is None:
+        filtered = _collapse_by_name(filtered, fmeta)
 
     sort_col = request.args.get("sort_col")
     if sort_col:

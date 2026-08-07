@@ -103,6 +103,10 @@ class TagSplit:
         # Matched mass whose partner did not carry the same tag. Reported, not
         # rebucketed -- see add_match.
         self.mismatch_w = {"a": defaultdict(float), "b": defaultdict(float)}
+        # tag_id -> partner tag id -> weight. `mismatch_w` says a tag's mass failed
+        # to agree; this says what it disagreed *with*, which is the difference
+        # between "libc has 12 drifted functions" and "libc 2.31 drifted to 2.35".
+        self.mismatch_pairs = defaultdict(lambda: defaultdict(float))
         # tag_id -> bin index -> [count_a, weight_a, count_b, weight_b]. Both
         # sides are tracked because a match need not be tagged the same on each.
         self.bins = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0, 0.0, 0.0]))
@@ -140,6 +144,16 @@ class TagSplit:
                 self.side_w[side][tag_id] += weight * frac
                 if tag_id not in shared and tag_id != TAG_UNTAGGED:
                     self.mismatch_w[side][tag_id] += weight * frac
+                    # Roll the partner up to its display parent: the useful fact
+                    # is "drifted to libc 2.35", not which of its 400 functions
+                    # this particular edge landed on.
+                    others = tags_b if side == "a" else tags_a
+                    for partner in others:
+                        if partner in shared or partner == TAG_UNTAGGED:
+                            continue
+                        self.mismatch_pairs[tag_id][tag_parent(partner)] += (
+                            weight * frac / len(others)
+                        )
                 b = self.bins[tag_id][idx]
                 b[slot] += frac
                 b[slot + 1] += weight * frac
@@ -208,6 +222,7 @@ class TagSplit:
             un_a = self.unique_n["a"].get(tag_id, 0.0)
             un_b = self.unique_n["b"].get(tag_id, 0.0)
             bins = {str(k): list(v) for k, v in self.bins.get(tag_id, {}).items()}
+            drift = dict(self.mismatch_pairs.get(tag_id, {}))
         else:
             matched_w = sum(r["matched_weight"] for r in merge)
             matched_n = sum(r["matched_count"] for r in merge)
@@ -221,12 +236,16 @@ class TagSplit:
             mm_a = sum(r["mismatch_weight_a"] for r in merge)
             mm_b = sum(r["mismatch_weight_b"] for r in merge)
             bins = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
+            drift = defaultdict(float)
             for r in merge:
                 for k, v in r["bins"].items():
                     acc = bins[k]
                     for i in range(4):
                         acc[i] += v[i]
+                for partner, w in r["drift"].items():
+                    drift[partner] += w
             bins = dict(bins)
+            drift = dict(drift)
 
         t_type, t_name, t_version = parse_tag_id(tag_id)
         meta = tag_meta.get(tag_id) or {}
@@ -252,6 +271,9 @@ class TagSplit:
             "coverage_pct_a": 100.0 * (w_a + uw_a) / total_a if total_a > 0 else 0.0,
             "coverage_pct_b": 100.0 * (w_b + uw_b) / total_b if total_b > 0 else 0.0,
             "bins": bins,
+            # partner tag id -> weight that failed to agree with it. Empty for
+            # every tag that matched cleanly.
+            "drift": drift,
         }
 
 

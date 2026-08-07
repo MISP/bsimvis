@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Self-check for the per-tag similarity split (bsimvis/app/services/bin_sim_tags.py).
+"""Self-check for the per-tag similarity split (bsimvis/app/services/bin_sim_tags.py)
+and for the File sim view's read path over it (_page_diff, routes/bin_sim.py).
 
-No redis, no fixtures: TagSplit is pure arithmetic over a fid -> tags map.
+No redis, no fixtures, no running server: TagSplit is pure arithmetic over a
+fid -> tags map, and _page_diff is pure filtering over a diff dict + query args.
 Run: python3 scripts/test_bin_sim_tag_split.py
 """
 
@@ -9,6 +11,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from flask import Flask  # noqa: E402
 
 from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     TAG_MISMATCH,
@@ -18,6 +22,7 @@ from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     parse_tag_id,
     tag_parent,
 )
+from bsimvis.app.routes.bin_sim import _page_diff  # noqa: E402
 
 
 def by_id(rows):
@@ -89,6 +94,42 @@ def test_disagreement_stays_on_its_own_tag():
     # Disagreement is still visible, as a field rather than a stolen bucket.
     assert abs(rows["lib:libc:2.31"]["mismatch_weight_a"] - 20.0) < 1e-9
     assert TAG_MISMATCH not in rows
+
+
+def test_drift_names_its_counterpart():
+    """`mismatch_weight_*` says mass disagreed; `drift` says what it disagreed with.
+
+    The tree draws a drift child under each library, and "libc 2.31 -> 2.35" is a
+    version-drift finding while a bare count is not.
+    """
+    fid_tags = {
+        "a1": {"lib:libc:2.31:memcpy": 1.0},
+        "b1": {"lib:libc:2.35:memcpy": 1.0},  # same lib, drifted version
+        "a2": {"lib:zlib:1.2:inflate": 1.0},
+        "b2": {"lib:zlib:1.2:inflate": 1.0},  # clean match
+        "a3": {"lib:libc:2.31:strlen": 1.0},
+        "b3": {},  # no evidence: untagged, not drift
+    }
+    ts = TagSplit(fid_tags)
+    ts.add_match("a1", "b1", 0.9, 10.0, 10.0)
+    ts.add_match("a2", "b2", 0.95, 10.0, 10.0)
+    ts.add_match("a3", "b3", 0.9, 10.0, 10.0)
+    rows = by_id(ts.summary(30.0, 30.0))
+
+    # Counterpart is rolled up to its display parent, not left per-function.
+    assert rows["lib:libc:2.31"]["drift"] == {"lib:libc:2.35": 10.0}
+    # A clean match drifts nowhere.
+    assert rows["lib:zlib:1.2"]["drift"] == {}
+    # An untagged partner is absence of evidence, not disagreement.
+    assert TAG_UNTAGGED not in rows["lib:libc:2.31"]["drift"]
+    # The counterpart's row records the drift symmetrically, from its own side.
+    assert rows["lib:libc:2.35"]["drift"] == {"lib:libc:2.31": 10.0}
+    # Drift never exceeds the mismatch mass it explains. Both sides, because a
+    # tag's row is side-agnostic and B-side tags carry their disagreement in
+    # mismatch_weight_b.
+    for row in rows.values():
+        mismatch = row["mismatch_weight_a"] + row["mismatch_weight_b"]
+        assert sum(row["drift"].values()) <= mismatch + 1e-9
 
 
 def test_one_sided_tag_does_not_inflate_unmatched():
@@ -178,6 +219,87 @@ def test_bins_reconcile_with_side_weights():
     assert abs(sum(b[2] for b in bins) - 2.0) < 1e-9
     # What the left node draws vs what its label says.
     assert abs((libc["weight_a"] + libc["unique_weight_a"]) - 23.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# File sim read path: one table with a `state` column, scoped by the tag tree.
+# ---------------------------------------------------------------------------
+
+_APP = Flask(__name__)
+
+_DIFF = {
+    "diff": {
+        "matched": [
+            {"func_a": "fa1", "func_b": "fb1", "similarity": 0.98},
+            {"func_a": "fa2", "func_b": "fb2", "similarity": 0.80},
+            {"func_a": "fa3", "func_b": "fb3", "similarity": 0.95},
+        ],
+        "unique_to_a": [
+            {"func_id": "fa4"},  # a third memcpy, unmatched
+            {"func_id": "fa5"},  # auto-named
+            {"func_id": "fa6"},  # auto-named
+        ],
+        "unique_to_b": [{"func_id": "fb4"}],
+    },
+    "functions_metadata": {
+        "fa1": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
+        "fb1": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
+        "fa2": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
+        "fb2": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
+        "fa3": {"name": "inflate", "tags": ["lib:zlib:1.2:inflate"]},
+        "fb3": {"name": "inflate", "tags": ["lib:zlib:1.2:inflate"]},
+        "fa4": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
+        "fa5": {"name": "FUN_00401234", "tags": []},
+        "fa6": {"name": "FUN_00401299", "tags": []},
+        "fb4": {"name": "helper", "tags": []},
+    },
+}
+
+
+def page(qs=""):
+    with _APP.test_request_context("/?" + qs):
+        return _page_diff(_DIFF, "all")
+
+
+def test_union_table_carries_state():
+    """All / Matched / Unmatched are one request with a different state filter."""
+    r = page()
+    assert r["total"] == 7
+    assert {i["state"] for i in r["items"]} == {"matched", "uniq_a", "uniq_b"}
+    assert page("state=uniq_a,uniq_b")["total"] == 4
+    assert page("state=matched")["total"] == 3
+
+
+def test_tag_scope_is_a_prefix_match():
+    """Selecting a tree node catches everything under it, at any depth."""
+    assert page("tags=lib:libc:2.31")["total"] == 3  # its per-function children
+    assert page("tags=lib")["total"] == 4  # the whole namespace
+    assert page("tags=original_code")["total"] == 3  # untagged is selectable
+    # Prefix must respect the separator: `lib` must not match a `libfoo:` tag.
+    assert page("tags=lib:libc:2")["total"] == 0
+
+
+def test_fold_by_name_pages_over_names():
+    """Copies of a name fold into one row so a page can never split them."""
+    r = page("collapse=name")
+    folds = {i["fold_name"]: i["n_copies"] for i in r["items"] if i.get("fold_name")}
+    assert folds["memcpy"] == 3, folds
+    assert r["total"] == 5  # memcpy, inflate, helper + 2 auto-named
+    # Auto-generated names are not copies of each other.
+    assert sum(1 for i in r["items"] if not i.get("fold_name")) == 2
+    # The fold shows its strongest evidence, not an arbitrary member.
+    rep = next(i for i in r["items"] if i.get("fold_name") == "memcpy")
+    assert rep["state"] == "matched" and rep["similarity"] == 0.98
+    # Expanding a fold returns its members, uncollapsed.
+    expanded = page("collapse=name&name=memcpy")
+    assert expanded["total"] == 3
+    assert all("n_copies" not in i for i in expanded["items"])
+
+
+def test_sort_applies_to_fold_representatives():
+    r = page("collapse=name&sort_col=similarity&sort_dir=desc")
+    sims = [i.get("similarity") or 0 for i in r["items"]]
+    assert sims == sorted(sims, reverse=True), sims
 
 
 if __name__ == "__main__":

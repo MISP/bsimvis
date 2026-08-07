@@ -667,7 +667,13 @@ def test_archive_upload():
         str(other)[:300],
     )
 
-    # A .gpr.zip is a Ghidra project, so it must stay a single file.
+    # A .gpr.zip is a Ghidra project, so it must stay a single file. Distinct
+    # bytes from the archive above: that one is now a container holding this
+    # collection's copy of that md5, and a collection holds one doc per md5.
+    gpr_buf = io.BytesIO()
+    with zipfile.ZipFile(gpr_buf, "w") as zf:
+        zf.writestr("project.prp", b"ghidra project properties")
+        zf.writestr("project.rep/idata/~index.bnd", b"\x7fELF project program")
     gpr = test_endpoint(
         "POST",
         "/api/file/upload",
@@ -677,7 +683,7 @@ def test_archive_upload():
             "skip_sim": "true",
             "enqueue": "false",
         },
-        raw_body=buf.getvalue(),
+        raw_body=gpr_buf.getvalue(),
         label="POST /api/file/upload (.gpr.zip stays one file)",
     )
     check(
@@ -810,11 +816,17 @@ def test_unpack_upload():
     )
 
     # -- unpack=false opts out entirely --------------------------------------
+    # A different APK from the one above: that upload's container now owns its
+    # md5, and re-sending the same bytes is a duplicate whatever unpack says.
+    flat_buf = io.BytesIO()
+    with zipfile.ZipFile(flat_buf, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"manifest of the opt-out apk")
+        zf.writestr("classes.dex", b"dex\n035\x00opt-out payload")
     flat = test_endpoint(
         "POST",
         "/api/file/upload",
         params={**common, "file_name": "app2.apk", "unpack": "false"},
-        raw_body=buf.getvalue(),
+        raw_body=flat_buf.getvalue(),
         label="POST /api/file/upload?unpack=false (stays one file)",
     )
     check(
@@ -877,6 +889,162 @@ def test_unpack_upload():
             )
     else:
         print(_color("[SKIP] upx not installed – UPX upload check skipped.", YELLOW))
+
+    requests.post(
+        f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
+    )
+
+
+def test_lineage():
+    """Checks containment lineage: container docs, edges, multi-parent, dangling."""
+    import hashlib
+    import io
+    import zipfile
+
+    coll = f"{COLLECTION}_lineage"
+    # enqueue=false: children never reach a worker, so only the container gets a
+    # document here. That is exactly the case the `exists` flag exists for.
+    common = {"collection": coll, "skip_sim": "true", "enqueue": "false"}
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"manifest")
+        zf.writestr("classes.dex", b"dex\n035\x00lineage payload")
+        zf.writestr("lib/arm64-v8a/libfoo.so", b"\x7fELF lineage native lib")
+    apk_bytes = buf.getvalue()
+    apk_md5 = hashlib.md5(apk_bytes).hexdigest()
+    dex_md5 = hashlib.md5(b"dex\n035\x00lineage payload").hexdigest()
+
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={**common, "file_name": "app.apk"},
+        raw_body=apk_bytes,
+        label="POST /api/file/upload (apk, for lineage)",
+    )
+
+    down = test_endpoint(
+        "GET",
+        f"/api/file/{apk_md5}/lineage",
+        params={"collection": coll},
+        label="GET /api/file/<md5>/lineage (container)",
+    )
+    check(
+        "container gets an identity document of its own",
+        isinstance(down, dict)
+        and down.get("file", {}).get("exists") is True
+        and down["file"].get("is_container") is True
+        and down["file"].get("file_name") == "app.apk",
+        str(down)[:250],
+    )
+    child_paths = sorted(c.get("path_in_parent") for c in (down or {}).get("children", []))
+    check(
+        "container lists its children with their path inside it",
+        child_paths == ["classes.dex", "lib/arm64-v8a/libfoo.so"],
+        str(child_paths)[:250],
+    )
+    check(
+        "a child with no document yet is reported as not existing",
+        all(c.get("exists") is False for c in (down or {}).get("children", [])),
+        str(down)[:250],
+    )
+
+    up = test_endpoint(
+        "GET",
+        f"/api/file/{dex_md5}/lineage",
+        params={"collection": coll},
+        label="GET /api/file/<md5>/lineage (child)",
+    )
+    check(
+        "child resolves back to its container",
+        isinstance(up, dict)
+        and [p.get("file_md5") for p in up.get("parents", [])] == [apk_md5]
+        and up["parents"][0].get("file_name") == "app.apk"
+        and up["parents"][0].get("exists") is True,
+        str(up)[:250],
+    )
+    check(
+        "ancestors are ordered nearest first",
+        isinstance(up, dict)
+        and [a.get("file_md5") for a in up.get("ancestors", [])] == [apk_md5],
+        str(up)[:250],
+    )
+
+    # The same member inside a second container: the upload is rejected as a
+    # duplicate md5, but that container holding it is still new information.
+    buf2 = io.BytesIO()
+    with zipfile.ZipFile(buf2, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"manifest two")
+        zf.writestr("classes.dex", b"dex\n035\x00lineage payload")
+    apk2_md5 = hashlib.md5(buf2.getvalue()).hexdigest()
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={**common, "file_name": "app2.apk"},
+        raw_body=buf2.getvalue(),
+        # Its only member already exists, so the upload itself reports 400.
+        expected_ok=False,
+        label="POST /api/file/upload (second apk sharing a member)",
+    )
+    multi = test_endpoint(
+        "GET",
+        f"/api/file/{dex_md5}/lineage",
+        params={"collection": coll},
+        label="GET /api/file/<md5>/lineage (multi-parent)",
+    )
+    check(
+        "a member shared by two containers keeps both parents",
+        isinstance(multi, dict)
+        and sorted(p.get("file_md5") for p in multi.get("parents", []))
+        == sorted([apk_md5, apk2_md5]),
+        str(multi)[:250],
+    )
+
+    # A declared parent we were never given: the edge stands, the node does not.
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            **common,
+            "file_name": "hand_unpacked.bin",
+            "parent_md5": "0" * 32,
+            "parent_file_name": "outer.7z",
+            "path_in_parent": "bin/hand_unpacked.bin",
+        },
+        raw_body=b"\x7fELF lineage out of band",
+        label="POST /api/file/upload (declared parent, for lineage)",
+    )
+    declared_md5 = hashlib.md5(b"\x7fELF lineage out of band").hexdigest()
+    dangling = test_endpoint(
+        "GET",
+        f"/api/file/{declared_md5}/lineage",
+        params={"collection": coll},
+        label="GET /api/file/<md5>/lineage (declared parent)",
+    )
+    parent0 = (dangling or {}).get("parents", [{}])[0] if (dangling or {}).get("parents") else {}
+    check(
+        "a declared container that was never uploaded is flagged, not hidden",
+        parent0.get("file_md5") == "0" * 32
+        and parent0.get("exists") is False
+        and parent0.get("path_in_parent") == "bin/hand_unpacked.bin",
+        str(dangling)[:250],
+    )
+
+    # Containers are ordinary rows in the file list.
+    listing = test_endpoint(
+        "GET",
+        "/api/file/search",
+        params={"collection": coll, "file_name": "app.apk"},
+        label="GET /api/file/search (container is listed)",
+    )
+    check(
+        "container is visible in the file list",
+        isinstance(listing, dict)
+        and any(
+            f.get("file_md5") == apk_md5 for f in (listing.get("files") or [])
+        ),
+        str(listing)[:250],
+    )
 
     requests.post(
         f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
@@ -3368,6 +3536,7 @@ if __name__ == "__main__":
     test_pool_collection_equivalence()
     test_archive_upload()
     test_unpack_upload()
+    test_lineage()
     test_lib_tag_rollup()
     run_all_tests()
     print_summary()

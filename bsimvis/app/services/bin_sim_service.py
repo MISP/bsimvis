@@ -4,6 +4,7 @@ import logging
 import math
 from collections import defaultdict
 from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import TagSplit, normalize_tags, load_tag_meta
 
 
@@ -149,6 +150,13 @@ class BinSimService:
                 if len(parts) >= 3:
                     binaries.append(parts[2])
             binaries = list(set(binaries))
+
+        # A container (APK, zip) has a file document but no code of its own, so
+        # it can only ever score 0 against everything. Keeping it out spares a
+        # row per container in every pair matrix.
+        containers = lineage_service.container_md5s(collection, r)
+        if containers:
+            binaries = [m for m in binaries if m not in containers]
 
         num_binaries = len(binaries)
         if num_binaries < 2:

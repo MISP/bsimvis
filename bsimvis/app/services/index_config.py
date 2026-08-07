@@ -24,6 +24,10 @@ INDEX_CONFIG = {
         "related_file_name": ["file", "func", "sim"],
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
         "parent_md5": ["file", "func", "sim"],
+        # md5 of the upload this file was eventually extracted from. Unpacking
+        # stops at unpack_service.MAX_DEPTH, so root + parent together answer
+        # "everything under X" for any node without walking the lineage edges.
+        "root_md5": ["file", "func", "sim"],
         "related_md5": ["file", "func", "sim"],
         "tags": ["file", "func", "sim"],  # becomes 'file_tags' when propagated
         "user_tags": ["file", "func", "sim"],  # not propagated

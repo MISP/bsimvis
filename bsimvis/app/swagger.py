@@ -808,6 +808,7 @@ class RawFileUpload(Resource):
             "unpack": "Set to false to analyze the upload exactly as-is (default: true)",
             "parent_md5": "md5 of the container this file was extracted from",
             "parent_file_name": "File name of the declared parent_md5 container",
+            "path_in_parent": "Path of this file inside the declared parent container",
         }
     )
     def post(self):
@@ -839,6 +840,24 @@ class BatchFinalize(Resource):
         from bsimvis.app.routes.file import finalize_batch_upload
 
         return finalize_batch_upload()
+
+
+@ns_file.route("/<string:file_md5>/lineage")
+class FileLineage(Resource):
+    @ns_file.doc(
+        params={"collection": "Collection name (default: main)"},
+        description=(
+            "Containment lineage for one file: the containers it came out of "
+            "(nearest first) and the files extracted out of it. Nodes carry an "
+            "`exists` flag, false for a container that was declared but never "
+            "uploaded."
+        ),
+    )
+    def get(self, file_md5):
+        """Returns the parents, ancestors and children of a file."""
+        from bsimvis.app.routes.file import get_file_lineage
+
+        return get_file_lineage(file_md5)
 
 
 @ns_file.route("/<string:file_md5>/metadata")

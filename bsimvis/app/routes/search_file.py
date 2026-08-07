@@ -74,6 +74,8 @@ def search_files():
             ("inferred_md5", "inferred_md5"),
             ("note_owner", "note_owners"),
             ("note_owners", "note_owners"),
+            # Every file extracted out of one upload, at any depth.
+            ("root_md5", "root_md5"),
         ]:
             val = request.args.get(arg)
             if val:
@@ -467,6 +469,7 @@ def query_files_advanced(r, collection, filters):
             "inferred_filename",
             "inferred_md5",
             "note_owners",
+            "root_md5",
         ]:
             candidates &= get_field_matches(field, val)
 

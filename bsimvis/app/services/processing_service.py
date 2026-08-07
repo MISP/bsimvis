@@ -2,6 +2,7 @@ import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
+from bsimvis.app.services import lineage_service
 
 
 def lib_parent(tag):
@@ -172,6 +173,19 @@ class ProcessingService:
         pipe.set(batch_key, json.dumps(batch_data))
 
         pipe.execute()
+
+        # Lineage is maintained here rather than in the upload route because
+        # every path that creates a file document lands here -- server-side
+        # unpacking, a locally-analyzed upload, a declared out-of-band parent.
+        # record() is idempotent, so the route recording the same edge first
+        # (it also records edges for children that fail as duplicates) costs
+        # nothing.
+        parent_md5 = coll_file_meta.get("parent_md5")
+        if parent_md5:
+            lineage_service.record(
+                collection, parent_md5, file_md5, coll_file_meta.get("file_name", "")
+            )
+        lineage_service.record_function_count(collection, file_md5, num_functions)
 
         if job_service and job_id:
             job_service.update_progress(

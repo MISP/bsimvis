@@ -482,6 +482,13 @@ def delete_file(r, coll, file_md5):
     pipe.hincrby(f"global:collection:{coll}:meta", "total_files", -1)
     pipe.execute()
 
+    # Containment edges outlive the document otherwise, leaving children
+    # pointing at a container that is gone and containers counting functions
+    # that no longer exist. Imported here: lineage_service imports this module.
+    from bsimvis.app.services import lineage_service
+
+    lineage_service.forget(coll, file_md5, r)
+
 
 def delete_function(r, coll, md5, addr):
     """Remove a function from all indexes."""

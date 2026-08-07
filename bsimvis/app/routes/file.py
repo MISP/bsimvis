@@ -1,12 +1,14 @@
 from flask import request
 import json
 import hashlib
-from bsimvis.app.services import archive_service, unpack_service
+from bsimvis.app.services import archive_service, lineage_service, unpack_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
 from bsimvis.app.services.metadata_service import stage_metadata, staged_metadata
+from bsimvis.app.services.processing_service import ProcessingService
 import logging
+import time
 import uuid
 
 job_service = JobService()
@@ -374,6 +376,7 @@ def _ingest_raw_binary(
     batch_name,
     parent_md5=None,
     parent_file_name=None,
+    root_md5=None,
     extra_tags=(),
 ):
     """Stores one binary and queues its analysis pipeline.
@@ -454,6 +457,8 @@ def _ingest_raw_binary(
     if parent_md5:
         extra_meta["parent_md5"] = parent_md5
         extra_meta["parent_file_name"] = parent_file_name
+    if root_md5:
+        extra_meta["root_md5"] = root_md5
     if extra_meta:
         analysis_payload["file_metadata_extra"] = extra_meta
 
@@ -501,6 +506,61 @@ def _ingest_raw_binary(
     }
 
 
+def _ingest_container(
+    file_md5,
+    raw_bytes,
+    file_name,
+    collection,
+    batch_uuid,
+    batch_name,
+    handler,
+    tags,
+    parent_md5,
+    parent_file_name,
+    root_md5,
+):
+    """Give a container an identity-only file document (issue #32 section 2).
+
+    An APK or a zip is not code: it gets a document holding what it is, so the
+    lineage links its children carry resolve to something and it can be found
+    by name, but no functions and no similarity document. Its function count is
+    the rolled-up count of everything below it, restated by lineage_service as
+    each child finishes indexing.
+    """
+    r_data = get_redis()
+    if r_data.sismember(f"{collection}:all_files", f"{collection}:file:{file_md5}"):
+        lineage_service.mark_container(collection, file_md5, r_data)
+        return  # re-uploaded container: the edges below are refreshed regardless
+
+    now_unix = int(time.time() * 1000)
+    file_meta = {
+        "entry_date": now_unix,
+        "file_date": now_unix,
+        "file_md5": file_md5,
+        "file_name": file_name,
+        "batch_uuid": batch_uuid,
+        "batch_name": batch_name,
+        "tags": list(tags),
+        "filetype": handler.name,
+        "file_size": len(raw_bytes),
+        "is_container": True,
+        "language_id": "",
+    }
+    if parent_md5:
+        file_meta["parent_md5"] = parent_md5
+        file_meta["parent_file_name"] = parent_file_name
+    if root_md5:
+        file_meta["root_md5"] = root_md5
+
+    # ponytail: the container's own bytes are not stored. Nothing reads them --
+    # its children are already extracted -- and keeping them doubles the corpus
+    # on disk. Store them here if re-extraction without a re-upload is wanted.
+    ProcessingService().index_metadata(
+        collection, None, file_meta=file_meta, num_functions=0, total_features=0
+    )
+    lineage_service.mark_container(collection, file_md5, r_data)
+
+
 def _ingest_tree(
     raw_bytes,
     file_name,
@@ -509,6 +569,8 @@ def _ingest_tree(
     batch_name,
     parent_md5=None,
     parent_file_name=None,
+    path_in_parent="",
+    root_md5=None,
     inherited_tags=(),
     depth=0,
 ):
@@ -544,6 +606,14 @@ def _ingest_tree(
             handler, children = None, []
 
     tags = list(inherited_tags) + ([handler.tag] if handler else [])
+    self_md5 = hashlib.md5(raw_bytes).hexdigest()
+
+    # A declared parent is an edge too, even when we unpacked nothing ourselves:
+    # it is how out-of-band unpacking gets its lineage in.
+    if parent_md5:
+        lineage_service.record(
+            collection, parent_md5, self_md5, path_in_parent or file_name
+        )
 
     results, errors = [], []
     if handler is None or handler.parent_is_code:
@@ -555,18 +625,28 @@ def _ingest_tree(
             batch_name,
             parent_md5=parent_md5,
             parent_file_name=parent_file_name,
+            root_md5=root_md5,
             extra_tags=tags,
         )
         if isinstance(outcome, tuple):
             errors.append({"file_name": file_name, **outcome[0]})
         else:
             results.append(outcome)
+    else:
+        _ingest_container(
+            self_md5,
+            raw_bytes,
+            file_name,
+            collection,
+            batch_uuid,
+            batch_name,
+            handler,
+            tags,
+            parent_md5,
+            parent_file_name,
+            root_md5,
+        )
 
-    # ponytail: a container gets no file document of its own, so its children
-    # carry a parent_md5 that resolves to nothing. Giving containers an
-    # identity-only document is section 2 of MISP/bsimvis#32, and waits on the
-    # lineage shape decided in section 3.
-    child_parent_md5 = hashlib.md5(raw_bytes).hexdigest()
     for child_name, child_bytes in children:
         sub_results, sub_errors = _ingest_tree(
             child_bytes,
@@ -574,8 +654,12 @@ def _ingest_tree(
             collection,
             batch_uuid,
             batch_name,
-            parent_md5=child_parent_md5,
+            parent_md5=self_md5,
             parent_file_name=file_name,
+            path_in_parent=child_name,
+            # The root is the upload itself, so every descendant answers
+            # "everything under this upload" with one indexed field.
+            root_md5=root_md5 or self_md5,
             inherited_tags=tags,
             depth=depth + 1,
         )
@@ -629,6 +713,7 @@ def upload_raw_binary():
             batch_name,
             parent_md5=request.args.get("parent_md5"),
             parent_file_name=request.args.get("parent_file_name"),
+            path_in_parent=request.args.get("path_in_parent", ""),
         )
 
         # A plain binary keeps the flat single-file response it always had.
@@ -762,6 +847,89 @@ def finalize_batch_upload():
         "master_pipeline_id": master_id,
         "batch_uuid": batch_uuid,
     }
+
+
+def _lineage_nodes(collection, edges, r):
+    """Resolve lineage edges into displayable nodes.
+
+    `exists` is what lets the UI stay honest about a container it was told
+    about but never given -- a declared parent, or anything ingested before
+    containers got documents of their own.
+    """
+    if not edges:
+        return []
+    pipe = r.pipeline(transaction=False)
+    for edge in edges:
+        pipe.get(f"{collection}:file:{edge['md5']}:meta")
+    containers = lineage_service.container_md5s(collection, r)
+
+    nodes = []
+    for edge, raw in zip(edges, pipe.execute()):
+        meta = {}
+        if raw:
+            try:
+                meta = json.loads(raw)
+            except (ValueError, TypeError):
+                meta = {}
+        nodes.append(
+            {
+                "file_md5": edge["md5"],
+                "path_in_parent": edge["path"],
+                # Falling back to the path keeps a dangling node labelled with
+                # something a human recognises instead of a bare hash.
+                "file_name": meta.get("file_name") or edge["path"] or edge["md5"],
+                "exists": bool(raw),
+                "is_container": edge["md5"] in containers,
+                "function_count": meta.get("function_count", 0),
+                "filetype": meta.get("filetype", ""),
+                "tags": meta.get("tags", []),
+            }
+        )
+    return nodes
+
+
+def get_file_lineage(file_md5):
+    """Returns the containment lineage of one file: ancestors and children.
+
+    `ancestors` is ordered nearest-first, so a breadcrumb is that list reversed
+    plus the file itself.
+    """
+    try:
+        collection = request.args.get("collection", "main")
+        r = get_redis()
+
+        raw = r.get(f"{collection}:file:{file_md5}:meta")
+        meta = json.loads(raw) if raw else {}
+
+        children_nodes = _lineage_nodes(
+            collection, lineage_service.children(collection, file_md5, r), r
+        )
+        descendants = lineage_service.descendants(collection, file_md5, r)
+
+        return {
+            "collection": collection,
+            "file": {
+                "file_md5": file_md5,
+                "file_name": meta.get("file_name", ""),
+                "exists": bool(raw),
+                "is_container": lineage_service.is_container(collection, file_md5, r),
+                "function_count": meta.get("function_count", 0),
+                "root_md5": meta.get("root_md5", ""),
+            },
+            "parents": _lineage_nodes(
+                collection, lineage_service.parents(collection, file_md5, r), r
+            ),
+            "ancestors": _lineage_nodes(
+                collection, lineage_service.ancestors(collection, file_md5, r), r
+            ),
+            "children": children_nodes,
+            "child_count": len(children_nodes),
+            "descendant_count": len(descendants),
+        }
+
+    except Exception as e:
+        logging.error(f"Failed to fetch lineage for {file_md5}: {e}")
+        return {"error": str(e)}, 500
 
 
 def update_file_metadata(file_md5):

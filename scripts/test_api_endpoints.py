@@ -639,6 +639,140 @@ def test_archive_upload():
     )
 
 
+def test_unpack_upload():
+    """Checks the pluggable unpack layer: APK, fat Mach-O, UPX and opt-out."""
+    import io
+    import struct
+    import zipfile
+
+    coll = f"{COLLECTION}_unpack"
+    # enqueue=false everywhere: these are synthetic blobs, not real binaries, so
+    # they must be registered but never handed to a worker.
+    common = {"collection": coll, "skip_sim": "true", "enqueue": "false"}
+
+    # -- APK: resources dropped, dex and native libraries kept ---------------
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("AndroidManifest.xml", b"manifest")
+        zf.writestr("classes.dex", b"dex\n035\x00payload")
+        zf.writestr("lib/arm64-v8a/libfoo.so", b"\x7fELF native lib")
+        zf.writestr("res/drawable/icon.png", b"\x89PNG not code")
+    apk = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={**common, "file_name": "app.apk"},
+        raw_body=buf.getvalue(),
+        label="POST /api/file/upload (apk keeps only code members)",
+    )
+    check(
+        "apk ingests dex and native libs, not resources",
+        isinstance(apk, dict)
+        and sorted(f.get("file_name") for f in apk.get("files") or [])
+        == ["classes.dex", "lib/arm64-v8a/libfoo.so"],
+        str(apk)[:200],
+    )
+
+    # -- fat Mach-O: one child per architecture slice ------------------------
+    slices = [
+        (0x01000007, b"\xcf\xfa\xed\xfe x86_64 slice"),
+        (0x0100000C, b"\xcf\xfa\xed\xfe arm64 slice"),
+    ]
+    header = struct.pack(">II", 0xCAFEBABE, len(slices))
+    body = b""
+    for cputype, payload in slices:
+        header += struct.pack(
+            ">IIIII", cputype, 0, 8 + 20 * len(slices) + len(body), len(payload), 4
+        )
+        body += payload
+    fat = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={**common, "file_name": "tool"},
+        raw_body=header + body,
+        label="POST /api/file/upload (fat Mach-O splits per arch)",
+    )
+    check(
+        "fat Mach-O yields one file per architecture",
+        isinstance(fat, dict)
+        and sorted(f.get("file_name") for f in fat.get("files") or [])
+        == ["tool:arm64", "tool:x86_64"],
+        str(fat)[:200],
+    )
+
+    # -- unpack=false opts out entirely --------------------------------------
+    flat = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={**common, "file_name": "app2.apk", "unpack": "false"},
+        raw_body=buf.getvalue(),
+        label="POST /api/file/upload?unpack=false (stays one file)",
+    )
+    check(
+        "unpack=false analyzes the upload as-is",
+        isinstance(flat, dict) and "file_count" not in flat and flat.get("file_md5"),
+        str(flat)[:200],
+    )
+
+    # -- a declared parent is honoured on a plain binary ---------------------
+    declared = test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            **common,
+            "file_name": "hand_unpacked.bin",
+            "parent_md5": "0" * 32,
+            "parent_file_name": "outer.7z",
+        },
+        raw_body=b"\x7fELF unpacked out of band",
+        label="POST /api/file/upload?parent_md5=... (declared parent)",
+    )
+    check(
+        "declared parent keeps the flat single-file response",
+        isinstance(declared, dict) and declared.get("file_name") == "hand_unpacked.bin",
+        str(declared)[:200],
+    )
+
+    # -- UPX: packed and unpacked both analyzed ------------------------------
+    import shutil
+    import subprocess
+    import tempfile
+
+    from bsimvis.app.services import unpack_service
+
+    upx = unpack_service.upx_path()
+    if upx and os.path.isfile(TEST_BINARY):
+        with tempfile.TemporaryDirectory() as td:
+            packed_path = os.path.join(td, "packed.bin")
+            shutil.copy(TEST_BINARY, packed_path)
+            proc = subprocess.run([upx, "-q", "-f", packed_path], capture_output=True)
+            packed = open(packed_path, "rb").read() if proc.returncode == 0 else None
+
+        if packed is None:
+            print(_color("[SKIP] upx could not pack the test binary.", YELLOW))
+        else:
+            res = test_endpoint(
+                "POST",
+                "/api/file/upload",
+                params={**common, "file_name": "packed.bin"},
+                raw_body=packed,
+                label="POST /api/file/upload (UPX-packed binary)",
+            )
+            names = sorted(f.get("file_name") for f in (res or {}).get("files") or [])
+            check(
+                "UPX upload analyzes the packed binary and its unpacked child",
+                isinstance(res, dict)
+                and res.get("file_count") == 2
+                and names == ["packed.bin", "packed.bin.unpacked"],
+                str(res)[:200],
+            )
+    else:
+        print(_color("[SKIP] upx not installed – UPX upload check skipped.", YELLOW))
+
+    requests.post(
+        f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 4 – Full endpoint sweep
 # ---------------------------------------------------------------------------
@@ -980,21 +1114,33 @@ def run_all_tests():
 
     # ── Binary Similarity ──────────────────────────────────────────────────
     print(_color("\n  [Binary Similarity]", BOLD))
-    bs_search = test_endpoint("GET", "/api/bin_sim/search", params={"collection": COLLECTION})
+    bs_search = test_endpoint(
+        "GET", "/api/bin_sim/search", params={"collection": COLLECTION}
+    )
     if bs_search and bs_search.get("results"):
         first_pair = bs_search["results"][0]
         check(
             "Binary similarity doc contains tags_summary list",
-            "tags_summary" in first_pair and isinstance(first_pair["tags_summary"], list),
-            "Checking for tags_summary list in the diff document"
+            "tags_summary" in first_pair
+            and isinstance(first_pair["tags_summary"], list),
+            "Checking for tags_summary list in the diff document",
         )
         if first_pair.get("tags_summary"):
             tag_elem = first_pair["tags_summary"][0]
             check(
                 "tags_summary element contains fractional split fields",
-                all(k in tag_elem for k in ("tag_id", "score", "contribution_pct",
-                                            "coverage_pct_a", "coverage_pct_b", "bins")),
-                "Fields: tag_id, score, contribution_pct, coverage_pct_a/b, bins"
+                all(
+                    k in tag_elem
+                    for k in (
+                        "tag_id",
+                        "score",
+                        "contribution_pct",
+                        "coverage_pct_a",
+                        "coverage_pct_b",
+                        "bins",
+                    )
+                ),
+                "Fields: tag_id, score, contribution_pct, coverage_pct_a/b, bins",
             )
 
     if file_md5:
@@ -2912,8 +3058,9 @@ def test_lib_tag_rollup():
             f"got {sorted(file_lib_tags(r, coll, md5))}, want {sorted(expected)}",
         )
 
-        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "backfill_lib_file_tags.py")
+        script = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "backfill_lib_file_tags.py"
+        )
         proc = subprocess.run(
             [sys.executable, script, "--collection", coll],
             capture_output=True,
@@ -3040,9 +3187,13 @@ def test_lib_tag_rollup():
         check(
             "uploaded collection: every function library tag reached its file",
             not missing,
-            "; ".join(missing)
-            if missing
-            else ("checked live files" if found_any else "no Function ID lib matches"),
+            (
+                "; ".join(missing)
+                if missing
+                else (
+                    "checked live files" if found_any else "no Function ID lib matches"
+                )
+            ),
         )
     finally:
         keys = list(r.scan_iter(match=f"{coll}:*", count=1000))
@@ -3105,6 +3256,7 @@ if __name__ == "__main__":
     test_tag_vocabulary_and_llm_batch()
     test_pool_collection_equivalence()
     test_archive_upload()
+    test_unpack_upload()
     test_lib_tag_rollup()
     run_all_tests()
     print_summary()

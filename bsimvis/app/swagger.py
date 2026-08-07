@@ -795,10 +795,19 @@ class RawFileUpload(Resource):
             "algo": "Similarity algorithm (jaccard, unweighted_cosine, milvus_sparse)",
             "skip_sim": "Set to true to skip building similarities",
             "archive_password": "Password for an uploaded zip archive (default: infected)",
+            "unpack": "Set to false to analyze the upload exactly as-is (default: true)",
+            "parent_md5": "md5 of the container this file was extracted from",
+            "parent_file_name": "File name of the declared parent_md5 container",
         }
     )
     def post(self):
-        """Uploads a raw binary, or a zip/tar archive whose members are each analyzed."""
+        """Uploads a raw binary, an archive/APK, or a packed executable.
+
+        Archives, APKs and fat Mach-O binaries are unpacked and every binary
+        inside is analyzed; a UPX-packed executable is analyzed both packed and
+        unpacked. Everything unpacked is tagged with the format it came from
+        (packer:upx, container:apk, ...) and carries the parent's md5.
+        """
         from bsimvis.app.routes.file import upload_raw_binary
 
         return upload_raw_binary()

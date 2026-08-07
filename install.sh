@@ -88,6 +88,34 @@ else
     echo "Kvrocks already installed in bin/"
 fi
 
+echo "--- Installing UPX ---"
+# Used to unpack UPX-packed samples before analysis (see unpack_service.py).
+# Optional: without it packed samples are still analyzed, just packed.
+UPX_VERSION="5.2.0"
+if [ ! -f "${BIN_DIR}/upx" ]; then
+    case "$(uname -m)" in
+        x86_64)  UPX_ARCH="amd64" ;;
+        aarch64) UPX_ARCH="arm64" ;;
+        armv7l)  UPX_ARCH="arm" ;;
+        i686)    UPX_ARCH="i386" ;;
+        *)       UPX_ARCH="" ;;
+    esac
+    UPX_DIR="upx-${UPX_VERSION}-${UPX_ARCH}_linux"
+    if [ -z "$UPX_ARCH" ]; then
+        echo "Warning: no UPX build for $(uname -m); packed samples stay packed."
+    elif ! (
+        cd "${SCRATCH_DIR}" \
+        && curl -fsSL "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${UPX_DIR}.tar.xz" -o upx.tar.xz \
+        && tar -xJf upx.tar.xz \
+        && cp "${UPX_DIR}/upx" "${BIN_DIR}/upx" \
+        && chmod +x "${BIN_DIR}/upx"
+    ); then
+        echo "Warning: UPX download failed; packed samples stay packed."
+    fi
+else
+    echo "UPX already installed in bin/"
+fi
+
 echo "--- Installing Ghidra ---"
 ./scripts/install_ghidra.sh
 

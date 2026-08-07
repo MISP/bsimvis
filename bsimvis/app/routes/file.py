@@ -1,7 +1,7 @@
 from flask import request
 import json
 import hashlib
-from bsimvis.app.services import archive_service
+from bsimvis.app.services import archive_service, unpack_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.milvus_service import milvus_service
@@ -365,11 +365,20 @@ def upload_chunk():
         return {"error": str(e), "detail": traceback.format_exc()}, 500
 
 
-def _ingest_raw_binary(raw_bytes, file_name, collection, batch_uuid, batch_name):
+def _ingest_raw_binary(
+    raw_bytes,
+    file_name,
+    collection,
+    batch_uuid,
+    batch_name,
+    parent_md5=None,
+    parent_file_name=None,
+    extra_tags=(),
+):
     """Stores one binary and queues its analysis pipeline.
 
     Returns the per-file result dict, or ({"error": ...}, status) on failure.
-    Shared by plain uploads and by every member of an uploaded archive.
+    Shared by plain uploads and by every binary unpacking produced.
     """
     # Compute MD5
     file_md5 = hashlib.md5(raw_bytes).hexdigest()
@@ -393,7 +402,7 @@ def _ingest_raw_binary(raw_bytes, file_name, collection, batch_uuid, batch_name)
         "file_name": file_name,
         "batch_uuid": batch_uuid,
         "batch_name": batch_name,
-        "tags": request.args.getlist("tags"),
+        "tags": request.args.getlist("tags") + list(extra_tags),
         "related_md5": request.args.getlist("related_md5"),
         "profile": request.args.get("profile", "fast"),
         "min_func_len": int(request.args.get("min_func_len", 10)),
@@ -416,10 +425,17 @@ def _ingest_raw_binary(raw_bytes, file_name, collection, batch_uuid, batch_name)
             val.lower() in ("true", "1") if isinstance(val, str) else bool(val)
         )
 
+    extra_meta = {}
     if "file_metadata_extra" in request.args:
-        analysis_payload["file_metadata_extra"] = json.loads(
-            request.args.get("file_metadata_extra")
-        )
+        extra_meta = json.loads(request.args.get("file_metadata_extra"))
+    # parent_md5 / parent_file_name are already declared index fields at the
+    # file, func and sim levels, so lineage rides the existing metadata merge
+    # in ghidra_job._stream_program_chunks -- no schema change needed.
+    if parent_md5:
+        extra_meta["parent_md5"] = parent_md5
+        extra_meta["parent_file_name"] = parent_file_name
+    if extra_meta:
+        analysis_payload["file_metadata_extra"] = extra_meta
 
     # Trigger Pipeline: Analysis -> Indexing -> Similarity
     pipeline_tasks = [(JobType.GHIDRA_ANALYZE, analysis_payload)]
@@ -465,10 +481,95 @@ def _ingest_raw_binary(raw_bytes, file_name, collection, batch_uuid, batch_name)
     }
 
 
+def _ingest_tree(
+    raw_bytes,
+    file_name,
+    collection,
+    batch_uuid,
+    batch_name,
+    parent_md5=None,
+    parent_file_name=None,
+    inherited_tags=(),
+    depth=0,
+):
+    """Ingest one upload plus everything unpacking it produces.
+
+    Returns (results, errors). Which files get analyzed is decided by the
+    handler that matched (see unpack_service): a packed executable is analyzed
+    both packed and unpacked, a container only through its children.
+    """
+    options = {
+        "password": request.args.get(
+            "archive_password", archive_service.DEFAULT_PASSWORD
+        )
+    }
+
+    handler, children = None, []
+    if (
+        request.args.get("unpack", "true").lower() != "false"
+        and depth < unpack_service.MAX_DEPTH
+    ):
+        try:
+            handler, children = unpack_service.unpack(raw_bytes, file_name, options)
+        except unpack_service.UnpackError as e:
+            handler = unpack_service.find_handler(raw_bytes, file_name)
+            if handler is None or not handler.parent_is_code:
+                # A container that will not open yields nothing at all.
+                return [], [
+                    {"file_name": file_name, "error": f"Could not extract: {e}"}
+                ]
+            # A packed binary that will not unpack is still a real sample, and
+            # the detector is a heuristic that may simply have been wrong.
+            logging.warning(f"[-] {file_name}: {handler.name} unpack failed: {e}")
+            handler, children = None, []
+
+    tags = list(inherited_tags) + ([handler.tag] if handler else [])
+
+    results, errors = [], []
+    if handler is None or handler.parent_is_code:
+        outcome = _ingest_raw_binary(
+            raw_bytes,
+            file_name,
+            collection,
+            batch_uuid,
+            batch_name,
+            parent_md5=parent_md5,
+            parent_file_name=parent_file_name,
+            extra_tags=tags,
+        )
+        if isinstance(outcome, tuple):
+            errors.append({"file_name": file_name, **outcome[0]})
+        else:
+            results.append(outcome)
+
+    # ponytail: a container gets no file document of its own, so its children
+    # carry a parent_md5 that resolves to nothing. Giving containers an
+    # identity-only document is section 2 of MISP/bsimvis#32, and waits on the
+    # lineage shape decided in section 3.
+    child_parent_md5 = hashlib.md5(raw_bytes).hexdigest()
+    for child_name, child_bytes in children:
+        sub_results, sub_errors = _ingest_tree(
+            child_bytes,
+            child_name,
+            collection,
+            batch_uuid,
+            batch_name,
+            parent_md5=child_parent_md5,
+            parent_file_name=file_name,
+            inherited_tags=tags,
+            depth=depth + 1,
+        )
+        results.extend(sub_results)
+        errors.extend(sub_errors)
+
+    return results, errors
+
+
 def upload_raw_binary():
     """
-    Receives a raw binary file, or an archive (zip/tar) of binaries.
-    Stores each one in Kvrocks and triggers its Ghidra analysis job.
+    Receives a raw binary file, an archive (zip/tar/APK) of binaries, or a
+    packed executable. Stores each resulting binary in Kvrocks and triggers its
+    Ghidra analysis job.
     """
     try:
         logging.info(f"[*] Raw upload request received. Args: {request.args}")
@@ -498,37 +599,27 @@ def upload_raw_binary():
             batch_uuid = uuid.uuid4().hex
         batch_name = request.args.get("batch_name", "Ghidra Batch")
 
-        if not archive_service.is_archive(raw_bytes, file_name):
-            result = _ingest_raw_binary(
-                raw_bytes, file_name, collection, batch_uuid, batch_name
-            )
-            return result
-
-        # Archive: every member becomes its own file in the same batch.
-        password = request.args.get(
-            "archive_password", archive_service.DEFAULT_PASSWORD
+        # A declared parent (issue #32: users who unpack out-of-band with their
+        # own tooling) is honoured whether or not we unpack anything ourselves.
+        results, errors = _ingest_tree(
+            raw_bytes,
+            file_name,
+            collection,
+            batch_uuid,
+            batch_name,
+            parent_md5=request.args.get("parent_md5"),
+            parent_file_name=request.args.get("parent_file_name"),
         )
-        try:
-            members = archive_service.extract(raw_bytes, password)
-        except archive_service.ArchiveError as e:
-            return {"error": f"Could not extract archive: {e}"}, 400
 
-        if not members:
-            return {"error": "Archive contains no files"}, 400
-
-        results, errors = [], []
-        for member_name, member_bytes in members:
-            outcome = _ingest_raw_binary(
-                member_bytes, member_name, collection, batch_uuid, batch_name
-            )
-            if isinstance(outcome, tuple):
-                errors.append({"file_name": member_name, **outcome[0]})
-            else:
-                results.append(outcome)
+        # A plain binary keeps the flat single-file response it always had.
+        if len(results) == 1 and not errors and results[0]["file_name"] == file_name:
+            return results[0]
 
         if not results:
+            if len(errors) == 1:
+                return {"error": errors[0]["error"]}, 400
             return {
-                "error": "No file in the archive could be queued",
+                "error": "No file in this upload could be queued",
                 "errors": errors,
             }, 400
 
@@ -541,7 +632,7 @@ def upload_raw_binary():
             "errors": errors,
             "pipeline_id": results[0]["pipeline_id"],
             "pipeline_ids": [r["pipeline_id"] for r in results],
-            "message": f"Archive unpacked: {len(results)} binaries queued"
+            "message": f"Unpacked: {len(results)} binaries queued"
             + (f", {len(errors)} skipped" if errors else ""),
         }
 

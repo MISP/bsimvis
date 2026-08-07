@@ -284,6 +284,14 @@ def _perform_raw_upload(raw_bytes, file_name, args):
             if getattr(args, "archive_password", None) is not None:
                 params["archive_password"] = args.archive_password
 
+            # Unpacking options
+            if getattr(args, "no_unpack", False):
+                params["unpack"] = "false"
+            if getattr(args, "parent_md5", None) is not None:
+                params["parent_md5"] = args.parent_md5
+            if getattr(args, "parent_file_name", None) is not None:
+                params["parent_file_name"] = args.parent_file_name
+
             api_url = f"http://{api_host}/api/file/upload"
             try:
                 logging.info(f"[*] Uploading {file_name} to {api_url}...")
@@ -793,6 +801,32 @@ def cli_main():
         default=None,
         help="Password for uploaded zip archives (server default: infected). "
         "Archives are unpacked server-side and every member analyzed.",
+    )
+
+    unpack_options = parser.add_argument_group("Unpacking options")
+    unpack_options.add_argument(
+        "--no-unpack",
+        dest="no_unpack",
+        action="store_true",
+        default=False,
+        help="Upload each file exactly as-is. Without this, the server unpacks "
+        "archives, APKs, fat Mach-O binaries and UPX-packed executables, and "
+        "analyzes every binary that comes out.",
+    )
+    unpack_options.add_argument(
+        "--parent-md5",
+        dest="parent_md5",
+        metavar="MD5",
+        default=None,
+        help="Declare the md5 of the container these files came from, for "
+        "samples unpacked with your own tooling.",
+    )
+    unpack_options.add_argument(
+        "--parent-name",
+        dest="parent_file_name",
+        metavar="NAME",
+        default=None,
+        help="File name of the declared --parent-md5 container.",
     )
 
     decomp_args = parser.add_argument_group("Decompilation options")

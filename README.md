@@ -157,6 +157,30 @@ curl -X POST --data-binary "@/path/to/file" \
 }
 ```
 
+## Supported upload formats
+
+`/api/file/upload` takes the raw bytes of whatever you have. Containers are unpacked server-side and every binary inside is analyzed as its own file, tagged with the format it came from and carrying the container's md5 in `parent_md5`.
+
+| Upload | What gets analyzed | Tag |
+|---|---|---|
+| Raw executable (ELF, PE, Mach-O, ...) | The file itself | — |
+| `.zip`, `.tar`, `.tar.gz`, `.tar.bz2`, `.tar.xz` | Every member, one file each | `container:archive` |
+| Encrypted zip (ZipCrypto or AES) | Same, password defaults to `infected` | `container:archive` |
+| `.apk`, `.aab` | Only `.dex`, `.so` and `.jar` members — resources and assets are skipped | `container:apk` |
+| Fat/universal Mach-O | One file per architecture slice, named `<file>:x86_64`, `<file>:arm64`, ... | `container:macho-fat` |
+| UPX-packed executable | **Both** the packed file and its unpacked child, so packed-vs-unpacked is a normal binary diff | `packer:upx` |
+| `.gpr.zip` (Ghidra project) | Imported whole, never unpacked — see below | — |
+
+Notes:
+
+- Archive password: `--archive-password` on the CLI, `archive_password=` on the API. Default is `infected`, the usual convention for shipped malware samples.
+- Unpacking UPX needs the `upx` binary, installed into `bin/` by `install.sh`. Without it a packed sample is still analyzed, just packed.
+- Containers are followed 2 levels deep, capped at 200 children.
+- `--no-unpack` (`unpack=false`) analyzes the upload exactly as-is.
+- Unpacked something with your own tooling? Declare the lineage yourself with `--parent-md5` / `--parent-name` (`parent_md5=` / `parent_file_name=`).
+
+Adding another format means one entry in `HANDLERS` in [`bsimvis/app/services/unpack_service.py`](bsimvis/app/services/unpack_service.py).
+
 ## Ghidra project upload 
 
 Files in ghidra projects won´t get reanalyzed to not overwrite analyst work, meaning if no analyzers were ran in this project, no functions will be found

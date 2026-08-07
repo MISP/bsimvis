@@ -7,10 +7,9 @@ let metaHighlightMode = 'different';
 let sankeyMode = 'simplified';
 let sankeyScale = 'count';
 let sankeySplit = 10;
-// File sim tab: table (tag tree) or sankey (tag flow). See "File sim tab" below.
-let fileSimView = 'table';      // 'table' | 'sankey'
+// The Sankey lives under the Summary rollup rather than behind a view toggle,
+// and folds with the tree, so neither a view nor a depth setting is needed.
 let fileSimScale = 'count';     // 'count' | 'features'
-let fileSimDepth = 2;           // default namespace frontier: 1=type, 2=library, 3=version
 // One table now, so one sort state. Keyed `matched` for continuity with the
 // filter-input ids the header still uses.
 let binSimSortState = {
@@ -105,7 +104,13 @@ function renderBinarySimilarityView(params) {
                  their own, so every tab means the same thing for any selection. -->
             <div id="bsim-main">
                 <div id="bsim-sidebar">
-                    <div class="bsim-side-title">Function tag tree</div>
+                    <div class="bsim-side-title">
+                        Function tag tree
+                        <span class="bsim-side-actions">
+                            <span onclick="expandAllFileSimNodes()" title="Expand every tag node">expand all</span>
+                            <span onclick="collapseAllFileSimNodes()" title="Collapse every tag node">collapse all</span>
+                        </span>
+                    </div>
                     <div id="bsim-tree" class="bsim-tree"></div>
                     <div class="bsim-side-sep"></div>
                     <div class="bsim-side-nav">
@@ -122,20 +127,28 @@ function renderBinarySimilarityView(params) {
                         <button class="bsim-tab" id="bin-sim-tab-btn-all" onclick="switchBinSimTab('all')">All</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched</button>
                         <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched</button>
-                        <div style="flex:1;"></div>
-                        <div class="view-toggle" id="bsim-view-toggle" style="margin:0; display:flex; align-items:center;">
-                            <button class="view-btn active" id="bsim-filesim-view-btn-table" onclick="setFileSimView('table')" title="Tag composition as a table">Table</button>
-                            <button class="view-btn" id="bsim-filesim-view-btn-sankey" onclick="setFileSimView('sankey')" title="Tag composition as a Shared / Unique flow graph">Sankey</button>
-                        </div>
                     </div>
 
                     <!-- Global scope chips: the tree selection, removable from here too -->
                     <div id="bsim-chips" class="bsim-chips"></div>
 
-                    <!-- Summary: stats for the selection + rollup of its children -->
+                    <!-- Summary: stats for the selection, a rollup that folds with the
+                         tree, and the same composition drawn as flow underneath. -->
                     <div class="bsim-subtab-panel" id="bsim-panel-summary" style="flex:1; min-height:0; display:flex; flex-direction:column; overflow:auto; gap:12px;">
                         <div id="bsim-summary-head"></div>
                         <div id="bsim-summary-rollup"></div>
+                        <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:4px;">
+                            <span class="bsim-ctl-label" style="margin:0;">Composition flow</span>
+                            <div class="view-toggle" id="bin-sim-filesim-scale-toggle" style="margin:0; align-items:center; display:flex;">
+                                <span class="bsim-ctl-label">Scale:</span>
+                                <button class="view-btn ${fileSimScale === 'count' ? 'active' : ''}" id="bsim-filesim-scale-btn-count" onclick="setFileSimScale('count')" title="Scale flow by function count">Count</button>
+                                <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
+                            </div>
+                            <span style="font-size:0.68rem; color:var(--dim); font-family:sans-serif;">follows the tree's folding · click a node to drill in</span>
+                        </div>
+                        <div id="bin-sim-filesim-sankey-card" style="position:relative; width:100%; flex:0 0 auto; height:440px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+                            <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
+                        </div>
                     </div>
 
                     <!-- The one function table. All / Matched / Unmatched differ only
@@ -148,7 +161,8 @@ function renderBinarySimilarityView(params) {
                                 <button class="view-btn" id="bsim-group-btn-tag" onclick="setFileSimGroupBy('tag')" title="Always group by tag">Tag</button>
                                 <button class="view-btn" id="bsim-group-btn-none" onclick="setFileSimGroupBy('none')" title="One flat list">None</button>
                             </div>
-                            <button class="view-btn" onclick="collapseAllFileSimGroups()" title="Collapse every tag group">Collapse all</button>
+                            <button class="view-btn" onclick="expandAllFileSimNodes()" title="Expand every tag group (also expands the tree)">Expand all</button>
+                            <button class="view-btn" onclick="collapseAllFileSimNodes()" title="Collapse every tag group (also collapses the tree)">Collapse all</button>
                             <span id="bsim-table-count" style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;"></span>
                         </div>
                         <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
@@ -203,28 +217,6 @@ function renderBinarySimilarityView(params) {
                 <div id="bin-sim-inferred-meta-container" style="color:var(--dim); text-align:center; padding:40px;">Loading clusters…</div>
             </div>
 
-                    <!-- Sankey view of the same selection. Deliberately stops at
-                         Shared / Unique per tag: function-level detail is the
-                         table's job. -->
-                    <div class="bsim-subtab-panel" id="bsim-panel-filesim" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
-                        <div style="display:flex; align-items:center; gap:14px; flex-shrink:0; flex-wrap:wrap;">
-                            <div class="view-toggle" id="bin-sim-filesim-scale-toggle" style="margin:0; align-items:center; display:flex;">
-                                <span class="bsim-ctl-label">Scale:</span>
-                                <button class="view-btn ${fileSimScale === 'count' ? 'active' : ''}" id="bsim-filesim-scale-btn-count" onclick="setFileSimScale('count')" title="Scale flow by function count">Count</button>
-                                <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
-                            </div>
-                            <div class="view-toggle" id="bin-sim-filesim-depth-toggle" style="margin:0; align-items:center; display:flex;">
-                                <span class="bsim-ctl-label">Group:</span>
-                                <button class="view-btn ${fileSimDepth === 1 ? 'active' : ''}" onclick="setFileSimDepth(1)" title="One node per tag namespace (lib, stdlib, ...)">Namespace</button>
-                                <button class="view-btn ${fileSimDepth === 2 ? 'active' : ''}" onclick="setFileSimDepth(2)" title="One node per library (lib:libc)">Library</button>
-                                <button class="view-btn ${fileSimDepth === 3 ? 'active' : ''}" onclick="setFileSimDepth(3)" title="One node per library version (lib:libc:2.31)">Version</button>
-                                <span style="font-size:0.68rem; color:var(--dim); margin-left:10px; font-family:sans-serif;">click a tag node to expand ▸ · shift-click to fold it up</span>
-                            </div>
-                        </div>
-                        <div id="bin-sim-filesim-sankey-card" style="position:relative; width:100%; flex:1; min-height:420px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                            <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
-                        </div>
-                    </div>
                 </div><!-- /#bsim-detail -->
             </div><!-- /#bsim-main -->
         </div>
@@ -239,7 +231,14 @@ function renderBinarySimilarityView(params) {
             .bsim-side-title {
                 font-size:0.68rem; text-transform:uppercase; letter-spacing:0.07em;
                 color:var(--subtle); font-weight:bold; padding:4px 12px 8px;
+                display:flex; align-items:baseline; justify-content:space-between; gap:8px;
             }
+            .bsim-side-actions { display:flex; gap:8px; text-transform:none; letter-spacing:0; font-weight:normal; }
+            .bsim-side-actions span { cursor:pointer; color:var(--dim); }
+            .bsim-side-actions span:hover { color:var(--accent); }
+            .bsim-sum-row td { padding:6px 10px; border-bottom:1px solid var(--border); }
+            .bsim-sum-row:hover td { background:var(--hover); }
+            .bsim-caret-btn { cursor:pointer; user-select:none; color:var(--subtle); display:inline-block; width:14px; }
             .bsim-tree { flex:0 0 auto; }
             /* Non-tree navigation: same column, deliberately not tree-shaped, so a
                page switch never reads as a scope change. */
@@ -262,7 +261,8 @@ function renderBinarySimilarityView(params) {
             .bsim-node.selected { background:var(--hover); border-left-color:var(--accent); }
             .bsim-node .bsim-caret { width:12px; color:var(--subtle); flex-shrink:0; user-select:none; }
             .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
-            .bsim-node .bsim-node-pct { font-size:0.72rem; color:var(--accent); font-family:'Consolas',monospace; }
+            .bsim-node .bsim-node-count { font-size:0.68rem; color:var(--dim); font-family:'Consolas',monospace; }
+            .bsim-node .bsim-node-pct { font-size:0.72rem; color:var(--accent); font-family:'Consolas',monospace; width:40px; text-align:right; }
             .bsim-node.bsim-drift { color:var(--token-instruction); font-size:0.74rem; cursor:default; }
             .bsim-node.bsim-drift:hover { background:none; }
             .bsim-chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px 0; min-height:0; }
@@ -445,14 +445,17 @@ function initResizableCards() {
         };
         // A fresh pair starts unscoped, at the root of the tree.
         fileSimSelection = new Set();
-        fileSimOpenGroups = new Set();
+        fileSimTreeOpen = new Set(['root', 'libraries', 'bundles']);
         fileSimOpenFolds = new Set();
-        fileSimGroups = {};
+        fileSimRows = {};
         fileSimFoldRows = {};
-        fileSimFlat.items = []; fileSimFlat.offset = 0; fileSimFlat.total = 0; fileSimFlat.loading = false;
 
+        const btnAll = document.getElementById('bin-sim-tab-btn-all');
         const btnMatched = document.getElementById('bin-sim-tab-btn-matched');
         const btnUnmatched = document.getElementById('bin-sim-tab-btn-unmatched');
+        // A matched row is one function on each side, so All counts both sides.
+        const allCount = (counts.matched || 0) * 2 + (counts.unique_to_a || 0) + (counts.unique_to_b || 0);
+        if (btnAll) btnAll.textContent = `All (${allCount})`;
         if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
         if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
@@ -507,10 +510,15 @@ function foldSmallTags(rows, keep = 12) {
 }
 
 // ---- File sim: the main view --------------------------------------------
-// A tag tree on the left scopes one function table on the right. The tree
-// answers "what mass do these two binaries carry"; the table answers "which
-// functions". Keeping those in separate panes is what stopped the single
-// recursive table from having to be both at once.
+// A tag tree on the left scopes the detail pane on the right. The tree answers
+// "what mass do these two binaries carry"; the table answers "which functions".
+// Keeping those in separate panes is what stopped the single recursive table
+// from having to be both at once.
+//
+// One expansion state (`fileSimTreeOpen`) drives all four surfaces: the tree,
+// the Summary rollup, the table's groups, and the Sankey's frontier. Folding
+// libc anywhere folds it everywhere, so the panes can never disagree about what
+// is being looked at.
 //
 // Composition similarity, tag by tag, is independent of how well individual
 // functions matched: a leaf tag scores min(count_a, count_b) / max(...) --
@@ -522,22 +530,23 @@ function foldSmallTags(rows, keep = 12) {
 // namespace segment as `type`, so the tree is a pure prefix read with no mapping
 // table to drift from the data.
 const FILESIM_GROUPS = [
-    { key: 'original', label: 'Original', prefixes: ['original_code'], types: ['original_code'] },
+    // Original has no library/version structure, so it is a leaf, not a group
+    // with one child called the same thing.
+    { key: 'original', label: 'Original', prefixes: ['original_code'], types: ['original_code'], flat: true },
     { key: 'bundles', label: 'Bundles', prefixes: ['bundle'], types: ['bundle'] },
     { key: 'libraries', label: 'Libraries', prefixes: ['lib', 'stdlib'], types: ['lib', 'stdlib'] },
     // Anything the analyzer tagged but we have no namespace convention for.
     { key: 'other', label: 'Other', prefixes: [], types: null },
 ];
 
-// Selected tag prefixes. Empty = the root "All" node = the whole pair.
+// Selected tag node ids. Empty = the root "All" node = the whole pair.
 let fileSimSelection = new Set();
-// Collapsed/expanded tree nodes, keyed by node id.
+// The one expansion state, shared by tree / summary / table / sankey.
 let fileSimTreeOpen = new Set(['root', 'libraries', 'bundles']);
 // 'summary' | 'all' | 'matched' | 'unmatched' -- the right pane's tabs.
 let fileSimTab = 'summary';
 let fileSimGroupBy = 'auto';   // 'auto' | 'tag' | 'none'
-// Expanded tag groups in the table, and expanded duplicate folds, by key.
-let fileSimOpenGroups = new Set();
+// Expanded duplicate folds, by key.
 let fileSimOpenFolds = new Set();
 
 // Functions carrying this tag on each side = matched (from the bins) + unique.
@@ -554,55 +563,76 @@ function fileSimSim(a, b) {
     return Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0;
 }
 
+// type / name / version, from the row if the backend set them and from the tag
+// id otherwise. Same decomposition as parse_tag_id (bin_sim_tags.py), so a row
+// carrying only an id still lands in the right place instead of in Other.
+function fileSimTagParts(row) {
+    const tagId = row.tag_id || row.name || '';
+    if (tagId === 'original_code') return { tagId, type: 'original_code', name: 'Original code', version: '' };
+    const parts = tagId.split(':');
+    return {
+        tagId,
+        type: row.type || (parts.length > 1 ? parts[0] : 'user'),
+        name: row.name || (parts.length > 1 ? parts[1] : tagId),
+        version: row.version || (parts.length > 2 ? parts[2] : ''),
+    };
+}
+
 // tags_summary rows are already rolled up to `lib:libc:2.31`. The tree adds two
 // levels above that: the group (Libraries) and the library name (libc), so a
-// whole library folds to one row when you are reading the pair as a whole.
+// whole library folds to one row when reading the pair as a whole.
 function fileSimTree(rows) {
-    const groups = FILESIM_GROUPS.map(g => ({ ...g, id: g.key, children: [], a: 0, b: 0 }));
-    const byGroup = new Map(groups.map(g => [g.key, g]));
-    const fallback = byGroup.get('other');
+    const groups = FILESIM_GROUPS.map(g => ({ ...g, id: g.key, children: [], a: 0, b: 0, tagIds: [] }));
+    const fallback = groups.find(g => g.key === 'other');
 
     (rows || []).forEach(row => {
         const [a, b] = tagSideCounts(row);
         // A tag with no functions on either side is not evidence of
         // dissimilarity, so it must not drag its parent's mean down.
         if (a === 0 && b === 0) return;
-        const tagId = row.tag_id || row.name || '';
-        const type = row.type || 'other';
+        const { tagId, type, name, version } = fileSimTagParts(row);
         const group = groups.find(g => g.types && g.types.includes(type)) || fallback;
+        group.tagIds.push(tagId);
 
-        // Original has no library/version level -- it is one bucket by definition.
-        if (group.key === 'original') {
-            group.children.push({
-                id: tagId, label: 'Original code', prefix: tagId,
-                a, b, sim: fileSimSim(a, b), children: [], drift: row.drift || {},
+        // Flat groups (Original) hold their mass directly -- no nesting level.
+        if (group.flat) {
+            group.a += a; group.b += b;
+            Object.entries(row.drift || {}).forEach(([partner, w]) => {
+                group.drift = group.drift || {};
+                group.drift[partner] = (group.drift[partner] || 0) + w;
             });
             return;
         }
 
-        const name = row.name || tagId;
         let lib = group.children.find(c => c.label === name);
         if (!lib) {
             // `lib:libc` catches every version and every function beneath it.
             const prefix = tagId.split(':').slice(0, 2).join(':');
-            lib = { id: group.key + '/' + name, label: name, prefix, a: 0, b: 0, children: [], drift: {} };
+            lib = { id: group.key + '/' + name, label: name, prefix, a: 0, b: 0, children: [], drift: {}, tagIds: [] };
             group.children.push(lib);
         }
         lib.a += a; lib.b += b;
+        lib.tagIds.push(tagId);
         Object.entries(row.drift || {}).forEach(([partner, w]) => {
             lib.drift[partner] = (lib.drift[partner] || 0) + w;
         });
         // Only split by version when there is more than one to split.
         lib.children.push({
-            id: tagId, label: row.version || name, prefix: tagId,
-            a, b, sim: fileSimSim(a, b), children: [], drift: row.drift || {},
+            id: tagId, label: version || name, prefix: tagId,
+            a, b, sim: fileSimSim(a, b), children: [], drift: row.drift || {}, tagIds: [tagId],
         });
     });
 
     groups.forEach(g => {
+        if (g.flat) {
+            g.sim = fileSimSim(g.a, g.b);
+            g.prefix = g.prefixes[0];
+            g.drift = g.drift || {};
+            return;
+        }
         g.children.forEach(lib => {
-            if (lib.sim === undefined) lib.sim = fileSimSim(lib.a, lib.b);
             if (lib.children.length === 1) lib.children = [];   // no pointless nesting
+            lib.sim = fileSimSim(lib.a, lib.b);
             lib.children.sort((x, y) => y.sim - x.sim);
         });
         g.children.sort((x, y) => y.sim - x.sim);
@@ -612,35 +642,41 @@ function fileSimTree(rows) {
         g.sim = g.children.length
             ? g.children.reduce((s, c) => s + c.sim, 0) / g.children.length
             : 0;
+        g.drift = g.drift || {};
     });
 
-    const live = groups.filter(g => g.children.length);
+    const live = groups.filter(g => g.children.length || g.a || g.b);
     return {
-        id: 'root', label: 'All', prefix: null, children: live,
+        id: 'root', label: 'All', prefix: null, children: live, drift: {},
         a: live.reduce((s, g) => s + g.a, 0),
         b: live.reduce((s, g) => s + g.b, 0),
         sim: live.length ? live.reduce((s, g) => s + g.sim, 0) / live.length : 0,
-        drift: {},
     };
 }
 
+// Rebuilt per render: cheap (tens of rows) and always consistent with the cache.
 function fileSimTreeRoot() {
     return fileSimTree((binSimDataCache && binSimDataCache.tags_summary) || []);
 }
 
-// Flat list of every node, so a prefix can be resolved back to its node.
 function fileSimNodes(node, out = []) {
     out.push(node);
     (node.children || []).forEach(c => fileSimNodes(c, out));
     return out;
 }
 
-function fileSimNodeByPrefix(prefix) {
-    return fileSimNodes(fileSimTreeRoot()).find(n => n.prefix === prefix);
+function fileSimNodeById(id) {
+    return fileSimNodes(fileSimTreeRoot()).find(n => n.id === id);
+}
+
+function fileSimNodePrefixes(node) {
+    if (!node) return [];
+    if (node.prefix) return [node.prefix];
+    return node.prefixes || [];
 }
 
 // tags_summary rows inside the current scope. Same prefix rule the backend
-// applies to functions, so the Sankey and the table agree on what is selected.
+// applies to functions, so every pane agrees on what is selected.
 function fileSimScopeRows(rows) {
     const prefixes = fileSimScopePrefixes();
     if (!prefixes.length) return rows;
@@ -655,11 +691,40 @@ function fileSimScopePrefixes() {
     const out = [];
     fileSimSelection.forEach(id => {
         const node = nodes.find(n => n.id === id);
-        if (!node) return;
-        if (node.prefix) out.push(node.prefix);
-        else if (node.prefixes) out.push(...node.prefixes);
+        if (node) out.push(...fileSimNodePrefixes(node));
     });
     return out;
+}
+
+// The nodes the detail panes render at the top level: the selection's children
+// when one node is selected, the selected nodes themselves otherwise.
+function fileSimScopeNodes() {
+    const root = fileSimTreeRoot();
+    if (!fileSimSelection.size) return root.children;
+    const nodes = fileSimNodes(root);
+    const sel = [...fileSimSelection].map(id => nodes.find(n => n.id === id)).filter(Boolean);
+    if (!sel.length) return root.children;
+    if (sel.length === 1) return sel[0].children.length ? sel[0].children : sel;
+    return sel;
+}
+
+window.expandAllFileSimNodes = function() {
+    // Every node, including leaves: in the tree a leaf has nothing to unfold,
+    // but in the table a leaf's open state is what loads its function rows.
+    fileSimNodes(fileSimTreeRoot()).forEach(n => fileSimTreeOpen.add(n.id));
+    onFileSimFoldChange();
+};
+
+window.collapseAllFileSimNodes = function() {
+    fileSimTreeOpen = new Set(['root']);
+    onFileSimFoldChange();
+};
+
+// Folding is shared, so a fold anywhere redraws everything that reads it.
+function onFileSimFoldChange() {
+    renderFileSimTree();
+    if (fileSimTab === 'summary') renderFileSimSummary();
+    else renderFileSimTable();
 }
 
 // ---- Tree rendering ------------------------------------------------------
@@ -679,6 +744,7 @@ function fileSimNodeHtml(node, depth, out) {
              onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
             ${caret}
             <span class="bsim-node-label">${escapeHtml(node.label)}</span>
+            <span class="bsim-node-count">${Math.round(node.a)}/${Math.round(node.b)}</span>
             <span class="bsim-node-pct">${pct}</span>
         </div>`);
 
@@ -721,7 +787,7 @@ function renderFileSimTree() {
 window.toggleFileSimNode = function(id) {
     if (fileSimTreeOpen.has(id)) fileSimTreeOpen.delete(id);
     else fileSimTreeOpen.add(id);
-    renderFileSimTree();
+    onFileSimFoldChange();
 };
 
 // Click selects, ctrl/shift-click adds. Selecting the root clears the scope,
@@ -736,14 +802,14 @@ window.selectFileSimNode = function(id, event) {
     } else {
         fileSimSelection = new Set([id]);
     }
-    // Selecting a node whose rows are hidden is confusing; open it.
     if (id !== 'root') fileSimTreeOpen.add(id);
     onFileSimScopeChange();
 };
 
 function onFileSimScopeChange() {
-    fileSimOpenGroups.clear();
     fileSimOpenFolds.clear();
+    fileSimRows = {};
+    fileSimFoldRows = {};
     renderFileSimTree();
     renderFileSimChips();
     renderFileSim(binSimDataCache);
@@ -788,18 +854,34 @@ window.removeFileSimScope = function(id) {
 
 // ---- Summary tab ---------------------------------------------------------
 
-// The nodes the Summary rolls up: the selection's children, or the selection
-// itself when it is a leaf.
-function fileSimSummaryNodes() {
-    const root = fileSimTreeRoot();
-    if (!fileSimSelection.size) return { head: root, rows: root.children };
-    const nodes = fileSimNodes(root);
-    const sel = [...fileSimSelection].map(id => nodes.find(n => n.id === id)).filter(Boolean);
-    if (sel.length === 1) {
-        const n = sel[0];
-        return { head: n, rows: n.children.length ? n.children : [n] };
-    }
-    return { head: null, rows: sel };
+// Rollup rows recurse to library-version depth, folding with the same state the
+// tree uses, so the two always show the same shape.
+function fileSimSummaryRows(nodes, depth, out) {
+    nodes.forEach(node => {
+        const hasKids = (node.children || []).length > 0;
+        const open = fileSimTreeOpen.has(node.id);
+        const drift = Object.entries(node.drift || {}).sort((x, y) => y[1] - x[1]);
+        const caret = hasKids
+            ? `<span class="bsim-caret-btn" onclick="event.stopPropagation(); toggleFileSimNode(${escapeAttr(jsString(node.id))})">${open ? '▼' : '▶'}</span>`
+            : '<span class="bsim-caret-btn"></span>';
+        out.push(`
+            <tr class="bsim-sum-row" style="cursor:pointer;"
+                onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
+                <td style="padding-left:${10 + depth * 18}px;">${caret}${escapeHtml(node.label)}</td>
+                <td style="text-align:right;">${Math.round(node.a)}</td>
+                <td style="text-align:right;">${Math.round(node.b)}</td>
+                <td style="text-align:right; color:var(--accent);">${(node.sim * 100).toFixed(0)}%</td>
+                <td style="width:140px;">
+                    <div style="background:var(--border); border-radius:3px; height:6px;">
+                        <div style="width:${Math.round(node.sim * 100)}%; background:var(--accent); height:6px; border-radius:3px;"></div>
+                    </div>
+                </td>
+                <td style="color:var(--token-instruction); font-size:0.75rem;">
+                    ${drift.length ? '⚠ ' + escapeHtml(fileSimDriftLabel(drift[0][0])) : ''}
+                </td>
+            </tr>`);
+        if (open && hasKids) fileSimSummaryRows(node.children, depth + 1, out);
+    });
 }
 
 function renderFileSimSummary() {
@@ -807,15 +889,16 @@ function renderFileSimSummary() {
     const rollupEl = document.getElementById('bsim-summary-rollup');
     if (!headEl || !rollupEl) return;
     const data = binSimDataCache || {};
-    const { head, rows } = fileSimSummaryNodes();
+    const root = fileSimTreeRoot();
+    const nodes = fileSimNodes(root);
+    const sel = [...fileSimSelection].map(id => nodes.find(n => n.id === id)).filter(Boolean);
+    const head = !fileSimSelection.size ? root : (sel.length === 1 ? sel[0] : null);
     const nameA = data.file_metadata_a?.file_name || 'Binary A';
     const nameB = data.file_metadata_b?.file_name || 'Binary B';
     const counts = data.counts || {};
 
     if (head && head.id === 'root') {
-        // Whole-pair overview: the same dashboard the view always opened with.
-        const arch = [data.file_metadata_a?.language_id, data.file_metadata_b?.language_id]
-            .filter(Boolean);
+        const arch = [data.file_metadata_a?.language_id, data.file_metadata_b?.language_id].filter(Boolean);
         headEl.innerHTML = `
             <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:var(--card-bg);">
                 <div style="font-size:0.95rem; font-weight:600; margin-bottom:8px;">
@@ -849,44 +932,29 @@ function renderFileSimSummary() {
         headEl.innerHTML = `<div style="font-size:0.82rem; color:var(--subtle); padding:4px 2px;">${fileSimSelection.size} tags selected</div>`;
     }
 
+    const rows = fileSimScopeNodes();
     if (!rows.length) {
         rollupEl.innerHTML = '';
-        return;
+    } else {
+        const body = [];
+        fileSimSummaryRows(rows, 0, body);
+        rollupEl.innerHTML = `
+            <table class="bin-sim-mc-table">
+                <thead>
+                    <tr>
+                        <th style="padding:8px 10px;">Tag</th>
+                        <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameA)}</th>
+                        <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameB)}</th>
+                        <th style="padding:8px 10px; text-align:right;">Sim</th>
+                        <th style="padding:8px 10px;"></th>
+                        <th style="padding:8px 10px;">Drift</th>
+                    </tr>
+                </thead>
+                <tbody>${body.join('')}</tbody>
+            </table>`;
     }
-    const body = rows.map(n => {
-        const drift = Object.entries(n.drift || {}).sort((x, y) => y[1] - x[1]);
-        return `
-            <tr style="border-bottom:1px solid var(--border); cursor:pointer;"
-                onclick="selectFileSimNode(${escapeAttr(jsString(n.id))}, event)">
-                <td style="padding:7px 10px;">${escapeHtml(n.label)}</td>
-                <td style="padding:7px 10px; text-align:right;">${Math.round(n.a)}</td>
-                <td style="padding:7px 10px; text-align:right;">${Math.round(n.b)}</td>
-                <td style="padding:7px 10px; text-align:right; color:var(--accent);">${(n.sim * 100).toFixed(0)}%</td>
-                <td style="padding:7px 10px; width:140px;">
-                    <div style="background:var(--border); border-radius:3px; height:6px;">
-                        <div style="width:${Math.round(n.sim * 100)}%; background:var(--accent); height:6px; border-radius:3px;"></div>
-                    </div>
-                </td>
-                <td style="padding:7px 10px; color:var(--token-instruction); font-size:0.75rem;">
-                    ${drift.length ? '⚠ ' + escapeHtml(fileSimDriftLabel(drift[0][0])) : ''}
-                </td>
-            </tr>`;
-    }).join('');
-
-    rollupEl.innerHTML = `
-        <table class="bin-sim-mc-table">
-            <thead>
-                <tr>
-                    <th style="padding:8px 10px;">Tag</th>
-                    <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameA)}</th>
-                    <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameB)}</th>
-                    <th style="padding:8px 10px; text-align:right;">Sim</th>
-                    <th style="padding:8px 10px;"></th>
-                    <th style="padding:8px 10px;">Drift</th>
-                </tr>
-            </thead>
-            <tbody>${body}</tbody>
-        </table>`;
+    // The flow sits under the table and reads the same folding.
+    renderFileSimSankey(data);
 }
 
 // ---- The one function table ---------------------------------------------
@@ -898,34 +966,16 @@ const FILESIM_TAB_STATES = {
     unmatched: 'uniq_a,uniq_b',
 };
 
-// Group when the result spans more than one tag; a single selected leaf gets a
-// flat list rather than one pointless header.
-function fileSimGroupNodes() {
-    if (fileSimGroupBy === 'none') return null;
-    const root = fileSimTreeRoot();
-    const nodes = fileSimNodes(root);
-    let scope;
-    if (!fileSimSelection.size) {
-        scope = root.children;
-    } else {
-        const sel = [...fileSimSelection].map(id => nodes.find(n => n.id === id)).filter(Boolean);
-        // One selected node groups by its children; several group by themselves.
-        scope = sel.length === 1 ? (sel[0].children.length ? sel[0].children : sel) : sel;
-    }
-    if (fileSimGroupBy === 'auto' && scope.length < 2) return null;
-    return scope;
-}
+// Per-node row pages, keyed by tree node id ('' = the flat, ungrouped list).
+let fileSimRows = {};
+let fileSimFoldRows = {};
 
-// Group headers come from tags_summary, which is already in the payload, so a
-// collapsed group costs no request at all. Its counts are therefore pre-filter:
-// the header says how much of the tag exists, not how much survives the filters.
-function fileSimGroupState(node) {
-    if (!fileSimGroups[node.id]) {
-        fileSimGroups[node.id] = { items: [], offset: 0, total: 0, loading: false };
+function fileSimRowState(key) {
+    if (!fileSimRows[key]) {
+        fileSimRows[key] = { items: [], offset: 0, total: 0, loading: false, loaded: false };
     }
-    return fileSimGroups[node.id];
+    return fileSimRows[key];
 }
-let fileSimGroups = {};
 
 function fileSimTableParams(prefixes, extra = {}) {
     const sort = binSimSortState.matched;
@@ -957,58 +1007,37 @@ async function fileSimFetchRows(prefixes, extra = {}) {
     return data;
 }
 
-// Flat (ungrouped) paging state, used when the selection is a single tag.
-const fileSimFlat = { items: [], offset: 0, total: 0, loading: false };
-
-async function loadFileSimFlatPage({ reset = false } = {}) {
+// Rows are paged per node, so the 100-row page limit applies to the node you
+// opened rather than truncating the whole view. `more` appends the next page.
+async function loadFileSimRows(key, prefixes, { reset = false } = {}) {
     if (!binSimCtx) return;
-    if (fileSimFlat.loading) return;
-    if (!reset && fileSimFlat.items.length >= fileSimFlat.total && fileSimFlat.total > 0) return;
-    fileSimFlat.loading = true;
-    if (reset) { fileSimFlat.offset = 0; fileSimFlat.items = []; }
-    try {
-        const data = await fileSimFetchRows(fileSimScopePrefixes(), { offset: fileSimFlat.offset });
-        fileSimFlat.items = fileSimFlat.items.concat(data.items || []);
-        fileSimFlat.offset = fileSimFlat.items.length;
-        fileSimFlat.total = data.total || 0;
-    } catch (e) {
-        console.error('file sim page load failed', e);
-    } finally {
-        fileSimFlat.loading = false;
-    }
-    renderFileSimTable();
-}
-
-window.toggleFileSimGroup = async function(nodeId) {
-    if (fileSimOpenGroups.has(nodeId)) {
-        fileSimOpenGroups.delete(nodeId);
-        renderFileSimTable();
-        return;
-    }
-    fileSimOpenGroups.add(nodeId);
-    const node = fileSimNodes(fileSimTreeRoot()).find(n => n.id === nodeId);
-    if (!node) return;
-    const st = fileSimGroupState(node);
-    if (st.items.length) { renderFileSimTable(); return; }
+    const st = fileSimRowState(key);
+    if (st.loading) return;
+    if (reset) { st.items = []; st.offset = 0; st.total = 0; st.loaded = false; }
+    if (st.loaded && st.items.length >= st.total && st.total > 0) return;
     st.loading = true;
     renderFileSimTable();
     try {
-        const prefixes = node.prefix ? [node.prefix] : (node.prefixes || []);
-        const data = await fileSimFetchRows(prefixes, { offset: 0 });
-        st.items = data.items || [];
+        const data = await fileSimFetchRows(prefixes, { offset: st.offset });
+        st.items = st.items.concat(data.items || []);
+        st.offset = st.items.length;
         st.total = data.total || 0;
+        st.loaded = true;
     } catch (e) {
-        console.error('file sim group load failed', e);
+        console.error('file sim page load failed', e);
+        st.loaded = true;
     } finally {
         st.loading = false;
     }
     renderFileSimTable();
+}
+
+window.loadMoreFileSimRows = function(key) {
+    const node = key ? fileSimNodeById(key) : null;
+    loadFileSimRows(key, node ? fileSimNodePrefixes(node) : fileSimScopePrefixes());
 };
 
-window.collapseAllFileSimGroups = function() {
-    fileSimOpenGroups.clear();
-    renderFileSimTable();
-};
+window.collapseAllFileSimGroups = window.collapseAllFileSimNodes;
 
 window.setFileSimGroupBy = function(mode) {
     fileSimGroupBy = mode;
@@ -1016,7 +1045,7 @@ window.setFileSimGroupBy = function(mode) {
         const btn = document.getElementById(`bsim-group-btn-${m}`);
         if (btn) btn.classList.toggle('active', m === mode);
     });
-    renderFileSimTable();
+    renderFileSim(binSimDataCache);
 };
 
 // Duplicate fold: the server hands back one row per distinct name with
@@ -1029,8 +1058,8 @@ window.toggleFileSimFold = async function(key, name, nodeId) {
     }
     fileSimOpenFolds.add(key);
     if (!fileSimFoldRows[key]) {
-        const node = nodeId ? fileSimNodes(fileSimTreeRoot()).find(n => n.id === nodeId) : null;
-        const prefixes = node ? (node.prefix ? [node.prefix] : (node.prefixes || [])) : fileSimScopePrefixes();
+        const node = nodeId ? fileSimNodeById(nodeId) : null;
+        const prefixes = node ? fileSimNodePrefixes(node) : fileSimScopePrefixes();
         try {
             const data = await fileSimFetchRows(prefixes, { name, limit: 200 });
             fileSimFoldRows[key] = data.items || [];
@@ -1041,7 +1070,6 @@ window.toggleFileSimFold = async function(key, name, nodeId) {
     }
     renderFileSimTable();
 };
-let fileSimFoldRows = {};
 
 function fileSimStateType(row) {
     if (row.state === 'matched') return 'matched';
@@ -1053,26 +1081,25 @@ function fileSimStateType(row) {
 // the same name's unmatched leftovers without leaving the tab.
 function fileSimRowHtml(row, depth, groupId) {
     const copies = (row.n_copies || 1) - 1;
+    const out = [];
     let pill = '';
+    let key = null;
     if (copies > 0 && row.fold_name) {
-        const key = (groupId || 'flat') + '/' + row.fold_name;
+        key = (groupId || 'flat') + '/' + row.fold_name;
         const open = fileSimOpenFolds.has(key);
         pill = `<span class="bsim-fold-pill" onclick="event.stopPropagation(); toggleFileSimFold(${escapeAttr(jsString(key))}, ${escapeAttr(jsString(row.fold_name))}, ${escapeAttr(jsString(groupId || ''))})">${open ? '▼' : '▶'} ${copies} more ${copies === 1 ? 'copy' : 'copies'} of ${escapeHtml(row.fold_name)}</span>`;
     }
-    const out = [renderMatchedFunctionRow(row, fileSimStateType(row), depth, pill)];
-    if (copies > 0 && row.fold_name) {
-        const key = (groupId || 'flat') + '/' + row.fold_name;
-        if (fileSimOpenFolds.has(key)) {
-            const rows = fileSimFoldRows[key];
-            if (!rows) {
-                out.push(`<tr><td colspan="5" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
-            } else {
-                rows.forEach(r => {
-                    // The representative is already shown above it.
-                    if (r.func_a === row.func_a && r.func_b === row.func_b && r.func_id === row.func_id) return;
-                    out.push(renderMatchedFunctionRow(r, fileSimStateType(r), depth + 1));
-                });
-            }
+    out.push(renderMatchedFunctionRow(row, fileSimStateType(row), depth, pill));
+    if (key && fileSimOpenFolds.has(key)) {
+        const rows = fileSimFoldRows[key];
+        if (!rows) {
+            out.push(`<tr><td colspan="5" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
+        } else {
+            rows.forEach(r => {
+                // The representative is already shown above it.
+                if (r.func_a === row.func_a && r.func_b === row.func_b && r.func_id === row.func_id) return;
+                out.push(renderMatchedFunctionRow(r, fileSimStateType(r), depth + 1));
+            });
         }
     }
     return out.join('');
@@ -1104,6 +1131,59 @@ function fileSimTableHeadHtml() {
         </tr>`;
 }
 
+function fileSimMoreRowHtml(key, st, indent) {
+    if (st.items.length >= st.total) return '';
+    return `
+        <tr><td colspan="5" style="padding:8px 10px 8px ${indent}px; background:var(--bg);">
+            <span class="bsim-fold-pill" onclick="loadMoreFileSimRows(${escapeAttr(jsString(key))})">
+                ▼ Load ${Math.min(BINSIM_LIMIT, st.total - st.items.length)} more
+            </span>
+            <span style="color:var(--dim); font-size:0.72rem; margin-left:8px;">showing ${st.items.length} of ${st.total} names</span>
+        </td></tr>`;
+}
+
+// Groups recurse with the tree: opening a node with children shows its child
+// groups, opening a leaf loads that leaf's functions.
+function fileSimGroupRows(nodes, depth, out) {
+    nodes.forEach(node => {
+        const open = fileSimTreeOpen.has(node.id);
+        const hasKids = (node.children || []).length > 0;
+        out.push(`
+            <tr class="bsim-grp-row" onclick="toggleFileSimNode(${escapeAttr(jsString(node.id))})">
+                <td colspan="5" style="padding-left:${10 + depth * 18}px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
+                        <span style="font-weight:600;">${escapeHtml(node.label)}</span>
+                        <div style="flex:1;"></div>
+                        <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.a)} A</span>
+                        <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.b)} B</span>
+                        <span style="color:var(--accent); font-size:0.74rem; width:44px; text-align:right;">${(node.sim * 100).toFixed(0)}%</span>
+                    </div>
+                </td>
+            </tr>`);
+        if (!open) return;
+        if (hasKids) { fileSimGroupRows(node.children, depth + 1, out); return; }
+
+        const st = fileSimRows[node.id];
+        if (!st || (!st.loaded && !st.loading)) {
+            // Opened but never fetched: kick it off, render a placeholder now.
+            loadFileSimRows(node.id, fileSimNodePrefixes(node));
+            out.push(`<tr><td colspan="5" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
+            return;
+        }
+        if (st.loading && !st.items.length) {
+            out.push(`<tr><td colspan="5" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>`);
+            return;
+        }
+        if (!st.items.length) {
+            out.push(`<tr><td colspan="5" style="padding:14px ${30 + depth * 18}px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>`);
+            return;
+        }
+        st.items.forEach(row => out.push(fileSimRowHtml(row, depth + 1, node.id)));
+        out.push(fileSimMoreRowHtml(node.id, st, 30 + depth * 18));
+    });
+}
+
 function renderFileSimTable() {
     const tbody = document.getElementById('bin-sim-table-matched');
     if (!tbody) return;
@@ -1111,47 +1191,30 @@ function renderFileSimTable() {
     if (thead && !thead.dataset.built) {
         thead.innerHTML = fileSimTableHeadHtml();
         thead.dataset.built = '1';
+        restoreFileSimFilters();
     }
     const countEl = document.getElementById('bsim-table-count');
-    const groups = fileSimGroupNodes();
+    const scope = fileSimScopeNodes();
+    // Auto: a single tag needs no header of its own; several do.
+    const grouped = fileSimGroupBy === 'tag'
+        || (fileSimGroupBy === 'auto' && scope.length > 1);
     const out = [];
 
-    if (!groups) {
-        fileSimFlat.items.forEach(row => out.push(fileSimRowHtml(row, 0, null)));
-        if (!fileSimFlat.items.length) {
+    if (!grouped) {
+        const st = fileSimRowState('');
+        if (!st.loaded && !st.loading) loadFileSimRows('', fileSimScopePrefixes());
+        if (st.loading && !st.items.length) {
+            out.push('<tr><td colspan="5" style="padding:30px; text-align:center; color:var(--dim);">Loading…</td></tr>');
+        } else if (!st.items.length) {
             out.push('<tr><td colspan="5" style="padding:30px; text-align:center; color:var(--dim);">No functions match this scope.</td></tr>');
+        } else {
+            st.items.forEach(row => out.push(fileSimRowHtml(row, 0, null)));
+            out.push(fileSimMoreRowHtml('', st, 20));
         }
-        if (countEl) countEl.textContent = `${fileSimFlat.items.length} of ${fileSimFlat.total} names`;
+        if (countEl) countEl.textContent = st.total ? `${st.items.length} of ${st.total} names` : '';
     } else {
-        groups.forEach(node => {
-            const open = fileSimOpenGroups.has(node.id);
-            const st = fileSimGroups[node.id];
-            out.push(`
-                <tr class="bsim-grp-row" onclick="toggleFileSimGroup(${escapeAttr(jsString(node.id))})">
-                    <td colspan="5">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
-                            <span style="font-weight:600;">${escapeHtml(node.label)}</span>
-                            <div style="flex:1;"></div>
-                            <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.a)} A</span>
-                            <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.b)} B</span>
-                            <span style="color:var(--accent); font-size:0.74rem; width:44px; text-align:right;">${(node.sim * 100).toFixed(0)}%</span>
-                        </div>
-                    </td>
-                </tr>`);
-            if (!open) return;
-            if (st && st.loading) {
-                out.push('<tr><td colspan="5" style="padding:14px 30px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>');
-            } else if (st && st.items.length) {
-                st.items.forEach(row => out.push(fileSimRowHtml(row, 1, node.id)));
-                if (st.items.length < st.total) {
-                    out.push(`<tr><td colspan="5" style="padding:8px 30px; color:var(--dim); font-size:0.75rem;">Showing ${st.items.length} of ${st.total} names in this tag.</td></tr>`);
-                }
-            } else if (st) {
-                out.push('<tr><td colspan="5" style="padding:14px 30px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>');
-            }
-        });
-        if (countEl) countEl.textContent = `${groups.length} tag groups`;
+        fileSimGroupRows(scope, 0, out);
+        if (countEl) countEl.textContent = `${scope.length} tag groups`;
     }
     tbody.innerHTML = out.join('');
 }
@@ -1162,42 +1225,15 @@ function renderFileSim(data) {
     if (!data) return;
     renderFileSimTree();
     renderFileSimChips();
-    if (fileSimTab === 'summary') {
-        renderFileSimSummary();
-        return;
-    }
-    if (fileSimView === 'sankey') {
-        renderFileSimSankey(data);
-        return;
-    }
-    fileSimGroups = {};
-    fileSimFoldRows = {};
-    renderFileSimTable();
-    if (!fileSimGroupNodes()) loadFileSimFlatPage({ reset: true });
+    if (fileSimTab === 'summary') renderFileSimSummary();
+    else renderFileSimTable();
 }
-
-window.setFileSimView = function(view) {
-    fileSimView = view;
-    ['table', 'sankey'].forEach(v => {
-        const btn = document.getElementById(`bsim-filesim-view-btn-${v}`);
-        if (btn) btn.classList.toggle('active', v === view);
-    });
-    // Summary has no sankey of its own; switching to it implies the table tabs.
-    if (fileSimTab === 'summary' && view === 'sankey') {
-        window.switchBinSimTab('all');
-        return;
-    }
-    window.switchBinSimTab(fileSimTab);
-};
 
 // ---- File sim tab: sankey view ------------------------------------------
 // Same tag composition as the table, drawn as flow. Deliberately stops at
 // Shared / Unique to A / Unique to B per tag -- function-level detail is the
 // Function graph tab's job. Depth is a namespace frontier over the tag ids
 // (`lib:libc:2.31`), so a whole namespace or a whole library folds to one node.
-
-// Per-node frontier override: ns key -> 'open' | 'closed'. Empty = follow fileSimDepth.
-const fileSimNsOverride = new Map();
 
 // Synthetic buckets have no namespace structure; everything else is type:name:version.
 function fileSimNsPath(tagId) {
@@ -1215,6 +1251,35 @@ function fileSimNsLabel(parts) {
     return parts.slice(1).join(' ');
 }
 
+// The chain of tree nodes a tag id belongs to, outermost first. The Sankey needs
+// this to fold exactly where the tree folds instead of keeping its own frontier.
+function fileSimChainFor(tagId, root) {
+    for (const group of root.children) {
+        const owns = (n) => (n.tagIds || []).includes(tagId);
+        if (!owns(group)) continue;
+        for (const lib of group.children || []) {
+            if (!owns(lib)) continue;
+            const version = (lib.children || []).find(owns);
+            return version ? [group, lib, version] : [group, lib];
+        }
+        return [group];
+    }
+    return [];
+}
+
+// Descend the chain while each node is open; the node we stop at is what the
+// graph draws. Same rule the table's group rows follow.
+function fileSimFrontierNode(tagId, root) {
+    const chain = fileSimChainFor(tagId, root);
+    if (!chain.length) return null;
+    let node = chain[0];
+    for (let i = 0; i < chain.length - 1; i++) {
+        if (!fileSimTreeOpen.has(chain[i].id)) break;
+        node = chain[i + 1];
+    }
+    return node;
+}
+
 // A tag row's four masses, in whichever metric is selected. Shared mass is
 // per-side on purpose: a match need not be tagged the same on both binaries,
 // so A's shared count and B's shared count can differ.
@@ -1230,26 +1295,23 @@ function fileSimRowMass(row, scale) {
     return [sa, sb, row.unique_count_a || 0, row.unique_count_b || 0];
 }
 
-// Fold the tag rows onto the current frontier: descend while a node is open,
-// stop at the first closed one. That node is what the graph draws.
+// Fold the tag rows onto the tree's current frontier. The Sankey used to keep
+// its own namespace-depth override, which meant the graph and the tree could
+// disagree about what "libc" currently means; it now reads the shared state.
 function fileSimSankeyGroups(rows, scale) {
     const groups = new Map();
+    const root = fileSimTreeRoot();
     (rows || []).forEach(row => {
-        const parts = fileSimNsPath(row.tag_id);
-        let depth = parts.length;
-        for (let d = 1; d <= parts.length; d++) {
-            const key = parts.slice(0, d).join(':');
-            const ov = fileSimNsOverride.get(key);
-            const open = ov === 'open' || (ov !== 'closed' && d < fileSimDepth);
-            if (!open) { depth = d; break; }
-        }
-        const key = parts.slice(0, depth).join(':');
+        const node = fileSimFrontierNode(row.tag_id, root);
+        if (!node) return;
+        const key = node.id;
         let g = groups.get(key);
         if (!g) {
             g = {
-                key, label: fileSimNsLabel(parts.slice(0, depth)), depth,
+                key, label: node.label, depth: 1,
                 sharedA: 0, sharedB: 0, uniqA: 0, uniqB: 0,
-                cohNum: 0, cohDen: 0, tags: 0, expandable: false,
+                cohNum: 0, cohDen: 0, tags: 0,
+                expandable: (node.children || []).length > 0,
             };
             groups.set(key, g);
         }
@@ -1258,26 +1320,17 @@ function fileSimSankeyGroups(rows, scale) {
         g.cohNum += (row.score || 0) * (row.matched_weight || 0);
         g.cohDen += row.matched_weight || 0;
         g.tags += 1;
-        if (parts.length > depth) g.expandable = true;
     });
     return [...groups.values()]
         .filter(g => g.sharedA + g.sharedB + g.uniqA + g.uniqB > 0)
         .sort((x, y) => (y.sharedA + y.sharedB + y.uniqA + y.uniqB) - (x.sharedA + x.sharedB + x.uniqA + x.uniqB));
 }
 
-// Click on a tag node: drill into it. Shift-click (or a click on a node that has
-// nothing left to expand) folds it back into its parent namespace, so `lib:libc`
-// collapses into `lib`. Depth buttons reset every override.
-window.toggleFileSimNs = function(key, expandable, foldUp) {
-    if (expandable && !foldUp) {
-        fileSimNsOverride.set(key, 'open');
-    } else {
-        const parts = key.split(':');
-        if (parts.length < 2) return;          // top-level leaf: nothing to fold into
-        fileSimNsOverride.delete(key);
-        fileSimNsOverride.set(parts.slice(0, -1).join(':'), 'closed');
-    }
-    if (binSimDataCache) renderFileSimSankey(binSimDataCache);
+// Click a graph node: fold or unfold the tree node it stands for. `key` is a
+// tree node id, so this is the same toggle the sidebar and the table use --
+// clicking libc in the graph collapses it everywhere.
+window.toggleFileSimNs = function(key) {
+    window.toggleFileSimNode(key);
 };
 
 function renderFileSimSankey(data) {
@@ -1479,15 +1532,8 @@ window.setFileSimScale = function(scale) {
     if (binSimDataCache) renderFileSimSankey(binSimDataCache);
 };
 
-window.setFileSimDepth = function(depth) {
-    fileSimDepth = depth;
-    fileSimNsOverride.clear();   // a global depth pick overrides every per-node choice
-    const toggle = document.getElementById('bin-sim-filesim-depth-toggle');
-    if (toggle) toggle.querySelectorAll('.view-btn').forEach(btn => {
-        btn.classList.toggle('active', (btn.getAttribute('onclick') || '').includes(`(${depth})`));
-    });
-    if (binSimDataCache) renderFileSimSankey(binSimDataCache);
-};
+// The Namespace / Library / Version depth buttons are gone: depth is now the
+// tree's folding, and Expand all / Collapse all cover what the presets did.
 
 // Aggregate a tag's fixed 5% server bins up to the currently selected split.
 // Returns Map<groupIdx, [count_a, weight_a, count_b, weight_b]>.
@@ -2274,17 +2320,12 @@ function restoreFileSimFilters() {
 // Any change to sort or filters invalidates every already-fetched page: rows
 // that were in a group may no longer belong there.
 function reloadFileSimRows() {
-    const open = new Set(fileSimOpenGroups);
-    fileSimGroups = {};
+    // Folding is untouched -- only the rows are stale. Dropping the page state
+    // makes every open node re-fetch on the next render.
+    fileSimRows = {};
     fileSimFoldRows = {};
     fileSimOpenFolds.clear();
-    fileSimOpenGroups.clear();
-    if (!fileSimGroupNodes()) {
-        loadFileSimFlatPage({ reset: true });
-        return;
-    }
     renderFileSimTable();
-    open.forEach(id => window.toggleFileSimGroup(id));
 }
 
 // Pre-seed the shared cluster tooltip cache with sample members shipped on the row, so the
@@ -2732,7 +2773,7 @@ const BIN_SIM_TABS = BIN_SIM_DETAIL_TABS.concat(BIN_SIM_NAV_PAGES);
 function binSimPanelFor(tab) {
     if (tab === 'summary') return 'summary';
     if (BIN_SIM_NAV_PAGES.includes(tab)) return tab;
-    return fileSimView === 'sankey' ? 'filesim' : 'table';
+    return 'table';
 }
 
 // push=true (a real click) writes the tab into the URL hash so it lands in
@@ -2759,11 +2800,6 @@ window.switchBinSimTab = function(tab, push = true) {
     // scope you were reading is still there when you come back.
     const sidebar = document.getElementById('bsim-sidebar');
     if (sidebar) sidebar.classList.toggle('nav-active', isNav);
-    // Summary is a property of the selection, not of the table, so the
-    // Table/Sankey switch has nothing to act on there.
-    const viewToggle = document.getElementById('bsim-view-toggle');
-    if (viewToggle) viewToggle.style.display = (isNav || tab === 'summary') ? 'none' : 'flex';
-
     // Sankey needs a visible (non-zero) container to size itself; render on show.
     if (tab === 'graph' && binSimDataCache) {
         renderBinaryDiffSankey(binSimDataCache);

@@ -1,4 +1,6 @@
-// Self-check for the File sim sankey grouping (namespace frontier + mass folding).
+// Self-check for the File sim sankey grouping (tree frontier + mass folding).
+// The graph folds where the tree folds: one shared expansion state drives the
+// tree, the Summary rollup, the table's groups and this graph.
 // Run: node scripts/test_filesim_sankey.js
 const fs = require('fs');
 const path = require('path');
@@ -17,10 +19,12 @@ const load = new Function('window', 'document', 'd3', `
     return {
         fileSimSankeyGroups,
         fileSimNsPath,
-        fileSimNsOverride,
         renderFileSimSankey,
-        setDepth: (d) => { fileSimDepth = d; },
+        // Folding is the tree's state now, not a private frontier of the graph.
+        setOpen: (ids) => { fileSimTreeOpen = new Set(ids); },
         setScale: (s) => { fileSimScale = s; },
+        // The tree is derived from the cached tag summary, so grouping needs it.
+        setRows: (rows) => { binSimDataCache = { tags_summary: rows, functions_metadata: {} }; },
     };
 `);
 
@@ -70,58 +74,60 @@ const rows = [
 ];
 
 const by = (gs) => Object.fromEntries(gs.map(g => [g.key, g]));
+M.setRows(rows);
 
-// Depth 2 (library): the two libc versions fold into one node, ssl stays alone.
-M.setDepth(2);
+// Libraries open, each library folded: the two libc versions become one node,
+// and ssl -- which has a single version -- is already a leaf.
+M.setOpen(['libraries']);
 let g = by(M.fileSimSankeyGroups(rows, 'count'));
-assert.deepStrictEqual(Object.keys(g).sort(), ['lib:libc', 'lib:ssl', 'original_code']);
-assert.strictEqual(g['lib:libc'].sharedA, 14);      // 10 + 4
-assert.strictEqual(g['lib:libc'].sharedB, 13);      // 9 + 4
-assert.strictEqual(g['lib:libc'].uniqA, 2);
-assert.strictEqual(g['lib:libc'].uniqB, 1);
-assert.strictEqual(g['lib:libc'].expandable, true); // version level still below
-assert.strictEqual(g['lib:libc'].label, 'libc');
-assert.strictEqual(g['original_code'].expandable, false);
-assert.strictEqual(g['original_code'].label, 'Original Code');
+assert.deepStrictEqual(Object.keys(g).sort(), ['libraries/libc', 'libraries/ssl', 'original']);
+assert.strictEqual(g['libraries/libc'].sharedA, 14);      // 10 + 4
+assert.strictEqual(g['libraries/libc'].sharedB, 13);      // 9 + 4
+assert.strictEqual(g['libraries/libc'].uniqA, 2);
+assert.strictEqual(g['libraries/libc'].uniqB, 1);
+assert.strictEqual(g['libraries/libc'].expandable, true); // version level below
+assert.strictEqual(g['libraries/libc'].label, 'libc');
+// Original holds its mass directly, so there is nothing under it to open.
+assert.strictEqual(g['original'].expandable, false);
+assert.strictEqual(g['original'].label, 'Original');
 
 // Features metric reads the weight_* fields instead of the bin counts.
 g = by(M.fileSimSankeyGroups(rows, 'features'));
-assert.strictEqual(g['lib:libc'].sharedA, 140);
-assert.strictEqual(g['lib:libc'].uniqA, 20);
-assert.strictEqual(g['original_code'].uniqA, 50);
+assert.strictEqual(g['libraries/libc'].sharedA, 140);
+assert.strictEqual(g['libraries/libc'].uniqA, 20);
+assert.strictEqual(g['original'].uniqA, 50);
 
-// Depth 1 (namespace): the whole lib namespace becomes one node.
-M.setDepth(1);
+// Everything folded: the whole Libraries group draws as one node.
+M.setOpen([]);
 g = by(M.fileSimSankeyGroups(rows, 'count'));
-assert.deepStrictEqual(Object.keys(g).sort(), ['lib', 'original_code']);
-assert.strictEqual(g['lib'].sharedA, 17);           // 10 + 4 + 3
-assert.strictEqual(g['lib'].tags, 3);
+assert.deepStrictEqual(Object.keys(g).sort(), ['libraries', 'original']);
+assert.strictEqual(g['libraries'].sharedA, 17);           // 10 + 4 + 3
+assert.strictEqual(g['libraries'].tags, 3);
 
-// Per-node override beats the depth setting in both directions.
-M.setDepth(1);
-M.fileSimNsOverride.set('lib', 'open');
+// Drilling into one library splits only that library; its siblings stay folded.
+// A single global depth setting could not express this -- the tree can.
+M.setOpen(['libraries', 'libraries/libc']);
 g = by(M.fileSimSankeyGroups(rows, 'count'));
-assert.deepStrictEqual(Object.keys(g).sort(), ['lib:libc', 'lib:ssl', 'original_code']);
-
-M.setDepth(3);
-M.fileSimNsOverride.clear();
-M.fileSimNsOverride.set('lib:libc', 'closed');
-g = by(M.fileSimSankeyGroups(rows, 'count'));
-assert.deepStrictEqual(Object.keys(g).sort(), ['lib:libc', 'lib:ssl:3.0', 'original_code']);
-assert.strictEqual(g['lib:ssl:3.0'].label, 'ssl 3.0');
+assert.deepStrictEqual(
+    Object.keys(g).sort(),
+    ['lib:libc:2.31', 'lib:libc:2.35', 'libraries/ssl', 'original']
+);
+assert.strictEqual(g['lib:libc:2.31'].label, '2.31');
+assert.strictEqual(g['libraries/ssl'].label, 'ssl');
 
 // Sorted by total mass, biggest first, and zero-mass tags dropped.
-M.fileSimNsOverride.clear();
-M.setDepth(2);
-const sorted = M.fileSimSankeyGroups(rows.concat([row('lib:dead:1.0')]), 'count');
-assert.strictEqual(sorted[0].key, 'lib:libc');
-assert.ok(!sorted.some(x => x.key === 'lib:dead'));
+const withDead = rows.concat([row('lib:dead:1.0')]);
+M.setRows(withDead);
+M.setOpen(['libraries']);
+const sorted = M.fileSimSankeyGroups(withDead, 'count');
+assert.strictEqual(sorted[0].key, 'libraries/libc');
+assert.ok(!sorted.some(x => x.key === 'libraries/dead'));
+M.setRows(rows);
 
 // ---- Graph shape --------------------------------------------------------
 // Regression: a side node must carry exactly one category. One node feeding both
 // the shared and the unmatched bucket reads as "all of it is shared AND unique".
-M.fileSimNsOverride.clear();
-M.setDepth(2);
+M.setOpen(['libraries']);
 M.setScale('count');
 M.renderFileSimSankey({
     tags_summary: rows,
@@ -147,7 +153,7 @@ captured.nodes.forEach(n => {
 });
 
 const nodeById = Object.fromEntries(captured.nodes.map(n => [n.id, n]));
-const idx = M.fileSimSankeyGroups(rows, 'count').findIndex(x => x.key === 'original_code');
+const idx = M.fileSimSankeyGroups(rows, 'count').findIndex(x => x.key === 'original');
 const linkVal = (from, to) => captured.links.find(l => l.source.id === from && l.target.id === to).value;
 // original_code: 7 shared / 5 unique in A, split across two left nodes.
 assert.ok(nodeById[`fsk_as_${idx}`] && nodeById[`fsk_au_${idx}`], 'original_code must split shared vs unmatched on the A side');

@@ -7,9 +7,19 @@ const fs = require('fs');
 const assert = require('assert');
 
 const src = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/binary_similarity.js', 'utf8');
-const start = src.indexOf('const FILESIM_GROUPS');
-const end = src.indexOf('function fileSimTreeRoot');
-const { fileSimTree } = new Function(src.slice(start, end) + '; return { fileSimTree };')();
+const slice = (from, to) => src.slice(src.indexOf(from), src.indexOf(to));
+// fileSimTree plus the frontier walk the Sankey uses, so the test can prove the
+// graph folds exactly where the tree does.
+const body = slice('const FILESIM_GROUPS', 'function fileSimTreeRoot')
+    + slice('// The chain of tree nodes a tag id belongs to', '// A tag row\'s four masses');
+const { fileSimTree, fileSimFrontierNode, setOpen } = new Function(
+    body + `
+    ; return {
+        fileSimTree,
+        fileSimFrontierNode,
+        setOpen: (ids) => { fileSimTreeOpen = new Set(ids); },
+    };`
+)();
 
 // A: 2 libc, 2 openssl, 2 mirai_xor. B: 4 libc, 0 openssl, 2 mirai_xor.
 const tag = (type, name, a, b, extra) => Object.assign({
@@ -49,10 +59,15 @@ assert.strictEqual(pct(bundles), 100);
 // no convention falls through to Other rather than vanishing.
 assert.strictEqual(byLabel(fileSimTree([tag('stdlib', 'libstdc++', 1, 1)]), 'Libraries').children.length, 1);
 assert.strictEqual(byLabel(fileSimTree([tag('user', 'hand_tagged', 1, 1)]), 'Other').children.length, 1);
+// Original carries its mass directly: nesting one child called "Original code"
+// under a node called "Original" is a level that says nothing.
 const orig = byLabel(fileSimTree([
     Object.assign(tag('original_code', 'Original Code', 3, 3), { tag_id: 'original_code' }),
 ]), 'Original');
-assert.strictEqual(orig.children[0].prefix, 'original_code');
+assert.strictEqual(orig.children.length, 0);
+assert.strictEqual(orig.prefix, 'original_code');
+assert.strictEqual(orig.a, 3);
+assert.strictEqual(pct(orig), 100);
 
 // Matched functions live in bins, not unique_count_*, so both must be counted.
 const withBins = fileSimTree([{
@@ -78,5 +93,33 @@ const drifted = fileSimTree([
     tag('lib', 'libc', 2, 2, { tag_id: 'lib:libc:2.31', drift: { 'lib:libc:2.35': 8 } }),
 ]);
 assert.deepStrictEqual(byLabel(drifted, 'Libraries').children[0].drift, { 'lib:libc:2.35': 8 });
+
+// The Sankey folds where the tree folds. One expansion state drives the tree,
+// the Summary rollup, the table's groups and the graph, so a node that is
+// collapsed in one is collapsed in all of them.
+const forFrontier = fileSimTree([
+    tag('lib', 'libc', 2, 2, { tag_id: 'lib:libc:2.31', version: '2.31' }),
+    tag('lib', 'libc', 1, 1, { tag_id: 'lib:libc:2.35', version: '2.35' }),
+    tag('lib', 'zlib', 1, 1, { tag_id: 'lib:zlib:1.2', version: '1.2' }),
+]);
+const frontier = (tagId) => fileSimFrontierNode(tagId, forFrontier).label;
+
+// Everything folded: the whole namespace draws as one node.
+setOpen([]);
+assert.strictEqual(frontier('lib:libc:2.31'), 'Libraries');
+assert.strictEqual(frontier('lib:zlib:1.2'), 'Libraries');
+
+// Group open, libraries closed: one node per library.
+setOpen(['libraries']);
+assert.strictEqual(frontier('lib:libc:2.31'), 'libc');
+assert.strictEqual(frontier('lib:libc:2.35'), 'libc');
+assert.strictEqual(frontier('lib:zlib:1.2'), 'zlib');
+
+// Drill into libc only: its versions split, zlib stays folded. This is the case
+// that the Sankey's old private depth setting could not express.
+setOpen(['libraries', 'libraries/libc']);
+assert.strictEqual(frontier('lib:libc:2.31'), '2.31');
+assert.strictEqual(frontier('lib:libc:2.35'), '2.35');
+assert.strictEqual(frontier('lib:zlib:1.2'), 'zlib');
 
 console.log('ok');

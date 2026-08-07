@@ -39,7 +39,23 @@ capability the other tables already have, without inheriting the crowding.
 
 Left pane is the **scope selector**. Right pane is the **detail**, and its four
 tabs mean the same thing for every possible selection — that scope-invariance is
-what makes the layout work. Earlier drafts had Libraries and Original code as
+what makes the layout work.
+
+## One folding state
+
+The tree, the Summary rollup, the table's groups and the Sankey all read a
+single expansion set keyed by tree node id. Folding libc anywhere folds it
+everywhere, so no two panes can disagree about what is being looked at, and
+`Expand all` / `Collapse all` act on all four at once.
+
+That set replaced the Sankey's private namespace-depth frontier, which could not
+express "drill into libc but leave zlib folded" — a single global depth applied
+to every library at once. It also removed the Namespace / Library / Version
+depth buttons: depth *is* the folding now.
+
+`Expand all` opens leaves too. A leaf has nothing to unfold in the tree, but in
+the table a leaf's open state is what loads its function rows, so stopping at
+nodes-with-children left every leaf empty. Earlier drafts had Libraries and Original code as
 *tabs*, which forced two different scoping rules into one tab bar; they are tree
 nodes instead.
 
@@ -50,7 +66,7 @@ Groups by the first namespace segment of the tag id, which `parse_tag_id`
 
 | tag id | tree location |
 |---|---|
-| `original_code` | Original |
+| `original_code` | Original *(a leaf: it has no library/version structure, so nesting one child called "Original code" under a node called "Original" is a level that says nothing)* |
 | `bundle:mirai:v1:attack_udp` | Bundles > Mirai |
 | `lib:libc:2.31:memcpy` | Libraries > libc |
 | `stdlib:libstdc++:11` | Libraries > libstdc++ |
@@ -86,11 +102,15 @@ There is **one** table implementation with a `state` column
 | Matched | `state: matched` |
 | Unmatched | `state: uniq A, uniq B` |
 
-Summary is the exception — stats header plus a sortable rollup of the selected
-node's children (A/B counts, composition sim, coverage of each binary, drift
-badge). At the root `All` node that header is today's whole-pair overview (score,
-coverage, function counts, architectures) and the rollup rows are Original /
-Bundles / Libraries.
+Summary is the exception — stats header, then a rollup that recurses to
+library-version depth with the same folding as the tree, then the Sankey
+underneath it. At the root `All` node the header is the whole-pair overview
+(score, coverage, function counts, architectures) and the rollup starts at
+Original / Bundles / Libraries.
+
+The Sankey lives here rather than behind a Table/Sankey toggle: it is a picture
+of the composition the rollup tabulates, so it belongs under it. The toggle is
+gone.
 
 Because the tabs are chip presets, any mix a user wants — "unmatched, but only
 in B, only libc, rarity above 0.8" — is reachable from the chip bar without a
@@ -123,6 +143,11 @@ one fetches its first page. The known ceiling: header counts are pre-filter, so 
 header reads "80 A / 78 B" (total in tag) rather than "12 rows matching your
 filter". A filtered group-count endpoint is the upgrade path if that proves
 confusing in practice.
+
+**Paging is per node.** Each leaf keeps its own page state and offers
+`Load 100 more … showing 100 of 250 names` when there is more. The page limit
+therefore applies to the tag you opened rather than truncating the whole view,
+which is what a single global list would have done.
 
 ### Duplicate fold
 

@@ -2999,7 +2999,8 @@ def test_pool_collection_equivalence():
 # Step 4c – Library tags roll up from functions to their file
 #
 # Tagging a function `lib:uclibc:0.9.30.1:xdrmem_getint32` means the binary
-# contains uClibc 0.9.30.1, so the file must carry `lib:uclibc:0.9.30.1`.
+# contains uClibc, so the file must carry `lib:uclibc` -- without the version,
+# which one matched function does not establish for the whole binary.
 # Seeded synthetically because the roll-up rules have to hold whether or not
 # Ghidra's Function ID databases happen to match anything in the test corpus;
 # the uploaded collection is then checked for consistency on top.
@@ -3023,11 +3024,11 @@ def test_lib_tag_rollup():
         # `ambiguous` is still evidence the library is present, and a second
         # library in the same file must not shadow the first.
         "00401100": ["lib:uclibc:0.9.30.1:ambiguous", "lib:musl:1.2.4"],
-        # Neither rolls up: an unversioned lib tag names a function, not a
-        # library build, and a plain tag is not a library at all.
+        # The unversioned lib tag rolls up like any other -- it still names a
+        # library the binary contains. A plain tag is not a library at all.
         "00401200": ["lib:zlib:deflate", "crypto"],
     }
-    expected = {"lib:uclibc:0.9.30.1", "lib:musl:1.2.4"}
+    expected = {"lib:uclibc", "lib:musl", "lib:zlib"}
 
     try:
         r.set(
@@ -3053,7 +3054,7 @@ def test_lib_tag_rollup():
             r.sadd(f"{coll}:idx:file:functions:{md5}", func_id)
 
         check(
-            "derives only versioned lib: tags from function tags",
+            "derives unversioned lib: tags from function tags",
             file_lib_tags(r, coll, md5) == expected,
             f"got {sorted(file_lib_tags(r, coll, md5))}, want {sorted(expected)}",
         )
@@ -3086,14 +3087,14 @@ def test_lib_tag_rollup():
             f"file tags: {tags}",
         )
         check(
-            "backfill does not roll up unversioned or non-lib tags",
-            not ({"lib:zlib:deflate", "crypto"} & set(tags or [])),
+            "backfill rolls up neither versions nor non-lib tags",
+            not ({"lib:uclibc:0.9.30.1", "lib:zlib:deflate", "crypto"} & set(tags or [])),
             f"file tags: {tags}",
         )
         check(
             "rolled-up tag is searchable at the file level",
-            r.sismember(f"{coll}:idx:file:tags:lib:uclibc:0.9.30.1", file_id),
-            f"{coll}:idx:file:tags:lib:uclibc:0.9.30.1",
+            r.sismember(f"{coll}:idx:file:tags:lib:uclibc", file_id),
+            f"{coll}:idx:file:tags:lib:uclibc",
         )
 
         # Idempotent: a second run must not duplicate anything.

@@ -13,6 +13,8 @@ import pyghidra
 from pyghidra.launcher import HeadlessPyGhidraLauncher
 import tomllib
 
+from bsimvis.app.services.unpack_service import FILE_SCOPE_TAG_PREFIXES
+
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
 DEFAULT_CONFIG_NAME = "bsimvis_config.toml"
 
@@ -519,6 +521,12 @@ class GhidraService:
         batch_uuid = options.get("batch_uuid")
         batch_name = options.get("batch_name", "Ghidra Batch")
         tags = options.get("tags", [])
+        # `container:apk`, `packer:upx` & co. describe the upload, not the code:
+        # copying them onto every function made them look like library evidence
+        # and gave the binary-similarity tag split a `container:apk` category.
+        func_scope_tags = [
+            t for t in tags if not str(t).startswith(FILE_SCOPE_TAG_PREFIXES)
+        ]
         related_md5 = options.get("related_md5", [])
         min_func_len = options.get("min_func_len", 10)
         batch_order = options.get("batch_order", 0)
@@ -703,7 +711,7 @@ class GhidraService:
             )
             parameters = [p.getDataType().getName() for p in func.getParameters()]
 
-            func_tags = list(tags)
+            func_tags = list(func_scope_tags)
             fid_tags = self._extract_fid_tags_for_function(
                 func, program, fid_query_service, fid_service
             )

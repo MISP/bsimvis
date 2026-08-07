@@ -7,23 +7,19 @@ from bsimvis.app.services.index_service import save_file, save_function
 def lib_parent(tag):
     """File-level library tag implied by a function tag, or None.
 
-    `lib:uclibc:0.9.30.1:xdrmem_getint32` -> `lib:uclibc:0.9.30.1`: if a
-    function is a known uClibc 0.9.30.1 routine, the binary contains that
-    library. Only versioned `lib:` tags roll up -- an unversioned one names no
-    file-level fact worth indexing.
+    `lib:uclibc:0.9.30.1:xdrmem_getint32` -> `lib:uclibc`: if a function is a
+    known uClibc routine, the binary contains uClibc. The version is deliberately
+    dropped -- one Function ID hit dates a single function, not the library the
+    file was linked against, and a per-function version on the file document
+    reads as a claim about the whole binary that nothing here established. The
+    version stays on the function tag, where the evidence actually is.
     """
     if not tag:
         return None
     parts = str(tag).split(":")
-    if parts[0] != "lib" or len(parts) < 3:
+    if parts[0] != "lib" or len(parts) < 2 or not parts[1]:
         return None
-    if len(parts) >= 4:
-        return ":".join(parts[:3])
-    # Three parts is ambiguous: the Function ID analyzer emits `lib:name:version`
-    # for a match it could not name (FUN_*), but `lib:name:funcname` when the
-    # library itself carries no version.
-    # ponytail: digit-led means version; widen if a version ever starts with a letter.
-    return tag if parts[2][:1].isdigit() else None
+    return f"lib:{parts[1]}"
 
 
 def lib_parents(tags):

@@ -250,6 +250,13 @@ HANDLERS = [
     Handler("upx", "packer:upx", True, _is_upx, _unpack_upx),
 ]
 
+# Namespaces a handler tag can live in. These describe how the *upload* was
+# wrapped, which says nothing about any single function inside it, so they stay
+# on the file document and are stripped before function tagging (see
+# ghidra_service.stream_bsim_data). Derived from HANDLERS so a new handler
+# cannot start leaking into function tags by accident.
+FILE_SCOPE_TAG_PREFIXES = tuple(sorted({h.tag.split(":")[0] + ":" for h in HANDLERS}))
+
 
 def find_handler(raw_bytes, file_name=""):
     """First handler that recognises this upload, or None."""
@@ -284,6 +291,16 @@ def unpack(raw_bytes, file_name="", options=None):
 
 def demo():
     import tarfile
+
+    # -- file-scope tag namespaces ----------------------------------------
+    assert FILE_SCOPE_TAG_PREFIXES == ("container:", "packer:")
+    assert all(h.tag.startswith(FILE_SCOPE_TAG_PREFIXES) for h in HANDLERS)
+    # what ghidra_service strips before tagging functions
+    assert [
+        t
+        for t in ["container:apk", "packer:upx", "mirai", "lib:libc:2.31"]
+        if not t.startswith(FILE_SCOPE_TAG_PREFIXES)
+    ] == ["mirai", "lib:libc:2.31"]
 
     # -- registry dispatch ------------------------------------------------
     buf = io.BytesIO()

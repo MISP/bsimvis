@@ -108,40 +108,14 @@ window.Lineage = {
         if (icon) icon.className = 'fa-solid fa-chevron-right';
     },
 
-    /** Same column count as renderFiles(), so the table stays aligned. */
+    /**
+     * An injected child row is the same kind of row as a search hit -- same
+     * columns, same tags, same metadata, same note button -- only indented. It
+     * is rendered by the same function, so the two can't drift apart and a
+     * child stops looking like a stripped-down version of its own file.
+     */
     _childRow(node, collection, depth) {
-        const fileId = `${collection}:file:${node.file_md5}`;
-        const md5Cell = node.exists
-            ? EntityRenderer.renderMd5(node.file_md5, { full: true })
-            : `<span class="mono dim" style="font-size:0.7rem;">${escapeHtml(node.file_md5)}</span>`;
-        const tagsCell = node.exists
-            ? EntityRenderer.renderTag('file', fileId, node.tags || [], [])
-            : '';
-
-        return `
-        <tr class="sim-row lineage-row" style="font-size:0.75rem;"
-            data-lineage-depth="${depth}" data-lineage-md5="${escapeAttr(node.file_md5)}"
-            data-lineage-col="${escapeAttr(collection)}" data-lineage-open="0">
-            <td class="sim-cell">
-                <div class="lineage-cell" style="padding-left:${depth * 18}px;">
-                    <span class="lineage-guide">└</span>
-                    ${this.toggleButton(node.child_count)}
-                    ${this.nodeName(node, collection, { max: 34 })}
-                    ${this.pathLabel(node, 38)}
-                </div>
-            </td>
-            <td class="sim-cell">${md5Cell}</td>
-            <td class="sim-cell dim" style="font-size:0.65rem;">${escapeHtml(node.filetype || '')}</td>
-            <td class="sim-cell"></td>
-            <td class="sim-cell" style="text-align:center;">
-                <span style="font-weight:bold;">${Number(node.function_count) || 0}</span>
-            </td>
-            <td class="sim-cell"></td>
-            <td class="sim-cell"></td>
-            <td class="sim-cell"></td>
-            <td>${tagsCell}</td>
-            ${renderCollectionCell(collection)}
-        </tr>`;
+        return renderFiles([{ ...node, collection }], {}, { depth });
     },
 
     _noteRow(depth, text) {
@@ -169,9 +143,15 @@ window.Lineage = {
         return `<div class="lineage-breadcrumb"><i class="fa-solid fa-box-open"></i>${crumbs.join('<span class="lineage-sep">›</span>')}</div>`;
     },
 
-    renderTree(nodes, collection, itemFn) {
+    /**
+     * `childrenOf(node)` -> the nodes contained in `node`, or nothing. A
+     * container sitting inside a container is drawn open: its own contents
+     * follow it, indented one level further, so the panel shows the whole
+     * subtree instead of stopping at the first level of nesting.
+     */
+    renderTree(nodes, collection, itemFn, childrenOf = null, baseDepth = -1) {
         if (!nodes || !nodes.length) return '';
-        
+
         const root = { files: [], dirs: {} };
         for (const node of nodes) {
             const pathStr = node.path_in_parent || '';
@@ -209,12 +189,16 @@ window.Lineage = {
             dir.files.sort((a, b) => (a.file_name || a.file_md5).localeCompare(b.file_name || b.file_md5));
             for (const f of dir.files) {
                 html.push(itemFn(f, true, depth + 1));
+                const kids = childrenOf ? childrenOf(f) : null;
+                if (kids && kids.length) {
+                    html.push(this.renderTree(kids, collection, itemFn, childrenOf, depth + 1));
+                }
             }
-            
+
             return html;
         };
-        
-        return renderDir(root, '', -1).join('');
+
+        return renderDir(root, '', baseDepth).join('');
     },
 
     toggleTreeRow(tr) {
@@ -254,37 +238,48 @@ window.Lineage = {
         }
     },
 
+    /** "2 contained · 143 func", or nothing when a node has neither. */
+    _panelCounts(node) {
+        const bits = [];
+        if (node.child_count) bits.push(`${node.child_count} contained`);
+        if (node.function_count) bits.push(`${node.function_count} func`);
+        return bits.length ? `<span class="lineage-count">${bits.join(' · ')}</span>` : '';
+    },
+
+    /**
+     * One row of the "Extracted from" / "Contains" panel: name, path, tags,
+     * counts. Tags swallow their own clicks -- the row itself navigates.
+     */
+    _panelRow(node, collection, hidePath = false, depth = -1) {
+        const fileId = node.file_id || `${collection}:file:${node.file_md5}`;
+        const tags = (node.exists === false || !window.EntityRenderer)
+            ? ''
+            : `<span onclick="event.stopPropagation();">${EntityRenderer.renderTag('file', fileId, node.tags || [], node.user_tags || [])}</span>`;
+        return `
+        <tr class="sim-row" data-id="${escapeAttr(fileId)}" data-depth="${depth}" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(node.file_md5))}, ${escapeAttr(jsString(node.file_name || ''))}, event)">
+            <td style="padding-left: ${12 + Math.max(0, depth) * 18}px; border-bottom: 1px solid var(--border); padding-top:6px; padding-bottom:6px; font-size:0.85rem;">
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    ${node.is_container ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
+                    ${this.nodeName(node, collection, { max: 48 })}
+                    ${hidePath ? '' : this.pathLabel(node)}
+                    ${tags}
+                </div>
+            </td>
+            <td style="border-bottom: 1px solid var(--border); text-align: right; padding-right:12px; font-size:0.85rem;">
+                ${this._panelCounts(node)}
+            </td>
+        </tr>`;
+    },
+
     renderParents(lin, collection, siblingsByParent = {}) {
         const parents = lin.parents || [];
         if (!parents.length) return '';
 
-        const item = (node, extra = '', hidePath = false, depth = -1) => {
-            const fileId = `${collection}:file:${node.file_md5}`;
-            return `
-            <tr class="sim-row" data-id="${escapeAttr(fileId)}" data-depth="${depth}" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(node.file_md5))}, ${escapeAttr(jsString(node.file_name || ''))}, event)">
-                <td style="padding-left: ${12 + Math.max(0, depth) * 18}px; border-bottom: 1px solid var(--border); padding-top:6px; padding-bottom:6px; font-size:0.85rem;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        ${this.nodeName(node, collection, { max: 48 })}
-                        ${hidePath ? '' : this.pathLabel(node)}
-                    </div>
-                </td>
-                <td style="border-bottom: 1px solid var(--border); text-align: right; padding-right:12px; font-size:0.85rem;">
-                    ${extra}
-                </td>
-            </tr>`;
-        };
-        const counts = node => {
-            const bits = [];
-            if (node.child_count) bits.push(`${node.child_count} contained`);
-            if (node.function_count) bits.push(`${node.function_count} func`);
-            return bits.length ? `<span class="lineage-count">${bits.join(' · ')}</span>` : '';
-        };
-
-        const itemWithCounts = (node, hidePath = false, depth = -1) => item(node, counts(node), hidePath, depth);
+        const itemWithCounts = (node, hidePath = false, depth = -1) => this._panelRow(node, collection, hidePath, depth);
 
         let html = `<div class="card lineage-panel" style="padding:0; overflow:hidden;"><table class="data-table" id="lineage-tree-parents-table" style="width: 100%;"><tbody>`;
         html += `<tr class="bsim-grp-row" data-depth="-1"><td colspan="2"><div class="lineage-section-title" style="padding: 10px 15px; margin: 0; border: none; background: transparent;"><i class="fa-solid fa-box-open"></i> Extracted from</div></td></tr>`;
-        html += parents.map(p => item(p, counts(p))).join('');
+        html += parents.map(p => this._panelRow(p, collection)).join('');
 
         const sibsHtml = parents.map((p, i) => {
             const sibs = (siblingsByParent[p.file_md5] || [])
@@ -304,41 +299,52 @@ window.Lineage = {
         return html;
     },
 
-    renderChildren(lin, collection) {
+    /**
+     * `subtrees` maps a container md5 to its own children, as returned by
+     * fetchSubtrees(). Anything in there is drawn nested under its container
+     * instead of the tree stopping one level down.
+     */
+    renderChildren(lin, collection, subtrees = {}) {
         const children = lin.children || [];
         if (!children.length) return '';
-
-        const item = (node, extra = '', hidePath = false, depth = -1) => {
-            const fileId = `${collection}:file:${node.file_md5}`;
-            return `
-            <tr class="sim-row" data-id="${escapeAttr(fileId)}" data-depth="${depth}" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(node.file_md5))}, ${escapeAttr(jsString(node.file_name || ''))}, event)">
-                <td style="padding-left: ${12 + Math.max(0, depth) * 18}px; border-bottom: 1px solid var(--border); padding-top:6px; padding-bottom:6px; font-size:0.85rem;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        ${this.nodeName(node, collection, { max: 48 })}
-                        ${hidePath ? '' : this.pathLabel(node)}
-                    </div>
-                </td>
-                <td style="border-bottom: 1px solid var(--border); text-align: right; padding-right:12px; font-size:0.85rem;">
-                    ${extra}
-                </td>
-            </tr>`;
-        };
-        const counts = node => {
-            const bits = [];
-            if (node.child_count) bits.push(`${node.child_count} contained`);
-            if (node.function_count) bits.push(`${node.function_count} func`);
-            return bits.length ? `<span class="lineage-count">${bits.join(' · ')}</span>` : '';
-        };
 
         let html = `<div class="card lineage-panel" style="padding:0; overflow:hidden;"><table class="data-table" id="lineage-tree-children-table" style="width: 100%;"><tbody>`;
         const deeper = (lin.descendant_count || 0) - children.length;
         html += `<tr class="bsim-grp-row" data-depth="-1"><td colspan="2"><div class="lineage-section-title" style="padding: 10px 15px; margin: 0; border: none; background: transparent;"><i class="fa-solid fa-diagram-project"></i> Contains
             <span class="lineage-count">${lin.child_count} direct${deeper > 0 ? ` · ${deeper} deeper` : ''}</span></div></td></tr>`;
-        
-        const itemWithCounts = (node, hidePath = false, depth = -1) => item(node, counts(node), hidePath, depth);
-        html += this.renderTree(children, collection, itemWithCounts);
+
+        const itemWithCounts = (node, hidePath = false, depth = -1) => this._panelRow(node, collection, hidePath, depth);
+        html += this.renderTree(children, collection, itemWithCounts, node => subtrees[node.file_md5]);
         html += `</tbody></table></div>`;
 
         return html;
+    },
+
+    /**
+     * Direct children of every expandable node below `nodes`, keyed by md5.
+     *
+     * One request per container, a level at a time. Unpacking stops at
+     * unpack_service.MAX_DEPTH, so in practice this is one extra round of
+     * requests; maxDepth only bounds a hand-declared chain.
+     */
+    async fetchSubtrees(collection, nodes, maxDepth = 4) {
+        const map = {};
+        let frontier = (nodes || []).filter(n => n.exists && n.child_count);
+        for (let d = 0; d < maxDepth && frontier.length; d++) {
+            const pages = await Promise.all(frontier.map(n =>
+                this.fetch(collection, n.file_md5)
+                    .then(l => l.children || [])
+                    .catch(e => { console.error(e); return []; })
+            ));
+            const next = [];
+            frontier.forEach((n, i) => {
+                map[n.file_md5] = pages[i];
+                pages[i].forEach(c => {
+                    if (c.exists && c.child_count && !(c.file_md5 in map)) next.push(c);
+                });
+            });
+            frontier = next;
+        }
+        return map;
     }
 };

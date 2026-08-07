@@ -207,14 +207,22 @@ window.TableRenderers = {
     
     // ... renderFiles (needs update)
 
-    renderFiles: function(data, clustersMap = {}) {
+    /**
+     * `opts.depth` > 0 renders the row as an injected lineage child: indented,
+     * labelled with its path inside its container. Depth 0 rows that came out
+     * of a container instead name that container underneath the file name, so
+     * a filtered search (a bookmark, a tag) says what the hit sits in rather
+     * than showing a bare extracted file with no context.
+     *
+     * Every row the server returned is rendered. A match is a match even when
+     * its container also matched and sits on the same page; hiding it there
+     * made "shown / total" lie and dropped the row the filter was about.
+     */
+    renderFiles: function(data, clustersMap = {}, opts = {}) {
         const { collection } = getRoutingState();
-        
-        // Hide child rows if their parent is already present in the current page
-        const md5s = new Set(data.map(f => f.file_md5));
-        const visibleData = data.filter(f => !f.parent_md5 || !md5s.has(f.parent_md5));
-        
-        return visibleData.map(f => {
+        const depth = opts.depth || 0;
+
+        return data.map(f => {
             // Base collection: pool searches span collections, so fall back to the id prefix.
             const col = f.collection || (f['file_id'] || '').split(':')[0] || collection;
             const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
@@ -227,11 +235,23 @@ window.TableRenderers = {
 
             const clusters = (Array.isArray(f['bin_clusters']) ? f['bin_clusters'] : []).map(cid => clustersMap[cid]).filter(Boolean);
 
+            // A node the lineage edges declared but whose bytes were never
+            // uploaded has no name of its own to link to.
+            const nameHtml = (f['exists'] === false)
+                ? Lineage.nodeName(f, targetCol, { max: 40 })
+                : `<b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(f['file_md5']))}, ${escapeAttr(jsString(f['file_name'] || ''))}, event)">${escapeHtml(f['file_name'])}</b>`;
+
+            const contextHtml = depth > 0
+                ? Lineage.pathLabel(f, 38)
+                : (f['parent_md5']
+                    ? `<div class="lineage-path" title="${escapeAttr(f['parent_file_name'] || f['parent_md5'])}">in <b class="lineage-link" onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(f['parent_md5']))}, ${escapeAttr(jsString(f['parent_file_name'] || ''))}, event)">${escapeHtml(middleTruncate(f['parent_file_name'] || f['parent_md5'], 38))}</b></div>`
+                    : '');
+
             // Depth 0 anchors the lineage tree: injected child rows carry a
             // higher depth, which is how collapsing knows where to stop.
             return `
-            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
-                data-lineage-depth="0" data-lineage-md5="${escapeAttr(f['file_md5'])}"
+            <tr class="sim-row${depth > 0 ? ' lineage-row' : ''}" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
+                data-lineage-depth="${depth}" data-lineage-md5="${escapeAttr(f['file_md5'])}"
                 data-lineage-col="${escapeAttr(targetCol)}" data-lineage-open="0"
                 data-entity-data='${escapeAttr(JSON.stringify({
                     md5: f['file_md5'],
@@ -241,11 +261,13 @@ window.TableRenderers = {
                 }))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                 <td class="sim-cell">
-                    <div class="lineage-cell">
+                    <div class="lineage-cell" style="padding-left:${depth * 18}px;">
+                        ${depth > 0 ? '<span class="lineage-guide">└</span>' : ''}
                         ${Lineage.toggleButton(f['child_count'])}
                         ${f['is_container'] ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
-                        <b style="color:var(--accent); cursor:pointer;" onclick="openFileDetails(${escapeAttr(jsString(targetCol))}, ${escapeAttr(jsString(f['file_md5']))}, ${escapeAttr(jsString(f['file_name'] || ''))}, event)">${escapeHtml(f['file_name'])}</b>
+                        ${nameHtml}
                     </div>
+                    ${contextHtml}
                 </td>
                 <td class="sim-cell">
                     ${EntityRenderer.renderMd5(f['file_md5'], { full: true })}

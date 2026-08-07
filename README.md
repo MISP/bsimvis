@@ -73,6 +73,7 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 - Ghidra and pyghidra install
 - Redis and Kvrocks databases
+- Function ID databases in the Ghidra install (see below) — without them, function library tags stay empty
 
 # Installation
 
@@ -90,6 +91,33 @@ Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 ```
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
+
+## Function ID databases
+
+Ghidra's Function ID (FID) analyzer is what produces the `lib:<library>:<version>:<name>` tags BSimVis puts
+on functions: standard library code identified by exact and operand-masked instruction hashes. Stock Ghidra
+ships FID databases for Visual Studio runtimes only, so on ELF samples nothing gets identified until you add
+databases to `$GHIDRA_HOME/Ghidra/Features/FunctionID/data/`.
+
+`install.sh` fetches the open-source [threatrack/ghidra-fidb-repo](https://github.com/threatrack/ghidra-fidb-repo)
+(MIT — 67 MB download, 215 MB unpacked, 47 databases: glibc, uClibc/OpenWrt, gcc, OpenSSL, Qt5, SDL,
+libsodium, CentOS 6/7, across x86 32/64, ARM, AARCH64, MIPS, PowerPC, SPARC, SuperH, m68k). Skip it with
+`SKIP_FIDB=1 ./install.sh`.
+
+To install them by hand, into your own Ghidra:
+
+```bash
+curl -LO https://github.com/threatrack/ghidra-fidb-repo/releases/download/20200530/ghidra-fidb-repo_20200530.zip
+unzip ghidra-fidb-repo_20200530.zip -d "$GHIDRA_HOME/Ghidra/Features/FunctionID/data/"
+```
+
+Those are the pre-unpacked `.fidbf` files, so no Ghidra rebuild is needed. Restart the workers afterwards —
+Ghidra reads the data directory at startup.
+
+Coverage is per-architecture and per-toolchain. No database exists for PowerPC e500, MIPS64r6, RISC-V or
+LoongArch, and a statically linked binary built with a different compiler or `-O` level than the one the FIDB
+was built from misses every hash even where a database exists. Build your own with Ghidra's
+`Tools -> Function ID -> Populate Function ID Database` when a library matters and nothing matches it.
 
 # Running
 

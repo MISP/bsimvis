@@ -82,6 +82,27 @@ else
     echo "Ghidra already installed in ${GHIDRA_PATH}"
 fi
 
+# Function ID databases (threatrack/ghidra-fidb-repo, MIT) — source of the lib:* function tags.
+# Stock Ghidra only ships Visual Studio FIDBs, so ELF samples get nothing without these.
+FIDB_URL="https://github.com/threatrack/ghidra-fidb-repo/releases/download/20200530/ghidra-fidb-repo_20200530.zip"
+FID_DATA_DIR="${GHIDRA_PATH}/Ghidra/Features/FunctionID/data"
+
+if [ "${SKIP_FIDB:-}" = "1" ]; then
+    echo "Skipping FunctionID databases (SKIP_FIDB=1)."
+elif ls "${FID_DATA_DIR}"/libc-*.fidbf >/dev/null 2>&1; then
+    echo "FunctionID databases already installed in ${FID_DATA_DIR}"
+else
+    echo "Downloading FunctionID databases (67MB)..."
+    if ! (
+        cd "${SCRATCH_DIR}" \
+        && curl -fsSL "${FIDB_URL}" -o fidb.zip \
+        && mkdir -p "${FID_DATA_DIR}" \
+        && unzip -qo fidb.zip -d "${FID_DATA_DIR}"
+    ); then
+        echo "Warning: FunctionID database install failed; lib:* tags will stay empty."
+    fi
+fi
+
 # Update .env if it exists
 if [ -f .env ]; then
     if grep -q "GHIDRA_INSTALL_DIR" .env; then

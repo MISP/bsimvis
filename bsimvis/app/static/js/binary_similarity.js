@@ -11,10 +11,10 @@ let sankeySplit = 10;
 let fileSimView = 'table';      // 'table' | 'sankey'
 let fileSimScale = 'count';     // 'count' | 'features'
 let fileSimDepth = 2;           // default namespace frontier: 1=type, 2=library, 3=version
+// One table now, so one sort state. Keyed `matched` for continuity with the
+// filter-input ids the header still uses.
 let binSimSortState = {
     matched: { col: 'similarity', dir: -1 },
-    uniqueA: { col: 'cohesion', dir: -1 },
-    uniqueB: { col: 'cohesion', dir: -1 }
 };
 
 // Change 4 (frontend): server-paged tables. Sankey uses the compact view; tables load
@@ -22,12 +22,6 @@ let binSimSortState = {
 const BINSIM_LIMIT = 100;
 let binSimCtx = null;        // {collection, md5a, md5b, collB, poolId}
 let binSimFullDiff = null;   // full diff, fetched only when detailed Sankey is opened
-let binSimPage = {
-    // keyed by sort-state key; maps to backend table + tbody id + filter prefix
-    matched: { table: 'matched', tbody: 'bin-sim-table-matched', prefix: 'matched', items: [], offset: 0, total: 0, loading: false },
-    uniqueA: { table: 'unique_to_a', tbody: 'bin-sim-table-unique-a', prefix: 'ua', items: [], offset: 0, total: 0, loading: false },
-    uniqueB: { table: 'unique_to_b', tbody: 'bin-sim-table-unique-b', prefix: 'ub', items: [], offset: 0, total: 0, loading: false },
-};
 function openClusterView(uuid, name, event) {
     const { collection: col } = getRoutingState();
     const url = Nav.buildUIUrl(col, ['search', 'functions']) + `?cluster_uuid=${encodeURIComponent(uuid)}`;
@@ -106,47 +100,66 @@ function renderBinarySimilarityView(params) {
                 <div id="bin-sim-strip-b" class="bin-sim-strip" style="flex: 1; min-width: 0;"></div>
             </div>
 
-            <!-- Tab bar -->
-            <div class="bsim-tabbar" id="bin-sim-tabs">
-                <button class="bsim-tab active" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched functions</button>
-                <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched functions</button>
-                <button class="bsim-tab" id="bin-sim-tab-btn-graph" onclick="switchBinSimTab('graph')">Function graph</button>
-                <button class="bsim-tab" id="bin-sim-tab-btn-metadata" onclick="switchBinSimTab('metadata')">Metadata</button>
-                <button class="bsim-tab" id="bin-sim-tab-btn-inferred" onclick="switchBinSimTab('inferred')">Clusters</button>
-                <button class="bsim-tab" id="bin-sim-tab-btn-filesim" onclick="switchBinSimTab('filesim')">File sim</button>
-            </div>
+            <!-- Main view: the tag tree scopes the detail pane beside it. Matched
+                 and Unmatched are states of the one detail table, not tables of
+                 their own, so every tab means the same thing for any selection. -->
+            <div id="bsim-main">
+                <div id="bsim-sidebar">
+                    <div class="bsim-side-title">Function tag tree</div>
+                    <div id="bsim-tree" class="bsim-tree"></div>
+                    <div class="bsim-side-sep"></div>
+                    <div class="bsim-side-nav">
+                        <div class="bsim-nav-item" id="bsim-nav-graph" onclick="switchBinSimTab('graph')">Function graph</div>
+                        <div class="bsim-nav-item" id="bsim-nav-metadata" onclick="switchBinSimTab('metadata')">Metadata</div>
+                        <div class="bsim-nav-item" id="bsim-nav-inferred" onclick="switchBinSimTab('inferred')">Clusters</div>
+                    </div>
+                </div>
 
-            <!-- Matched functions tab -->
-            <div class="bsim-subtab-panel" id="bsim-panel-matched" style="flex:1; min-height:0; display:flex; flex-direction:column;">
-                <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
-                    <div style="flex:1; overflow:auto;">
-                        <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
-                            <tbody id="bin-sim-table-matched"></tbody>
-                        </table>
+                <div id="bsim-detail">
+                    <!-- Detail tabs: presets on one table, plus its own Summary -->
+                    <div class="bsim-tabbar" id="bin-sim-tabs">
+                        <button class="bsim-tab active" id="bin-sim-tab-btn-summary" onclick="switchBinSimTab('summary')">Summary</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-all" onclick="switchBinSimTab('all')">All</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-matched" onclick="switchBinSimTab('matched')">Matched</button>
+                        <button class="bsim-tab" id="bin-sim-tab-btn-unmatched" onclick="switchBinSimTab('unmatched')">Unmatched</button>
+                        <div style="flex:1;"></div>
+                        <div class="view-toggle" id="bsim-view-toggle" style="margin:0; display:flex; align-items:center;">
+                            <button class="view-btn active" id="bsim-filesim-view-btn-table" onclick="setFileSimView('table')" title="Tag composition as a table">Table</button>
+                            <button class="view-btn" id="bsim-filesim-view-btn-sankey" onclick="setFileSimView('sankey')" title="Tag composition as a Shared / Unique flow graph">Sankey</button>
+                        </div>
                     </div>
-                </div>
-            </div>
 
-            <!-- Unmatched functions sub-tab -->
-            <div class="bsim-subtab-panel" id="bsim-panel-unmatched" style="flex:1; min-height:0; display:none; gap:20px;">
-                <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                    <div style="flex:1; overflow:auto;">
-                        <table id="bin-sim-table-unique-a-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
-                            <tbody id="bin-sim-table-unique-a"></tbody>
-                        </table>
+                    <!-- Global scope chips: the tree selection, removable from here too -->
+                    <div id="bsim-chips" class="bsim-chips"></div>
+
+                    <!-- Summary: stats for the selection + rollup of its children -->
+                    <div class="bsim-subtab-panel" id="bsim-panel-summary" style="flex:1; min-height:0; display:flex; flex-direction:column; overflow:auto; gap:12px;">
+                        <div id="bsim-summary-head"></div>
+                        <div id="bsim-summary-rollup"></div>
                     </div>
-                </div>
-                <div style="flex:1; border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
-                    <div style="flex:1; overflow:auto;">
-                        <table id="bin-sim-table-unique-b-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                            <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
-                            <tbody id="bin-sim-table-unique-b"></tbody>
-                        </table>
+
+                    <!-- The one function table. All / Matched / Unmatched differ only
+                         by the state filter they send. -->
+                    <div class="bsim-subtab-panel" id="bsim-panel-table" style="flex:1; min-height:0; display:none; flex-direction:column;">
+                        <div style="display:flex; align-items:center; gap:10px; padding:0 0 8px 0; flex-shrink:0; flex-wrap:wrap;">
+                            <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
+                                <span class="bsim-ctl-label">Group by:</span>
+                                <button class="view-btn active" id="bsim-group-btn-auto" onclick="setFileSimGroupBy('auto')" title="Group by tag when the selection spans more than one">Auto</button>
+                                <button class="view-btn" id="bsim-group-btn-tag" onclick="setFileSimGroupBy('tag')" title="Always group by tag">Tag</button>
+                                <button class="view-btn" id="bsim-group-btn-none" onclick="setFileSimGroupBy('none')" title="One flat list">None</button>
+                            </div>
+                            <button class="view-btn" onclick="collapseAllFileSimGroups()" title="Collapse every tag group">Collapse all</button>
+                            <span id="bsim-table-count" style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;"></span>
+                        </div>
+                        <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
+                            <div class="bin-sim-table-scroll" style="flex:1; overflow:auto;">
+                                <table id="bin-sim-table-matched-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                                    <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;"></thead>
+                                    <tbody id="bin-sim-table-matched"></tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
-                </div>
-            </div>
 
             <!-- Graph sub-tab -->
             <div class="bsim-subtab-panel" id="bsim-panel-graph" style="flex:1; min-height:0; display:none; flex-direction:column;">
@@ -190,33 +203,94 @@ function renderBinarySimilarityView(params) {
                 <div id="bin-sim-inferred-meta-container" style="color:var(--dim); text-align:center; padding:40px;">Loading clusters…</div>
             </div>
 
-            <!-- File sim tab: tag-composition similarity, collapsible by depth -->
-            <div class="bsim-subtab-panel" id="bsim-panel-filesim" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
-                <div style="display:flex; align-items:center; gap:14px; flex-shrink:0; flex-wrap:wrap;">
-                    <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
-                        <button class="view-btn ${fileSimView === 'table' ? 'active' : ''}" id="bsim-filesim-view-btn-table" onclick="setFileSimView('table')" title="Tag composition as a collapsible table">Table</button>
-                        <button class="view-btn ${fileSimView === 'sankey' ? 'active' : ''}" id="bsim-filesim-view-btn-sankey" onclick="setFileSimView('sankey')" title="Tag composition as a Shared / Unique flow graph">Sankey</button>
+                    <!-- Sankey view of the same selection. Deliberately stops at
+                         Shared / Unique per tag: function-level detail is the
+                         table's job. -->
+                    <div class="bsim-subtab-panel" id="bsim-panel-filesim" style="flex:1; min-height:0; display:none; flex-direction:column; overflow:auto; padding:5px 0 0 0; gap:10px;">
+                        <div style="display:flex; align-items:center; gap:14px; flex-shrink:0; flex-wrap:wrap;">
+                            <div class="view-toggle" id="bin-sim-filesim-scale-toggle" style="margin:0; align-items:center; display:flex;">
+                                <span class="bsim-ctl-label">Scale:</span>
+                                <button class="view-btn ${fileSimScale === 'count' ? 'active' : ''}" id="bsim-filesim-scale-btn-count" onclick="setFileSimScale('count')" title="Scale flow by function count">Count</button>
+                                <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
+                            </div>
+                            <div class="view-toggle" id="bin-sim-filesim-depth-toggle" style="margin:0; align-items:center; display:flex;">
+                                <span class="bsim-ctl-label">Group:</span>
+                                <button class="view-btn ${fileSimDepth === 1 ? 'active' : ''}" onclick="setFileSimDepth(1)" title="One node per tag namespace (lib, stdlib, ...)">Namespace</button>
+                                <button class="view-btn ${fileSimDepth === 2 ? 'active' : ''}" onclick="setFileSimDepth(2)" title="One node per library (lib:libc)">Library</button>
+                                <button class="view-btn ${fileSimDepth === 3 ? 'active' : ''}" onclick="setFileSimDepth(3)" title="One node per library version (lib:libc:2.31)">Version</button>
+                                <span style="font-size:0.68rem; color:var(--dim); margin-left:10px; font-family:sans-serif;">click a tag node to expand ▸ · shift-click to fold it up</span>
+                            </div>
+                        </div>
+                        <div id="bin-sim-filesim-sankey-card" style="position:relative; width:100%; flex:1; min-height:420px; border:1px solid var(--border); background:var(--bg); border-radius:8px; display:flex; flex-direction:column; overflow:hidden;">
+                            <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
+                        </div>
                     </div>
-                    <div class="view-toggle" id="bin-sim-filesim-scale-toggle" style="margin:0; align-items:center; display:${fileSimView === 'sankey' ? 'flex' : 'none'};">
-                        <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Scale:</span>
-                        <button class="view-btn ${fileSimScale === 'count' ? 'active' : ''}" id="bsim-filesim-scale-btn-count" onclick="setFileSimScale('count')" title="Scale flow by function count">Count</button>
-                        <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
-                    </div>
-                    <div class="view-toggle" id="bin-sim-filesim-depth-toggle" style="margin:0; align-items:center; display:${fileSimView === 'sankey' ? 'flex' : 'none'};">
-                        <span style="font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold; font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;">Group:</span>
-                        <button class="view-btn ${fileSimDepth === 1 ? 'active' : ''}" onclick="setFileSimDepth(1)" title="One node per tag namespace (lib, stdlib, ...)">Namespace</button>
-                        <button class="view-btn ${fileSimDepth === 2 ? 'active' : ''}" onclick="setFileSimDepth(2)" title="One node per library (lib:libc)">Library</button>
-                        <button class="view-btn ${fileSimDepth === 3 ? 'active' : ''}" onclick="setFileSimDepth(3)" title="One node per library version (lib:libc:2.31)">Version</button>
-                        <span style="font-size:0.68rem; color:var(--dim); margin-left:10px; font-family:sans-serif;">click a tag node to expand ▸ · shift-click to fold it up</span>
-                    </div>
-                </div>
-                <div id="bin-sim-filesim" style="color:var(--dim); text-align:center; padding:40px;">No tag data for this pair.</div>
-                <div id="bin-sim-filesim-sankey-card" style="display:none; position:relative; width:100%; flex:1; min-height:420px; border:1px solid var(--border); background:var(--bg); border-radius:8px; flex-direction:column; overflow:hidden;">
-                    <div id="bin-sim-filesim-sankey" style="flex:1; width:100%; min-height:0; overflow:auto; position:relative;"></div>
-                </div>
-            </div>
+                </div><!-- /#bsim-detail -->
+            </div><!-- /#bsim-main -->
         </div>
         <style>
+            #bsim-main { display:flex; flex:1; min-height:0; align-items:stretch; gap:16px; }
+            #bsim-sidebar {
+                width:280px; flex-shrink:0; display:flex; flex-direction:column;
+                border:1px solid var(--border); border-radius:8px; background:var(--card-bg);
+                overflow:auto; padding:10px 0;
+            }
+            #bsim-detail { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; }
+            .bsim-side-title {
+                font-size:0.68rem; text-transform:uppercase; letter-spacing:0.07em;
+                color:var(--subtle); font-weight:bold; padding:4px 12px 8px;
+            }
+            .bsim-tree { flex:0 0 auto; }
+            /* Non-tree navigation: same column, deliberately not tree-shaped, so a
+               page switch never reads as a scope change. */
+            .bsim-side-sep { border-top:1px solid var(--border); margin:10px 12px; }
+            .bsim-nav-item {
+                padding:7px 14px; cursor:pointer; font-size:0.82rem; color:var(--subtle);
+                font-family:'Inter',sans-serif; border-left:3px solid transparent;
+            }
+            .bsim-nav-item:hover { background:var(--hover); color:var(--text); }
+            .bsim-nav-item.active { color:var(--accent); border-left-color:var(--accent); background:var(--hover); }
+            /* The tree greys out while a non-scoping page is open, rather than
+               collapsing, so returning to a scope stays one click. */
+            #bsim-sidebar.nav-active .bsim-tree { opacity:0.45; }
+            .bsim-node {
+                display:flex; align-items:center; gap:6px; padding:4px 12px; cursor:pointer;
+                font-size:0.8rem; font-family:'Inter',sans-serif; color:var(--text);
+                border-left:3px solid transparent; white-space:nowrap;
+            }
+            .bsim-node:hover { background:var(--hover); }
+            .bsim-node.selected { background:var(--hover); border-left-color:var(--accent); }
+            .bsim-node .bsim-caret { width:12px; color:var(--subtle); flex-shrink:0; user-select:none; }
+            .bsim-node .bsim-node-label { flex:1; overflow:hidden; text-overflow:ellipsis; }
+            .bsim-node .bsim-node-pct { font-size:0.72rem; color:var(--accent); font-family:'Consolas',monospace; }
+            .bsim-node.bsim-drift { color:var(--token-instruction); font-size:0.74rem; cursor:default; }
+            .bsim-node.bsim-drift:hover { background:none; }
+            .bsim-chips { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px 0; min-height:0; }
+            .bsim-chip {
+                display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
+                border:1px solid var(--border); border-radius:12px; background:var(--bg-alt);
+                font-size:0.72rem; font-family:'Inter',sans-serif; color:var(--subtle);
+            }
+            .bsim-chip b { color:var(--text); font-weight:600; }
+            .bsim-chip .bsim-chip-x { cursor:pointer; color:var(--dim); }
+            .bsim-chip .bsim-chip-x:hover { color:var(--token-instruction); }
+            .bsim-ctl-label {
+                font-size:0.7rem; color:var(--subtle); margin-right:6px; font-weight:bold;
+                font-family:sans-serif; text-transform:uppercase; letter-spacing:0.5px;
+            }
+            .bsim-grp-row td {
+                background:var(--bg-alt); border-top:1px solid var(--border);
+                border-bottom:1px solid var(--border); padding:7px 10px;
+                font-family:'Inter',sans-serif; font-size:0.78rem; cursor:pointer;
+            }
+            .bsim-grp-row:hover td { background:var(--hover); }
+            .bsim-fold-pill {
+                display:inline-block; padding:2px 8px; border-radius:12px; background:var(--bg-alt);
+                border:1px solid var(--border); font-size:0.72rem; color:var(--subtle);
+                cursor:pointer; user-select:none; white-space:nowrap; margin-left:8px;
+                font-family:'Inter',sans-serif;
+            }
+            .bsim-fold-pill:hover { border-color:var(--accent); color:var(--text); }
             .bsim-tabbar { display:flex; gap:4px; margin:0 0 16px 0; border-bottom:2px solid var(--border); }
             .bsim-tab {
                 background:none; border:none; border-bottom:3px solid transparent;
@@ -240,9 +314,7 @@ function renderBinarySimilarityView(params) {
             .drag-handle-v:hover div {
                 background: var(--accent) !important;
             }
-            #bin-sim-table-matched-table td,
-            #bin-sim-table-unique-a-table td,
-            #bin-sim-table-unique-b-table td {
+            #bin-sim-table-matched-table td {
                 position: relative;
                 user-select: text !important;
             }
@@ -371,21 +443,22 @@ function initResizableCards() {
             functions_metadata: {},
             diff: { matched: [], unique_to_a: [], unique_to_b: [] },
         };
-        ['matched', 'uniqueA', 'uniqueB'].forEach(k => {
-            binSimPage[k].items = []; binSimPage[k].offset = 0; binSimPage[k].total = 0; binSimPage[k].loading = false;
-        });
+        // A fresh pair starts unscoped, at the root of the tree.
+        fileSimSelection = new Set();
+        fileSimOpenGroups = new Set();
+        fileSimOpenFolds = new Set();
+        fileSimGroups = {};
+        fileSimFoldRows = {};
+        fileSimFlat.items = []; fileSimFlat.offset = 0; fileSimFlat.total = 0; fileSimFlat.loading = false;
 
         const btnMatched = document.getElementById('bin-sim-tab-btn-matched');
         const btnUnmatched = document.getElementById('bin-sim-tab-btn-unmatched');
-        if (btnMatched) btnMatched.textContent = `Matched functions (${counts.matched})`;
-        if (btnUnmatched) btnUnmatched.textContent = `Unmatched functions (${counts.unique_to_a} / ${counts.unique_to_b})`;
+        if (btnMatched) btnMatched.textContent = `Matched (${counts.matched})`;
+        if (btnUnmatched) btnUnmatched.textContent = `Unmatched (${counts.unique_to_a} / ${counts.unique_to_b})`;
 
-        // Render headers, the Sankey (from compact data), then load first page of each table.
-        renderBinSimTables();
+        // Tree + Summary render from the compact payload alone; the table pages
+        // itself once a tab that needs rows is shown.
         renderBinaryDiffSankey(binSimDataCache);
-        loadBinSimTablePage('matched', { reset: true });
-        loadBinSimTablePage('uniqueA', { reset: true });
-        loadBinSimTablePage('uniqueB', { reset: true });
 
         // Restore the tab from the URL hash (e.g. after a Back navigation).
         applyBinSimTabFromHash();
@@ -433,13 +506,39 @@ function foldSmallTags(rows, keep = 12) {
     return head;
 }
 
-// ---- File sim tab -------------------------------------------------------
-// Composition similarity: how much of the same *stuff* the two binaries carry,
-// tag by tag, independent of how well individual functions matched. A leaf tag
-// scores min(count_a, count_b) / max(count_a, count_b) — "A has 2 libc funcs,
-// B has 4" -> 50%. A category is the mean of its children, so a category with
-// one perfect and one absent library reads 50%, not "mostly fine".
+// ---- File sim: the main view --------------------------------------------
+// A tag tree on the left scopes one function table on the right. The tree
+// answers "what mass do these two binaries carry"; the table answers "which
+// functions". Keeping those in separate panes is what stopped the single
+// recursive table from having to be both at once.
+//
+// Composition similarity, tag by tag, is independent of how well individual
+// functions matched: a leaf tag scores min(count_a, count_b) / max(...) --
+// "A has 2 libc funcs, B has 4" -> 50%. A group is the mean of its children, so
+// a group with one perfect and one absent library reads 50%, not "mostly fine".
 // ponytail: counts, not feature weights. Switch to weight_* if count proves noisy.
+
+// Tree grouping. `parse_tag_id` (bin_sim_tags.py) already hands us the first
+// namespace segment as `type`, so the tree is a pure prefix read with no mapping
+// table to drift from the data.
+const FILESIM_GROUPS = [
+    { key: 'original', label: 'Original', prefixes: ['original_code'], types: ['original_code'] },
+    { key: 'bundles', label: 'Bundles', prefixes: ['bundle'], types: ['bundle'] },
+    { key: 'libraries', label: 'Libraries', prefixes: ['lib', 'stdlib'], types: ['lib', 'stdlib'] },
+    // Anything the analyzer tagged but we have no namespace convention for.
+    { key: 'other', label: 'Other', prefixes: [], types: null },
+];
+
+// Selected tag prefixes. Empty = the root "All" node = the whole pair.
+let fileSimSelection = new Set();
+// Collapsed/expanded tree nodes, keyed by node id.
+let fileSimTreeOpen = new Set(['root', 'libraries', 'bundles']);
+// 'summary' | 'all' | 'matched' | 'unmatched' -- the right pane's tabs.
+let fileSimTab = 'summary';
+let fileSimGroupBy = 'auto';   // 'auto' | 'tag' | 'none'
+// Expanded tag groups in the table, and expanded duplicate folds, by key.
+let fileSimOpenGroups = new Set();
+let fileSimOpenFolds = new Set();
 
 // Functions carrying this tag on each side = matched (from the bins) + unique.
 function tagSideCounts(row) {
@@ -451,300 +550,645 @@ function tagSideCounts(row) {
     return [a, b];
 }
 
-function fileSimNode(name, children, a, b, forceSim, tagId, groupType) {
-    let sim;
-    if (forceSim !== undefined) {
-        sim = forceSim;
-    } else {
-        sim = children.length
-            ? children.reduce((s, c) => s + c.sim, 0) / children.length
-            : (Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0);
-    }
-    return { name, children, a, b, sim, tagId, groupType };
+function fileSimSim(a, b) {
+    return Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0;
 }
 
+// tags_summary rows are already rolled up to `lib:libc:2.31`. The tree adds two
+// levels above that: the group (Libraries) and the library name (libc), so a
+// whole library folds to one row when you are reading the pair as a whole.
 function fileSimTree(rows) {
-    const byType = new Map();
+    const groups = FILESIM_GROUPS.map(g => ({ ...g, id: g.key, children: [], a: 0, b: 0 }));
+    const byGroup = new Map(groups.map(g => [g.key, g]));
+    const fallback = byGroup.get('other');
+
     (rows || []).forEach(row => {
         const [a, b] = tagSideCounts(row);
-        const kids = (row.children || []).map(c => {
-            const [ca, cb] = tagSideCounts(c);
-            let childName = c.version || c.name;
-            if (c.tag_id && c.tag_id.split(':').length > 3) {
-                childName = c.tag_id.split(':').slice(3).join(':'); // Extract function name
-            }
-            return fileSimNode(childName, [], ca, cb, undefined, c.tag_id);
-        });
-        
-        let nodeName = row.name;
-        if (row.version) nodeName += ' ' + row.version;
-        
-        const trueSim = kids.length ? kids.reduce((s, c) => s + c.sim, 0) / kids.length : (Math.max(a, b) > 0 ? Math.min(a, b) / Math.max(a, b) : 0);
-        
-        const groupedKids = [];
-        if (kids.length > 0) {
-            const shared = kids.filter(k => k.a > 0 && k.b > 0);
-            const uniqueA = kids.filter(k => k.a > 0 && k.b === 0);
-            const uniqueB = kids.filter(k => k.a === 0 && k.b > 0);
-            
-            if (shared.length > 0) {
-                shared.forEach(k => k.groupType = 'matched');
-                groupedKids.push(fileSimNode(`Shared (${shared.length})`, shared, shared.reduce((s, k) => s + k.a, 0), shared.reduce((s, k) => s + k.b, 0), 1.0));
-            }
-            if (uniqueA.length > 0) {
-                uniqueA.forEach(k => k.groupType = 'uniqueA');
-                groupedKids.push(fileSimNode(`Unique to A (${uniqueA.length})`, uniqueA, uniqueA.reduce((s, k) => s + k.a, 0), 0, 0.0));
-            }
-            if (uniqueB.length > 0) {
-                uniqueB.forEach(k => k.groupType = 'uniqueB');
-                groupedKids.push(fileSimNode(`Unique to B (${uniqueB.length})`, uniqueB, 0, uniqueB.reduce((s, k) => s + k.b, 0), 0.0));
-            }
-        } else if (row.tag_id === 'original_code') {
-            // "Original Code" has no sub-tags (children), but we still want it to display the matched/unique functions.
-            // Create dummy 'matched', 'uniqueA', 'uniqueB' nodes so fileSimRows will render them.
-            if (row.matched_count > 0) {
-                const leaf = fileSimNode('dummy', [], 0, 0, undefined, row.tag_id, 'matched');
-                groupedKids.push(fileSimNode(`Shared (${Math.round(row.matched_count)})`, [leaf], row.matched_count, row.matched_count, 1.0));
-            }
-            if (row.unique_count_a > 0) {
-                const leaf = fileSimNode('dummy', [], 0, 0, undefined, row.tag_id, 'uniqueA');
-                groupedKids.push(fileSimNode(`Unique to A (${Math.round(row.unique_count_a)})`, [leaf], row.unique_count_a, 0, 0.0));
-            }
-            if (row.unique_count_b > 0) {
-                const leaf = fileSimNode('dummy', [], 0, 0, undefined, row.tag_id, 'uniqueB');
-                groupedKids.push(fileSimNode(`Unique to B (${Math.round(row.unique_count_b)})`, [leaf], 0, row.unique_count_b, 0.0));
-            }
-        }
-        
-        const node = fileSimNode(nodeName, groupedKids, a, b, trueSim);
+        // A tag with no functions on either side is not evidence of
+        // dissimilarity, so it must not drag its parent's mean down.
+        if (a === 0 && b === 0) return;
+        const tagId = row.tag_id || row.name || '';
         const type = row.type || 'other';
-        if (!byType.has(type)) byType.set(type, []);
-        byType.get(type).push(node);
+        const group = groups.find(g => g.types && g.types.includes(type)) || fallback;
+
+        // Original has no library/version level -- it is one bucket by definition.
+        if (group.key === 'original') {
+            group.children.push({
+                id: tagId, label: 'Original code', prefix: tagId,
+                a, b, sim: fileSimSim(a, b), children: [], drift: row.drift || {},
+            });
+            return;
+        }
+
+        const name = row.name || tagId;
+        let lib = group.children.find(c => c.label === name);
+        if (!lib) {
+            // `lib:libc` catches every version and every function beneath it.
+            const prefix = tagId.split(':').slice(0, 2).join(':');
+            lib = { id: group.key + '/' + name, label: name, prefix, a: 0, b: 0, children: [], drift: {} };
+            group.children.push(lib);
+        }
+        lib.a += a; lib.b += b;
+        Object.entries(row.drift || {}).forEach(([partner, w]) => {
+            lib.drift[partner] = (lib.drift[partner] || 0) + w;
+        });
+        // Only split by version when there is more than one to split.
+        lib.children.push({
+            id: tagId, label: row.version || name, prefix: tagId,
+            a, b, sim: fileSimSim(a, b), children: [], drift: row.drift || {},
+        });
     });
-    const cats = [...byType.entries()].map(([type, kids]) => fileSimNode(
-        type,
-        kids.sort((x, y) => y.sim - x.sim),
-        kids.reduce((s, k) => s + k.a, 0),
-        kids.reduce((s, k) => s + k.b, 0),
-    ));
-    return fileSimNode('Similarity', cats.sort((x, y) => y.sim - x.sim), 0, 0);
+
+    groups.forEach(g => {
+        g.children.forEach(lib => {
+            if (lib.sim === undefined) lib.sim = fileSimSim(lib.a, lib.b);
+            if (lib.children.length === 1) lib.children = [];   // no pointless nesting
+            lib.children.sort((x, y) => y.sim - x.sim);
+        });
+        g.children.sort((x, y) => y.sim - x.sim);
+        g.a = g.children.reduce((s, c) => s + c.a, 0);
+        g.b = g.children.reduce((s, c) => s + c.b, 0);
+        // A group is the mean of its children, so one absent library still shows.
+        g.sim = g.children.length
+            ? g.children.reduce((s, c) => s + c.sim, 0) / g.children.length
+            : 0;
+    });
+
+    const live = groups.filter(g => g.children.length);
+    return {
+        id: 'root', label: 'All', prefix: null, children: live,
+        a: live.reduce((s, g) => s + g.a, 0),
+        b: live.reduce((s, g) => s + g.b, 0),
+        sim: live.length ? live.reduce((s, g) => s + g.sim, 0) / live.length : 0,
+        drift: {},
+    };
 }
 
-// Paths of expanded subtrees. Everything else is collapsed.
-const fileSimExpanded = new Set();
-// Auto-expand depth 0 once
-let fileSimAutoExpanded = false;
+function fileSimTreeRoot() {
+    return fileSimTree((binSimDataCache && binSimDataCache.tags_summary) || []);
+}
 
-window.toggleFileSimRow = function(path) {
-    if (fileSimExpanded.has(path)) fileSimExpanded.delete(path);
-    else fileSimExpanded.add(path);
-    if (binSimDataCache) renderFileSimTable(binSimDataCache);
-};
+// Flat list of every node, so a prefix can be resolved back to its node.
+function fileSimNodes(node, out = []) {
+    out.push(node);
+    (node.children || []).forEach(c => fileSimNodes(c, out));
+    return out;
+}
 
-function fileSimRows(node, path, depth, out, tagToMatched, tagToUniqueA, tagToUniqueB) {
-    if (node.name === 'original_code' && depth === 1 && node.children.length > 0 && node.children[0].name === 'Original Code') {
-        // Skip redundant 'original_code' category wrapper for the 'Original Code' node
-        node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth, out, tagToMatched, tagToUniqueA, tagToUniqueB));
-        return;
-    }
+function fileSimNodeByPrefix(prefix) {
+    return fileSimNodes(fileSimTreeRoot()).find(n => n.prefix === prefix);
+}
 
-    if (node.tagId && node.groupType && tagToMatched) {
-        if (node.groupType === 'matched') {
-            const pairs = tagToMatched.get(node.tagId) || [];
-            let uniqA = tagToUniqueA.get(node.tagId) || [];
-            let uniqB = tagToUniqueB.get(node.tagId) || [];
-            
-            if (node.tagId === 'original_code') {
-                uniqA = [];
-                uniqB = [];
-            }
+// tags_summary rows inside the current scope. Same prefix rule the backend
+// applies to functions, so the Sankey and the table agree on what is selected.
+function fileSimScopeRows(rows) {
+    const prefixes = fileSimScopePrefixes();
+    if (!prefixes.length) return rows;
+    return rows.filter(r => prefixes.some(p => r.tag_id === p || String(r.tag_id).startsWith(p + ':')));
+}
 
-            if (pairs.length > 0 || uniqA.length > 0 || uniqB.length > 0) {
-                if (pairs.length > 0 && (uniqA.length > 0 || uniqB.length > 0)) {
-                    const unmatchedPath = path + '/unmatched';
-                    const unmatchedExpanded = fileSimExpanded.has(unmatchedPath);
-                    pairs.forEach((p, index) => {
-                        let btn = '';
-                        let isLast = index === pairs.length - 1;
-                        if (isLast) {
-                            btn = `<span onclick="toggleFileSimRow(${escapeAttr(jsString(unmatchedPath))})" style="cursor:pointer; user-select:none; display:inline-block; padding:2px 8px; border-radius:12px; background:var(--bg-alt); border:1px solid var(--border); font-size:0.75rem; color:var(--subtle); white-space:nowrap; margin-left:8px;">${unmatchedExpanded ? '▼' : '▶'} And ${uniqA.length + uniqB.length} unmatched duplicates</span>`;
-                        }
-                        let rowHtml = renderMatchedFunctionRow(p, 'matched', depth, btn);
-                        if (isLast && unmatchedExpanded) {
-                            rowHtml = rowHtml.replace('border-bottom: 1px solid var(--border);', 'border-bottom: none;');
-                        }
-                        out.push(rowHtml);
-                    });
-                    if (unmatchedExpanded) {
-                        out.push(`
-                        <tr>
-                            <td colspan="5" style="padding:0; border-bottom:1px solid var(--border);">
-                                <div style="margin: 0 10px 10px 40px; padding: 10px; background: var(--bg-alt); border-radius: 6px; border: 1px solid var(--border); border-left: 4px solid var(--accent);">
-                                    <div style="font-size:0.75rem; color:var(--subtle); margin-bottom:8px; text-transform:uppercase; font-weight:bold;">Unmatched Duplicates</div>
-                                    <table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
-                                        <tbody>
-                        `);
-                        uniqA.forEach(f => {
-                            let r = renderMatchedFunctionRow(f, 'uniqueA', 0);
-                            r = r.replace('border-bottom: 1px solid var(--border); background: var(--bg);', 'border-bottom: 1px solid var(--border); background: transparent;');
-                            out.push(r);
-                        });
-                        uniqB.forEach(f => {
-                            let r = renderMatchedFunctionRow(f, 'uniqueB', 0);
-                            r = r.replace('border-bottom: 1px solid var(--border); background: var(--bg);', 'border-bottom: 1px solid var(--border); background: transparent;');
-                            out.push(r);
-                        });
-                        out.push(`
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </td>
-                        </tr>
-                        `);
-                    }
-                } else if (pairs.length === 0) {
-                    // Only unmatched functions
-                    uniqA.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
-                    uniqB.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
-                } else {
-                    // Only matched functions
-                    pairs.forEach(p => out.push(renderMatchedFunctionRow(p, 'matched', depth)));
-                }
-                return;
-            }
+// The tag prefixes the current selection sends to the backend. A group node has
+// several (Libraries is `lib` + `stdlib`); the root has none, meaning no filter.
+function fileSimScopePrefixes() {
+    if (!fileSimSelection.size) return [];
+    const nodes = fileSimNodes(fileSimTreeRoot());
+    const out = [];
+    fileSimSelection.forEach(id => {
+        const node = nodes.find(n => n.id === id);
+        if (!node) return;
+        if (node.prefix) out.push(node.prefix);
+        else if (node.prefixes) out.push(...node.prefixes);
+    });
+    return out;
+}
 
-        } else if (node.groupType === 'uniqueA') {
-            const funcs = tagToUniqueA.get(node.tagId) || [];
-            if (funcs.length > 0) {
-                funcs.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueA', depth)));
-                return;
-            }
-        } else if (node.groupType === 'uniqueB') {
-            const funcs = tagToUniqueB.get(node.tagId) || [];
-            if (funcs.length > 0) {
-                funcs.forEach(f => out.push(renderMatchedFunctionRow(f, 'uniqueB', depth)));
-                return;
-            }
-        }
-    }
+// ---- Tree rendering ------------------------------------------------------
 
-    const hasKids = node.children.length > 0;
-    if (depth === 0 && !fileSimAutoExpanded) {
-        fileSimExpanded.add(path);
-    }
-    const expanded = fileSimExpanded.has(path);
+function fileSimNodeHtml(node, depth, out) {
+    const hasKids = (node.children || []).length > 0;
+    const open = fileSimTreeOpen.has(node.id);
+    const selected = fileSimSelection.has(node.id) || (node.id === 'root' && !fileSimSelection.size);
     const pct = (node.sim * 100).toFixed(node.sim === 1 || node.sim === 0 ? 0 : 1) + '%';
-    const bar = Math.round(node.sim * 100);
-    
-    let displayName = escapeHtml(node.name);
-    if (node.name.startsWith('Shared (')) displayName = `<span style="color:var(--success); font-weight:bold;">${displayName}</span>`;
-    else if (node.name.startsWith('Unique to A (')) displayName = `<span style="color:var(--token-instruction); font-weight:bold;">${displayName}</span>`;
-    else if (node.name.startsWith('Unique to B (')) displayName = `<span style="color:var(--accent); font-weight:bold;">${displayName}</span>`;
+    const caret = hasKids
+        ? `<span class="bsim-caret" onclick="event.stopPropagation(); toggleFileSimNode(${escapeAttr(jsString(node.id))})">${open ? '▼' : '▶'}</span>`
+        : '<span class="bsim-caret"></span>';
 
     out.push(`
-        <tr style="${depth === 0 ? 'font-weight:bold;' : ''}; border-bottom: 1px solid var(--border);">
-            <td style="padding:8px; padding-left:${12 + depth * 22}px;">
-                ${hasKids
-                    ? `<span onclick="toggleFileSimRow(${escapeAttr(jsString(path))})" style="cursor:pointer; user-select:none; color:var(--subtle); margin-right:6px;">${expanded ? '▼' : '▶'}</span>`
-                    : '<span style="display:inline-block; width:14px;"></span>'}
-                ${displayName}
-            </td>
-            <td colspan="4" style="padding:8px;">
-                <div style="display:flex; align-items:center; gap:20px; justify-content:flex-end; color:var(--subtle);">
-                    <div title="Functions in A">A: <span style="color:var(--text);">${Math.round(node.a)}</span></div>
-                    <div title="Functions in B">B: <span style="color:var(--text);">${Math.round(node.b)}</span></div>
-                    <div style="width:160px;">
-                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; font-size:0.7rem;">
-                            <span>Similarity</span>
-                            <span style="color:var(--accent); font-weight:bold;">${pct}</span>
-                        </div>
-                        <div style="background:var(--border); border-radius:3px; height:6px;">
-                            <div style="width:${bar}%; background:var(--accent); height:6px; border-radius:3px;"></div>
-                        </div>
-                    </div>
-                </div>
-            </td>
-        </tr>`);
-    if (expanded) node.children.forEach(c => fileSimRows(c, path + '/' + c.name, depth + 1, out, tagToMatched, tagToUniqueA, tagToUniqueB));
+        <div class="bsim-node${selected ? ' selected' : ''}" style="padding-left:${8 + depth * 14}px;"
+             title="A: ${Math.round(node.a)} · B: ${Math.round(node.b)}"
+             onclick="selectFileSimNode(${escapeAttr(jsString(node.id))}, event)">
+            ${caret}
+            <span class="bsim-node-label">${escapeHtml(node.label)}</span>
+            <span class="bsim-node-pct">${pct}</span>
+        </div>`);
+
+    // Drift sits under the library it drifted from, where the version comparison
+    // is legible, rather than in one anonymous global mismatch bucket.
+    const drift = Object.entries(node.drift || {}).sort((x, y) => y[1] - x[1]);
+    if (open && drift.length) {
+        drift.forEach(([partner, w]) => {
+            out.push(`
+                <div class="bsim-node bsim-drift" style="padding-left:${8 + (depth + 1) * 14}px;"
+                     title="${Math.round(w)} weight matched against ${escapeHtml(partner)} instead">
+                    <span class="bsim-caret"></span>
+                    <span class="bsim-node-label">⚠ drift → ${escapeHtml(fileSimDriftLabel(partner))}</span>
+                </div>`);
+        });
+    }
+    if (open) (node.children || []).forEach(c => fileSimNodeHtml(c, depth + 1, out));
 }
 
-async function renderFileSimTable(data) {
-    const el = document.getElementById('bin-sim-filesim');
+function fileSimDriftLabel(tagId) {
+    const parts = String(tagId).split(':');
+    if (parts.length >= 3) return parts[1] + ' ' + parts[2];
+    if (parts.length === 2) return parts[1];
+    return tagId;
+}
+
+function renderFileSimTree() {
+    const el = document.getElementById('bsim-tree');
     if (!el) return;
-    const rows = data.tags_summary || [];
-    if (!rows.length) {
-        el.innerHTML = '<div style="color:var(--dim); text-align:center; padding:40px;">No tag data for this pair.</div>';
+    const root = fileSimTreeRoot();
+    if (!root.children.length) {
+        el.innerHTML = '<div style="color:var(--dim); padding:10px 12px; font-size:0.78rem;">No tag data for this pair.</div>';
         return;
     }
+    const out = [];
+    fileSimNodeHtml(root, 0, out);
+    el.innerHTML = out.join('');
+}
 
-    if (!binSimFullDiff && binSimCtx) {
-        el.innerHTML = '<div style="color:var(--dim); text-align:center; padding:40px;">Loading full function data…</div>';
-        try {
-            let u = `/api/diff?collection_a=${encodeURIComponent(binSimCtx.collection)}&md5_a=${encodeURIComponent(binSimCtx.md5a)}&md5_b=${encodeURIComponent(binSimCtx.md5b)}`;
-            if (binSimCtx.collB) u += `&collection_b=${encodeURIComponent(binSimCtx.collB)}`;
-            if (binSimCtx.poolId) u += `&pool=${encodeURIComponent(binSimCtx.poolId)}`;
-            const r = await fetch(u);
-            binSimFullDiff = await r.json();
-            Object.assign(binSimDataCache.functions_metadata, binSimFullDiff.functions_metadata || {});
-        } catch (e) { console.error('filesim full diff fetch failed', e); }
+window.toggleFileSimNode = function(id) {
+    if (fileSimTreeOpen.has(id)) fileSimTreeOpen.delete(id);
+    else fileSimTreeOpen.add(id);
+    renderFileSimTree();
+};
+
+// Click selects, ctrl/shift-click adds. Selecting the root clears the scope,
+// which is the same thing as selecting everything.
+window.selectFileSimNode = function(id, event) {
+    const additive = event && (event.ctrlKey || event.metaKey || event.shiftKey);
+    if (id === 'root') {
+        fileSimSelection.clear();
+    } else if (additive) {
+        if (fileSimSelection.has(id)) fileSimSelection.delete(id);
+        else fileSimSelection.add(id);
+    } else {
+        fileSimSelection = new Set([id]);
+    }
+    // Selecting a node whose rows are hidden is confusing; open it.
+    if (id !== 'root') fileSimTreeOpen.add(id);
+    onFileSimScopeChange();
+};
+
+function onFileSimScopeChange() {
+    fileSimOpenGroups.clear();
+    fileSimOpenFolds.clear();
+    renderFileSimTree();
+    renderFileSimChips();
+    renderFileSim(binSimDataCache);
+}
+
+// ---- Scope chips ---------------------------------------------------------
+
+function renderFileSimChips() {
+    const el = document.getElementById('bsim-chips');
+    if (!el) return;
+    const nodes = fileSimNodes(fileSimTreeRoot());
+    const chips = [];
+
+    [...fileSimSelection].forEach(id => {
+        const node = nodes.find(n => n.id === id);
+        if (!node) return;
+        chips.push(`
+            <span class="bsim-chip">tag: <b>${escapeHtml(node.label)}</b>
+                <span class="bsim-chip-x" title="Remove this scope"
+                      onclick="removeFileSimScope(${escapeAttr(jsString(id))})">✕</span>
+            </span>`);
+    });
+
+    const stateLabel = { matched: 'matched', unmatched: 'unmatched' }[fileSimTab];
+    if (stateLabel) {
+        chips.push(`
+            <span class="bsim-chip">state: <b>${stateLabel}</b>
+                <span class="bsim-chip-x" title="Show all states"
+                      onclick="switchBinSimTab('all')">✕</span>
+            </span>`);
     }
 
-    const tagToMatched = new Map();
-    const tagToUniqueA = new Map();
-    const tagToUniqueB = new Map();
-    
-    if (binSimFullDiff) {
-        const getTags = (fid) => {
-            const meta = binSimFullDiff.functions_metadata[fid];
-            if (meta && meta.tags) {
-                if (typeof meta.tags === 'string') return [meta.tags];
-                if (Array.isArray(meta.tags) && meta.tags.length > 0) return meta.tags;
-                if (typeof meta.tags === 'object' && Object.keys(meta.tags).length > 0) return Object.keys(meta.tags);
-            }
-            return ['original_code'];
-        };
+    el.innerHTML = chips.length
+        ? chips.join('')
+        : '<span style="font-size:0.72rem; color:var(--dim); font-family:sans-serif;">Whole pair — select a tag on the left to scope.</span>';
+}
 
-        (binSimFullDiff.diff.matched || []).forEach(m => {
-            const tags = new Set([...(m.func_a ? getTags(m.func_a) : []), ...(m.func_b ? getTags(m.func_b) : [])]);
-            tags.forEach(t => {
-                if (!tagToMatched.has(t)) tagToMatched.set(t, []);
-                tagToMatched.get(t).push(m);
-            });
-        });
-        (binSimFullDiff.diff.unique_to_a || []).forEach(u => {
-            getTags(u.func_id).forEach(t => {
-                if (!tagToUniqueA.has(t)) tagToUniqueA.set(t, []);
-                tagToUniqueA.get(t).push(u);
-            });
-        });
-        (binSimFullDiff.diff.unique_to_b || []).forEach(u => {
-            getTags(u.func_id).forEach(t => {
-                if (!tagToUniqueB.has(t)) tagToUniqueB.set(t, []);
-                tagToUniqueB.get(t).push(u);
-            });
-        });
+window.removeFileSimScope = function(id) {
+    fileSimSelection.delete(id);
+    onFileSimScopeChange();
+};
+
+// ---- Summary tab ---------------------------------------------------------
+
+// The nodes the Summary rolls up: the selection's children, or the selection
+// itself when it is a leaf.
+function fileSimSummaryNodes() {
+    const root = fileSimTreeRoot();
+    if (!fileSimSelection.size) return { head: root, rows: root.children };
+    const nodes = fileSimNodes(root);
+    const sel = [...fileSimSelection].map(id => nodes.find(n => n.id === id)).filter(Boolean);
+    if (sel.length === 1) {
+        const n = sel[0];
+        return { head: n, rows: n.children.length ? n.children : [n] };
     }
+    return { head: null, rows: sel };
+}
 
+function renderFileSimSummary() {
+    const headEl = document.getElementById('bsim-summary-head');
+    const rollupEl = document.getElementById('bsim-summary-rollup');
+    if (!headEl || !rollupEl) return;
+    const data = binSimDataCache || {};
+    const { head, rows } = fileSimSummaryNodes();
     const nameA = data.file_metadata_a?.file_name || 'Binary A';
     const nameB = data.file_metadata_b?.file_name || 'Binary B';
-    const body = [];
-    fileSimAutoExpanded = false;
-    fileSimRows(fileSimTree(rows), 'root', 0, body, tagToMatched, tagToUniqueA, tagToUniqueB);
-    fileSimAutoExpanded = true;
-    el.innerHTML = `
-        <table class="bin-sim-mc-table" style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+    const counts = data.counts || {};
+
+    if (head && head.id === 'root') {
+        // Whole-pair overview: the same dashboard the view always opened with.
+        const arch = [data.file_metadata_a?.language_id, data.file_metadata_b?.language_id]
+            .filter(Boolean);
+        headEl.innerHTML = `
+            <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:var(--card-bg);">
+                <div style="font-size:0.95rem; font-weight:600; margin-bottom:8px;">
+                    ${escapeHtml(nameA)} <span style="color:var(--dim);">↔</span> ${escapeHtml(nameB)}
+                </div>
+                <div style="display:flex; gap:24px; flex-wrap:wrap; font-size:0.8rem; color:var(--subtle);">
+                    <div>score <b style="color:var(--accent);">${((data.score || 0) * 100).toFixed(1)}%</b></div>
+                    <div>matched <b style="color:var(--text);">${counts.matched || 0}</b></div>
+                    <div>unique A <b style="color:var(--text);">${counts.unique_to_a || 0}</b></div>
+                    <div>unique B <b style="color:var(--text);">${counts.unique_to_b || 0}</b></div>
+                    ${arch.length ? `<div>arch <b style="color:var(--text);">${escapeHtml(arch.join(' ↔ '))}</b></div>` : ''}
+                </div>
+            </div>`;
+    } else if (head) {
+        const drift = Object.entries(head.drift || {}).sort((x, y) => y[1] - x[1]);
+        headEl.innerHTML = `
+            <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; background:var(--card-bg);">
+                <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px;">
+                    <div style="font-size:0.95rem; font-weight:600;">${escapeHtml(head.label)}</div>
+                    <div style="font-size:1.1rem; color:var(--accent); font-family:'Consolas',monospace;">${(head.sim * 100).toFixed(1)}%</div>
+                </div>
+                <div style="display:flex; gap:24px; flex-wrap:wrap; font-size:0.8rem; color:var(--subtle); margin-top:8px;">
+                    <div>${escapeHtml(nameA)} <b style="color:var(--text);">${Math.round(head.a)}</b> funcs</div>
+                    <div>${escapeHtml(nameB)} <b style="color:var(--text);">${Math.round(head.b)}</b> funcs</div>
+                </div>
+                ${drift.length ? `<div style="margin-top:10px; font-size:0.78rem; color:var(--token-instruction);">
+                    ⚠ version drift: ${drift.map(([p, w]) => `${escapeHtml(fileSimDriftLabel(p))} (${Math.round(w)})`).join(', ')}
+                </div>` : ''}
+            </div>`;
+    } else {
+        headEl.innerHTML = `<div style="font-size:0.82rem; color:var(--subtle); padding:4px 2px;">${fileSimSelection.size} tags selected</div>`;
+    }
+
+    if (!rows.length) {
+        rollupEl.innerHTML = '';
+        return;
+    }
+    const body = rows.map(n => {
+        const drift = Object.entries(n.drift || {}).sort((x, y) => y[1] - x[1]);
+        return `
+            <tr style="border-bottom:1px solid var(--border); cursor:pointer;"
+                onclick="selectFileSimNode(${escapeAttr(jsString(n.id))}, event)">
+                <td style="padding:7px 10px;">${escapeHtml(n.label)}</td>
+                <td style="padding:7px 10px; text-align:right;">${Math.round(n.a)}</td>
+                <td style="padding:7px 10px; text-align:right;">${Math.round(n.b)}</td>
+                <td style="padding:7px 10px; text-align:right; color:var(--accent);">${(n.sim * 100).toFixed(0)}%</td>
+                <td style="padding:7px 10px; width:140px;">
+                    <div style="background:var(--border); border-radius:3px; height:6px;">
+                        <div style="width:${Math.round(n.sim * 100)}%; background:var(--accent); height:6px; border-radius:3px;"></div>
+                    </div>
+                </td>
+                <td style="padding:7px 10px; color:var(--token-instruction); font-size:0.75rem;">
+                    ${drift.length ? '⚠ ' + escapeHtml(fileSimDriftLabel(drift[0][0])) : ''}
+                </td>
+            </tr>`;
+    }).join('');
+
+    rollupEl.innerHTML = `
+        <table class="bin-sim-mc-table">
             <thead>
                 <tr>
-                    <th style="padding:10px;">Tag / Similarity</th>
-                    <th style="padding:10px; text-align:center;">${escapeHtml(nameA)}</th>
-                    <th style="padding:10px; text-align:center; width:50px;">Notes</th>
-                    <th style="padding:10px; text-align:center;">${escapeHtml(nameB)}</th>
-                    <th style="padding:10px; text-align:center; width:50px;">Notes</th>
+                    <th style="padding:8px 10px;">Tag</th>
+                    <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameA)}</th>
+                    <th style="padding:8px 10px; text-align:right;">${escapeHtml(nameB)}</th>
+                    <th style="padding:8px 10px; text-align:right;">Sim</th>
+                    <th style="padding:8px 10px;"></th>
+                    <th style="padding:8px 10px;">Drift</th>
                 </tr>
             </thead>
-            <tbody>${body.join('')}</tbody>
+            <tbody>${body}</tbody>
         </table>`;
 }
+
+// ---- The one function table ---------------------------------------------
+
+// Tabs are presets on the state filter, nothing more.
+const FILESIM_TAB_STATES = {
+    all: '',
+    matched: 'matched',
+    unmatched: 'uniq_a,uniq_b',
+};
+
+// Group when the result spans more than one tag; a single selected leaf gets a
+// flat list rather than one pointless header.
+function fileSimGroupNodes() {
+    if (fileSimGroupBy === 'none') return null;
+    const root = fileSimTreeRoot();
+    const nodes = fileSimNodes(root);
+    let scope;
+    if (!fileSimSelection.size) {
+        scope = root.children;
+    } else {
+        const sel = [...fileSimSelection].map(id => nodes.find(n => n.id === id)).filter(Boolean);
+        // One selected node groups by its children; several group by themselves.
+        scope = sel.length === 1 ? (sel[0].children.length ? sel[0].children : sel) : sel;
+    }
+    if (fileSimGroupBy === 'auto' && scope.length < 2) return null;
+    return scope;
+}
+
+// Group headers come from tags_summary, which is already in the payload, so a
+// collapsed group costs no request at all. Its counts are therefore pre-filter:
+// the header says how much of the tag exists, not how much survives the filters.
+function fileSimGroupState(node) {
+    if (!fileSimGroups[node.id]) {
+        fileSimGroups[node.id] = { items: [], offset: 0, total: 0, loading: false };
+    }
+    return fileSimGroups[node.id];
+}
+let fileSimGroups = {};
+
+function fileSimTableParams(prefixes, extra = {}) {
+    const sort = binSimSortState.matched;
+    const params = new URLSearchParams({
+        table: 'all',
+        collection_a: binSimCtx.collection,
+        md5_a: binSimCtx.md5a,
+        md5_b: binSimCtx.md5b,
+        limit: BINSIM_LIMIT,
+        sort_col: sort.col,
+        sort_dir: sort.dir === -1 ? 'desc' : 'asc',
+        collapse: 'name',
+        ...binSimFilterParams('matched'),
+        ...extra,
+    });
+    const state = FILESIM_TAB_STATES[fileSimTab] || '';
+    if (state) params.set('state', state);
+    if (prefixes && prefixes.length) params.set('tags', prefixes.join(','));
+    if (binSimCtx.collB) params.set('collection_b', binSimCtx.collB);
+    if (binSimCtx.poolId) params.set('pool', binSimCtx.poolId);
+    return params;
+}
+
+async function fileSimFetchRows(prefixes, extra = {}) {
+    const params = fileSimTableParams(prefixes, extra);
+    const res = await fetch(`/api/diff?${params.toString()}`);
+    const data = await res.json();
+    Object.assign(binSimDataCache.functions_metadata, data.functions_metadata || {});
+    return data;
+}
+
+// Flat (ungrouped) paging state, used when the selection is a single tag.
+const fileSimFlat = { items: [], offset: 0, total: 0, loading: false };
+
+async function loadFileSimFlatPage({ reset = false } = {}) {
+    if (!binSimCtx) return;
+    if (fileSimFlat.loading) return;
+    if (!reset && fileSimFlat.items.length >= fileSimFlat.total && fileSimFlat.total > 0) return;
+    fileSimFlat.loading = true;
+    if (reset) { fileSimFlat.offset = 0; fileSimFlat.items = []; }
+    try {
+        const data = await fileSimFetchRows(fileSimScopePrefixes(), { offset: fileSimFlat.offset });
+        fileSimFlat.items = fileSimFlat.items.concat(data.items || []);
+        fileSimFlat.offset = fileSimFlat.items.length;
+        fileSimFlat.total = data.total || 0;
+    } catch (e) {
+        console.error('file sim page load failed', e);
+    } finally {
+        fileSimFlat.loading = false;
+    }
+    renderFileSimTable();
+}
+
+window.toggleFileSimGroup = async function(nodeId) {
+    if (fileSimOpenGroups.has(nodeId)) {
+        fileSimOpenGroups.delete(nodeId);
+        renderFileSimTable();
+        return;
+    }
+    fileSimOpenGroups.add(nodeId);
+    const node = fileSimNodes(fileSimTreeRoot()).find(n => n.id === nodeId);
+    if (!node) return;
+    const st = fileSimGroupState(node);
+    if (st.items.length) { renderFileSimTable(); return; }
+    st.loading = true;
+    renderFileSimTable();
+    try {
+        const prefixes = node.prefix ? [node.prefix] : (node.prefixes || []);
+        const data = await fileSimFetchRows(prefixes, { offset: 0 });
+        st.items = data.items || [];
+        st.total = data.total || 0;
+    } catch (e) {
+        console.error('file sim group load failed', e);
+    } finally {
+        st.loading = false;
+    }
+    renderFileSimTable();
+};
+
+window.collapseAllFileSimGroups = function() {
+    fileSimOpenGroups.clear();
+    renderFileSimTable();
+};
+
+window.setFileSimGroupBy = function(mode) {
+    fileSimGroupBy = mode;
+    ['auto', 'tag', 'none'].forEach(m => {
+        const btn = document.getElementById(`bsim-group-btn-${m}`);
+        if (btn) btn.classList.toggle('active', m === mode);
+    });
+    renderFileSimTable();
+};
+
+// Duplicate fold: the server hands back one row per distinct name with
+// `n_copies`, so expanding asks for that name specifically.
+window.toggleFileSimFold = async function(key, name, nodeId) {
+    if (fileSimOpenFolds.has(key)) {
+        fileSimOpenFolds.delete(key);
+        renderFileSimTable();
+        return;
+    }
+    fileSimOpenFolds.add(key);
+    if (!fileSimFoldRows[key]) {
+        const node = nodeId ? fileSimNodes(fileSimTreeRoot()).find(n => n.id === nodeId) : null;
+        const prefixes = node ? (node.prefix ? [node.prefix] : (node.prefixes || [])) : fileSimScopePrefixes();
+        try {
+            const data = await fileSimFetchRows(prefixes, { name, limit: 200 });
+            fileSimFoldRows[key] = data.items || [];
+        } catch (e) {
+            console.error('file sim fold load failed', e);
+            fileSimFoldRows[key] = [];
+        }
+    }
+    renderFileSimTable();
+};
+let fileSimFoldRows = {};
+
+function fileSimStateType(row) {
+    if (row.state === 'matched') return 'matched';
+    return row.state === 'uniq_b' ? 'uniqueB' : 'uniqueA';
+}
+
+// One row, plus the fold pill when the server says this name has copies. The
+// pill is a peek past the current state filter: on the Matched tab it reveals
+// the same name's unmatched leftovers without leaving the tab.
+function fileSimRowHtml(row, depth, groupId) {
+    const copies = (row.n_copies || 1) - 1;
+    let pill = '';
+    if (copies > 0 && row.fold_name) {
+        const key = (groupId || 'flat') + '/' + row.fold_name;
+        const open = fileSimOpenFolds.has(key);
+        pill = `<span class="bsim-fold-pill" onclick="event.stopPropagation(); toggleFileSimFold(${escapeAttr(jsString(key))}, ${escapeAttr(jsString(row.fold_name))}, ${escapeAttr(jsString(groupId || ''))})">${open ? '▼' : '▶'} ${copies} more ${copies === 1 ? 'copy' : 'copies'} of ${escapeHtml(row.fold_name)}</span>`;
+    }
+    const out = [renderMatchedFunctionRow(row, fileSimStateType(row), depth, pill)];
+    if (copies > 0 && row.fold_name) {
+        const key = (groupId || 'flat') + '/' + row.fold_name;
+        if (fileSimOpenFolds.has(key)) {
+            const rows = fileSimFoldRows[key];
+            if (!rows) {
+                out.push(`<tr><td colspan="5" style="padding:8px 0 8px ${28 + depth * 22}px; color:var(--dim); font-size:0.75rem;">Loading copies…</td></tr>`);
+            } else {
+                rows.forEach(r => {
+                    // The representative is already shown above it.
+                    if (r.func_a === row.func_a && r.func_b === row.func_b && r.func_id === row.func_id) return;
+                    out.push(renderMatchedFunctionRow(r, fileSimStateType(r), depth + 1));
+                });
+            }
+        }
+    }
+    return out.join('');
+}
+
+function fileSimTableHeadHtml() {
+    const data = binSimDataCache || {};
+    const nameA = data.file_metadata_a?.file_name || 'Binary A';
+    const nameB = data.file_metadata_b?.file_name || 'Binary B';
+    const icon = (col) => binSimSortState.matched.col === col
+        ? (binSimSortState.matched.dir === -1 ? '▼' : '▲') : '↕';
+    return `
+        <tr>
+            <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable" onclick="setBinSimSort('matched','similarity')">Similarity <small>${icon('similarity')}</small></th>
+            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameA)}</th>
+            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>
+            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${escapeHtml(nameB)}</th>
+            <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width:50px;">Notes</th>
+        </tr>
+        <tr class="filter-row">
+            <th><div style="display:flex; align-items:center; gap:2px;" onclick="event.stopPropagation()">
+                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+                <span class="dim" style="font-size:0.6rem">-</span>
+                <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-coh-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
+            </div></th>
+            <th colspan="4"><div onclick="event.stopPropagation()">
+                <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key==='Enter') binSimFilterChange(true)" id="bsim-flt-matched-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
+            </div></th>
+        </tr>`;
+}
+
+function renderFileSimTable() {
+    const tbody = document.getElementById('bin-sim-table-matched');
+    if (!tbody) return;
+    const thead = tbody.previousElementSibling;
+    if (thead && !thead.dataset.built) {
+        thead.innerHTML = fileSimTableHeadHtml();
+        thead.dataset.built = '1';
+    }
+    const countEl = document.getElementById('bsim-table-count');
+    const groups = fileSimGroupNodes();
+    const out = [];
+
+    if (!groups) {
+        fileSimFlat.items.forEach(row => out.push(fileSimRowHtml(row, 0, null)));
+        if (!fileSimFlat.items.length) {
+            out.push('<tr><td colspan="5" style="padding:30px; text-align:center; color:var(--dim);">No functions match this scope.</td></tr>');
+        }
+        if (countEl) countEl.textContent = `${fileSimFlat.items.length} of ${fileSimFlat.total} names`;
+    } else {
+        groups.forEach(node => {
+            const open = fileSimOpenGroups.has(node.id);
+            const st = fileSimGroups[node.id];
+            out.push(`
+                <tr class="bsim-grp-row" onclick="toggleFileSimGroup(${escapeAttr(jsString(node.id))})">
+                    <td colspan="5">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <span style="color:var(--subtle); width:12px;">${open ? '▼' : '▶'}</span>
+                            <span style="font-weight:600;">${escapeHtml(node.label)}</span>
+                            <div style="flex:1;"></div>
+                            <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.a)} A</span>
+                            <span style="color:var(--subtle); font-size:0.74rem;">${Math.round(node.b)} B</span>
+                            <span style="color:var(--accent); font-size:0.74rem; width:44px; text-align:right;">${(node.sim * 100).toFixed(0)}%</span>
+                        </div>
+                    </td>
+                </tr>`);
+            if (!open) return;
+            if (st && st.loading) {
+                out.push('<tr><td colspan="5" style="padding:14px 30px; color:var(--dim); font-size:0.78rem;">Loading…</td></tr>');
+            } else if (st && st.items.length) {
+                st.items.forEach(row => out.push(fileSimRowHtml(row, 1, node.id)));
+                if (st.items.length < st.total) {
+                    out.push(`<tr><td colspan="5" style="padding:8px 30px; color:var(--dim); font-size:0.75rem;">Showing ${st.items.length} of ${st.total} names in this tag.</td></tr>`);
+                }
+            } else if (st) {
+                out.push('<tr><td colspan="5" style="padding:14px 30px; color:var(--dim); font-size:0.78rem;">No functions match this scope.</td></tr>');
+            }
+        });
+        if (countEl) countEl.textContent = `${groups.length} tag groups`;
+    }
+    tbody.innerHTML = out.join('');
+}
+
+// ---- Entry point ---------------------------------------------------------
+
+function renderFileSim(data) {
+    if (!data) return;
+    renderFileSimTree();
+    renderFileSimChips();
+    if (fileSimTab === 'summary') {
+        renderFileSimSummary();
+        return;
+    }
+    if (fileSimView === 'sankey') {
+        renderFileSimSankey(data);
+        return;
+    }
+    fileSimGroups = {};
+    fileSimFoldRows = {};
+    renderFileSimTable();
+    if (!fileSimGroupNodes()) loadFileSimFlatPage({ reset: true });
+}
+
+window.setFileSimView = function(view) {
+    fileSimView = view;
+    ['table', 'sankey'].forEach(v => {
+        const btn = document.getElementById(`bsim-filesim-view-btn-${v}`);
+        if (btn) btn.classList.toggle('active', v === view);
+    });
+    // Summary has no sankey of its own; switching to it implies the table tabs.
+    if (fileSimTab === 'summary' && view === 'sankey') {
+        window.switchBinSimTab('all');
+        return;
+    }
+    window.switchBinSimTab(fileSimTab);
+};
 
 // ---- File sim tab: sankey view ------------------------------------------
 // Same tag composition as the table, drawn as flow. Deliberately stops at
@@ -841,9 +1285,10 @@ function renderFileSimSankey(data) {
     if (!container) return;
     container.innerHTML = '';
 
-    const groups = fileSimSankeyGroups(data.tags_summary || [], fileSimScale);
+    // Same scope as every other pane: select libc on the left, see libc's flow.
+    const groups = fileSimSankeyGroups(fileSimScopeRows(data.tags_summary || []), fileSimScale);
     if (!groups.length) {
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No tag data for this pair.</div>';
+        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim);">No tag data for this scope.</div>';
         return;
     }
 
@@ -1024,30 +1469,6 @@ function renderFileSimSankey(data) {
         .style('cursor', d => (d.tagKey ? 'pointer' : 'default'))
         .on('click', (event, d) => { if (d.tagKey) window.toggleFileSimNs(d.tagKey, d.expandable, event.shiftKey); });
 }
-
-// Table / sankey switch for the File sim tab.
-function renderFileSim(data) {
-    const tableEl = document.getElementById('bin-sim-filesim');
-    const card = document.getElementById('bin-sim-filesim-sankey-card');
-    const isSankey = fileSimView === 'sankey';
-    ['bin-sim-filesim-scale-toggle', 'bin-sim-filesim-depth-toggle'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.style.display = isSankey ? 'flex' : 'none';
-    });
-    ['table', 'sankey'].forEach(v => {
-        const b = document.getElementById(`bsim-filesim-view-btn-${v}`);
-        if (b) b.classList.toggle('active', fileSimView === v);
-    });
-    if (tableEl) tableEl.style.display = isSankey ? 'none' : '';
-    if (card) card.style.display = isSankey ? 'flex' : 'none';
-    if (isSankey) renderFileSimSankey(data);
-    else renderFileSimTable(data);
-}
-
-window.setFileSimView = function(view) {
-    fileSimView = view;
-    if (binSimDataCache) renderFileSim(binSimDataCache);
-};
 
 window.setFileSimScale = function(scale) {
     fileSimScale = scale;
@@ -1819,121 +2240,52 @@ async function renderBinaryDiffSankey(data) {
     });
 }
 
+// There is one table now, so sorting always means the same thing. The header is
+// rebuilt in place rather than re-rendered so the filter inputs keep focus.
 function setBinSimSort(table, col) {
-    if (binSimSortState[table].col === col) {
-        binSimSortState[table].dir *= -1;
-    } else {
-        binSimSortState[table].col = col;
-        binSimSortState[table].dir = -1;
-    }
-    // Re-render headers (sort arrows) then reload that table's first page from the server.
-    renderBinSimTables();
-    loadBinSimTablePage(table, { reset: true });
+    const st = binSimSortState.matched;
+    if (st.col === col) st.dir *= -1;
+    else { st.col = col; st.dir = -1; }
+    const tbody = document.getElementById('bin-sim-table-matched');
+    const thead = tbody && tbody.previousElementSibling;
+    if (thead) { thead.innerHTML = fileSimTableHeadHtml(); restoreFileSimFilters(); }
+    reloadFileSimRows();
 }
 
+// Per-column filters refine the current tab; the chip bar carries the scope.
+// Values are stashed so a re-render of the header does not lose what was typed.
 function binSimFilterChange(shouldApply = false) {
-    const prefixes = ['matched', 'ua', 'ub'];
-    prefixes.forEach(prefix => {
-        const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
-        if (qEl) window[`bsim-flt-${prefix}-q-val`] = qEl.value;
-        const suffixes = prefix === 'matched' ? ['feat', 'coh', 'rar'] : ['feat', 'rar'];
-        suffixes.forEach(suffix => {
-            const minEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-min`);
-            const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
-            if (minEl) window[`bsim-flt-${prefix}-${suffix}-min-val`] = minEl.value;
-            if (maxEl) window[`bsim-flt-${prefix}-${suffix}-max-val`] = maxEl.value;
-        });
-        const noteSuffixes = prefix === 'matched' ? ['note-a', 'note-b'] : ['note'];
-        noteSuffixes.forEach(suffix => {
-            const el = document.getElementById(`bsim-flt-${prefix}-${suffix}`);
-            if (el) window[`bsim-flt-${prefix}-${suffix}-val`] = el.value;
-        });
+    ['q', 'coh-min', 'coh-max', 'feat-min', 'feat-max', 'rar-min', 'rar-max', 'note-a', 'note-b'].forEach(k => {
+        const el = document.getElementById(`bsim-flt-matched-${k}`);
+        if (el) window[`bsim-flt-matched-${k}-val`] = el.value;
     });
-
-    // Reload only the table whose filter input changed (derived from the focused input),
-    // so a search in one table doesn't reset the others. Fallback: reload all.
-    const el = document.activeElement;
-    let targets = ['matched', 'uniqueA', 'uniqueB'];
-    if (el && el.id) {
-        if (el.id.startsWith('bsim-flt-matched-')) targets = ['matched'];
-        else if (el.id.startsWith('bsim-flt-ua-')) targets = ['uniqueA'];
-        else if (el.id.startsWith('bsim-flt-ub-')) targets = ['uniqueB'];
-    }
     if (window._binSimFilterTimer) clearTimeout(window._binSimFilterTimer);
-    window._binSimFilterTimer = setTimeout(() => {
-        targets.forEach(k => loadBinSimTablePage(k, { reset: true }));
-    }, shouldApply ? 0 : 300);
+    window._binSimFilterTimer = setTimeout(reloadFileSimRows, shouldApply ? 0 : 300);
 }
 
-const funcSearchHaystack = (fid) => {
-    const meta = (binSimDataCache && binSimDataCache.functions_metadata)
-        ? (binSimDataCache.functions_metadata[fid] || {}) : {};
-    const addr = meta.entrypoint_address || fid.split(':').pop();
-    return [meta.name, meta.namespace, addr, ...(meta.tags || []), ...(meta.user_tags || [])]
-        .filter(Boolean).join(' ').toLowerCase();
-};
-
-const applyFilters = (items, prefix) => {
-    const q = (document.getElementById(`bsim-flt-${prefix}-q`)?.value || '').trim().toLowerCase();
-    const checkNotes = (funcsList, searchOwner) => {
-        if (!searchOwner) return true;
-        return funcsList.some(fid => {
-            const owners = (binSimDataCache.functions_metadata && binSimDataCache.functions_metadata[fid]?.note_owners) || [];
-            return owners.some(o => o.toLowerCase().includes(searchOwner));
-        });
-    };
-
-    return items.filter(item => {
-        if (q) {
-            const fids = (item.func_a || item.func_b)
-                ? [item.func_a, item.func_b].filter(Boolean)
-                : (item.func_id ? [item.func_id] : []);
-            const hay = fids.map(funcSearchHaystack).join(' ');
-            if (!hay.includes(q)) return false;
-        }
-
-        const noteA = (document.getElementById(`bsim-flt-${prefix}-note-a`)?.value || '').trim().toLowerCase();
-        if (noteA && !checkNotes(item.func_a ? [item.func_a] : [], noteA)) return false;
-
-        const noteB = (document.getElementById(`bsim-flt-${prefix}-note-b`)?.value || '').trim().toLowerCase();
-        if (noteB && !checkNotes(item.func_b ? [item.func_b] : [], noteB)) return false;
-
-        const noteU = (document.getElementById(`bsim-flt-${prefix}-note`)?.value || '').trim().toLowerCase();
-        if (noteU) {
-            if (!checkNotes(item.func_id ? [item.func_id] : [], noteU)) return false;
-        }
-
-        // Similarity filter (matched rows); unique rows have no similarity inputs so this is skipped.
-        const simMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-coh-min`)?.value);
-        const simMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-coh-max`)?.value);
-        if (!isNaN(simMin) && (item.similarity || 0) < simMin) return false;
-        if (!isNaN(simMax) && (item.similarity || 0) > simMax) return false;
-        
-        const featMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-feat-min`)?.value);
-        const featMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-feat-max`)?.value);
-        if (!isNaN(featMin) && (item.avg_features || 0) < featMin) return false;
-        if (!isNaN(featMax) && (item.avg_features || 0) > featMax) return false;
-
-        if (item.sim_rarity !== undefined) {
-            const rarMin = parseFloat(document.getElementById(`bsim-flt-${prefix}-rar-min`)?.value);
-            const rarMax = parseFloat(document.getElementById(`bsim-flt-${prefix}-rar-max`)?.value);
-            if (!isNaN(rarMin) && item.sim_rarity < rarMin) return false;
-            if (!isNaN(rarMax) && item.sim_rarity > rarMax) return false;
-        }
-
-        return true;
+function restoreFileSimFilters() {
+    ['q', 'coh-min', 'coh-max', 'feat-min', 'feat-max', 'rar-min', 'rar-max', 'note-a', 'note-b'].forEach(k => {
+        const el = document.getElementById(`bsim-flt-matched-${k}`);
+        const v = window[`bsim-flt-matched-${k}-val`];
+        if (el && v) el.value = v;
     });
-};
+}
 
-const sortItems = (items, state) => {
-    return items.sort((a, b) => {
-        let valA = a[state.col];
-        let valB = b[state.col];
-        if (state.col === 'count' && a.funcs) { valA = a.funcs.length; valB = b.funcs.length; }
-        if (typeof valA === 'string') return valA.localeCompare(valB) * state.dir;
-        return ((valA || 0) - (valB || 0)) * state.dir;
-    });
-};
+// Any change to sort or filters invalidates every already-fetched page: rows
+// that were in a group may no longer belong there.
+function reloadFileSimRows() {
+    const open = new Set(fileSimOpenGroups);
+    fileSimGroups = {};
+    fileSimFoldRows = {};
+    fileSimOpenFolds.clear();
+    fileSimOpenGroups.clear();
+    if (!fileSimGroupNodes()) {
+        loadFileSimFlatPage({ reset: true });
+        return;
+    }
+    renderFileSimTable();
+    open.forEach(id => window.toggleFileSimGroup(id));
+}
 
 // Pre-seed the shared cluster tooltip cache with sample members shipped on the row, so the
 // tooltip renders them directly instead of fetching by collection (which fails for
@@ -2073,291 +2425,6 @@ function renderMatchedFunctionRow(m, type, depth, extraHtml = '') {
         </tr>`;
 }
 
-function renderBinSimTables(isFilterChange = false) {
-    if (!binSimDataCache) return;
-    const data = binSimDataCache;
-
-
-
-    const getSortIcon = (table, col) => {
-        if (binSimSortState[table].col === col) {
-            return binSimSortState[table].dir === -1 ? '▼' : '▲';
-        }
-        return '↕';
-    };
-
-    const filterHtml = (prefix, suffix) => `
-        <div style="display:flex; align-items:center; gap:2px;" onclick="event.stopPropagation()">
-            <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}-min" placeholder="Min..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-            <span class="dim" style="font-size:0.6rem">-</span>
-            <input type="number" step="any" oninput="binSimFilterChange(false)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}-max" placeholder="Max..." style="font-size:0.65rem; box-sizing:border-box; width:45%;">
-        </div>`;
-
-    // Free-text search over function name / namespace / address / tags for a table.
-    const searchHtml = (prefix) => `
-        <div onclick="event.stopPropagation()">
-            <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-q" placeholder="Search name / tag / addr..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
-        </div>`;
-
-    const noteFilterHtml = (prefix, suffix) => `
-        <div onclick="event.stopPropagation()">
-            <input type="text" oninput="binSimFilterChange(true)" onkeydown="if(event.key === 'Enter') binSimFilterChange(true)" id="bsim-flt-${prefix}-${suffix}" placeholder="Note Owner..." style="font-size:0.65rem; box-sizing:border-box; width:100%;">
-        </div>`;
-
-    const restoreFilters = (prefix, suffixes, noteSuffixes = []) => {
-        const qEl = document.getElementById(`bsim-flt-${prefix}-q`);
-        if (qEl && window[`bsim-flt-${prefix}-q-val`]) qEl.value = window[`bsim-flt-${prefix}-q-val`];
-        suffixes.forEach(suffix => {
-            const minEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-min`);
-            const maxEl = document.getElementById(`bsim-flt-${prefix}-${suffix}-max`);
-            if (minEl && window[`bsim-flt-${prefix}-${suffix}-min-val`]) minEl.value = window[`bsim-flt-${prefix}-${suffix}-min-val`];
-            if (maxEl && window[`bsim-flt-${prefix}-${suffix}-max-val`]) maxEl.value = window[`bsim-flt-${prefix}-${suffix}-max-val`];
-        });
-        noteSuffixes.forEach(suffix => {
-            const el = document.getElementById(`bsim-flt-${prefix}-${suffix}`);
-            if (el && window[`bsim-flt-${prefix}-${suffix}-val`]) el.value = window[`bsim-flt-${prefix}-${suffix}-val`];
-        });
-    };
-
-    const nameA = (data && data.file_metadata_a && data.file_metadata_a.file_name) || 'A';
-    const nameB = (data && data.file_metadata_b && data.file_metadata_b.file_name) || 'B';
-
-    const tbodyMatched = document.getElementById('bin-sim-table-matched');
-    if (tbodyMatched) {
-        const thead = tbodyMatched.previousElementSibling;
-        if (thead && !isFilterChange) {
-            thead.innerHTML = `
-                <tr>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'similarity')">Similarity <small>${getSortIcon('matched', 'similarity')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${nameA}</th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border);">${nameB}</th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'sim_rarity')">Rarity <small>${getSortIcon('matched', 'sim_rarity')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'avg_features')">Avg Feat <small>${getSortIcon('matched', 'avg_features')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort('matched', 'cluster_name')">Cluster <small>${getSortIcon('matched', 'cluster_name')}</small><div class="resizer"></div></th>
-                </tr>
-                <tr class="filter-row">
-                    <th>${filterHtml('matched', 'coh')}</th>
-                    <th>${searchHtml('matched')}</th>
-                    <th>${noteFilterHtml('matched', 'note-a')}</th>
-                    <th></th>
-                    <th>${noteFilterHtml('matched', 'note-b')}</th>
-                    <th>${filterHtml('matched', 'rar')}</th>
-                    <th>${filterHtml('matched', 'feat')}</th>
-                    <th></th>
-                </tr>
-            `;
-            restoreFilters('matched', ['feat', 'coh', 'rar'], ['note-a', 'note-b']);
-        }
-    }
-
-    if (tbodyMatched) {
-        // Server already filtered + sorted; render the accumulated pages as-is.
-        const matched = binSimPage.matched.items;
-
-        if (matched.length > 0) {
-            tbodyMatched.innerHTML = matched.map(m => {
-                const cleanName = m.cluster_name.replace(/'/g, "\\'");
-                const escUuid = m.cluster_uuid;
-                const noteBtn = (fid) => {
-                    const fObj = buildFuncObj(fid);
-                    return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
-                };
-                const notesAHtml = m.func_a ? noteBtn(m.func_a) : '';
-                const notesBHtml = m.func_b ? noteBtn(m.func_b) : '';
-
-                let similarityHtml = '';
-                if (m.func_a && m.func_b) {
-                    const fA = buildFuncObj(m.func_a);
-                    const fB = buildFuncObj(m.func_b);
-                    let diffUrl = '';
-                    if (window.buildDiffUrl) {
-                        diffUrl = window.buildDiffUrl(fA.function_id, fB.function_id);
-                    } else {
-                        // Fallback just in case
-                        let poolId = null;
-                        if (window.getRoutingState && window.getRoutingState().pool) {
-                            poolId = window.getRoutingState().pool;
-                        } else {
-                            poolId = new URLSearchParams(window.location.search).get('pool_id');
-                        }
-                        diffUrl = `/collections/${encodeURIComponent(fA.collection)}/files/${fA.file_md5}/functions/${fA.entrypoint_address}/vs/${encodeURIComponent(fB.collection)}/${fB.file_md5}/${fB.entrypoint_address}`;
-                        if (poolId) {
-                            diffUrl = `/pools/${encodeURIComponent(poolId)}` + diffUrl;
-                        }
-                    }
-
-                    const pairId = `${fA.function_id}|${fB.function_id}|unweighted_cosine`;
-
-                    similarityHtml = `
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
-                            onmouseenter="showDiffPreview(${escapeAttr(jsString(fA.function_id))}, ${escapeAttr(jsString(fA.function_name || ''))}, ${escapeAttr(jsString(fB.function_id))}, ${escapeAttr(jsString(fB.function_name || ''))}, ${Number(m.similarity) || 0}, event)"
-                            onmousemove="moveCodePreview(event)"
-                            onmouseleave="hideDiffPreview(event)"
-                            onclick="Nav.openPath(${escapeAttr(jsString(diffUrl))}, event, { title: ${escapeAttr(jsString(`Diff: ${fA.function_name} vs ${fB.function_name}`))}, type: 'diff' })"
-                            title="Run Aligned Diff">${(m.similarity * 100).toFixed(1)}%</div>
-                    </div>
-                    ${EntityRenderer.renderTag('similarity', pairId, m.tags || [], m.user_tags || [])}
-                    `;
-                } else {
-                    similarityHtml = `<span class="mono" style="color:var(--accent); font-weight:bold;">${(m.similarity * 100).toFixed(1)}%</span>`;
-                }
-
-                const clusterData = (m.cluster_id || m.cluster_uuid) ? [{
-                    cluster_id: m.cluster_id,
-                    cluster_uuid: m.cluster_uuid,
-                    cluster_name: m.cluster_name,
-                    cohesion_score: m.cohesion || 0.0,
-                    member_count: m.cluster_member_count || 0,
-                    cluster_stability: m.cluster_stability || 0.0,
-                    avg_features: m.cluster_avg_features || 0.0,
-                    sample_functions: m.cluster_sample_functions || []
-                }] : [];
-                seedBinSimClusterSamples(clusterData[0]);
-
-                return `
-                <tr style="border-bottom: 1px solid var(--border);"
-                    data-entity-data='${escapeAttr(JSON.stringify({
-                        cluster_id: m.cluster_id,
-                        cluster_uuid: m.cluster_uuid,
-                        cluster_name: m.cluster_name
-                    }))}'
-                    oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
-                    <td style="padding:10px;">
-                        ${similarityHtml}
-                    </td>
-                    <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
-                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
-                            ${m.func_a ? renderFuncBadge(m.func_a) : ''}
-                        </div>
-                    </td>
-                    <td style="padding:10px; text-align:center;">
-                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
-                            ${notesAHtml}
-                        </div>
-                    </td>
-                    <td style="padding:8px; text-align:left; vertical-align:top; min-width:220px;">
-                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
-                            ${m.func_b ? renderFuncBadge(m.func_b) : ''}
-                        </div>
-                    </td>
-                    <td style="padding:10px; text-align:center;">
-                        <div style="display:flex; flex-direction:column; gap:6px; max-height:120px; overflow-y:auto;">
-                            ${notesBHtml}
-                        </div>
-                    </td>
-                    <td style="padding:10px;">
-                        <div class="mono dim">${m.sim_rarity.toFixed(2)}</div>
-                    </td>
-                    <td style="padding:10px;">
-                        <div class="mono dim">${(m.avg_features || 0).toFixed(1)}</div>
-                    </td>
-                    <td class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(clusterData))}' style="padding:10px;">
-                        ${EntityRenderer.renderClusterCard(clusterData)}
-                    </td>
-                </tr>
-                `;
-            }).join('');
-        } else {
-            tbodyMatched.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px;">No matched functions</td></tr>';
-        }
-    }
-
-    const renderUnique = (itemsRaw, tbody, state, prefix) => {
-        if (!tbody) return;
-        const stateKey = state === binSimSortState.uniqueA ? 'uniqueA' : 'uniqueB';
-        const thead = tbody.previousElementSibling;
-        if (thead && !isFilterChange) {
-            thead.innerHTML = `
-                <tr>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'func_name')">Function <small>${getSortIcon(stateKey, 'func_name')}</small><div class="resizer"></div></th>
-                    <th style="text-align:center; padding:10px; border-bottom:1px solid var(--border); width: 50px;">Notes</th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'sim_rarity')">Rarity <small>${getSortIcon(stateKey, 'sim_rarity')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'avg_features')">Features <small>${getSortIcon(stateKey, 'avg_features')}</small><div class="resizer"></div></th>
-                    <th style="text-align:left; padding:10px; border-bottom:1px solid var(--border);" class="sortable resizable-th" onclick="setBinSimSort(${escapeAttr(jsString(stateKey))}, 'cluster_name')">Cluster <small>${getSortIcon(stateKey, 'cluster_name')}</small><div class="resizer"></div></th>
-                </tr>
-                <tr class="filter-row">
-                    <th>${searchHtml(prefix)}</th>
-                    <th>${noteFilterHtml(prefix, 'note')}</th>
-                    <th>${filterHtml(prefix, 'rar')}</th>
-                    <th>${filterHtml(prefix, 'feat')}</th>
-                    <th>${searchHtml(prefix + '-cl')}</th>
-                </tr>
-            `;
-            restoreFilters(prefix, ['feat', 'rar'], ['note']);
-        }
-
-        // Server already filtered + sorted (incl. cluster-name via cl_q); render as-is.
-        const items = itemsRaw || [];
-
-        if (items.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px;">No unmatched functions</td></tr>';
-            return;
-        }
-        tbody.innerHTML = items.map(u => {
-            const rarity = (u.sim_rarity !== undefined) ? u.sim_rarity : 0;
-            const funcs = u.funcs || (u.func_id ? [u.func_id] : []);
-            const notesHtml = funcs.map(fid => {
-                const fObj = buildFuncObj(fid);
-                return `<div style="min-height:24px; display:flex; align-items:center; justify-content:center;">${EntityRenderer.renderNoteButton(fid, fObj.note_owners, { isTable: true, raw_data: fObj })}</div>`;
-            }).join('');
-            const clusterData = (u.cluster_id || u.cluster_uuid) ? [{
-                cluster_id: u.cluster_id,
-                cluster_uuid: u.cluster_uuid,
-                cluster_name: u.cluster_name,
-                cohesion_score: u.cohesion || 1.0,
-                member_count: u.cluster_member_count || 0,
-                cluster_stability: u.cluster_stability || 0.0,
-                avg_features: u.cluster_avg_features || 0.0,
-                sample_functions: u.cluster_sample_functions || []
-            }] : [];
-            seedBinSimClusterSamples(clusterData[0]);
-            return `
-            <tr style="border-bottom: 1px solid var(--border);"
-                data-entity-data='${escapeAttr(JSON.stringify({
-                    cluster_id: u.cluster_id,
-                    cluster_uuid: u.cluster_uuid,
-                    cluster_name: u.cluster_name
-                }))}'
-                oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
-                <td style="padding:8px;">
-                    ${funcs.map(renderFuncBadge).join('')}
-                </td>
-                <td style="padding:10px; text-align:center;">
-                    <div style="display:flex; flex-direction:column; gap:6px;">
-                        ${notesHtml}
-                    </div>
-                </td>
-                <td style="padding:10px;">
-                    <span class="dim">${rarity.toFixed(2)}</span>
-                </td>
-                <td style="padding:10px;">
-                    <span class="dim">${(u.avg_features || 0).toFixed(0)}</span>
-                </td>
-                <td class="cluster-cards-cell" data-clusters='${escapeAttr(JSON.stringify(clusterData))}' style="padding:10px;">
-                    ${clusterData.length > 0 ? EntityRenderer.renderClusterCard(clusterData) : ''}
-                </td>
-            </tr>
-            `;
-        }).join('');
-    };
-
-    renderUnique(binSimPage.uniqueA.items, document.getElementById('bin-sim-table-unique-a'), binSimSortState.uniqueA, 'ua');
-    renderUnique(binSimPage.uniqueB.items, document.getElementById('bin-sim-table-unique-b'), binSimSortState.uniqueB, 'ub');
-
-    if (!isFilterChange && typeof TableSelection !== 'undefined') {
-        new TableSelection('bin-sim-table-matched-table');
-        new TableSelection('bin-sim-table-unique-a-table');
-        new TableSelection('bin-sim-table-unique-b-table');
-    }
-
-    ['matched', 'uniqueA', 'uniqueB'].forEach(setupBinSimInfiniteScroll);
-}
-
-// ---- Change 4 (frontend): server paging + infinite scroll for the diff tables ----
-
 function binSimFilterParams(prefix) {
     const val = (id) => (document.getElementById(id)?.value || '').trim();
     const p = {};
@@ -2377,61 +2444,6 @@ function binSimFilterParams(prefix) {
     const rmin = val(`bsim-flt-${prefix}-rar-min`); if (rmin) p.rar_min = rmin;
     const rmax = val(`bsim-flt-${prefix}-rar-max`); if (rmax) p.rar_max = rmax;
     return p;
-}
-
-async function loadBinSimTablePage(key, { reset = false } = {}) {
-    if (!binSimCtx) return;
-    const st = binSimPage[key];
-    if (st.loading) return;
-    if (!reset && st.items.length >= st.total && st.total > 0) return; // fully loaded
-    st.loading = true;
-    if (reset) { st.offset = 0; st.items = []; }
-
-    const sort = binSimSortState[key];
-    const params = new URLSearchParams({
-        view: 'table',  // ignored by backend; documents intent
-        table: st.table,
-        collection_a: binSimCtx.collection,
-        md5_a: binSimCtx.md5a,
-        md5_b: binSimCtx.md5b,
-        offset: st.offset,
-        limit: BINSIM_LIMIT,
-        sort_col: sort.col,
-        sort_dir: sort.dir === -1 ? 'desc' : 'asc',
-        ...binSimFilterParams(st.prefix),
-    });
-    if (binSimCtx.collB) params.set('collection_b', binSimCtx.collB);
-    if (binSimCtx.poolId) params.set('pool', binSimCtx.poolId);
-
-    try {
-        const res = await fetch(`/api/diff?${params.toString()}`);
-        const data = await res.json();
-        Object.assign(binSimDataCache.functions_metadata, data.functions_metadata || {});
-        st.items = st.items.concat(data.items || []);
-        st.offset = st.items.length;
-        st.total = data.total || 0;
-        binSimDataCache.diff[st.table] = st.items;
-    } catch (e) {
-        console.error('bin-sim page load failed', e);
-    } finally {
-        st.loading = false;
-    }
-    renderBinSimTables(true);
-}
-
-function setupBinSimInfiniteScroll(key) {
-    const st = binSimPage[key];
-    const tbody = document.getElementById(st.tbody);
-    if (!tbody) return;
-    const scroller = tbody.closest('.bin-sim-table-scroll') || tbody.closest('[style*="overflow"]') || tbody.parentElement;
-    if (!scroller || scroller._binSimScrollBound === key) return;
-    scroller._binSimScrollBound = key;
-    scroller.addEventListener('scroll', () => {
-        if (st.loading || st.items.length >= st.total) return;
-        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
-            loadBinSimTablePage(key);
-        }
-    });
 }
 
 window.setSankeyMode = function(mode) {
@@ -2674,7 +2686,7 @@ window.refreshFunctionRow = async function(funcId) {
                 note_owners: f.note_owners || [],
                 note_count: f.note_count || 0
             };
-            renderBinSimTables();
+            renderFileSimTable();
         }
     } catch (e) {
         console.error("Failed to refresh function note badge in comparison view:", e);
@@ -2709,24 +2721,55 @@ function renderBinSimStrip(containerId, m, fileId) {
 }
 
 // ---- Tab switching: Matched / Unmatched / Graph / Metadata / Inferred ----
-const BIN_SIM_TABS = ['matched', 'unmatched', 'graph', 'metadata', 'inferred', 'filesim'];
+// Detail tabs (scoped by the tree) and sidebar pages (not scoped). Both live in
+// the same hash so Back/forward restores either.
+const BIN_SIM_DETAIL_TABS = ['summary', 'all', 'matched', 'unmatched'];
+const BIN_SIM_NAV_PAGES = ['graph', 'metadata', 'inferred'];
+const BIN_SIM_TABS = BIN_SIM_DETAIL_TABS.concat(BIN_SIM_NAV_PAGES);
+
+// Which DOM panel backs each tab. All / Matched / Unmatched share one panel --
+// they differ only by the state filter they send.
+function binSimPanelFor(tab) {
+    if (tab === 'summary') return 'summary';
+    if (BIN_SIM_NAV_PAGES.includes(tab)) return tab;
+    return fileSimView === 'sankey' ? 'filesim' : 'table';
+}
 
 // push=true (a real click) writes the tab into the URL hash so it lands in
 // browser history; Back/forward then fires hashchange and re-selects the tab.
 window.switchBinSimTab = function(tab, push = true) {
-    if (!BIN_SIM_TABS.includes(tab)) tab = 'matched';
-    BIN_SIM_TABS.forEach(t => {
-        const panel = document.getElementById(`bsim-panel-${t}`);
-        const btn = document.getElementById(`bin-sim-tab-btn-${t}`);
-        if (panel) panel.style.display = (t === tab) ? 'flex' : 'none';
-        if (btn) btn.classList.toggle('active', t === tab);
+    if (!BIN_SIM_TABS.includes(tab)) tab = 'summary';
+    const isNav = BIN_SIM_NAV_PAGES.includes(tab);
+    if (!isNav) fileSimTab = tab;
+
+    const shown = binSimPanelFor(tab);
+    ['summary', 'table', 'filesim'].concat(BIN_SIM_NAV_PAGES).forEach(p => {
+        const panel = document.getElementById(`bsim-panel-${p}`);
+        if (panel) panel.style.display = (p === shown) ? 'flex' : 'none';
     });
+    BIN_SIM_DETAIL_TABS.forEach(t => {
+        const btn = document.getElementById(`bin-sim-tab-btn-${t}`);
+        if (btn) btn.classList.toggle('active', !isNav && t === tab);
+    });
+    BIN_SIM_NAV_PAGES.forEach(p => {
+        const item = document.getElementById(`bsim-nav-${p}`);
+        if (item) item.classList.toggle('active', p === tab);
+    });
+    // The tree greys out on a non-scoping page rather than disappearing, so the
+    // scope you were reading is still there when you come back.
+    const sidebar = document.getElementById('bsim-sidebar');
+    if (sidebar) sidebar.classList.toggle('nav-active', isNav);
+    // Summary is a property of the selection, not of the table, so the
+    // Table/Sankey switch has nothing to act on there.
+    const viewToggle = document.getElementById('bsim-view-toggle');
+    if (viewToggle) viewToggle.style.display = (isNav || tab === 'summary') ? 'none' : 'flex';
+
     // Sankey needs a visible (non-zero) container to size itself; render on show.
     if (tab === 'graph' && binSimDataCache) {
         renderBinaryDiffSankey(binSimDataCache);
     }
     if ((tab === 'metadata' || tab === 'inferred') && binSimMetaCtx && !binSimMetaCtx.loaded) loadBinSimMetadata();
-    if (tab === 'filesim' && binSimDataCache) renderFileSim(binSimDataCache);
+    if (!isNav && binSimDataCache) renderFileSim(binSimDataCache);
 
     if (push && location.hash.slice(1) !== tab) {
         // pushState (not location.hash=) so the app's hashchange ROUTER doesn't
@@ -2737,11 +2780,11 @@ window.switchBinSimTab = function(tab, push = true) {
     }
 };
 
-// Select the tab named in the URL hash (default matched). Called on initial
+// Select the tab named in the URL hash (default summary). Called on initial
 // render and on Back/forward navigation.
 function applyBinSimTabFromHash() {
     const tab = location.hash.slice(1);
-    window.switchBinSimTab(BIN_SIM_TABS.includes(tab) ? tab : 'matched', false);
+    window.switchBinSimTab(BIN_SIM_TABS.includes(tab) ? tab : 'summary', false);
 }
 window.applyBinSimTabFromHash = applyBinSimTabFromHash;
 

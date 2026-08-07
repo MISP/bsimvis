@@ -209,7 +209,12 @@ window.TableRenderers = {
 
     renderFiles: function(data, clustersMap = {}) {
         const { collection } = getRoutingState();
-        return data.map(f => {
+        
+        // Hide child rows if their parent is already present in the current page
+        const md5s = new Set(data.map(f => f.file_md5));
+        const visibleData = data.filter(f => !f.parent_md5 || !md5s.has(f.parent_md5));
+        
+        return visibleData.map(f => {
             // Base collection: pool searches span collections, so fall back to the id prefix.
             const col = f.collection || (f['file_id'] || '').split(':')[0] || collection;
             const fileId = f['file_id'] || `${col}:file:${f['file_md5']}`;
@@ -259,7 +264,7 @@ window.TableRenderers = {
                             return fields.map(field => {
                                 const val = f[field.key];
                                 if (val && val.length) {
-                                    return `<div class="dim">${field.label}: <span style="color:var(--accent)">${escapeHtml(val.join(', '))}</span></div>`;
+                                    return `<div class="dim">${field.label}: <span style="color:var(--accent)">${escapeHtml(Array.isArray(val) ? val.join(', ') : val)}</span></div>`;
                                 }
                                 
                                 // Try inference
@@ -284,7 +289,7 @@ window.TableRenderers = {
                                 return '';
                             }).join('');
                         })()}
-                        ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${escapeHtml(f['first_seen'].join(', '))}</span></div>` : ''}
+                        ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${escapeHtml(Array.isArray(f['first_seen']) ? f['first_seen'].join(', ') : f['first_seen'])}</span></div>` : ''}
                     </div>
                 </td>
                 <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}">

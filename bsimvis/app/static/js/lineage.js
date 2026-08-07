@@ -169,22 +169,110 @@ window.Lineage = {
         return `<div class="lineage-breadcrumb"><i class="fa-solid fa-box-open"></i>${crumbs.join('<span class="lineage-sep">›</span>')}</div>`;
     },
 
-    /**
-     * "Extracted from / Contains". `siblingsByParent` maps a parent md5 to that
-     * parent's children, so a file held by two containers lists the neighbours
-     * of each separately instead of merging two unrelated archives.
-     */
-    renderPanel(lin, collection, siblingsByParent = {}) {
-        const parents = lin.parents || [];
-        const children = lin.children || [];
-        if (!parents.length && !children.length) return '';
+    renderTree(nodes, collection, itemFn) {
+        if (!nodes || !nodes.length) return '';
+        
+        const root = { files: [], dirs: {} };
+        for (const node of nodes) {
+            const pathStr = node.path_in_parent || '';
+            const pathParts = pathStr.split('/').filter(p => p);
+            if (pathParts.length > 0) {
+                pathParts.pop();
+            }
+            
+            let current = root;
+            for (const part of pathParts) {
+                if (!current.dirs[part]) current.dirs[part] = { files: [], dirs: {} };
+                current = current.dirs[part];
+            }
+            current.files.push(node);
+        }
 
-        const item = (node, extra = '') => `
-            <div class="lineage-item">
-                ${this.nodeName(node, collection, { max: 48 })}
-                ${this.pathLabel(node)}
-                ${extra}
-            </div>`;
+        const renderDir = (dir, name, depth) => {
+            let html = [];
+            
+            if (name) {
+                html.push(`
+                <tr class="bsim-grp-row" data-depth="${depth}" data-rowkey="dir-${escapeAttr(name)}" onclick="Lineage.toggleTreeRow(this)">
+                    <td colspan="2" style="padding-left: ${12 + depth * 18}px; border-bottom: 1px solid var(--border);">
+                        <span class="bsim-caret-btn" style="display:inline-block; width:14px; color:var(--subtle);">▼</span>
+                        <i class="fa-regular fa-folder" style="color:var(--accent);"></i> <span style="font-weight:600; margin-left:4px;">${escapeHtml(name)}</span>
+                    </td>
+                </tr>`);
+            }
+            
+            const dirNames = Object.keys(dir.dirs).sort((a, b) => a.localeCompare(b));
+            for (const d of dirNames) {
+                html = html.concat(renderDir(dir.dirs[d], d, depth + 1));
+            }
+            
+            dir.files.sort((a, b) => (a.file_name || a.file_md5).localeCompare(b.file_name || b.file_md5));
+            for (const f of dir.files) {
+                html.push(itemFn(f, true, depth + 1));
+            }
+            
+            return html;
+        };
+        
+        return renderDir(root, '', -1).join('');
+    },
+
+    toggleTreeRow(tr) {
+        const depth = parseInt(tr.dataset.depth || 0);
+        const caret = tr.querySelector('.bsim-caret-btn');
+        if (!caret) return;
+        const isClosing = caret.textContent === '▼';
+        caret.textContent = isClosing ? '▶' : '▼';
+        tr.dataset.closed = isClosing ? '1' : '0';
+
+        let next = tr.nextElementSibling;
+        while (next) {
+            const nextDepth = parseInt(next.dataset.depth || 0);
+            if (nextDepth <= depth) break;
+            
+            if (isClosing) {
+                next.style.display = 'none';
+            } else {
+                let visible = true;
+                let p = next.previousElementSibling;
+                let currentDepth = nextDepth;
+                while (p && parseInt(p.dataset.depth || 0) >= 0) {
+                    const pDepth = parseInt(p.dataset.depth || 0);
+                    if (pDepth < currentDepth) {
+                        if (p.dataset.closed === '1') {
+                            visible = false;
+                            break;
+                        }
+                        currentDepth = pDepth;
+                        if (currentDepth <= depth) break;
+                    }
+                    p = p.previousElementSibling;
+                }
+                next.style.display = visible ? '' : 'none';
+            }
+            next = next.nextElementSibling;
+        }
+    },
+
+    renderParents(lin, collection, siblingsByParent = {}) {
+        const parents = lin.parents || [];
+        if (!parents.length) return '';
+
+        const item = (node, extra = '', hidePath = false, depth = -1) => {
+            const fileId = `${collection}:file:${node.file_md5}`;
+            return `
+            <tr class="sim-row" data-id="${escapeAttr(fileId)}" data-depth="${depth}" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(node.file_md5))}, ${escapeAttr(jsString(node.file_name || ''))}, event)">
+                <td style="padding-left: ${12 + Math.max(0, depth) * 18}px; border-bottom: 1px solid var(--border); padding-top:6px; padding-bottom:6px; font-size:0.85rem;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        ${this.nodeName(node, collection, { max: 48 })}
+                        ${hidePath ? '' : this.pathLabel(node)}
+                    </div>
+                </td>
+                <td style="border-bottom: 1px solid var(--border); text-align: right; padding-right:12px; font-size:0.85rem;">
+                    ${extra}
+                </td>
+            </tr>`;
+        };
         const counts = node => {
             const bits = [];
             if (node.child_count) bits.push(`${node.child_count} contained`);
@@ -192,31 +280,65 @@ window.Lineage = {
             return bits.length ? `<span class="lineage-count">${bits.join(' · ')}</span>` : '';
         };
 
-        let html = '';
+        const itemWithCounts = (node, hidePath = false, depth = -1) => item(node, counts(node), hidePath, depth);
 
-        if (parents.length) {
-            html += `<div class="lineage-section-title"><i class="fa-solid fa-box-open"></i> Extracted from</div>`;
-            html += parents.map(p => item(p, counts(p))).join('');
+        let html = `<div class="card lineage-panel" style="padding:0; overflow:hidden;"><table class="data-table" id="lineage-tree-parents-table" style="width: 100%;"><tbody>`;
+        html += `<tr class="bsim-grp-row" data-depth="-1"><td colspan="2"><div class="lineage-section-title" style="padding: 10px 15px; margin: 0; border: none; background: transparent;"><i class="fa-solid fa-box-open"></i> Extracted from</div></td></tr>`;
+        html += parents.map(p => item(p, counts(p))).join('');
 
-            const sibSections = parents.map(p => {
-                const sibs = (siblingsByParent[p.file_md5] || [])
-                    .filter(s => s.file_md5 !== lin.file.file_md5);
-                if (!sibs.length) return '';
-                const heading = parents.length > 1
-                    ? `<div class="lineage-section-sub">alongside, in ${escapeHtml(middleTruncate(p.file_name || p.file_md5, 40))}</div>`
-                    : `<div class="lineage-section-sub">alongside</div>`;
-                return heading + sibs.map(s => item(s, counts(s))).join('');
-            }).join('');
-            html += sibSections;
-        }
+        const sibsHtml = parents.map((p, i) => {
+            const sibs = (siblingsByParent[p.file_md5] || [])
+                .filter(s => s.file_md5 !== lin.file.file_md5);
+            if (!sibs.length) return '';
+            const heading = parents.length > 1
+                ? ` <span class="lineage-section-sub">in ${escapeHtml(middleTruncate(p.file_name || p.file_md5, 40))}</span>`
+                : '';
+            return `
+                <tr style="height: 20px; background: var(--bg);"><td colspan="2" style="border: none; padding: 0;"></td></tr>
+                <tr class="bsim-grp-row" data-depth="-1"><td colspan="2"><div class="lineage-section-title" style="padding: 10px 15px; margin: 0; border: none; background: transparent;"><i class="fa-solid fa-folder-tree"></i> Alongside${heading}</div></td></tr>
+                ${this.renderTree(sibs, collection, itemWithCounts)}
+            `;
+        }).join('');
 
-        if (children.length) {
-            const deeper = (lin.descendant_count || 0) - children.length;
-            html += `<div class="lineage-section-title"><i class="fa-solid fa-diagram-project"></i> Contains
-                <span class="lineage-count">${lin.child_count} direct${deeper > 0 ? ` · ${deeper} deeper` : ''}</span></div>`;
-            html += children.map(c => item(c, counts(c))).join('');
-        }
+        html += sibsHtml + `</tbody></table></div>`;
+        return html;
+    },
 
-        return `<div class="card lineage-panel">${html}</div>`;
+    renderChildren(lin, collection) {
+        const children = lin.children || [];
+        if (!children.length) return '';
+
+        const item = (node, extra = '', hidePath = false, depth = -1) => {
+            const fileId = `${collection}:file:${node.file_md5}`;
+            return `
+            <tr class="sim-row" data-id="${escapeAttr(fileId)}" data-depth="${depth}" onclick="openFileDetails(${escapeAttr(jsString(collection))}, ${escapeAttr(jsString(node.file_md5))}, ${escapeAttr(jsString(node.file_name || ''))}, event)">
+                <td style="padding-left: ${12 + Math.max(0, depth) * 18}px; border-bottom: 1px solid var(--border); padding-top:6px; padding-bottom:6px; font-size:0.85rem;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        ${this.nodeName(node, collection, { max: 48 })}
+                        ${hidePath ? '' : this.pathLabel(node)}
+                    </div>
+                </td>
+                <td style="border-bottom: 1px solid var(--border); text-align: right; padding-right:12px; font-size:0.85rem;">
+                    ${extra}
+                </td>
+            </tr>`;
+        };
+        const counts = node => {
+            const bits = [];
+            if (node.child_count) bits.push(`${node.child_count} contained`);
+            if (node.function_count) bits.push(`${node.function_count} func`);
+            return bits.length ? `<span class="lineage-count">${bits.join(' · ')}</span>` : '';
+        };
+
+        let html = `<div class="card lineage-panel" style="padding:0; overflow:hidden;"><table class="data-table" id="lineage-tree-children-table" style="width: 100%;"><tbody>`;
+        const deeper = (lin.descendant_count || 0) - children.length;
+        html += `<tr class="bsim-grp-row" data-depth="-1"><td colspan="2"><div class="lineage-section-title" style="padding: 10px 15px; margin: 0; border: none; background: transparent;"><i class="fa-solid fa-diagram-project"></i> Contains
+            <span class="lineage-count">${lin.child_count} direct${deeper > 0 ? ` · ${deeper} deeper` : ''}</span></div></td></tr>`;
+        
+        const itemWithCounts = (node, hidePath = false, depth = -1) => item(node, counts(node), hidePath, depth);
+        html += this.renderTree(children, collection, itemWithCounts);
+        html += `</tbody></table></div>`;
+
+        return html;
     }
 };

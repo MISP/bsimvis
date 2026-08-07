@@ -2360,5 +2360,27 @@ html.light-theme .analysis-tag-badge {
 .lineage-item {
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     padding:6px 0; font-size:0.85rem; border-bottom:1px solid var(--border);
+    transition: background 0.1s ease-in-out;
 }
+.lineage-item:hover { background: var(--hover); }
 .lineage-item:last-child { border-bottom:none; }
+
+.lineage-folder-details > summary {
+    list-style: none;
+    display: flex; align-items: center; gap: 6px; padding: 4px 12px;
+    cursor: pointer; font-size: 0.8rem; font-family: 'Inter', sans-serif;
+    color: var(--text); white-space: nowrap; border-left: 3px solid transparent;
+}
+.lineage-folder-details > summary::-webkit-details-marker { display: none; }
+.lineage-folder-details > summary:hover { background: var(--hover); }
+.lineage-folder-details > summary i { color: var(--accent); }
+.lineage-folder-summary::before {
+    content: '▶'; display: inline-block; width: 12px; color: var(--subtle);
+    font-size: 0.65rem; flex-shrink: 0; text-align: center; font-family: sans-serif;
+}
+.lineage-folder-details[open] > .lineage-folder-summary::before {
+    content: '▼';
+}
+.lineage-folder-content {
+    display: flex; flex-direction: column;
+}

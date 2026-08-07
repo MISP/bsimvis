@@ -78,9 +78,21 @@ window.FileView = {
                 </div>
 
                 <div class="bsim-tabbar" id="file-view-tabs">
+                    <button class="bsim-tab" id="file-tab-btn-files" onclick="FileView.switchTab('files')" style="display: none;">Files</button>
                     <button class="bsim-tab active" id="file-tab-btn-metadata" onclick="FileView.switchTab('metadata')">Metadata (<span id="metadata-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
+                </div>
+
+                <!-- Files Tab Panel -->
+                <div id="file-panel-files" class="file-view-panel" style="display: none;">
+                    <div id="file-lineage-children-panel"></div>
+                </div>
+
+                <!-- Extracted From Tab Panel -->
+                <div id="file-panel-extracted_from" class="file-view-panel" style="display: none;">
+                    <div id="file-lineage-parents-panel"></div>
                 </div>
 
                 <!-- Metadata Tab Panel (Default Active) -->
@@ -91,8 +103,6 @@ window.FileView = {
                                 <!-- Reused comparison table layout here -->
                             </div>
                         </div>
-
-                        <div id="file-lineage-panel"></div>
 
                         <div class="card" id="inferred-meta-card" style="display: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; ">
                             <div class="card-title" style="font-size: 1rem; font-weight: bold; margin-bottom: 15px; color: var(--accent); display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
@@ -500,8 +510,9 @@ window.FileView = {
      */
     async loadLineage(collection, file_md5) {
         const crumbEl = document.getElementById('file-lineage-breadcrumb');
-        const panelEl = document.getElementById('file-lineage-panel');
-        if (!crumbEl || !panelEl) return;
+        const parentsEl = document.getElementById('file-lineage-parents-panel');
+        const childrenEl = document.getElementById('file-lineage-children-panel');
+        if (!crumbEl) return;
         try {
             const lin = await Lineage.fetch(collection, file_md5);
             if (!this.container) return;   // view was destroyed mid-flight
@@ -518,7 +529,18 @@ window.FileView = {
             if (!this.container) return;
 
             crumbEl.innerHTML = Lineage.renderBreadcrumb(lin, collection);
-            panelEl.innerHTML = Lineage.renderPanel(lin, collection, siblingsByParent);
+            if (parentsEl) {
+                parentsEl.innerHTML = Lineage.renderParents(lin, collection, siblingsByParent);
+                if (window.TableSelection) {
+                    parentsEl.querySelectorAll('.data-table').forEach(t => { if (t.id) new window.TableSelection(t.id); });
+                }
+            }
+            if (childrenEl) {
+                childrenEl.innerHTML = Lineage.renderChildren(lin, collection);
+                if (window.TableSelection) {
+                    childrenEl.querySelectorAll('.data-table').forEach(t => { if (t.id) new window.TableSelection(t.id); });
+                }
+            }
         } catch (e) {
             console.error(e);
         }
@@ -544,9 +566,27 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'functions', 'clusters'];
-        const tab = location.hash.slice(1);
-        this.switchTab(allowedTabs.includes(tab) ? tab : 'metadata', false);
+        const allowedTabs = ['metadata', 'functions', 'clusters', 'extracted_from', 'files'];
+        let tab = location.hash.slice(1);
+        
+        const hasChildren = this.file && (this.file.child_count > 0 || this.file.is_container);
+        const hasParents = this.file && !!this.file.parent_md5;
+        
+        const btnFiles = document.getElementById('file-tab-btn-files');
+        if (btnFiles) btnFiles.style.display = hasChildren ? 'inline-block' : 'none';
+        
+        const btnExtracted = document.getElementById('file-tab-btn-extracted_from');
+        if (btnExtracted) btnExtracted.style.display = hasParents ? 'inline-block' : 'none';
+        
+        if (!allowedTabs.includes(tab)) {
+            if (hasChildren) tab = 'files';
+            else tab = 'metadata';
+        }
+        
+        if (tab === 'files' && !hasChildren) tab = 'metadata';
+        if (tab === 'extracted_from' && !hasParents) tab = 'metadata';
+        
+        this.switchTab(tab, false);
     },
 
     // Filter inputs -> /api/function/search params. Same names the function

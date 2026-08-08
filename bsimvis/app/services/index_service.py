@@ -485,7 +485,12 @@ def delete_file(r, coll, file_md5):
     # Containment edges outlive the document otherwise, leaving children
     # pointing at a container that is gone and containers counting functions
     # that no longer exist. Imported here: lineage_service imports this module.
-    from bsimvis.app.services import lineage_service
+    from bsimvis.app.services import container_sim_service, lineage_service
+
+    # A container's similarity score is a claim about its children, so it stops
+    # being true the moment one of them goes. Must run before forget(), which is
+    # what knows the containers above this file.
+    container_sim_service.clear_for(coll, file_md5, r=r)
 
     lineage_service.forget(coll, file_md5, r)
 

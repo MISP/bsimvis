@@ -349,7 +349,14 @@ function initResizableCards() {
             throw new Error(errMsg);
         }
         const data = await res.json();
-        
+
+        if (data.is_container_pair) {
+            // Neither side has functions of its own, so none of the machinery
+            // below (tag tree, sankey, function tables) has anything to draw.
+            await renderContainerPairView(data, collection, md5a, md5b, collB, poolId);
+            return;
+        }
+
         window.filenameCache = window.filenameCache || {};
         if (data.file_metadata_a) window.filenameCache[md5a] = data.file_metadata_a.file_name || 'File';
         if (data.file_metadata_b) window.filenameCache[md5b] = data.file_metadata_b.file_name || 'File';
@@ -1928,12 +1935,161 @@ function applyBinSimSearch() {
     }
 }
 
-function renderBinSimPairs(items) {
+function binSimBytes(n) {
+    if (!n) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let v = n;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
+}
+
+/** The comparison view for a container pair: the same coverage bar and child
+ *  rows the grouped list uses. The function tag tree, the sankey and the
+ *  matched/unmatched function tabs all describe functions, and a container has
+ *  none of its own -- its evidence is one level down, in the child pairs, each
+ *  of which links to its own real function-level diff. */
+async function renderContainerPairView(data, collection, md5a, md5b, collB, poolId) {
+    const el = document.getElementById('binary-similarity-container');
+    if (!el) return;
+    const nameA = data.file_metadata_a?.file_name || md5a;
+    const nameB = data.file_metadata_b?.file_name || md5b;
+    const score = ((data.score || 0) * 100).toFixed(1) + '%';
+
+    const side = (name, md5, coll, cov, analyzed, unanalyzed, childCount, funcs) => `
+        <div style="flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
+                <i class="fa-solid fa-box-archive" style="color:var(--subtle);"></i>
+                ${EntityRenderer.renderFileName(name, md5, coll)}
+            </div>
+            <div style="font-family:'Consolas',monospace; font-size:0.9rem; margin-top:6px;">${((cov || 0) * 100).toFixed(1)}% covered</div>
+            ${binSimCovBar(cov, analyzed, unanalyzed)}
+            <div class="dim" style="font-size:0.72rem; margin-top:4px;">
+                ${childCount || 0} files · ${funcs || 0} functions${unanalyzed ? ` · ${binSimBytes(unanalyzed)} not analyzed` : ''}
+            </div>
+        </div>`;
+
+    el.innerHTML = `
+        <div style="flex:1; display:flex; flex-direction:column; padding:20px; min-height:0; overflow-y:auto;">
+            <div style="border:1px solid var(--border); border-radius:8px; padding:18px 20px; margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:16px; background:var(--card-bg);">
+                <span style="color:var(--subtle); text-transform:uppercase; font-size:0.8rem; font-weight:bold; letter-spacing:0.08em;">Container Similarity</span>
+                <span style="font-family:'Consolas',monospace; font-weight:800; font-size:2.4rem; line-height:1; color:var(--success);">${score}</span>
+                <span class="dim" style="font-size:0.72rem; max-width:280px;">rolled up from the files inside, weighted by function count</span>
+            </div>
+            <div style="display:flex; gap:20px; margin-bottom:14px;">
+                ${side(nameA, md5a, collection, data.coverage_a, data.analyzed_bytes_a, data.unanalyzed_bytes_a, data.child_count_a, data.functions_count_a)}
+                ${side(nameB, md5b, collB || collection, data.coverage_b, data.analyzed_bytes_b, data.unanalyzed_bytes_b, data.child_count_b, data.functions_count_b)}
+            </div>
+            <div class="resizable-card" style="border:1px solid var(--border); border-radius:8px; display:flex; flex-direction:column; flex:1; min-height:200px; overflow:hidden;">
+                <div style="flex:1; overflow:auto;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                        <thead style="position:sticky; top:0; background:var(--card-bg); z-index:10;">
+                            <tr>
+                                <th style="text-align:left; padding:6px 10px;">Score</th>
+                                <th style="text-align:left; padding:6px 10px;">${escapeHtml(nameA)}</th>
+                                <th style="text-align:left; padding:6px 10px;">${escapeHtml(nameB)}</th>
+                                <th style="text-align:right; padding:6px 10px;">Functions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="container-pair-rows"><tr><td colspan="4" class="dim" style="padding:20px; text-align:center;">Loading files…</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+
+    let url = `/api/diff?table=all&limit=500&sort_col=similarity&sort_dir=desc&collection_a=${encodeURIComponent(collection)}&md5_a=${encodeURIComponent(md5a)}&md5_b=${encodeURIComponent(md5b)}`;
+    if (collB) url += `&collection_b=${encodeURIComponent(collB)}`;
+    if (poolId) url += `&pool=${encodeURIComponent(poolId)}`;
+
+    const body = document.getElementById('container-pair-rows');
+    try {
+        const res = await fetch(url);
+        const page = await res.json();
+        const items = page.items || [];
+        if (!items.length) {
+            body.innerHTML = `<tr><td colspan="4" class="dim" style="padding:20px; text-align:center;">No files to compare.</td></tr>`;
+            return;
+        }
+        body.innerHTML = items.map(it => containerPairRow(it, collection, collB || collection, poolId)).join('');
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="4" style="padding:20px; text-align:center; color:var(--token-instruction);">Failed to load files: ${escapeHtml(String(e.message || e))}</td></tr>`;
+    }
+}
+
+function containerPairRow(it, collA, collB, poolId) {
+    const matched = it.state === 'matched';
+    const label = (md5, name, path, coll) => {
+        if (!md5) return '<span class="dim">—</span>';
+        const shown = name || md5;
+        const sub = path ? `<div class="dim" style="font-size:0.68rem;">${escapeHtml(path)}</div>` : '';
+        return `<div>${EntityRenderer.renderFileName(shown, md5, coll)}${sub}</div>`;
+    };
+
+    if (!matched) {
+        const onA = it.state === 'unique_to_a';
+        return `<tr class="sim-row" style="opacity:0.55;">
+            <td style="padding:6px 10px;" class="dim">no match</td>
+            <td style="padding:6px 10px;">${onA ? label(it.md5, it.file_name, it.path_in_parent, collA) : '<span class="dim">—</span>'}</td>
+            <td style="padding:6px 10px;">${onA ? '<span class="dim">—</span>' : label(it.md5, it.file_name, it.path_in_parent, collB)}</td>
+            <td style="padding:6px 10px; text-align:right;" class="dim">${it.functions_count || 0}${it.bytes ? ` · ${binSimBytes(it.bytes)}` : ''}</td>
+        </tr>`;
+    }
+
+    let diffUrl = `/collections/${collA}/files/${it.md5_a}/vs/${collB}/${it.md5_b}`;
+    if (poolId) diffUrl = `/pools/${encodeURIComponent(poolId)}/collections/${collA}/files/${it.md5_a}/vs/${collB}/${it.md5_b}`;
+    const title = `Bin Diff: ${it.file_name_a || it.md5_a} vs ${it.file_name_b || it.md5_b}`;
+    const open = `Nav.openPath(${jsString(diffUrl)}, event, { title: ${jsString(title)}, type: 'bin_sim' });`;
+    const pct = ((it.similarity || 0) * 100).toFixed(1) + '%';
+
+    return `<tr class="sim-row">
+        <td style="padding:6px 10px;">
+            <span style="font-weight:bold; color:var(--success); cursor:pointer;" onclick="${escapeAttr(open)}" title="Open the diff for these two files">${pct}</span>
+            ${binSimCovBar(it.coverage_a, 1, 0)}
+        </td>
+        <td style="padding:6px 10px;">${label(it.md5_a, it.file_name_a, it.path_in_parent_a, collA)}</td>
+        <td style="padding:6px 10px;">${label(it.md5_b, it.file_name_b, it.path_in_parent_b, collB)}</td>
+        <td style="padding:6px 10px; text-align:right;" class="dim">${it.functions_count_a || 0} / ${it.functions_count_b || 0}</td>
+    </tr>`;
+}
+
+/** Matched / unmatched / unjudged mass of one side, as one small bar.
+ *  Grey is the honest part: bytes with no functions in them (a `classes.dex`,
+ *  resources) are invisible to a function-count score, so they are shown rather
+ *  than folded into it. */
+function binSimCovBar(coverage, analyzedBytes, unanalyzedBytes) {
+    const cov = Math.max(0, Math.min(1, coverage || 0));
+    const analyzed = Math.max(0, analyzedBytes || 0);
+    const unanalyzed = Math.max(0, unanalyzedBytes || 0);
+    const total = analyzed + unanalyzed;
+    const codeShare = total > 0 ? analyzed / total : 1;
+    const matched = cov * codeShare * 100;
+    const unmatched = (1 - cov) * codeShare * 100;
+    const grey = (1 - codeShare) * 100;
+    const title = total > 0 && unanalyzed > 0
+        ? `${(cov * 100).toFixed(1)}% of analyzed code matched · ${(grey).toFixed(0)}% of bytes hold no analyzed code`
+        : `${(cov * 100).toFixed(1)}% of analyzed code matched`;
+    return `<div title="${escapeAttr(title)}" style="display:flex; height:4px; width:100%; max-width:120px; border-radius:2px; overflow:hidden; background:var(--border); margin-top:3px;">
+        <div style="width:${matched}%; background:var(--success);"></div>
+        <div style="width:${unmatched}%; background:var(--border);"></div>
+        <div style="width:${grey}%; background:var(--subtle); opacity:0.45;"></div>
+    </div>`;
+}
+
+/** @param depth 0 for a normal row; deeper rows are the children folded under a
+ *  container row, hidden until its caret is opened. */
+function renderBinSimPairs(items, depth = 0) {
     if (!items || items.length === 0) return '';
     let html = '';
     const { collection, params } = getRoutingState();
 
     items.forEach(item => {
+        const kids = Array.isArray(item.children) ? item.children : [];
+        // Reuse the lineage tree's row mechanics rather than a second one: it
+        // hides and shows by data-depth, which is all a folded row needs.
+        const rowAttrs = `data-depth="${depth}"${depth > 0 ? ' style="display:none;"' : ''}`;
+        const caret = kids.length
+            ? `<span class="bsim-caret-btn" style="display:inline-block; width:14px; cursor:pointer; color:var(--subtle);" onclick="event.stopPropagation(); Lineage.toggleTreeRow(this.closest('tr'));">▶</span>`
+            : (depth > 0 ? `<span style="display:inline-block; width:${14 + (depth - 1) * 12}px;"></span>` : '');
         const activeScoreType = params.get('sort') || 'score';
         const score = item[activeScoreType] || item.score || 0;
         const scoreFormatted = (score * 100).toFixed(1) + '%';
@@ -1961,10 +2117,12 @@ function renderBinSimPairs(items) {
         const onClickHandler = `Nav.openPath(${jsString(diffUrl)}, event, { title: ${jsString(diffTitle)}, type: 'bin_sim' });`;
 
         html += `
-            <tr class="sim-row">
+            <tr class="sim-row" ${rowAttrs}>
                 <td>
-                    <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:8px; padding-left:${depth * 14}px;">
+                        ${caret}
                         <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;" onclick="${escapeAttr(onClickHandler)}" title="Open Diff">${scoreFormatted}</div>
+                        ${item.is_container_pair ? '<i class="fa-solid fa-box-archive" style="color:var(--subtle); font-size:0.75rem;" title="Container pair: rolled up from the files inside"></i>' : ''}
                     </div>
                 </td>
                 <td class="sim-cell">
@@ -1997,8 +2155,8 @@ function renderBinSimPairs(items) {
                 </td>
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div style="min-height:24px; display:flex; align-items:center;">${covA}</div>
-                        <div style="min-height:24px; display:flex; align-items:center;">${covB}</div>
+                        <div style="min-height:24px; display:flex; flex-direction:column; justify-content:center;">${covA}${binSimCovBar(item.coverage_a, item.analyzed_bytes_a, item.unanalyzed_bytes_a)}</div>
+                        <div style="min-height:24px; display:flex; flex-direction:column; justify-content:center;">${covB}${binSimCovBar(item.coverage_b, item.analyzed_bytes_b, item.unanalyzed_bytes_b)}</div>
                     </div>
                 </td>
                 <td class="sim-cell" style="vertical-align:middle;">
@@ -2013,12 +2171,17 @@ function renderBinSimPairs(items) {
                 ${window.renderCollectionCell ? window.renderCollectionCell(collA, collB) : ''}
             </tr>
         `;
+
+        // A child is the same kind of row one level down, so it draws itself.
+        if (kids.length) html += renderBinSimPairs(kids, depth + 1);
     });
     return html;
 }
 
 window.applyBinSimSearch = applyBinSimSearch;
 window.renderBinSimPairs = renderBinSimPairs;
+window.binSimCovBar = binSimCovBar;
+window.renderContainerPairView = renderContainerPairView;
 
 // Expose showFunctionCodeById if not already defined, supporting iframe/standalone/Ctrl-click
 if (typeof window.showFunctionCodeById === 'undefined') {

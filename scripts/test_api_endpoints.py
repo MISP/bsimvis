@@ -3367,6 +3367,195 @@ def test_pool_collection_equivalence():
 
 
 # ---------------------------------------------------------------------------
+# Step 4b2 – Container similarity: child scores roll up the containment edges
+#
+# An APK holds no code of its own, so build_bin_sim leaves it out of the pair
+# sweep. The rollup that runs after it is what lets two containers be compared
+# at all, and its whole claim is that the container says exactly what its
+# children say, weighted by function count. One container per binary makes that
+# claim checkable to the digit: with a single matched child and nothing else in
+# either container, the container score must BE the child score.
+# ---------------------------------------------------------------------------
+def test_container_similarity():
+    import hashlib
+    import io
+    import zipfile
+
+    if not (os.path.isfile(TEST_BINARY) and os.path.isfile(SECOND_BINARY)):
+        print(_color("\n[SKIP] container similarity needs both test binaries.", YELLOW))
+        return
+
+    coll = f"{COLLECTION}_contsim"
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 4b2 – Container similarity", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    def zip_of(path, inner):
+        buf = io.BytesIO()
+        with open(path, "rb") as fh:
+            payload = fh.read()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(inner, payload)
+        return buf.getvalue(), hashlib.md5(payload).hexdigest()
+
+    zip_a, bin_a = zip_of(TEST_BINARY, "lib/one.so")
+    zip_b, bin_b = zip_of(SECOND_BINARY, "lib/two.so")
+    apk_a = hashlib.md5(zip_a).hexdigest()
+    apk_b = hashlib.md5(zip_b).hexdigest()
+
+    pipelines = []
+    for name, blob in (("first.apk", zip_a), ("second.apk", zip_b)):
+        body = test_endpoint(
+            "POST",
+            "/api/file/upload",
+            params={"collection": coll, "file_name": name},
+            raw_body=blob,
+            label=f"POST /api/file/upload ({name})",
+        )
+        pipelines += (body or {}).get("pipeline_ids") or (
+            [body.get("pipeline_id")] if isinstance(body, dict) and body.get("pipeline_id") else []
+        )
+
+    ok = True
+    for pid in pipelines:
+        ok = wait_for_pipeline(pid, banner=" STEP 4b2 – Wait for container member analysis") and ok
+    if not ok:
+        check("container members analysed", False, "pipeline did not complete")
+        return
+
+    built = test_endpoint(
+        "POST",
+        "/api/bin_sim/build",
+        data={"collection": coll, "algo": "unweighted_cosine"},
+        label="POST /api/bin_sim/build (container collection)",
+    )
+    if isinstance(built, dict) and built.get("job_id"):
+        wait_for_pipeline(built["job_id"], banner=" STEP 4b2 – Wait for bin_sim build")
+
+    def pair_with(md5, other, params=None):
+        body = test_endpoint(
+            "GET",
+            "/api/bin_sim/list",
+            params={"collection": coll, "md5": md5, "limit": 50, **(params or {})},
+            label=f"GET /api/bin_sim/list (md5={md5[:8]}{' grouped' if params else ''})",
+        )
+        rows = (body or {}).get("results") or []
+        return next(
+            (
+                row
+                for row in rows
+                if other in (row.get("md5_a"), row.get("md5_b"))
+            ),
+            None,
+        ), rows
+
+    child, _ = pair_with(bin_a, bin_b)
+    check(
+        "the two container members are scored against each other",
+        isinstance(child, dict) and (child.get("score") or 0) > 0,
+        str(child)[:200],
+    )
+    if not child:
+        return
+
+    container, _ = pair_with(apk_a, apk_b)
+    check(
+        "two containers holding matching code are scored against each other",
+        isinstance(container, dict) and container.get("is_container_pair") is True,
+        str(container)[:250],
+    )
+    if not container:
+        return
+
+    # The exactness claim. One child on each side and no unmatched mass, so the
+    # weighting has nothing to dilute: any drift here means the rollup is
+    # weighting, orienting or matching differently than it says it does.
+    check(
+        "a container with one matched child scores exactly what that child scored",
+        abs((container.get("score") or 0) - (child.get("score") or 0)) < 1e-6,
+        f"container={container.get('score')} child={child.get('score')}",
+    )
+
+    def side(row, md5, field):
+        return row.get(f"{field}_a") if row.get("md5_a") == md5 else row.get(f"{field}_b")
+
+    check(
+        "container coverage is its child's coverage when the child is all it holds",
+        abs((side(container, apk_a, "coverage") or 0) - (side(child, bin_a, "coverage") or 0))
+        < 1e-6,
+        f"container={side(container, apk_a, 'coverage')} child={side(child, bin_a, 'coverage')}",
+    )
+    check(
+        "the container pair reports how many children it weighed",
+        (side(container, apk_a, "child_count") or 0) == 1
+        and (side(container, apk_a, "functions_count") or 0) > 0,
+        str(container)[:250],
+    )
+
+    # Cross-level: the loose binary and the container that holds its twin are
+    # the same similarity question asked at two altitudes, so both must answer.
+    cross, _ = pair_with(bin_a, apk_b)
+    check(
+        "a standalone binary is scored against a container holding its match",
+        isinstance(cross, dict) and (cross.get("score") or 0) > 0,
+        str(cross)[:200],
+    )
+
+    # Grouping: the match inside second.apk stops being a loose row and becomes
+    # evidence hanging off the container's row.
+    grouped_row, grouped_rows = pair_with(bin_a, apk_b, {"group": "container"})
+    kids = (grouped_row or {}).get("children") or []
+    check(
+        "grouping folds a match into the container it was extracted from",
+        bool(kids) and any(bin_b in (k.get("md5_a"), k.get("md5_b")) for k in kids),
+        str(grouped_row)[:300],
+    )
+    check(
+        "a folded match is not also listed loose",
+        not any(
+            bin_b in (row.get("md5_a"), row.get("md5_b"))
+            and not row.get("is_container_pair")
+            for row in grouped_rows
+        ),
+        str([r.get("md5_b") for r in grouped_rows])[:250],
+    )
+
+    # The diff view pages child pairs where it pages functions for a normal pair.
+    page = test_endpoint(
+        "GET",
+        "/api/diff",
+        params={
+            "collection_a": coll,
+            "md5_a": apk_a,
+            "md5_b": apk_b,
+            "table": "all",
+            "limit": 20,
+        },
+        label="GET /api/diff (container pair, child rows)",
+    )
+    items = (page or {}).get("items") or []
+    matched = next((i for i in items if i.get("state") == "matched"), None)
+    check(
+        "a container pair pages its child files, with the path each sat at",
+        isinstance(page, dict)
+        and page.get("is_container_pair") is True
+        and isinstance(matched, dict)
+        and matched.get("path_in_parent_a") == "lib/one.so"
+        and (matched.get("similarity") or 0) > 0,
+        str(matched)[:250],
+    )
+    check(
+        "child rows carry file metadata, not function metadata",
+        isinstance(page, dict) and bool(page.get("files_metadata")),
+        str((page or {}).get("files_metadata"))[:200],
+    )
+
+    requests.post(
+        f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
+    )
+
+
+# ---------------------------------------------------------------------------
 # Step 4c – Library tags roll up from functions to their file
 #
 # Tagging a function `lib:uclibc:0.9.30.1:xdrmem_getint32` means the binary
@@ -3632,6 +3821,7 @@ if __name__ == "__main__":
     test_archive_upload()
     test_unpack_upload()
     test_lineage()
+    test_container_similarity()
     test_lib_tag_rollup()
     run_all_tests()
     print_summary()

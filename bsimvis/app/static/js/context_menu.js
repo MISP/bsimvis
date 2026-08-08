@@ -354,6 +354,9 @@
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
             const simUrl = Nav.buildUIUrl(col, ['functions', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5);
+            // Matches for this file, with anything found inside a container
+            // folded under that container instead of listed loose.
+            const binSimUrl = Nav.buildUIUrl(col, ['files', 'similarities']) + '?md5=' + encodeURIComponent(norm.md5) + '&group=container';
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcsUrl))}, event, { title: 'Functions', type: 'functions' })">
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
@@ -371,6 +374,10 @@
             <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(simUrl))}, event, { title: 'Function Similarities', type: 'function-similarity' })">
                 <i class="fa-solid fa-code-compare" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Similarities</span>
+            </div>
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(binSimUrl))}, event, { title: 'Similar Files', type: 'binary-similarity' })">
+                <i class="fa-solid fa-box-archive" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Similar Files (by container)</span>
             </div>
             `;
             // Whole-binary enrichment: same LLM entries, resolved from the file

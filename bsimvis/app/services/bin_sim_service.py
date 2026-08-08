@@ -598,6 +598,20 @@ class BinSimService:
 
         pipe.execute()
 
+        # Containers were kept out of the sweep above because they hold no code
+        # of their own. Roll the child pairs it just wrote up the containment
+        # edges, so an APK can be compared as a whole.
+        from bsimvis.app.services import container_sim_service
+
+        container_sim_service.build_container_sims(
+            collection,
+            algo,
+            pair_scores,
+            r,
+            job_service=job_service,
+            job_id=job_id,
+        )
+
         if job_service and job_id:
             job_service.update_progress(
                 job_id, 100, f"Completed binary similarity build for {processed} pairs."
@@ -625,32 +639,53 @@ class BinSimService:
 
         if md5:
             involves_key = f"{collection}:bin_sim:involves:{md5}"
-            sids = r.smembers(involves_key)
+            sids = [
+                s.decode() if isinstance(s, bytes) else str(s)
+                for s in (r.smembers(involves_key) or ())
+            ]
             if sids:
+                # Read the docs before deleting them: the secondary indexes are
+                # keyed by the fields they denormalise, so a sid dropped without
+                # its doc stays in every index bucket it was ever filed under.
+                reader = r.pipeline(transaction=False)
+                for sid in sids:
+                    reader.get(sid)
+                raw_docs = reader.execute()
+
+                meta_cache = {}
+
+                def _meta(m):
+                    if m not in meta_cache:
+                        raw = r.get(f"{collection}:file:{m}:meta")
+                        try:
+                            meta_cache[m] = json.loads(raw) if raw else {}
+                        except (ValueError, TypeError):
+                            meta_cache[m] = {}
+                    return meta_cache[m]
+
                 pipe = r.pipeline(transaction=False)
-                for sid_raw in sids:
-                    sid = sid_raw.decode() if isinstance(sid_raw, bytes) else sid_raw
+                for sid, raw in zip(sids, raw_docs):
+                    try:
+                        doc = json.loads(raw) if raw else {}
+                    except (ValueError, TypeError):
+                        doc = {}
+
                     pipe.delete(sid)
                     pipe.zrem(f"{collection}:bin_sim:score:{algo}", sid)
                     pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
 
-                    parts = sid.split(":")
-                    if len(parts) >= 5:
-                        m_a, m_b = (
-                            parts[4].split("::")
-                            if "::" in parts[4]
-                            else (parts[3], parts[4])
+                    m_a, m_b = doc.get("md5_a"), doc.get("md5_b")
+                    if not (m_a and m_b):
+                        tail = sid.split(f"{collection}:bin_sim:{algo}:")
+                        if len(tail) == 2 and "::" in tail[1]:
+                            m_a, m_b = tail[1].split("::", 1)
+                    other_md5 = m_b if m_a == md5 else m_a
+                    if other_md5:
+                        pipe.srem(f"{collection}:bin_sim:involves:{other_md5}", sid)
+                    if doc:
+                        _unindex_bin_sim_pair(
+                            pipe, collection, sid, doc, _meta(m_a), _meta(m_b)
                         )
-                        # Let's cleanly extract it
-                        try:
-                            keys_split = sid.split(f"{collection}:bin_sim:{algo}:")[
-                                1
-                            ].split("::")
-                            m_a, m_b = keys_split[0], keys_split[1]
-                            other_md5 = m_b if m_a == md5 else m_a
-                            pipe.srem(f"{collection}:bin_sim:involves:{other_md5}", sid)
-                        except:
-                            pass
 
                 pipe.delete(involves_key)
                 pipe.execute()

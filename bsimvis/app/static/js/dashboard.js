@@ -760,6 +760,12 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
+    // Neighbours of one file, folded into the containers they came from. The
+    // faceted pair search this view normally uses is index-backed and cannot
+    // group, so grouping is served by the neighbour endpoint instead.
+    if (viewKey === 'binary-similarity' && params.get('group') === 'container' && params.get('md5')) {
+        apiUrl = '/api/bin_sim/list?' + params.toString();
+    }
     updateUI(viewKey, collection, params, route, force);
 
     const isGraphView = params.get('view') === 'graph' || params.get('view') === 'hierarchy' || params.get('view') === 'packing';

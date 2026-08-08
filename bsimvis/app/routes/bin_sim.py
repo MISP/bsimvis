@@ -1,6 +1,7 @@
 import logging
 import math
 import re
+from collections import defaultdict
 from flask import request
 from flask_restx import abort
 from bsimvis.app.services.job_service import JobService, JobType
@@ -14,9 +15,60 @@ from bsimvis.app.services.cluster_utils import (
     pick_best_shared_cluster,
     pick_best_cluster,
 )
+from bsimvis.app.services import container_sim_service, lineage_service
 import json
 
 job_service = JobService()
+
+
+def _files_metadata(r, coll_a, coll_b, diff):
+    """`{md5: {...}}` for the child files named by a container pair's diff.
+
+    The container-pair equivalent of `functions_metadata`: the rows carry md5s,
+    and the client needs a name, an architecture and a size to draw them.
+    """
+    md5s = set()
+    for row in diff.get("matched", []):
+        md5s.update(x for x in (row.get("md5_a"), row.get("md5_b")) if x)
+    for row in diff.get("unique_to_a", []) + diff.get("unique_to_b", []):
+        if row.get("md5"):
+            md5s.add(row["md5"])
+    if not md5s:
+        return {}
+
+    md5s = list(md5s)
+    # Both sides of a stored pair live in one collection (cross-collection pairs
+    # are pool-only, and pools have no container rollup), but coll_b is honoured
+    # so a caller that passes one cannot silently get the wrong document.
+    pipe = r.pipeline(transaction=False)
+    for m in md5s:
+        pipe.get(f"{coll_a}:file:{m}:meta")
+        pipe.get(f"{coll_b}:file:{m}:meta")
+    res = pipe.execute()
+
+    out = {}
+    for idx, m in enumerate(md5s):
+        raw = res[idx * 2] or res[idx * 2 + 1]
+        if not raw:
+            continue
+        try:
+            meta = json.loads(raw) if not isinstance(raw, dict) else raw
+        except (ValueError, TypeError):
+            continue
+        if isinstance(meta, list) and meta:
+            meta = meta[0]
+        if not isinstance(meta, dict):
+            continue
+        out[m] = {
+            "file_name": meta.get("file_name"),
+            "architecture": meta.get("language_id"),
+            "function_count": meta.get("function_count"),
+            "file_size": meta.get("file_size"),
+            "tags": meta.get("tags", []),
+            "user_tags": meta.get("user_tags", []),
+            "path_in_parent": meta.get("path_in_parent"),
+        }
+    return out
 
 
 def _enrich_diff_clusters(r, diff, collection, pool_id, algo):
@@ -429,7 +481,12 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     else:
         diff_data["functions_metadata"] = {}
 
-    _enrich_diff_clusters(r, diff, coll_a, pool_id, algo)
+    if diff_data.get("is_container_pair"):
+        # Rows here are child files, not functions: there is no function cluster
+        # to attribute them to, and the names the client needs are file names.
+        diff_data["files_metadata"] = _files_metadata(r, coll_a, coll_b, diff)
+    else:
+        _enrich_diff_clusters(r, diff, coll_a, pool_id, algo)
 
     # Change 4: when a table is requested, filter/sort/paginate server-side and return
     # only the page (+ its function metadata). Absent `table` → full doc (back-compat).
@@ -449,6 +506,37 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
 def _sankey_summary(diff_data):
     diff = diff_data.get("diff", {})
     fmeta = diff_data.get("functions_metadata", {})
+
+    if diff_data.get("is_container_pair"):
+        # No function flow to project: the summary a container pair needs is how
+        # much of each side its children account for, and how much of it the
+        # score does not speak for at all.
+        out = {
+            k: diff_data.get(k)
+            for k in (
+                "score",
+                "is_container_pair",
+                "coverage_a",
+                "coverage_b",
+                "functions_count_a",
+                "functions_count_b",
+                "child_count_a",
+                "child_count_b",
+                "analyzed_bytes_a",
+                "unanalyzed_bytes_a",
+                "analyzed_bytes_b",
+                "unanalyzed_bytes_b",
+                "file_metadata_a",
+                "file_metadata_b",
+            )
+        }
+        out["counts"] = {
+            "matched": len(diff.get("matched", [])),
+            "unique_to_a": len(diff.get("unique_to_a", [])),
+            "unique_to_b": len(diff.get("unique_to_b", [])),
+        }
+        out["tags_summary"] = []
+        return out
 
     def feat(fid):
         try:
@@ -690,6 +778,24 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
         owners = fmeta.get(fid, {}).get("note_owners", []) if fid else []
         return any(needle in str(o).lower() for o in owners)
 
+    def file_haystack(item):
+        """Searchable text of a container-pair row, which names files not functions."""
+        parts = [
+            item.get(k)
+            for k in (
+                "file_name_a",
+                "file_name_b",
+                "file_name",
+                "path_in_parent_a",
+                "path_in_parent_b",
+                "path_in_parent",
+                "md5_a",
+                "md5_b",
+                "md5",
+            )
+        ]
+        return " ".join(str(p) for p in parts if p).lower()
+
     def keep(item):
         fids = [x for x in (item.get("func_a"), item.get("func_b")) if x] or (
             [item["func_id"]] if item.get("func_id") else []
@@ -704,8 +810,16 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
                 return False
         if fold_name is not None and _fold_key(item, fmeta) != fold_name:
             return False
-        if q and not any(q in haystack(f) for f in fids):
-            return False
+        if q:
+            # A container-pair row has no function ids, so it is searched by the
+            # file names and paths it does carry.
+            hay_hit = (
+                any(q in haystack(f) for f in fids)
+                if fids
+                else q in file_haystack(item)
+            )
+            if not hay_hit:
+                return False
         if cl_q and cl_q not in (item.get("cluster_name") or "unclustered").lower():
             return False
         if note_a and not owners_match(item.get("func_a"), note_a):
@@ -826,9 +940,51 @@ def _page_diff(diff_data, table, r=None, collection=None, algo=None, pool_id=Non
         "limit": limit,
         "table": table,
         "functions_metadata": {f: fmeta[f] for f in page_fids if f in fmeta},
+        "files_metadata": diff_data.get("files_metadata", {}),
+        "is_container_pair": bool(diff_data.get("is_container_pair")),
         "file_metadata_a": diff_data.get("file_metadata_a"),
         "file_metadata_b": diff_data.get("file_metadata_b"),
     }
+
+
+def _group_by_container(collection, algo, md5, scored_sids, r):
+    """Collapse matches that live inside a container into that container's row.
+
+    Grouping has to happen before paging, not after: a container and the
+    children it swallows are ranked by their own scores, so a post-filter over
+    one page would leave a child on page 1 whose container sits on page 3.
+
+    Returns `(top_level, {container_sid: [(child_sid, score)]})`. A match whose
+    container is not itself in the results stays where it is -- the container is
+    context, not a filter.
+    """
+    other_of = {}
+    for sid, _score in scored_sids:
+        parsed = container_sim_service._parse_sid(sid, collection, algo)
+        if not parsed:
+            continue
+        a, b = parsed
+        other_of[sid] = b if a == md5 else a
+
+    present = {other: sid for sid, other in other_of.items()}
+    containers = lineage_service.container_md5s(collection, r)
+
+    # One walk per container in the results, rather than one per match: the
+    # containers are the few, the matches are the many.
+    owner_of = {}
+    for c in (m for m in present if m in containers):
+        for edge in lineage_service.descendants(collection, c, r):
+            owner_of.setdefault(edge["md5"], c)
+
+    top, children = [], defaultdict(list)
+    for sid, score in scored_sids:
+        other = other_of.get(sid)
+        owner = owner_of.get(other) if other and other not in containers else None
+        if owner and present.get(owner) and present[owner] != sid:
+            children[present[owner]].append((sid, score))
+        else:
+            top.append((sid, score))
+    return top, children
 
 
 def list_bin_sims():
@@ -898,6 +1054,14 @@ def list_bin_sims():
 
     # Sort by score descending
     scored_sids.sort(key=lambda x: x[1], reverse=True)
+
+    grouped = request.args.get("group") == "container" and not is_pool
+    children_of = {}
+    if grouped:
+        scored_sids, children_of = _group_by_container(
+            collection, algo, md5, scored_sids, r
+        )
+
     total = len(scored_sids)
 
     # Paginate
@@ -906,22 +1070,46 @@ def list_bin_sims():
     if not paged:
         return {"total": total, "results": [], "offset": offset, "limit": limit}
 
-    # Fetch docs
+    # Fetch docs -- the page's own rows, plus the child rows folded under them.
+    child_sids = [s for sid, _ in paged for s, _ in children_of.get(sid, ())]
     pipe = r.pipeline(transaction=False)
     for sid, _ in paged:
         pipe.get(sid)
-
+    for sid in child_sids:
+        pipe.get(sid)
     docs_res = pipe.execute()
 
-    results = []
-    for i, res in enumerate(docs_res):
-        if res:
-            doc = json.loads(res) if not isinstance(res, dict) else res
-            if isinstance(doc, str):
-                doc = json.loads(doc)
-            results.append(doc)
+    def _load(res):
+        if not res:
+            return None
+        doc = json.loads(res) if not isinstance(res, dict) else res
+        if isinstance(doc, str):
+            doc = json.loads(doc)
+        return doc
 
-    return {"total": total, "offset": offset, "limit": limit, "results": results}
+    child_docs = {}
+    for sid, res in zip(child_sids, docs_res[len(paged) :]):
+        doc = _load(res)
+        if doc:
+            child_docs[sid] = doc
+
+    results = []
+    for (sid, _score), res in zip(paged, docs_res[: len(paged)]):
+        doc = _load(res)
+        if not doc:
+            continue
+        if grouped:
+            kids = [
+                child_docs[s] for s, _ in children_of.get(sid, ()) if s in child_docs
+            ]
+            if kids:
+                doc["children"] = kids
+        results.append(doc)
+
+    out = {"total": total, "offset": offset, "limit": limit, "results": results}
+    if grouped:
+        out["grouped"] = True
+    return out
 
 
 def reindex_bin_sim():

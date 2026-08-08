@@ -2124,6 +2124,11 @@ class BinSimList(Resource):
             "md5": "Target binary MD5",
             "limit": "Max results",
             "offset": "Pagination offset",
+            "group": (
+                "Set to 'container' to fold every match that was extracted from "
+                "a container into that container's row, as `children`. Ignored "
+                "for pools."
+            ),
         }
     )
     def get(self):

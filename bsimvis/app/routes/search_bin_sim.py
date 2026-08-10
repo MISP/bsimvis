@@ -3,10 +3,14 @@ import logging
 import time
 
 from flask import request
+from bsimvis.app.services import lineage_service
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags, enrich_pool_data
 
 DEFAULT_LIMIT = 50
+
+# ?containers= values: both members / at least one / neither (plain files only).
+CONTAINER_MODES = ("both", "any", "none")
 
 # Collection sort field -> ZSET index suffix (None = no zset, must sort via docs).
 # Mirrors the numeric indexes written by _index_bin_sim_pair.
@@ -105,6 +109,58 @@ def _file_tag_union(r, collection, val, fields=("tags", "user_tags"), is_pool=Fa
         if res:
             out.update(_dec(x) for x in res)
     return out
+
+
+def _split_sid(sid, algo_marker, collection, is_pool=False):
+    """Parse a pair SID into (coll_a, m_a, coll_b, m_b), or None if it isn't one.
+    Collection: {coll}:bin_sim:{algo}:{m_a}::{m_b}
+    Pool:       global:pool:{id}:bin_sim:{algo}:{coll_a}:{m_a}::{coll_b}:{m_b}"""
+    try:
+        rest = sid.split(algo_marker, 1)[1]
+    except (IndexError, ValueError):
+        return None
+    parts = rest.split("::", 1)
+    part_a = parts[0]
+    part_b = parts[1] if len(parts) > 1 else ""
+    if is_pool:
+        coll_a, m_a = part_a.rsplit(":", 1) if ":" in part_a else ("", part_a)
+        coll_b, m_b = part_b.rsplit(":", 1) if ":" in part_b else ("", part_b)
+    else:
+        coll_a = coll_b = collection
+        m_a, m_b = part_a, part_b
+    return coll_a, m_a, coll_b, m_b
+
+
+def _container_pred(r, collection, algo_marker, mode, is_pool=False):
+    """Predicate sid -> keep, for the container-membership filter. None if off.
+
+    Reads the live `{coll}:lineage:containers` set rather than a bin_sim index,
+    so marking a file as a container takes effect without rebuilding pairs.
+    ponytail: one SMEMBERS per involved collection, cached for the request.
+    """
+    if mode not in CONTAINER_MODES:
+        return None
+    cache = {}
+
+    def members(coll):
+        if coll not in cache:
+            cache[coll] = lineage_service.container_md5s(coll, r) if coll else set()
+        return cache[coll]
+
+    def keep(sid):
+        parsed = _split_sid(sid, algo_marker, collection, is_pool)
+        if not parsed:
+            return False
+        coll_a, m_a, coll_b, m_b = parsed
+        a = m_a in members(coll_a)
+        b = m_b in members(coll_b)
+        if mode == "both":
+            return a and b
+        if mode == "any":
+            return a or b
+        return not a and not b
+
+    return keep
 
 
 def _znum(r, collection, field, lo, hi):
@@ -206,15 +262,18 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         restrict(_znum(r, collection, "shared_clusters", f["min_shared"], None))
     if f["max_shared"] is not None:
         restrict(_znum(r, collection, "shared_clusters", None, f["max_shared"]))
+    # functions_count: both sides must pass. A pair is only interesting when both
+    # binaries carry enough functions — a union lets a 3-function stub ride along
+    # with a big partner and swamp the page.
     if f["min_funcs"] is not None:
         restrict(
             _znum(r, collection, "functions_count_a", f["min_funcs"], None)
-            | _znum(r, collection, "functions_count_b", f["min_funcs"], None)
+            & _znum(r, collection, "functions_count_b", f["min_funcs"], None)
         )
     if f["max_funcs"] is not None:
         restrict(
             _znum(r, collection, "functions_count_a", None, f["max_funcs"])
-            | _znum(r, collection, "functions_count_b", None, f["max_funcs"])
+            & _znum(r, collection, "functions_count_b", None, f["max_funcs"])
         )
 
     # --- Exclusions (subtract) ---
@@ -245,7 +304,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
     zkey = f"{collection}:idx:bin_sim:{sort_zset_field}" if sort_zset_field else None
     offset, limit = f["offset"], f["limit"]
 
-    if candidates is None and zkey:
+    # Container membership isn't indexed per pair; it's a predicate on the SID's
+    # two md5s, so it rules out the count-only fast path below.
+    keep = _container_pred(r, collection, algo_marker, f["containers"], is_pool)
+
+    if candidates is None and zkey and keep is None:
         # Fast path: page straight off the sorted ZSET (O(offset+limit)).
         total = r.zcard(zkey)
         page_raw = (
@@ -264,10 +327,13 @@ def _collection_page(r, collection, algo, f, is_pool=False):
         page_sids = []
         for s in ordered:
             s = _dec(s)
-            if s in candidates:
-                if offset <= total < offset + limit:
-                    page_sids.append(s)
-                total += 1
+            if candidates is not None and s not in candidates:
+                continue
+            if keep is not None and not keep(s):
+                continue
+            if offset <= total < offset + limit:
+                page_sids.append(s)
+            total += 1
     else:
         # architecture sort: no ZSET, rank candidate docs by architecture_a.
         if candidates is None:
@@ -275,7 +341,11 @@ def _collection_page(r, collection, algo, f, is_pool=False):
             candidates = set(
                 _dec(x) for x in r.smembers(f"{collection}:bin_sim:built:{algo}")
             )
-        cand = [s for s in candidates if algo_marker in s]
+        cand = [
+            s
+            for s in candidates
+            if algo_marker in s and (keep is None or keep(s))
+        ]
         total = len(cand)
         pipe = r.pipeline(transaction=False)
         for s in cand:
@@ -304,25 +374,14 @@ def _collection_page(r, collection, algo, f, is_pool=False):
 
 
 def _light_from_sids(page_sids, algo_marker, collection, is_pool=False):
-    """Parse SIDs into light docs.
-    Collection: {coll}:bin_sim:{algo}:{m_a}::{m_b}
-    Pool:       global:pool:{id}:bin_sim:{algo}:{coll_a}:{m_a}::{coll_b}:{m_b}"""
+    """Parse SIDs into light docs."""
     paged_light = []
     page_md5s = set()
     for sid in page_sids:
-        try:
-            rest = sid.split(algo_marker, 1)[1]
-            parts = rest.split("::", 1)
-            part_a = parts[0]
-            part_b = parts[1] if len(parts) > 1 else ""
-        except (IndexError, ValueError):
+        parsed = _split_sid(sid, algo_marker, collection, is_pool)
+        if not parsed:
             continue
-        if is_pool:
-            coll_a, m_a = part_a.rsplit(":", 1) if ":" in part_a else ("", part_a)
-            coll_b, m_b = part_b.rsplit(":", 1) if ":" in part_b else ("", part_b)
-        else:
-            coll_a = coll_b = collection
-            m_a, m_b = part_a, part_b
+        coll_a, m_a, coll_b, m_b = parsed
         page_md5s.add((coll_a, m_a))
         page_md5s.add((coll_b, m_b))
         paged_light.append(
@@ -397,18 +456,19 @@ def _pool_page(r, pool_id, algo, f):
     if not candidates:
         return [], 0, {}, {}
 
+    keep = _container_pred(
+        r, f"global:pool:{pool_id}", algo_marker, f["containers"], is_pool=True
+    )
+
     light_docs = []
     unique_md5s = set()
     for sid in candidates:
-        try:
-            rest = sid.split(algo_marker, 1)[1]
-            parts = rest.split("::", 1)
-            part_a = parts[0]
-            part_b = parts[1] if len(parts) > 1 else ""
-            coll_a, m_a = part_a.rsplit(":", 1) if ":" in part_a else ("", part_a)
-            coll_b, m_b = part_b.rsplit(":", 1) if ":" in part_b else ("", part_b)
-        except (IndexError, ValueError):
+        if keep is not None and not keep(sid):
             continue
+        parsed = _split_sid(sid, algo_marker, "", is_pool=True)
+        if not parsed:
+            continue
+        coll_a, m_a, coll_b, m_b = parsed
         unique_md5s.add((coll_a, m_a))
         unique_md5s.add((coll_b, m_b))
         light_docs.append(
@@ -502,9 +562,10 @@ def _pool_page(r, pool_id, algo, f):
             and f["arch"] not in arch_b.lower()
         ):
             continue
-        if f["min_funcs"] is not None and max(funcs_a, funcs_b) < f["min_funcs"]:
+        # both sides must pass, same as the indexed path
+        if f["min_funcs"] is not None and min(funcs_a, funcs_b) < f["min_funcs"]:
             continue
-        if f["max_funcs"] is not None and min(funcs_a, funcs_b) > f["max_funcs"]:
+        if f["max_funcs"] is not None and max(funcs_a, funcs_b) > f["max_funcs"]:
             continue
         if f["file_tag"]:
             combined = set(t.lower() for t in tags_a + tags_b)
@@ -592,6 +653,7 @@ def search_bin_sims():
             "max_shared": parse_float(request.args.get("max_shared")),
             "min_funcs": parse_float(request.args.get("min_funcs")),
             "max_funcs": parse_float(request.args.get("max_funcs")),
+            "containers": request.args.get("containers", "").strip().lower(),
             "arch": request.args.get("arch", "").strip().lower(),
             "md5": request.args.get("md5", "").strip().lower(),
             "file_name": request.args.get("file_name", "").strip().lower(),

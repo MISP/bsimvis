@@ -2419,6 +2419,57 @@ def _sweep_substr(spec, ns, label):
             )
 
 
+def _sweep_bin_sim_pair_filters(ns, label):
+    """bin_sim filters that constrain BOTH sides of a pair, which the generic
+    range sweep (one row field at a time) cannot express."""
+    base = dict(ns, limit=100)
+    baseline, total = _search("/api/bin_sim/search", base, "results")
+    if not baseline:
+        vprint(f"     [skip] {label} bin_sim: no pairs for pair-level filters")
+        return
+
+    def sides(row):
+        return _num(row.get("functions_count_a")), _num(row.get("functions_count_b"))
+
+    vals = sorted(
+        v for row in baseline for v in sides(row) if v is not None
+    )
+    if vals and vals[0] != vals[-1]:
+        threshold = vals[len(vals) // 2]
+        sent = int(threshold) if float(threshold).is_integer() else threshold
+        rows, _ = _search("/api/bin_sim/search", dict(base, min_funcs=sent), "results")
+        bad = [
+            row
+            for row in rows
+            if any(v is None or v < threshold - 1e-6 for v in sides(row))
+        ]
+        check(
+            f"{label}: bin_sim min_funcs={sent} constrains both sides of the pair",
+            not bad,
+            f"{len(rows)} row(s), {len(bad)} with a side under the threshold",
+        )
+    else:
+        vprint(f"     [skip] {label} bin_sim: functions_count has no spread")
+
+    # Container modes partition the pairs: none = pairs with no container side,
+    # any = its complement, both is a subset of any.
+    totals = {}
+    for mode in ("both", "any", "none"):
+        _, totals[mode] = _search(
+            "/api/bin_sim/search", dict(base, containers=mode), "results"
+        )
+    check(
+        f"{label}: bin_sim containers=none/any partition every pair",
+        totals["none"] + totals["any"] == total,
+        f"none={totals['none']} any={totals['any']} all={total}",
+    )
+    check(
+        f"{label}: bin_sim containers=both is a subset of containers=any",
+        totals["both"] <= totals["any"],
+        f"both={totals['both']} any={totals['any']}",
+    )
+
+
 def _sweep_namespace(label, ns):
     print(_color(f"\n  [{label}: filter/sort sweep]", BOLD))
     for spec in SEARCH_SPECS:
@@ -2427,6 +2478,7 @@ def _sweep_namespace(label, ns):
         _sweep_sorts(spec, ns, label)
         _sweep_ranges(spec, ns, label)
         _sweep_substr(spec, ns, label)
+    _sweep_bin_sim_pair_filters(ns, label)
 
 
 def _check_namespace_filters(label, ns, bin_sim_expected=True):
@@ -3612,6 +3664,46 @@ def test_container_similarity():
         "a standalone binary is scored against a container holding its match",
         isinstance(cross, dict) and (cross.get("score") or 0) > 0,
         str(cross)[:200],
+    )
+
+    # The containers filter reads the live lineage set, so each mode must cut a
+    # different slice out of the same pairs: two containers, two loose binaries,
+    # and one of each are all present in this collection.
+    def searched(mode):
+        body = test_endpoint(
+            "GET",
+            "/api/bin_sim/search",
+            params={"collection": coll, "limit": 100, "containers": mode},
+            label=f"GET /api/bin_sim/search (containers={mode})",
+        )
+        return (body or {}).get("results") or []
+
+    def has_pair(rows, x, y):
+        return any({row.get("md5_a"), row.get("md5_b")} == {x, y} for row in rows)
+
+    rows = searched("both")
+    check(
+        "containers=both keeps only container-to-container pairs",
+        has_pair(rows, apk_a, apk_b)
+        and not has_pair(rows, bin_a, apk_b)
+        and not has_pair(rows, bin_a, bin_b),
+        f"{len(rows)} row(s)",
+    )
+    rows = searched("any")
+    check(
+        "containers=any keeps every pair with at least one container side",
+        has_pair(rows, apk_a, apk_b)
+        and has_pair(rows, bin_a, apk_b)
+        and not has_pair(rows, bin_a, bin_b),
+        f"{len(rows)} row(s)",
+    )
+    rows = searched("none")
+    check(
+        "containers=none keeps only pairs of plain files",
+        has_pair(rows, bin_a, bin_b)
+        and not has_pair(rows, apk_a, apk_b)
+        and not has_pair(rows, bin_a, apk_b),
+        f"{len(rows)} row(s)",
     )
 
     # Grouping: the match inside second.apk stops being a loose row and becomes

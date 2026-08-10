@@ -1417,7 +1417,14 @@ function updateUI(viewKey, collection, params, route, force = false) {
                             </div>
                         </div>
                     </th>
-                    <th><input type="text" id="bsim-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;"></th>
+                    <th>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <input type="text" id="bsim-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:100%; box-sizing:border-box;">
+                            <select id="bsim-containers" onchange="applyBinSimSearch()" title="Filter by whether each side of the pair is a container" style="font-size:0.6rem; padding:2px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:3px; width:100%; box-sizing:border-box;">
+                                ${[['', 'Any pair'], ['both', 'Container ↔ container'], ['any', 'At least one container'], ['none', 'Single files only']].map(([v, label]) => `<option value="${escapeAttr(v)}" ${(p.get('containers') || '') === v ? 'selected' : ''}>${label}</option>`).join('')}
+                            </select>
+                        </div>
+                    </th>
                     <th><input type="text" id="bsim-md5" placeholder="MD5..." value="${escapeAttr(p.get('md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box; font-family:monospace;"></th>
                     <th><input type="text" id="bsim-arch" placeholder="Arch..." value="${escapeAttr(p.get('arch') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyBinSimSearch(); })" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.6rem; width:100%; box-sizing:border-box;"></th>
                     <th><div style="display:flex; align-items:center; gap:2px;"><input type="number" id="bsim-min-funcs" placeholder="Min..." min="0" value="${escapeAttr(p.get('min_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"><span class="dim" style="font-size:0.6rem">-</span><input type="number" id="bsim-max-funcs" placeholder="Max..." min="0" value="${escapeAttr(p.get('max_funcs') || '')}" onchange="debouncedSearch(applyBinSimSearch)" onkeydown="handleFilterKey(event, applyBinSimSearch)" style="font-size:0.65rem; width:48%; box-sizing:border-box;"></div></th>
@@ -1590,6 +1597,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncDate('flt-pool-min-date', 'min_created_at'); syncDate('flt-pool-max-date', 'max_created_at');
         } else if (path === 'binary-similarity') {
             syncSelect('bsim-score-type', 'sort', 'score'); syncInput('bsim-min-score', 'min_score'); syncInput('bsim-max-score', 'max_score'); syncInput('bsim-file-name', 'file_name'); syncInput('bsim-md5', 'md5'); syncInput('bsim-arch', 'arch');
+            syncSelect('bsim-containers', 'containers', '');
             syncInput('bsim-min-funcs', 'min_funcs'); syncInput('bsim-max-funcs', 'max_funcs'); syncInput('bsim-min-cov', 'min_coverage'); syncInput('bsim-max-cov', 'max_coverage'); syncInput('bsim-min-shared', 'min_shared');
         } else if (path === 'jobs') {
             syncSelect('job-type-filter', 'type'); syncSelect('job-collection-filter', 'collection'); syncSelect('job-status-filter', 'status');

@@ -1892,6 +1892,7 @@ function applyBinSimSearch() {
         'file_name': 'bsim-file-name',
         'md5': 'bsim-md5',
         'arch': 'bsim-arch',
+        'containers': 'bsim-containers',
         'min_funcs': 'bsim-min-funcs',
         'max_funcs': 'bsim-max-funcs',
         'min_coverage': 'bsim-min-cov',

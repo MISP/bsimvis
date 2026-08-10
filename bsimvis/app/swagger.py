@@ -2180,6 +2180,21 @@ class BinSimSearch(Resource):
             "max_coverage_b": {"description": "Maximum coverage for binary B"},
             "min_shared": {"description": "Minimum shared clusters", "example": 5},
             "max_shared": {"description": "Maximum shared clusters"},
+            "min_funcs": {
+                "description": "Minimum function count — both sides must reach it",
+                "example": 20,
+            },
+            "max_funcs": {
+                "description": "Maximum function count — both sides must stay under it"
+            },
+            "containers": {
+                "description": (
+                    "Container membership of the pair: 'both' (both sides are "
+                    "containers), 'any' (at least one), 'none' (plain files only). "
+                    "Empty = no filter."
+                ),
+                "example": "both",
+            },
             "sort_by": {
                 "description": "Sort by: score (default), coverage_a, coverage_b, shared_clusters, computed_at"
             },

@@ -49,10 +49,29 @@ TEST_BINARY = "./data/test/crypto_test"
 # step uploads a second one. Same architecture as TEST_BINARY, or every pair
 # scores zero and the sort checks compare nothing.
 SECOND_BINARY = "./data/test/v01_linux_x64"
-POLL_INTERVAL = 3  # seconds between pipeline status polls
+# A finished pipeline is only noticed at the next poll, so the interval is dead
+# time added to every wait in the suite. One second costs a few more cheap status
+# calls and stops the run rounding up to the next multiple of three.
+POLL_INTERVAL = 1  # seconds between pipeline status polls
 POLL_TIMEOUT = 300  # max seconds to wait for pipeline
 
 VERBOSE = "-v" in sys.argv or "--verbose" in sys.argv
+
+
+def _argv_opt(name):
+    """Value of `--name X` or `--name=X` on the command line, or None."""
+    for i, arg in enumerate(sys.argv):
+        if arg == name and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if arg.startswith(name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+# Substring of a step's function name; only matching steps run. The upload and
+# analysis prelude always runs regardless — every step reads the binaries it
+# produces — so this shortens iteration on one area, it does not skip fixtures.
+ONLY = _argv_opt("--only")
 
 # Populated after upload
 pipeline_id = None
@@ -4083,6 +4102,52 @@ if __name__ == "__main__":
     print(_color(f"  Verbose: {VERBOSE}", DIM))
     print(_color(f"{'='*60}", CYAN))
 
+    # run_all_tests() stays last: it deletes the collection on its way out.
+    STEPS = [
+        test_pool_annotation_propagation,
+        test_search_filters_and_sorting,
+        test_tag_vocabulary_and_llm_batch,
+        test_bin_sim_diff_cache,
+        test_pool_collection_equivalence,
+        test_archive_upload,
+        test_unpack_upload,
+        test_lineage,
+        test_container_similarity,
+        test_lib_tag_rollup,
+        run_all_tests,
+    ]
+
+    # Not every step is self-contained: some read state an earlier one creates.
+    # --only pulls those in, because a filter that reports a failure the full run
+    # does not have is worse than no filter. A step that passes in a full run but
+    # fails under --only means its entry here is missing.
+    STEP_DEPS = {
+        # Issues the /api/bin_sim/build whose doc the diff cache step reads.
+        "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
+    }
+
+    # Resolved before the prelude: a mistyped --only should fail now, not after
+    # several minutes of uploading and analysing binaries.
+    steps = STEPS
+    if ONLY:
+        picked = {s.__name__ for s in STEPS if ONLY in s.__name__}
+        if not picked:
+            print(_color(f"\n  No step matches --only {ONLY!r}. Available:", RED))
+            for s in STEPS:
+                print(f"    {s.__name__}")
+            sys.exit(2)
+
+        pending = list(picked)
+        while pending:
+            for dep in STEP_DEPS.get(pending.pop(), []):
+                if dep not in picked:
+                    picked.add(dep)
+                    pending.append(dep)
+
+        # Declaration order, so run_all_tests still deletes the collection last.
+        steps = [s for s in STEPS if s.__name__ in picked]
+        print(_color(f"  --only {ONLY!r} → {', '.join(s.__name__ for s in steps)}", CYAN))
+
     uploaded = upload_and_start()
     if uploaded:
         wait_for_pipeline()
@@ -4090,16 +4155,7 @@ if __name__ == "__main__":
         upload_second_binary()
 
     resolve_ids()
-    # Before run_all_tests(): that step deletes the collection on its way out.
-    test_pool_annotation_propagation()
-    test_search_filters_and_sorting()
-    test_tag_vocabulary_and_llm_batch()
-    test_bin_sim_diff_cache()
-    test_pool_collection_equivalence()
-    test_archive_upload()
-    test_unpack_upload()
-    test_lineage()
-    test_container_similarity()
-    test_lib_tag_rollup()
-    run_all_tests()
+
+    for step in steps:
+        step()
     print_summary()

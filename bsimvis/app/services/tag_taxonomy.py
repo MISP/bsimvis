@@ -208,6 +208,10 @@ def migrate_tag(tag_id):
     head = parts[0].lower()
 
     if head in ("origin", "severity", "category", "user"):
+        # `user:flag:...` is a legacy id `namespaced()` buried under `user:`
+        # after the split, not a human's word. Unbury it and migrate for real.
+        if head == "user" and len(parts) > 1 and parts[1].lower() in LEGACY_PREFIXES:
+            return migrate_tag(":".join(parts[1:]))
         return [raw]
     if head in FILE_SCOPE_NAMESPACES:
         return [raw]
@@ -217,6 +221,11 @@ def migrate_tag(tag_id):
         # `flag:crypto` (no risk segment) was also produced, by the batch writer
         # prepending the namespace to a bare vocabulary tag.
         rest = [p.lower() for p in parts[1:]]
+        # `flag:llm:benign:init` -- the batch writer prefixed `flag:` onto an id
+        # llm_service had already namespaced `llm:`. Both layers come off, else
+        # the risk segment sits behind `llm` and the severity is lost.
+        while rest and rest[0] in LEGACY_PREFIXES:
+            rest = rest[1:]
         if rest and rest[0] in LEGACY_RISK:
             out.append(severity_tag(LEGACY_RISK[rest[0]]))
             rest = rest[1:]
@@ -263,6 +272,12 @@ def demo():
     # Unknown capability behind a known prefix must not vanish silently.
     assert migrate_tag("flag:suspicious:invented") == ["severity:medium"]
     assert migrate_tag("flag:nonsense") == ["user:flag:nonsense"]
+    # Double-prefixed by the old writer disagreement.
+    assert migrate_tag("flag:llm:benign:init") == ["severity:none", "category:util:init"]
+    # ... and the same id after `namespaced()` buried it under `user:`.
+    assert migrate_tag("user:flag:llm:benign:init") == [
+        "severity:none", "category:util:init"]
+    assert migrate_tag("user:flag:nonsense") == ["user:flag:nonsense"]
 
     assert migrate_tag("lib:libc:2.31:memcpy") == ["origin:lib:libc:2.31:memcpy"]
     assert migrate_tag("lib:uclibc") == ["origin:lib:uclibc:unknown"]

@@ -1568,81 +1568,93 @@ function renderFileSimSankey(data) {
         const sColor = `hsl(${score * 120}, var(--color-s-med), var(--color-l-dim))`;
 
         if (g.sharedA > 0 || g.sharedB > 0) {
-            const mid = addNode(`fsk_s_${i}`, `${g.label} shared (${fmt(Math.max(g.sharedA, g.sharedB))} ${suffix})`, sColor, {
-                align: COL_MID, tagIdx: i, sort: i * 10,
-                tip: `${g.label} · shared\n${filenameA}: ${fmt(g.sharedA)} ${suffix}\n${filenameB}: ${fmt(g.sharedB)} ${suffix}\nMatch quality: ${(score * 100).toFixed(0)}%`,
+            const unionKeys = new Set([...g.flags.keys()]);
+            let flaggedA = 0, flaggedB = 0;
+            for (const v of g.flags.values()) {
+                flaggedA += v[0];
+                flaggedB += v[1];
+            }
+            const restA = Math.max(0, g.sharedA - flaggedA);
+            const restB = Math.max(0, g.sharedB - flaggedB);
+            if (restA > 0 || restB > 0) unionKeys.add('');
+
+            // Sort so unflagged is at the end, else by max size
+            const keys = [...unionKeys].sort((x, y) => {
+                if (x === '') return 1;
+                if (y === '') return -1;
+                const vx = g.flags.get(x);
+                const vy = g.flags.get(y);
+                const max_x = Math.max(vx[0], vx[1]);
+                const max_y = Math.max(vy[0], vy[1]);
+                return max_y - max_x;
             });
 
-            // The second axis, as a stage: this tag's matched mass, split by what
-            // was flagged on it. Provenance says whose code matched, the flag
-            // column says what that code does -- "30% matched, and it is
-            // suspicious" is one path through both. Unflagged mass is the
-            // remainder, never a stored bucket, so the two cannot drift apart.
-            //
-            // The split starts at the tag node, not at the flag column: one node
-            // fanning out into every flag reads as "all of libc is suspicious
-            // AND unflagged", the same misreading the shared/unmatched split
-            // exists to prevent. Every node in an outer column feeds exactly one
-            // bucket, here as everywhere else in this graph.
-            const flagParts = (side) => {
-                const total = side === 'a' ? g.sharedA : g.sharedB;
-                if (!hasFlags) return [['', total]];
-                const parts = [...g.flags.entries()]
-                    .map(([id, v]) => [id, side === 'a' ? v[0] : v[1]])
-                    .filter(([, v]) => v > 0)
-                    .sort((x, y) => y[1] - x[1]);
-                // Cells can undershoot their row when confidences are fractional
-                // (see AxisSplit._cross), so the remainder is clamped.
-                const rest = Math.max(0, total - parts.reduce((s, [, v]) => s + v, 0));
-                if (rest > 0) parts.push(['', rest]);
-                return parts;
-            };
+            keys.forEach((flagId, k) => {
+                const valA = flagId === '' ? restA : g.flags.get(flagId)[0];
+                const valB = flagId === '' ? restB : g.flags.get(flagId)[1];
+                if (valA <= 0 && valB <= 0) return;
 
-            // side 'a' flows tag -> flag -> shared; side 'b' mirrors it.
-            const sharedSide = (side) => {
-                const total = side === 'a' ? g.sharedA : g.sharedB;
-                if (total <= 0) return;
-                const name = side === 'a' ? filenameA : filenameB;
-                const outerTotal = side === 'a' ? totalA : totalB;
-                flagParts(side).forEach(([flagId, value], k) => {
-                    const lbl = flagId ? fileSimFlagLabel(flagId) : 'unflagged';
-                    const suffixLbl = hasFlags ? ` · ${lbl}` : '';
-                    const outer = addNode(
-                        hasFlags ? `fsk_${side}s_${i}_${k}` : `fsk_${side}s_${i}`,
-                        `${g.label}${marker}${suffixLbl} shared (${fmt(value)} ${suffix})`,
+                const lbl = flagId ? fileSimFlagLabel(flagId) : 'unflagged';
+                const suffixLbl = hasFlags ? ` · ${lbl}` : '';
+
+                // A single mid node for THIS specific flag combination, separating the flows completely
+                const mid = addNode(`fsk_s_${i}_${k}`, `${g.label}${suffixLbl} shared (${fmt(Math.max(valA, valB))} ${suffix})`, sColor, {
+                    align: COL_MID, tagIdx: i, sort: i * 10 + k * 0.01,
+                    tip: `${g.label}${suffixLbl} · shared\n${filenameA}: ${fmt(valA)} ${suffix}\n${filenameB}: ${fmt(valB)} ${suffix}\nMatch quality: ${(score * 100).toFixed(0)}%`,
+                });
+
+                if (valA > 0) {
+                    const outerA = addNode(
+                        hasFlags ? `fsk_as_${i}_${k}` : `fsk_as_${i}`,
+                        `${g.label}${marker}${suffixLbl} shared (${fmt(valA)} ${suffix})`,
                         tagColor,
                         {
-                            align: side === 'a' ? COL_A : COL_B,
-                            tagIdx: i, sort: i * 10 + k * 0.01,
+                            align: COL_A, tagIdx: i, sort: i * 10 + k * 0.01,
                             tagKey: g.key, expandable: g.expandable,
-                            tip: `${name} · ${g.label}${suffixLbl} — matched\n${fmt(value)} of ${fmt(outerTotal)} ${suffix}\n${stat}`,
+                            tip: `${filenameA} · ${g.label}${suffixLbl} — matched\n${fmt(valA)} of ${fmt(totalA)} ${suffix}\n${stat}`,
                         }
                     );
                     if (!hasFlags) {
-                        links.push(side === 'a'
-                            ? { source: outer.index, target: mid.index, value }
-                            : { source: mid.index, target: outer.index, value });
-                        return;
-                    }
-                    const flag = addNode(`fsk_fl_${side}_${i}_${k}`, `${lbl} (${fmt(value)} ${suffix})`,
-                        flagId ? FILESIM_FLAG_COLOR : 'var(--dim)', {
-                            align: side === 'a' ? 1 : 3, tagIdx: i, sort: i * 10 + k * 0.01,
-                            tip: flagId
-                                ? `${g.label} · ${lbl}\n${fmt(value)} of ${fmt(total)} matched ${suffix}`
-                                : `${g.label} · no flag raised\n${fmt(value)} of ${fmt(total)} matched ${suffix}`,
-                        });
-                    if (side === 'a') {
-                        links.push({ source: outer.index, target: flag.index, value });
-                        links.push({ source: flag.index, target: mid.index, value });
+                        links.push({ source: outerA.index, target: mid.index, value: valA });
                     } else {
-                        links.push({ source: mid.index, target: flag.index, value });
-                        links.push({ source: flag.index, target: outer.index, value });
+                        const flagA = addNode(`fsk_fl_a_${i}_${k}`, `${lbl} (${fmt(valA)} ${suffix})`,
+                            flagId ? FILESIM_FLAG_COLOR : 'var(--dim)', {
+                                align: 1, tagIdx: i, sort: i * 10 + k * 0.01,
+                                tip: flagId
+                                    ? `${g.label} · ${lbl}\n${fmt(valA)} of ${fmt(g.sharedA)} matched ${suffix}`
+                                    : `${g.label} · no flag raised\n${fmt(valA)} of ${fmt(g.sharedA)} matched ${suffix}`,
+                            });
+                        links.push({ source: outerA.index, target: flagA.index, value: valA });
+                        links.push({ source: flagA.index, target: mid.index, value: valA });
                     }
-                });
-            };
+                }
 
-            sharedSide('a');
-            sharedSide('b');
+                if (valB > 0) {
+                    const outerB = addNode(
+                        hasFlags ? `fsk_bs_${i}_${k}` : `fsk_bs_${i}`,
+                        `${g.label}${marker}${suffixLbl} shared (${fmt(valB)} ${suffix})`,
+                        tagColor,
+                        {
+                            align: COL_B, tagIdx: i, sort: i * 10 + k * 0.01,
+                            tagKey: g.key, expandable: g.expandable,
+                            tip: `${filenameB} · ${g.label}${suffixLbl} — matched\n${fmt(valB)} of ${fmt(totalB)} ${suffix}\n${stat}`,
+                        }
+                    );
+                    if (!hasFlags) {
+                        links.push({ source: mid.index, target: outerB.index, value: valB });
+                    } else {
+                        const flagB = addNode(`fsk_fl_b_${i}_${k}`, `${lbl} (${fmt(valB)} ${suffix})`,
+                            flagId ? FILESIM_FLAG_COLOR : 'var(--dim)', {
+                                align: 3, tagIdx: i, sort: i * 10 + k * 0.01,
+                                tip: flagId
+                                    ? `${g.label} · ${lbl}\n${fmt(valB)} of ${fmt(g.sharedB)} matched ${suffix}`
+                                    : `${g.label} · no flag raised\n${fmt(valB)} of ${fmt(g.sharedB)} matched ${suffix}`,
+                            });
+                        links.push({ source: mid.index, target: flagB.index, value: valB });
+                        links.push({ source: flagB.index, target: outerB.index, value: valB });
+                    }
+                }
+            });
         }
         if (g.uniqA > 0) {
             const mid = addNode(`fsk_ua_${i}`, `${g.label} only in ${filenameA} (${fmt(g.uniqA)} ${suffix})`, '#f92672', {

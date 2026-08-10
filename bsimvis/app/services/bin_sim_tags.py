@@ -402,6 +402,19 @@ class TagSplit:
         }
 
 
+# Separator for a flag *set* used as one matrix key. Flags overlap by design, so
+# the crossing with provenance is keyed by the whole set a function carries --
+# the only way a flow diagram can stay both conserving and countable in whole
+# functions. `flags_summary` still reports each flag's full mass separately,
+# where overlap is the point and the rows are free to exceed 100%.
+FLAG_COMBO_SEP = " + "
+
+
+def flag_combo(flags):
+    """Stable name for the set of flags one function carries."""
+    return FLAG_COMBO_SEP.join(sorted({tag_parent(f) for f in flags}))
+
+
 # Joint-matrix cell layout, mirroring what a Sankey column needs on each side:
 # matched and unmatched mass, in features and in function counts.
 MATRIX_SLOTS = ("w_shared_a", "w_shared_b", "w_uniq_a", "w_uniq_b",
@@ -438,7 +451,13 @@ class AxisSplit:
         return bool(self.fid_prov or self.fid_flags)
 
     def _cross(self, fid, weight, w_slot, n_slot):
-        """Spread one function's mass over its (provenance, flag) cells.
+        """Spread one function's mass over its (provenance, flag set) cells.
+
+        A function carrying `crypto` and `suspicious` goes to one cell named
+        for both, not half to each. Splitting it evenly conserved the totals but
+        made every count fractional, and left no node answering "how many
+        functions are suspicious" -- the flow would show 0.5 of a function under
+        each flag and none under the pair it actually is.
 
         Only flagged functions land here, so a provenance row's unflagged mass
         is what the row keeps after its cells are subtracted -- no bucket to
@@ -453,14 +472,14 @@ class AxisSplit:
         flags = self.fid_flags.get(fid)
         if not flags:
             return
+        combo = flag_combo(flags)
         prov = self.fid_prov.get(fid) or {TAG_UNTAGGED: 1.0}
-        n_p, n_f = len(prov), len(flags)
+        n_p = len(prov)
         for p, conf in prov.items():
             share = conf / n_p
-            for f in flags:
-                cell = self.matrix[tag_parent(p)][tag_parent(f)]
-                cell[w_slot] += weight * share / n_f
-                cell[n_slot] += share / n_f
+            cell = self.matrix[tag_parent(p)][combo]
+            cell[w_slot] += weight * share
+            cell[n_slot] += share
 
     def add_match(self, fid_a, fid_b, score, w_a, w_b):
         self.provenance.add_match(fid_a, fid_b, score, w_a, w_b)

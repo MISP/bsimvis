@@ -2841,6 +2841,68 @@ def test_bin_sim_diff_cache():
         f"got {_meta_md5((again or {}).get('file_metadata_a'))}, want {file_md5}",
     )
 
+    _check_diff_cache_expiry()
+
+
+def _check_diff_cache_expiry():
+    """Sliding-idle / hard-ceiling expiry, driven directly rather than by sleeping.
+
+    This runs in the test process, so it touches its own import of the module and
+    never the cache the live app is using. Timestamps are rewritten in place: a
+    real 60s idle wait or a 600s ceiling wait has no business in the suite.
+    """
+    try:
+        from bsimvis.app.routes import bin_sim as bs
+    except ImportError as exc:
+        print(_color(f"\n[SKIP] bsimvis not importable ({exc}) – expiry checks skipped.", YELLOW))
+        return
+
+    def seed(key, age, idle):
+        """Put `key` in the cache, hydrated `age`s ago and last read `idle`s ago."""
+        doc = {"key": key}
+        bs._diff_cache_put((key,), doc)
+        now = time.time()
+        with bs._DIFF_CACHE_LOCK:
+            bs._DIFF_CACHE[(key,)] = (now - age, now - idle, doc)
+        return doc
+
+    fresh = seed("ttl-fresh", age=0, idle=0)
+    check(
+        "diff cache: fresh entry is a hit",
+        bs._diff_cache_get(("ttl-fresh",)) is fresh,
+        "freshly stored doc was not returned",
+    )
+
+    seed("ttl-idle", age=0, idle=bs._DIFF_IDLE_TTL + 1)
+    check(
+        "diff cache: entry idle past the TTL is dropped",
+        bs._diff_cache_get(("ttl-idle",)) is None,
+        f"idle > {bs._DIFF_IDLE_TTL}s survived",
+    )
+
+    # The point of the sliding window: older than the idle TTL by hydration age,
+    # but read recently, so it stays — and the read pushes the idle clock forward.
+    slid = seed("ttl-slide", age=bs._DIFF_IDLE_TTL * 2, idle=1)
+    hit = bs._diff_cache_get(("ttl-slide",))
+    with bs._DIFF_CACHE_LOCK:
+        entry = bs._DIFF_CACHE.get(("ttl-slide",))
+    check(
+        "diff cache: continued use slides the idle window",
+        hit is slid and entry is not None and time.time() - entry[1] < 1,
+        f"hit={hit is slid}, entry={'missing' if entry is None else round(time.time() - entry[1], 3)}",
+    )
+
+    seed("ttl-ceiling", age=bs._DIFF_MAX_AGE + 1, idle=0)
+    check(
+        "diff cache: entry past the max age is dropped even when in use",
+        bs._diff_cache_get(("ttl-ceiling",)) is None,
+        f"age > {bs._DIFF_MAX_AGE}s survived a recent read",
+    )
+
+    with bs._DIFF_CACHE_LOCK:
+        for k in ("ttl-fresh", "ttl-slide"):
+            bs._DIFF_CACHE.pop((k,), None)
+
 
 # ---------------------------------------------------------------------------
 # Step 3d – Pool/collection equivalence (absorbed from test_pools.py)

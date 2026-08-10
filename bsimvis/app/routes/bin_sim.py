@@ -444,17 +444,23 @@ def _hydrate_diff(r, data_raw, coll_a, md5_a, coll_b, md5_b, pool_id, algo):
 # every filter, sort and tree-node expansion. Cache the hydrated doc so only the
 # first request pays. The requested A/B orientation is part of the key because
 # _flip_diff_sides rewrites the doc in place.
-# ponytail: TTL, not invalidation — a tag edit or a bin_sim rebuild shows up
-# within _DIFF_TTL. Add explicit invalidation on the rebuild/tag-write paths if
-# 60s of staleness turns out to matter.
+# Expiry is sliding, with a ceiling. _DIFF_IDLE_TTL measures time since the last
+# read, so someone who sits on one diff and keeps filtering never re-pays the
+# hydration mid-session; _DIFF_MAX_AGE measures time since hydration and expires
+# the entry regardless, so a tag edit or a cluster rebuild cannot be hidden
+# indefinitely by continuous use.
+# ponytail: expiry, not invalidation — the ceiling is how stale a doc can get.
+# A generation counter bumped on the rebuild and tag-write paths would make this
+# exact and let both numbers grow; add it if _DIFF_MAX_AGE has to be tuned.
 # ponytail: entries are capped by count, not by bytes. A hydrated 30k-function
 # doc is hundreds of MB and the app is one process, so the cap is deliberately
 # small — two entries is one pair held in both A/B orientations, which is the
 # working set of someone reading a diff. Measure bytes and cap on those if a
 # bigger window is ever wanted.
-_DIFF_TTL = 60
+_DIFF_IDLE_TTL = 60
+_DIFF_MAX_AGE = 600
 _DIFF_CACHE_MAX = 2
-_DIFF_CACHE = OrderedDict()  # key -> (stored_at, diff_data)
+_DIFF_CACHE = OrderedDict()  # key -> (hydrated_at, last_used, diff_data)
 # app.run() is threaded, so request threads share this dict: one thread can drop
 # an expired entry while another is between its lookup and its move_to_end.
 _DIFF_CACHE_LOCK = threading.Lock()
@@ -465,17 +471,20 @@ def _diff_cache_get(key):
         entry = _DIFF_CACHE.get(key)
         if not entry:
             return None
-        stored_at, doc = entry
-        if time.time() - stored_at > _DIFF_TTL:
+        hydrated_at, last_used, doc = entry
+        now = time.time()
+        if now - last_used > _DIFF_IDLE_TTL or now - hydrated_at > _DIFF_MAX_AGE:
             _DIFF_CACHE.pop(key, None)
             return None
+        _DIFF_CACHE[key] = (hydrated_at, now, doc)
         _DIFF_CACHE.move_to_end(key)
         return doc
 
 
 def _diff_cache_put(key, doc):
     with _DIFF_CACHE_LOCK:
-        _DIFF_CACHE[key] = (time.time(), doc)
+        now = time.time()
+        _DIFF_CACHE[key] = (now, now, doc)
         _DIFF_CACHE.move_to_end(key)
         while len(_DIFF_CACHE) > _DIFF_CACHE_MAX:
             _DIFF_CACHE.popitem(last=False)

@@ -3201,24 +3201,34 @@ def test_tag_vocabulary_and_llm_batch():
             label="POST /api/llm/batch/<id>/cancel (filters)",
         )
 
-    # --- batch: size cap refuses oversized selections up front ---
+    # --- batch: the size cap guards filter-resolved sets, not an explicit list.
+    #     A caller who named every id already knows how many there are. ---
     from bsimvis.app.services.llm_batch_service import max_batch_size
 
+    over = max_batch_size() + 1
     oversized = test_endpoint(
         "POST",
         "/api/llm/batch",
         data={
             "collection": COLLECTION,
             "func_ids": [
-                f"{COLLECTION}:func:{file_md5}:{i:08x}"
-                for i in range(max_batch_size() + 1)
+                f"{COLLECTION}:func:{file_md5}:{i:08x}" for i in range(over)
             ],
             "actions": ["notes"],
         },
-        expected_ok=False,
-        label="POST /api/llm/batch (over cap)",
+        label="POST /api/llm/batch (explicit selection over cap)",
     )
-    check("oversized batch refused", "error" in (oversized or {}), str(oversized)[:200])
+    check(
+        "explicit oversized batch accepted",
+        (oversized or {}).get("total") == over,
+        str(oversized)[:200],
+    )
+    if (oversized or {}).get("job_id"):
+        test_endpoint(
+            "POST",
+            f"/api/llm/batch/{oversized['job_id']}/cancel",
+            label="POST /api/llm/batch/<id>/cancel (over cap)",
+        )
 
     # --- invalid action is rejected ---
     bad = test_endpoint(

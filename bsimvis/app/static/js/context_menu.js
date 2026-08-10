@@ -413,6 +413,15 @@
                 <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>View Functions</span>
             </div>`;
+            // Same whole-scope enrichment a file offers, resolved from the
+            // cluster's member filter instead of an md5.
+            const clFilter = jsString('cluster_uuid=' + encodeURIComponent(norm.uuid));
+            actionsSubmenuHtml += renderLLMSubmenu([
+                { label: 'Summary (all members)', icon: 'fa-note-sticky', actions: "['notes']", opts: `{ filters: ${clFilter} }` },
+                { label: 'Tags (all members)', icon: 'fa-tags', actions: "['tags']", opts: `{ filters: ${clFilter} }` },
+                { label: 'Summary + tags (all members)', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", opts: `{ filters: ${clFilter} }` },
+                { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", opts: `{ filters: ${clFilter}, askPrompt: true }` }
+            ]);
         } else if (resolvedType === 'bin_cluster') {
             const fileClusterUrl = Nav.buildUIUrl(col, ['files']) + '?bin_cluster_uuid=' + encodeURIComponent(norm.uuid);
             actionsSubmenuHtml += `

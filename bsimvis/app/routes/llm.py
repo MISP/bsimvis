@@ -124,8 +124,9 @@ def _resolve_filters_to_ids(collection, filters, cap):
 
     args.setlist("collection", [collection])
     # One page, capped: a filter matching 200k functions must be refused up
-    # front, so ask for cap+1 and let the caller detect the overflow.
-    args.setlist("limit", [str(cap + 1)])
+    # front, so ask for cap+1 and let the caller detect the overflow. A cap of
+    # 0 turns the guard off, so ask for the export-sized page instead.
+    args.setlist("limit", [str(cap + 1 if cap > 0 else 100000)])
     args.setlist("offset", ["0"])
     args.setlist("format", [""])
 
@@ -177,6 +178,10 @@ def batch():
 
     cap = max_batch_size()
     func_ids = data.get("func_ids")
+    # The cap guards against a filter that quietly matches the whole collection.
+    # An explicit id list is not that: the caller already named every function,
+    # so refusing it only forces them to click the same batch through in slices.
+    explicit = bool(func_ids)
 
     if not func_ids:
         filters = data.get("filters")
@@ -190,11 +195,12 @@ def batch():
     if not func_ids:
         return {"error": "Selection resolved to zero functions"}, 400
 
-    if len(func_ids) > cap:
+    if not explicit and cap > 0 and len(func_ids) > cap:
         return {
             "error": (
-                f"Selection of {len(func_ids)} functions exceeds the batch cap "
-                f"of {cap}. Narrow the filter or raise llm.batch_max."
+                f"Filter matched {len(func_ids)} functions, over the batch cap "
+                f"of {cap}. Narrow the filter, raise llm.batch_max, or set it "
+                f"to 0 for no cap."
             ),
             "count": len(func_ids),
             "cap": cap,

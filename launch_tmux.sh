@@ -132,19 +132,30 @@ PROJECT_NAME="${PROJECT_NAME//./_}"
 CLEAN_TMUX=${CLEAN_TMUX:-$CLEAR}
 
 if [ "$CLEAN_TMUX" = "true" ]; then
-    # Try sending clean shutdown commands first
+    # Worker scopes are separate systemd units, not children of the tmux shell:
+    # kill-session alone leaves them running and still eating the queue.
+    #
+    # Stop them BEFORE the datastores, and in a single systemctl call. One call
+    # per unit inside a loop is what made teardown take N x (SIGTERM -> exit):
+    # `systemctl stop` blocks until that unit is gone, so ten workers stopped
+    # one after another instead of all at once. Passing every unit to one
+    # invocation enqueues independent stop jobs that systemd runs in parallel,
+    # so the wall time is the slowest worker, not their sum.
+    UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" 2>/dev/null | awk '{print $1}')
+    if [ -n "$UNITS" ]; then
+        echo "Stopping leftover worker scopes: $(echo $UNITS | tr '\n' ' ')"
+        systemctl --user stop $UNITS 2>/dev/null || true
+    fi
+
+    # Datastores go last. Killing Redis/Kvrocks first left every worker
+    # spinning on connection errors (1s sleep per failed loop) while it was
+    # still being asked to shut down -- slower teardown and a log full of
+    # noise for a shutdown that was going fine.
     if command -v redis-cli > /dev/null; then
         echo "Sending shutdown commands to Redis and Kvrocks..."
         redis-cli -p "${REDIS_PORT}" shutdown 2>/dev/null || true
         redis-cli -p "${KVROCKS_PORT}" shutdown 2>/dev/null || true
     fi
-
-    # Worker scopes are separate systemd units, not children of the tmux shell:
-    # kill-session alone leaves them running and still eating the queue.
-    for unit in $(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" 2>/dev/null | awk '{print $1}'); do
-        echo "Stopping leftover worker scope ${unit}..."
-        systemctl --user stop "${unit}" 2>/dev/null || true
-    done
 
     if tmux has-session -t "${PROJECT_NAME}" 2>/dev/null; then
         echo "Cleaning up tmux session ${PROJECT_NAME}..."

@@ -10,6 +10,9 @@ from bsimvis.app.services.job_service import JobService, JobType
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import normalize_tags
 from bsimvis.app.services.bin_sim_tags import (
+    EMPTY_SUMMARIES,
+    SPLIT_SCHEMA,
+    SUMMARY_FIELDS,
     TAG_UNTAGGED,
     normalize_tags as tag_ids,
     read_tags_rev,
@@ -295,6 +298,20 @@ def rebuild_bin_sim():
     }
 
 
+def _split_current(diff_data, cur_rev):
+    """Is this doc's tag split still the one we would compute today?
+
+    Two ways it can be out of date, and both must invalidate: the collection has
+    been re-tagged since (`tags_rev`), or the doc was written by an older
+    splitter and simply has no rows for axes that exist now (`split_schema`).
+    Revision alone is not enough -- a doc split before the four-axis rework
+    carries whatever revision was current then, which can equal today's.
+    """
+    if (diff_data.get("tags_rev") or 0) != cur_rev:
+        return False
+    return (diff_data.get("split_schema") or 0) >= SPLIT_SCHEMA
+
+
 def _swap_side_keys(d):
     """Swap every `<x>_a`/`<x>_b` (and `_1`/`_2`) pair in a dict, in place."""
     for key in list(d):
@@ -322,13 +339,13 @@ def _flip_tag_row(row):
 def _flip_diff_sides(diff_data):
     """Mirror a stored bin_sim doc so side A becomes side B and vice versa."""
     _swap_side_keys(diff_data)
-    # tags_summary is a list, so it is invisible to the top-level key swap.
-    for key in ("tags_summary", "flags_summary"):
+    # The summaries are lists, so they are invisible to the top-level key swap.
+    for key in SUMMARY_FIELDS:
         for row in diff_data.get(key) or []:
             _flip_tag_row(row)
-    # flag_matrix cells are positional too: [w_shared_a, w_shared_b, w_uniq_a,
+    # joint cells are positional too: [w_shared_a, w_shared_b, w_uniq_a,
     # w_uniq_b, n_shared_a, n_shared_b, n_uniq_a, n_uniq_b].
-    for row in (diff_data.get("flag_matrix") or {}).values():
+    for row in (diff_data.get("joint") or {}).values():
         for cell in row.values():
             if isinstance(cell, list) and len(cell) == 8:
                 cell[0:8] = [cell[1], cell[0], cell[3], cell[2],
@@ -583,7 +600,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # is about to draw predates the user's tagging.
     cur_rev = read_tags_rev(r, f"global:pool:{pool_id}" if pool_id else collection)
     diff_data = _diff_cache_get(key)
-    if diff_data is not None and (diff_data.get("tags_rev") or 0) != cur_rev:
+    if diff_data is not None and not _split_current(diff_data, cur_rev):
         diff_data = None
     if diff_data is None:
         data_raw = r.get(sid)
@@ -604,7 +621,7 @@ def get_bin_sim(collection=None, md5_a=None, md5_b=None, coll_b=None, pool_id=No
     # Tags changed since this pair was split. The score is unaffected -- it comes
     # from the matched edges alone -- so this offers a resplit rather than
     # invalidating the pair.
-    diff_data["tags_stale"] = (diff_data.get("tags_rev") or 0) != cur_rev
+    diff_data["tags_stale"] = not _split_current(diff_data, cur_rev)
 
     # The canonical-md5 lookup above may have swapped these; everything below
     # answers in the order the caller asked for.
@@ -657,9 +674,7 @@ def _sankey_summary(diff_data):
             "unique_to_a": len(diff.get("unique_to_a", [])),
             "unique_to_b": len(diff.get("unique_to_b", [])),
         }
-        out["tags_summary"] = []
-        out["flags_summary"] = []
-        out["flag_matrix"] = {}
+        out.update(EMPTY_SUMMARIES)
         return out
 
     def feat(fid):
@@ -703,9 +718,9 @@ def _sankey_summary(diff_data):
             "score",
             "file_metadata_a",
             "file_metadata_b",
-            "tags_summary",
-            "flags_summary",
-            "flag_matrix",
+            *SUMMARY_FIELDS,
+            "joint",
+            "split_schema",
             "tags_stale",
         )
     }

@@ -18,10 +18,14 @@ from flask import Flask  # noqa: E402
 from bsimvis.app.services.bin_sim_tags import (  # noqa: E402
     TAG_MISMATCH,
     TAG_UNTAGGED,
-    AXIS_FLAGS,
-    AXIS_PROVENANCE,
+    AXIS_CATEGORY,
+    AXIS_ORIGIN,
+    AXIS_SEVERITY,
+    AXIS_USER,
+    SPLIT_SCHEMA,
     AxisSplit,
     TagSplit,
+    joint_marginal,
     merge_tag_fields,
     normalize_tags,
     parse_tag_id,
@@ -37,33 +41,33 @@ def by_id(rows):
 
 
 def test_normalize_and_parse():
-    assert normalize_tags(["lib:libc:2.31"]) == {"lib:libc:2.31": 1.0}
-    assert normalize_tags({"lib:libc": 0.5}) == {"lib:libc": 0.5}
+    assert normalize_tags(["origin:lib:libc:2.31"]) == {"origin:lib:libc:2.31": 1.0}
+    assert normalize_tags({"origin:lib:libc:unknown": 0.5}) == {"origin:lib:libc:unknown": 0.5}
     assert normalize_tags(None) == {}
     assert normalize_tags("nonsense") == {}
 
     # Matching keeps the function name; only display rolls up.
-    assert tag_parent("lib:libc:2.31:memcpy") == "lib:libc:2.31"
-    assert tag_parent("lib:libc:2.31") == "lib:libc:2.31"
+    assert tag_parent("origin:lib:libc:2.31:memcpy") == "origin:lib:libc:2.31"
+    assert tag_parent("origin:lib:libc:2.31") == "origin:lib:libc:2.31"
     assert tag_parent(TAG_UNTAGGED) == TAG_UNTAGGED
-    assert parse_tag_id("lib:libc:2.31:memcpy") == ("lib", "libc", "2.31")
+    assert parse_tag_id("origin:lib:libc:2.31:memcpy") == ("lib", "libc", "2.31")
     assert parse_tag_id("mytag") == ("user", "mytag", "")
 
 
 def test_shared_tag_split():
     fid_tags = {
-        "a1": {"lib:libc:2.31:memcpy": 1.0},
-        "b1": {"lib:libc:2.31:memcpy": 1.0},
-        "a2": {"bundle:mirai_core": 1.0},
-        "b2": {"bundle:mirai_core": 1.0},
+        "a1": {"origin:lib:libc:2.31:memcpy": 1.0},
+        "b1": {"origin:lib:libc:2.31:memcpy": 1.0},
+        "a2": {"origin:bundle:mirai_core:unknown": 1.0},
+        "b2": {"origin:bundle:mirai_core:unknown": 1.0},
     }
     ts = TagSplit(fid_tags)
     ts.add_match("a1", "b1", 0.5, 10.0, 10.0)
     ts.add_match("a2", "b2", 1.0, 30.0, 30.0)
     rows = by_id(ts.summary(40.0, 40.0))
 
-    libc = rows["lib:libc:2.31"]
-    mirai = rows["bundle:mirai_core"]
+    libc = rows["origin:lib:libc:2.31"]
+    mirai = rows["origin:bundle:mirai_core:unknown"]
     # Per-tag score is that tag's own cohesion, not the pair's blended 0.875.
     assert abs(libc["score"] - 0.5) < 1e-9, libc["score"]
     assert abs(mirai["score"] - 1.0) < 1e-9
@@ -72,7 +76,7 @@ def test_shared_tag_split():
     assert abs(mirai["contribution_pct"] - 75.0) < 1e-9
     assert abs(libc["coverage_pct_a"] - 25.0) < 1e-9
     # The func-level tag survives as a child of its lib:name:version parent.
-    assert [c["tag_id"] for c in libc["children"]] == ["lib:libc:2.31:memcpy"]
+    assert [c["tag_id"] for c in libc["children"]] == ["origin:lib:libc:2.31:memcpy"]
     assert mirai["children"] == []
 
 
@@ -82,9 +86,9 @@ def test_disagreement_stays_on_its_own_tag():
     the real tag while its unmatched mass stayed, so every library rendered as an
     almost entirely unmatched flow."""
     fid_tags = {
-        "a1": {"lib:libc:2.31": 1.0},
-        "b1": {"lib:uclibc:0.9": 1.0},  # both tagged, nothing in common
-        "a2": {"lib:libc:2.31": 1.0},
+        "a1": {"origin:lib:libc:2.31": 1.0},
+        "b1": {"origin:lib:uclibc:0.9": 1.0},  # both tagged, nothing in common
+        "a2": {"origin:lib:libc:2.31": 1.0},
         "b2": {},  # one side has no evidence at all
     }
     ts = TagSplit(fid_tags)
@@ -93,13 +97,13 @@ def test_disagreement_stays_on_its_own_tag():
     rows = by_id(ts.summary(20.0, 20.0))
 
     # A's libc mass is on libc, matched, both times -- not shunted elsewhere.
-    assert abs(rows["lib:libc:2.31"]["weight_a"] - 20.0) < 1e-9
-    assert abs(rows["lib:libc:2.31"]["weight_b"]) < 1e-9
-    assert abs(rows["lib:uclibc:0.9"]["weight_b"] - 10.0) < 1e-9
+    assert abs(rows["origin:lib:libc:2.31"]["weight_a"] - 20.0) < 1e-9
+    assert abs(rows["origin:lib:libc:2.31"]["weight_b"]) < 1e-9
+    assert abs(rows["origin:lib:uclibc:0.9"]["weight_b"] - 10.0) < 1e-9
     # B's untagged partner is reported as untagged, on B's side only.
     assert abs(rows[TAG_UNTAGGED]["weight_b"] - 10.0) < 1e-9
     # Disagreement is still visible, as a field rather than a stolen bucket.
-    assert abs(rows["lib:libc:2.31"]["mismatch_weight_a"] - 20.0) < 1e-9
+    assert abs(rows["origin:lib:libc:2.31"]["mismatch_weight_a"] - 20.0) < 1e-9
     assert TAG_MISMATCH not in rows
 
 
@@ -110,11 +114,11 @@ def test_drift_names_its_counterpart():
     version-drift finding while a bare count is not.
     """
     fid_tags = {
-        "a1": {"lib:libc:2.31:memcpy": 1.0},
-        "b1": {"lib:libc:2.35:memcpy": 1.0},  # same lib, drifted version
-        "a2": {"lib:zlib:1.2:inflate": 1.0},
-        "b2": {"lib:zlib:1.2:inflate": 1.0},  # clean match
-        "a3": {"lib:libc:2.31:strlen": 1.0},
+        "a1": {"origin:lib:libc:2.31:memcpy": 1.0},
+        "b1": {"origin:lib:libc:2.35:memcpy": 1.0},  # same lib, drifted version
+        "a2": {"origin:lib:zlib:1.2:inflate": 1.0},
+        "b2": {"origin:lib:zlib:1.2:inflate": 1.0},  # clean match
+        "a3": {"origin:lib:libc:2.31:strlen": 1.0},
         "b3": {},  # no evidence: untagged, not drift
     }
     ts = TagSplit(fid_tags)
@@ -124,13 +128,13 @@ def test_drift_names_its_counterpart():
     rows = by_id(ts.summary(30.0, 30.0))
 
     # Counterpart is rolled up to its display parent, not left per-function.
-    assert rows["lib:libc:2.31"]["drift"] == {"lib:libc:2.35": 10.0}
+    assert rows["origin:lib:libc:2.31"]["drift"] == {"origin:lib:libc:2.35": 10.0}
     # A clean match drifts nowhere.
-    assert rows["lib:zlib:1.2"]["drift"] == {}
+    assert rows["origin:lib:zlib:1.2"]["drift"] == {}
     # An untagged partner is absence of evidence, not disagreement.
-    assert TAG_UNTAGGED not in rows["lib:libc:2.31"]["drift"]
+    assert TAG_UNTAGGED not in rows["origin:lib:libc:2.31"]["drift"]
     # The counterpart's row records the drift symmetrically, from its own side.
-    assert rows["lib:libc:2.35"]["drift"] == {"lib:libc:2.31": 10.0}
+    assert rows["origin:lib:libc:2.35"]["drift"] == {"origin:lib:libc:2.31": 10.0}
     # Drift never exceeds the mismatch mass it explains. Both sides, because a
     # tag's row is side-agnostic and B-side tags carry their disagreement in
     # mismatch_weight_b.
@@ -142,15 +146,15 @@ def test_drift_names_its_counterpart():
 def test_one_sided_tag_does_not_inflate_unmatched():
     """The reported symptom: libc showing a huge unmatched flow. 3 of A's 4 libc
     functions matched, so at most a quarter of libc may read as unmatched."""
-    fid_tags = {("a%d" % i): {"lib:libc": 1.0} for i in range(4)}
+    fid_tags = {("a%d" % i): {"origin:lib:libc:unknown": 1.0} for i in range(4)}
     fid_tags.update(
-        {"b1": {}, "b2": {"lib:libc": 1.0}, "b3": {}}
+        {"b1": {}, "b2": {"origin:lib:libc:unknown": 1.0}, "b3": {}}
     )  # FID missed 2 of B's
     ts = TagSplit(fid_tags)
     for a, b in (("a0", "b1"), ("a1", "b2"), ("a2", "b3")):
         ts.add_match(a, b, 0.9, 10.0, 10.0)
     ts.add_unique("a3", 10.0, "a")
-    libc = by_id(ts.summary(40.0, 30.0))["lib:libc"]
+    libc = by_id(ts.summary(40.0, 30.0))["origin:lib:libc:unknown"]
 
     assert abs(libc["weight_a"] - 30.0) < 1e-9, "3 matched libc funcs, all on libc"
     assert abs(libc["unique_weight_a"] - 10.0) < 1e-9
@@ -163,15 +167,15 @@ def test_one_sided_tag_does_not_inflate_unmatched():
 
 def test_asymmetric_sides_and_unique_flow():
     fid_tags = {
-        "a1": {"lib:libc": 1.0},
-        "b1": {"lib:libc": 1.0},
-        "a9": {"lib:libc": 1.0},
+        "a1": {"origin:lib:libc:unknown": 1.0},
+        "b1": {"origin:lib:libc:unknown": 1.0},
+        "a9": {"origin:lib:libc:unknown": 1.0},
     }
     ts = TagSplit(fid_tags)
     ts.add_match("a1", "b1", 1.0, 40.0, 10.0)  # same function, different feature counts
     ts.add_unique("a9", 50.0, "a")  # libc mass present only in A
     rows = by_id(ts.summary(90.0, 10.0))
-    libc = rows["lib:libc"]
+    libc = rows["origin:lib:libc:unknown"]
     # Each side keeps its own weight instead of both being the max.
     assert abs(libc["weight_a"] - 40.0) < 1e-9
     assert abs(libc["weight_b"] - 10.0) < 1e-9
@@ -184,21 +188,21 @@ def test_asymmetric_sides_and_unique_flow():
 
 def test_fractional_allocation_and_bins():
     fid_tags = {
-        "a1": {"lib:libc": 1.0, "bundle:utils": 1.0},
-        "b1": {"lib:libc": 1.0, "bundle:utils": 0.5},
+        "a1": {"origin:lib:libc:unknown": 1.0, "origin:bundle:utils:unknown": 1.0},
+        "b1": {"origin:lib:libc:unknown": 1.0, "origin:bundle:utils:unknown": 0.5},
     }
     ts = TagSplit(fid_tags)
     ts.add_match("a1", "b1", 0.8, 10.0, 10.0)
     rows = by_id(ts.summary(10.0, 10.0))
     # min-weight pairing, then split across the two shared tags. matched_weight is
     # two-sided (5.0 from each of A and B), since each side is attributed separately.
-    assert abs(rows["lib:libc"]["matched_weight"] - 10.0) < 1e-9
-    assert abs(rows["bundle:utils"]["matched_weight"] - 5.0) < 1e-9
-    assert abs(rows["lib:libc"]["weight_a"] - 5.0) < 1e-9
+    assert abs(rows["origin:lib:libc:unknown"]["matched_weight"] - 10.0) < 1e-9
+    assert abs(rows["origin:bundle:utils:unknown"]["matched_weight"] - 5.0) < 1e-9
+    assert abs(rows["origin:lib:libc:unknown"]["weight_a"] - 5.0) < 1e-9
     # score 0.8 lands in the 5%-wide bin 16 (0.80-0.85), which the UI re-aggregates.
-    assert list(rows["lib:libc"]["bins"].keys()) == ["16"]
+    assert list(rows["origin:lib:libc:unknown"]["bins"].keys()) == ["16"]
     # [count_a, weight_a, count_b, weight_b]
-    assert rows["lib:libc"]["bins"]["16"] == [0.5, 5.0, 0.5, 5.0]
+    assert rows["origin:lib:libc:unknown"]["bins"]["16"] == [0.5, 5.0, 0.5, 5.0]
 
 
 def test_bins_reconcile_with_side_weights():
@@ -206,17 +210,17 @@ def test_bins_reconcile_with_side_weights():
     labels it from weight_a/unique_weight_a. If the bins did not sum to weight_a the
     drawn height and the printed count would disagree."""
     fid_tags = {
-        "a1": {"lib:libc": 1.0},
-        "b1": {"lib:libc": 1.0},
-        "a2": {"lib:libc": 1.0},
-        "b2": {"lib:libc": 1.0},
-        "a3": {"lib:libc": 1.0},
+        "a1": {"origin:lib:libc:unknown": 1.0},
+        "b1": {"origin:lib:libc:unknown": 1.0},
+        "a2": {"origin:lib:libc:unknown": 1.0},
+        "b2": {"origin:lib:libc:unknown": 1.0},
+        "a3": {"origin:lib:libc:unknown": 1.0},
     }
     ts = TagSplit(fid_tags)
     ts.add_match("a1", "b1", 0.95, 12.0, 9.0)
     ts.add_match("a2", "b2", 0.30, 7.0, 5.0)  # a different bin
     ts.add_unique("a3", 4.0, "a")
-    libc = by_id(ts.summary(23.0, 14.0))["lib:libc"]
+    libc = by_id(ts.summary(23.0, 14.0))["origin:lib:libc:unknown"]
 
     bins = libc["bins"].values()
     assert len(libc["bins"]) == 2, "two distinct similarity bins"
@@ -249,13 +253,13 @@ _DIFF = {
         "unique_to_b": [{"func_id": "fb4"}],
     },
     "functions_metadata": {
-        "fa1": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
-        "fb1": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
-        "fa2": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
-        "fb2": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
-        "fa3": {"name": "inflate", "tags": ["lib:zlib:1.2:inflate"]},
-        "fb3": {"name": "inflate", "tags": ["lib:zlib:1.2:inflate"]},
-        "fa4": {"name": "memcpy", "tags": ["lib:libc:2.31:memcpy"]},
+        "fa1": {"name": "memcpy", "tags": ["origin:lib:libc:2.31:memcpy"]},
+        "fb1": {"name": "memcpy", "tags": ["origin:lib:libc:2.31:memcpy"]},
+        "fa2": {"name": "memcpy", "tags": ["origin:lib:libc:2.31:memcpy"]},
+        "fb2": {"name": "memcpy", "tags": ["origin:lib:libc:2.31:memcpy"]},
+        "fa3": {"name": "inflate", "tags": ["origin:lib:zlib:1.2:inflate"]},
+        "fb3": {"name": "inflate", "tags": ["origin:lib:zlib:1.2:inflate"]},
+        "fa4": {"name": "memcpy", "tags": ["origin:lib:libc:2.31:memcpy"]},
         "fa5": {"name": "FUN_00401234", "tags": []},
         "fa6": {"name": "FUN_00401299", "tags": []},
         "fb4": {"name": "helper", "tags": []},
@@ -279,11 +283,12 @@ def test_union_table_carries_state():
 
 def test_tag_scope_is_a_prefix_match():
     """Selecting a tree node catches everything under it, at any depth."""
-    assert page("tags=lib:libc:2.31")["total"] == 3  # its per-function children
-    assert page("tags=lib")["total"] == 4  # the whole namespace
+    assert page("tags=origin:lib:libc:2.31")["total"] == 3  # per-function children
+    assert page("tags=origin:lib")["total"] == 4  # the whole library namespace
+    assert page("tags=origin")["total"] == 4  # every origin, at the root
     assert page("tags=original_code")["total"] == 3  # untagged is selectable
     # Prefix must respect the separator: `lib` must not match a `libfoo:` tag.
-    assert page("tags=lib:libc:2")["total"] == 0
+    assert page("tags=origin:lib:libc:2")["total"] == 0
 
 
 def test_fold_by_name_pages_over_names():
@@ -341,7 +346,7 @@ class _FakeRedis:
 # fa1 < fb1, and the key puts the larger fid first (similarity_service.py:1061).
 _PAIR_DOCS = {
     "main:sim:uc:fb1::fa1": json.dumps({"tags": ["crypto"], "user_tags": ["bookmark"]}),
-    "main:sim:uc:fb2::fa2": json.dumps({"tags": [], "user_tags": ["lib:libc:review"]}),
+    "main:sim:uc:fb2::fa2": json.dumps({"tags": [], "user_tags": ["origin:lib:libc:review"]}),
     # fb3::fa3 deliberately absent: a pair with no doc must still page fine.
 }
 
@@ -377,9 +382,12 @@ def test_matched_rows_carry_the_pairs_tags():
 def test_similarity_tag_filter():
     assert tag_page("sim_tags=crypto")["total"] == 1
     assert tag_page("sim_tags=bookmark")["total"] == 1, "user tags count too"
-    # Namespace prefix, same rule as the tree's scope.
-    assert tag_page("sim_tags=lib")["total"] == 1
-    assert tag_page("sim_tags=lib:libc:review")["total"] == 1
+    # Namespace prefix, same rule as the tree's scope. Origin ids lead with
+    # `origin:` now, so a filter written against the old `lib` bucket no longer
+    # matches -- a deliberate hard break, not a regression.
+    assert tag_page("sim_tags=lib")["total"] == 0
+    assert tag_page("sim_tags=origin")["total"] == 1
+    assert tag_page("sim_tags=origin:lib:libc:review")["total"] == 1
     assert tag_page("sim_tags=nope")["total"] == 0
     # Unmatched rows have no pair, so a similarity-tag filter excludes them.
     assert all(i["state"] == "matched" for i in tag_page("sim_tags=crypto")["items"])
@@ -397,101 +405,150 @@ def test_similarity_tag_exclude():
 
 
 def test_axis_routing_and_parents():
-    assert tag_axis("lib:libc:2.31") == AXIS_PROVENANCE
-    assert tag_axis("bundle:mirai") == AXIS_PROVENANCE
-    assert tag_axis("flag:suspicious:c2") == AXIS_FLAGS
-    assert tag_axis("llm:crypto") == AXIS_FLAGS, "legacy LLM prefix stays a flag"
-    # An unrecognised tag must not be able to empty original_code.
-    assert tag_axis("mirai") == AXIS_FLAGS
-    # Provenance rolls up at version, flags at the behaviour they refine.
-    assert tag_parent("flag:suspicious:c2") == "flag:suspicious"
-    assert tag_parent("lib:libc:2.31:memcpy") == "lib:libc:2.31"
+    assert tag_axis("origin:lib:libc:2.31") == AXIS_ORIGIN
+    assert tag_axis("origin:bundle:mirai:unknown") == AXIS_ORIGIN
+    assert tag_axis("severity:high") == AXIS_SEVERITY
+    assert tag_axis("category:network:c2") == AXIS_CATEGORY
+    assert tag_axis("user:bookmark") == AXIS_USER
+    # An unrecognised tag came from a human, and must not be able to empty
+    # original_code or dilute the behaviour percentages.
+    assert tag_axis("mirai") == AXIS_USER
+    # Origin rolls up at version, category at the behaviour group it refines.
+    assert tag_parent("category:network:c2") == "category:network"
+    assert tag_parent("origin:lib:libc:2.31:memcpy") == "origin:lib:libc:2.31"
+    # A bundle carries a placeholder version precisely so this depth is uniform.
+    assert tag_parent("origin:bundle:mirai:unknown:scan") == "origin:bundle:mirai:unknown"
+    # Severity is one segment deep and is already its own parent.
+    assert tag_parent("severity:high") == "severity:high"
 
 
-def test_provenance_resolves_by_priority():
-    tags = {"lib:libc:2.31": 1.0, "bundle:mirai": 1.0, "flag:suspicious": 1.0}
+def test_origin_resolves_by_priority():
+    tags = {
+        "origin:lib:libc:2.31": 1.0,
+        "origin:bundle:mirai:unknown": 1.0,
+        "category:network:c2": 1.0,
+    }
     axes = split_axes(tags)
     # Function ID matched actual bytes; the bundle tag labelled a whole binary.
-    assert axes[AXIS_PROVENANCE] == {"lib:libc:2.31": 1.0}
-    assert axes[AXIS_FLAGS] == {"flag:suspicious": 1.0}
+    assert axes[AXIS_ORIGIN] == {"origin:lib:libc:2.31": 1.0}
+    assert axes[AXIS_CATEGORY] == {"category:network:c2": 1.0}
+    assert axes[AXIS_SEVERITY] == {} and axes[AXIS_USER] == {}
 
     # An explicit priority overrides the namespace default...
-    meta = {"bundle:mirai": {"priority": 500}}
-    assert set(split_axes(tags, meta)[AXIS_PROVENANCE]) == {"bundle:mirai"}
+    meta = {"origin:bundle:mirai:unknown": {"priority": 500}}
+    assert set(split_axes(tags, meta)[AXIS_ORIGIN]) == {"origin:bundle:mirai:unknown"}
     # ...and a genuine tie keeps the even split, which is the honest answer.
-    meta = {"bundle:mirai": {"priority": 100}}
-    assert set(split_axes(tags, meta)[AXIS_PROVENANCE]) == {
-        "lib:libc:2.31",
-        "bundle:mirai",
+    meta = {"origin:bundle:mirai:unknown": {"priority": 100}}
+    assert set(split_axes(tags, meta)[AXIS_ORIGIN]) == {
+        "origin:lib:libc:2.31",
+        "origin:bundle:mirai:unknown",
     }
 
 
-def test_flag_does_not_dilute_provenance():
+def test_analysis_tag_does_not_dilute_origin():
     """The regression this whole split exists to prevent.
 
-    Under one flat tag space, flagging a function halved its library's mass and
-    evicted genuinely original code from `original_code` -- that bucket only
-    fills when a function carries no tag at all.
+    Under one flat tag space, tagging a function's behaviour halved its
+    library's mass and evicted genuinely original code from `original_code` --
+    that bucket only fills when a function carries no tag at all.
     """
-    plain = AxisSplit({"a1": {"lib:libc:2.31": 1.0}, "b1": {"lib:libc:2.31": 1.0}})
+    plain = AxisSplit({"a1": {"origin:lib:libc:2.31": 1.0}, "b1": {"origin:lib:libc:2.31": 1.0}})
     plain.add_match("a1", "b1", 1.0, 10.0, 10.0)
     plain.add_unique("a2", 10.0, "a")
     base = by_id(plain.summaries(20.0, 10.0)["tags_summary"])
 
-    flagged = AxisSplit(
+    tagged = AxisSplit(
         {
-            "a1": {"lib:libc:2.31": 1.0, "flag:suspicious:c2": 1.0},
-            "b1": {"lib:libc:2.31": 1.0},
-            "a2": {"flag:suspicious:c2": 1.0},
+            "a1": {"origin:lib:libc:2.31": 1.0, "category:network:c2": 1.0},
+            "b1": {"origin:lib:libc:2.31": 1.0},
+            "a2": {"category:network:c2": 1.0},
         }
     )
-    flagged.add_match("a1", "b1", 1.0, 10.0, 10.0)
-    flagged.add_unique("a2", 10.0, "a")
-    out = flagged.summaries(20.0, 10.0)
+    tagged.add_match("a1", "b1", 1.0, 10.0, 10.0)
+    tagged.add_unique("a2", 10.0, "a")
+    out = tagged.summaries(20.0, 10.0)
     rows = by_id(out["tags_summary"])
 
-    assert rows["lib:libc:2.31"]["weight_a"] == base["lib:libc:2.31"]["weight_a"]
-    # a2 is flagged but still nobody's library code, so it stays original.
+    assert rows["origin:lib:libc:2.31"]["weight_a"] == base["origin:lib:libc:2.31"]["weight_a"]
+    # a2 has a behaviour but is still nobody's library code, so it stays original.
     assert rows[TAG_UNTAGGED]["unique_weight_a"] == 10.0
 
-    flags = by_id(out["flags_summary"])
-    assert set(flags) == {"flag:suspicious"}
-    # Flags overlay: the flag claims its functions whole, on top of provenance.
-    assert flags["flag:suspicious"]["weight_a"] == 10.0
-    assert flags["flag:suspicious"]["unique_weight_a"] == 10.0
-    # "No flag raised" is the absence of a finding, not a row competing with one.
-    assert TAG_UNTAGGED not in flags
+    cats = by_id(out["category_summary"])
+    assert set(cats) == {"category:network"}
+    # Behaviour overlays: the tag claims its functions whole, on top of origin.
+    assert cats["category:network"]["weight_a"] == 10.0
+    assert cats["category:network"]["unique_weight_a"] == 10.0
+    # "No behaviour found" is the absence of a finding, not a row competing
+    # with one -- only origin gets an untagged bucket.
+    assert TAG_UNTAGGED not in cats
+    assert out["severity_summary"] == [] and out["user_summary"] == []
 
 
-def test_flag_matrix_crosses_the_two_axes():
-    """The Sankey's third stage: which part of libc's match is flagged."""
+def test_joint_crosses_origin_and_category():
+    """The Sankey's third stage: which part of libc's match is network code."""
     split = AxisSplit(
         {
-            "a1": {"lib:libc:2.31": 1.0, "flag:suspicious:c2": 1.0},
-            "b1": {"lib:libc:2.31": 1.0},
-            "a2": {"lib:libc:2.31": 1.0},
-            "b2": {"lib:libc:2.31": 1.0},
+            "a1": {"origin:lib:libc:2.31": 1.0, "category:network:c2": 1.0},
+            "b1": {"origin:lib:libc:2.31": 1.0},
+            "a2": {"origin:lib:libc:2.31": 1.0},
+            "b2": {"origin:lib:libc:2.31": 1.0},
         }
     )
     split.add_match("a1", "b1", 1.0, 10.0, 10.0)
     split.add_match("a2", "b2", 1.0, 30.0, 30.0)
     out = split.summaries(40.0, 40.0)
 
-    cell = out["flag_matrix"]["lib:libc:2.31"]["flag:suspicious"]
-    assert cell[0] == 10.0, "A-side matched mass that is both libc and flagged"
-    assert cell[1] == 0.0, "B never carried the flag"
+    crossed = joint_marginal(out["joint"], AXIS_ORIGIN, AXIS_CATEGORY)
+    cell = crossed["origin:lib:libc:2.31"]["category:network"]
+    assert cell[0] == 10.0, "A-side matched mass that is both libc and network"
+    assert cell[1] == 0.0, "B never carried the behaviour"
     assert cell[4] == 1.0, "one function"
 
-    # Unflagged mass is the row minus its cells, so nothing has to be stored for
+    # Untagged mass is the row minus its cells, so nothing has to be stored for
     # it and the two can never drift apart.
-    row = by_id(out["tags_summary"])["lib:libc:2.31"]
+    row = by_id(out["tags_summary"])["origin:lib:libc:2.31"]
     assert row["weight_a"] - cell[0] == 30.0
 
 
+def test_joint_serves_every_axis_mode():
+    """Ten Sankey modes, one stored table: each view is a marginal of it."""
+    split = AxisSplit(
+        {
+            "a1": {
+                "origin:lib:libc:2.31": 1.0,
+                "severity:high": 1.0,
+                "category:network:c2": 1.0,
+            },
+            "b1": {"origin:lib:libc:2.31": 1.0, "severity:high": 1.0},
+            "a2": {"severity:low": 1.0, "category:util:init": 1.0},
+            "b2": {"severity:low": 1.0, "category:util:init": 1.0},
+        }
+    )
+    split.add_match("a1", "b1", 1.0, 10.0, 10.0)
+    split.add_match("a2", "b2", 1.0, 40.0, 40.0)
+    out = split.summaries(50.0, 50.0)
+    assert out["split_schema"] == SPLIT_SCHEMA
+
+    # The cross the whole redesign was asked for: high-severity network mass.
+    sev_cat = joint_marginal(out["joint"], AXIS_SEVERITY, AXIS_CATEGORY)
+    assert sev_cat["severity:high"]["category:network"][0] == 10.0
+    assert sev_cat["severity:low"]["category:util"][0] == 40.0
+    # a2 carries no origin, so crossing severity with origin must attribute it
+    # to original_code rather than dropping it.
+    sev_origin = joint_marginal(out["joint"], AXIS_SEVERITY, AXIS_ORIGIN)
+    assert sev_origin["severity:low"][TAG_UNTAGGED][0] == 40.0
+
+    # A single-axis view is the same call with one axis, and must conserve the
+    # same total however the joint is sliced.
+    for axis in (AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY):
+        single = joint_marginal(out["joint"], axis)
+        assert sum(c[0] for row in single.values() for c in row.values()) == 50.0, axis
+
+
 def test_merge_tag_fields_reads_both_fields():
-    meta = {"tags": ["lib:libc:2.31"], "user_tags": ["flag:suspicious", "lib:libc:2.31"]}
+    meta = {"tags": ["origin:lib:libc:2.31"], "user_tags": ["severity:high", "origin:lib:libc:2.31"]}
     merged = merge_tag_fields(meta)
-    assert merged == {"lib:libc:2.31": 1.0, "flag:suspicious": 1.0}
+    assert merged == {"origin:lib:libc:2.31": 1.0, "severity:high": 1.0}
     assert merge_tag_fields({}) == {}
 
 
@@ -562,9 +619,9 @@ def test_resplit_replays_the_split_from_the_stored_diff():
         },
     }
     meta = {
-        "fa1": {"bsim_features_count": 10, "tags": ["lib:libc:2.31"],
-                "user_tags": ["flag:suspicious:c2"]},
-        "fb1": {"bsim_features_count": 10, "tags": ["lib:libc:2.31"]},
+        "fa1": {"bsim_features_count": 10, "tags": ["origin:lib:libc:2.31"],
+                "user_tags": ["severity:high", "category:network:c2"]},
+        "fb1": {"bsim_features_count": 10, "tags": ["origin:lib:libc:2.31"]},
         "fa2": {"bsim_features_count": 5},
     }
     values = {sid: json.dumps(stored), "main:tags_rev": "7"}
@@ -584,14 +641,18 @@ def test_resplit_replays_the_split_from_the_stored_diff():
     assert out["tags_rev"] == 7
 
     rows = by_id(out["tags_summary"])
-    # The flagged function is still wholly libc's, and the untagged leftover is
+    # The tagged function is still wholly libc's, and the untagged leftover is
     # still original code.
-    assert rows["lib:libc:2.31"]["weight_a"] == 10.0
+    assert rows["origin:lib:libc:2.31"]["weight_a"] == 10.0
     assert rows[TAG_UNTAGGED]["unique_weight_a"] == 5.0
 
-    flags = by_id(out["flags_summary"])
-    assert flags["flag:suspicious"]["weight_a"] == 10.0
-    assert out["flag_matrix"]["lib:libc:2.31"]["flag:suspicious"][0] == 10.0
+    # A resplit must write every axis and stamp the schema, or the read path
+    # cannot tell a fresh doc from one split by the old two-axis code.
+    assert by_id(out["severity_summary"])["severity:high"]["weight_a"] == 10.0
+    assert by_id(out["category_summary"])["category:network"]["weight_a"] == 10.0
+    assert out["split_schema"] == SPLIT_SCHEMA
+    crossed = joint_marginal(out["joint"], AXIS_SEVERITY, AXIS_CATEGORY)
+    assert crossed["severity:high"]["category:network"][0] == 10.0
 
 
 if __name__ == "__main__":

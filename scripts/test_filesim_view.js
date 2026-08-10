@@ -109,7 +109,7 @@ M.setCache({
     file_metadata_b: { file_name: 'b.elf' },
     functions_metadata: {},
     tags_summary: [
-        tag('lib', 'libc', '2.31', 80, 78, { drift: { 'lib:libc:2.35': 12 } }),
+        tag('lib', 'libc', '2.31', 80, 78, { drift: { 'origin:lib:libc:2.35': 12 } }),
         tag('lib', 'libc', '2.35', 5, 0),
         tag('lib', 'zlib', '1.2', 12, 12),
         tag('bundle', 'mirai', 'v1', 30, 28),

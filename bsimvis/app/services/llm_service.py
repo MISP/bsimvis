@@ -1,5 +1,6 @@
 import logging
 from ollama import Client
+from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.config_service import config_service
 
 
@@ -48,25 +49,22 @@ class LLMService:
         self._load_config()
         prompt = custom_prompt or self.default_prompt
 
-        # The core namespace strategy is always active
-        base_rule = (
-            "Then, on a final line starting with 'TAGS:', list at most 3 namespace tags summarizing the function. "
-            "Format each tag strictly as `llm:<risk>:<capability>`. "
-            "<risk> MUST be one of: benign, suspicious, malicious. "
-            "<capability> MUST be one of: init, string, memory, math, file_io, anti_debug, anti_vm, obfuscation, packer, crypto, encoding, compression, parser, c2, download, network_io, p2p, persistence, privesc, injection, shell, registry, spyware, ransomware, ddos, exfil, destruction."
-        )
+        # The core namespace strategy is always active. Severity and category are
+        # separate tags, not one welded `risk:capability` id, so the two can be
+        # crossed later ("high severity AND network") instead of only counted.
+        base_rule = tag_taxonomy.prompt_rules()
 
         if vocabulary:
             tag_rule = (
                 f"{base_rule}\n"
                 f"Additionally, you MAY include these specific custom tags if highly relevant: {', '.join(vocabulary)}. "
-                "Example: TAGS: llm:suspicious:crypto, custom_tag_name"
+                "Example: TAGS: severity:medium, category:crypto:cipher, custom_tag_name"
             )
         else:
             tag_rule = (
                 f"{base_rule}\n"
-                "Example: TAGS: llm:suspicious:crypto, llm:malicious:injection. "
-                "If the function is trivial, write 'TAGS: llm:benign:init'."
+                "Example: TAGS: severity:medium, category:crypto:cipher, category:network:c2. "
+                "If the function is trivial, write 'TAGS: severity:none, category:util:init'."
             )
 
         full_prompt = (
@@ -123,14 +121,14 @@ class LLMService:
             tags.append(t)
 
         if vocabulary:
-            import re
             allowed = {v.lower(): v for v in vocabulary}
-            
+
             def is_allowed(t):
-                # Always allow valid namespace tags, otherwise check vocabulary
-                if re.match(r"^llm:(benign|suspicious|malicious):[a-z_]+$", t):
-                    return True
-                return t in allowed
+                # Always allow a tag from the fixed taxonomy, otherwise the tag
+                # has to be one the collection registered. `is_taxonomy_tag`
+                # rejects `origin:` on purpose: a hallucinated library
+                # attribution must not enter through the summarisation path.
+                return tag_taxonomy.is_taxonomy_tag(t) or t in allowed
 
             tags = [allowed.get(t, t) for t in tags if is_allowed(t)]
 
@@ -343,9 +341,9 @@ def _selfcheck():
     split = LLMService._split_summary_tags
 
     # Tags line parsed off the end, summary kept intact.
-    s, t = split("**TLDR**: does aes\nmore text\nTAGS: llm:suspicious:crypto, llm:malicious:network")
+    s, t = split("**TLDR**: does aes\nmore text\nTAGS: severity:medium, category:crypto:cipher")
     assert s == "**TLDR**: does aes\nmore text", s
-    assert t == ["llm:suspicious:crypto", "llm:malicious:network"], t
+    assert t == ["severity:medium", "category:crypto:cipher"], t
 
     # No TAGS line: whole text is the summary, no tags.
     s, t = split("just a summary")
@@ -353,14 +351,22 @@ def _selfcheck():
 
     # 'none' and decorations are dropped; duplicates collapse.
     assert split("x\nTAGS: none")[1] == []
-    assert split("x\n**TAGS:** `llm:malicious:crypto`, llm:malicious:crypto, [llm:suspicious:parser]")[1] == ["llm:malicious:crypto", "llm:suspicious:parser"]
+    assert split("x\n**TAGS:** `category:crypto:cipher`, category:crypto:cipher, [category:util:parser]")[1] == [
+        "category:crypto:cipher", "category:util:parser"]
 
-    # Vocabulary constrains output and restores the canonical casing.
-    s, t = split("x\nTAGS: llm:suspicious:Crypto, invented", ["llm:suspicious:crypto", "llm:malicious:network"])
-    assert t == ["llm:suspicious:crypto"], t
+    # A vocabulary constrains *custom* tags but never the fixed taxonomy, and it
+    # restores the collection's canonical casing for its own entries.
+    s, t = split("x\nTAGS: category:crypto:Cipher, MyTag, invented", ["mytag"])
+    assert t == ["category:crypto:cipher", "mytag"], t
+
+    # An invented leaf is not in the taxonomy, so a vocabulary drops it.
+    assert split("x\nTAGS: category:network:telepathy", ["mytag"])[1] == []
+
+    # The model must not be able to assert provenance.
+    assert split("x\nTAGS: origin:lib:libc:2.31", ["mytag"])[1] == []
 
     # Only the last TAGS line counts (models sometimes echo the instruction).
-    assert split("TAGS: ignored\nbody\nTAGS: llm:suspicious:net")[1] == ["llm:suspicious:net"]
+    assert split("TAGS: ignored\nbody\nTAGS: severity:high")[1] == ["severity:high"]
 
     print("ok")
 

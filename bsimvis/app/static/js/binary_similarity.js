@@ -109,6 +109,21 @@ function renderBinarySimilarityView(params) {
                                 <button class="view-btn ${fileSimScale === 'count' ? 'active' : ''}" id="bsim-filesim-scale-btn-count" onclick="setFileSimScale('count')" title="Scale flow by function count">Count</button>
                                 <button class="view-btn ${fileSimScale === 'features' ? 'active' : ''}" id="bsim-filesim-scale-btn-features" onclick="setFileSimScale('features')" title="Scale flow by BSim feature sum">Features</button>
                             </div>
+                            <div class="view-toggle" id="bin-sim-filesim-axis-toggle" style="margin:0; align-items:center; display:flex; gap:4px;">
+                                <span class="bsim-ctl-label">Axis:</span>
+                                <select class="view-btn" id="bsim-filesim-axis-a" onchange="setFileSimAxis(this.value, null)"
+                                        title="What the left and right columns are grouped by">
+                                    ${Object.entries(FILESIM_AXES).map(([k, a]) =>
+                                        `<option value="${k}" ${fileSimAxisA === k ? 'selected' : ''}>${a.label}</option>`).join('')}
+                                </select>
+                                <span class="bsim-ctl-label" style="margin:0;">×</span>
+                                <select class="view-btn" id="bsim-filesim-axis-b" onchange="setFileSimAxis(null, this.value)"
+                                        title="Cross with a second axis, e.g. Severity × Behavior shows shared high-severity network code">
+                                    <option value="" ${!fileSimAxisB ? 'selected' : ''}>(none)</option>
+                                    ${Object.entries(FILESIM_AXES).map(([k, a]) =>
+                                        `<option value="${k}" ${fileSimAxisB === k ? 'selected' : ''}>${a.label}</option>`).join('')}
+                                </select>
+                            </div>
                             <span style="font-size:0.68rem; color:var(--dim); font-family:sans-serif;">follows the tree's folding · click a node to drill in</span>
                             <span id="bin-sim-resplit-slot"></span>
                         </div>
@@ -397,8 +412,10 @@ function initResizableCards() {
             file_metadata_a: data.file_metadata_a,
             file_metadata_b: data.file_metadata_b,
             tags_summary: data.tags_summary || [],
-            flags_summary: data.flags_summary || [],
-            flag_matrix: data.flag_matrix || {},
+            severity_summary: data.severity_summary || [],
+            category_summary: data.category_summary || [],
+            user_summary: data.user_summary || [],
+            joint: data.joint || {},
             tags_stale: !!data.tags_stale,
             counts,
             functions_metadata: {},
@@ -503,6 +520,18 @@ function fileSimTagParts(row) {
     const tagId = row.tag_id || row.name || '';
     if (tagId === 'original_code') return { tagId, type: 'original_code', name: 'Original code', version: '' };
     const parts = tagId.split(':');
+    // Origin ids carry a kind segment (`origin:lib:libc:2.31`), so the displayed
+    // type is that kind rather than the literal `origin` -- the tree groups on
+    // it. A placeholder version reads as no version, same as parse_tag_id.
+    if (parts[0] === 'origin') {
+        const version = parts[3] || '';
+        return {
+            tagId,
+            type: row.type || parts[1],
+            name: row.name || parts[2] || parts[1],
+            version: row.version || (version === 'unknown' ? '' : version),
+        };
+    }
     return {
         tagId,
         type: row.type || (parts.length > 1 ? parts[0] : 'user'),
@@ -1354,22 +1383,78 @@ function renderFileSim(data) {
 // Function graph tab's job. Depth is a namespace frontier over the tag ids
 // (`lib:libc:2.31`), so a whole namespace or a whole library folds to one node.
 
-// Flags come from a different axis than the tag tree, so they get their own
-// colour rather than the composition scale: a flag is a finding, not a degree
-// of agreement between the two binaries.
+// The crossed axis is a different question than the one the tag tree answers,
+// so it gets its own colour rather than the composition scale: a behaviour is a
+// finding, not a degree of agreement between the two binaries.
 const FILESIM_FLAG_COLOR = '#fd971f';
 
-// `flag:suspicious:c2` reads as "suspicious c2"; a legacy `llm:crypto` as "crypto".
+// The four axes the graph can draw, and the doc field each reads. `tags_summary`
+// is the origin axis under its historical name.
+const FILESIM_AXES = {
+    origin: { field: 'tags_summary', label: 'Origin' },
+    severity: { field: 'severity_summary', label: 'Severity' },
+    category: { field: 'category_summary', label: 'Behavior' },
+    user: { field: 'user_summary', label: 'User' },
+};
+// Which axis is on each side. An empty B is a single-axis view.
+let fileSimAxisA = 'origin';
+let fileSimAxisB = 'category';
+
+// Key layout of the stored joint table, mirroring bin_sim_tags: origin is the
+// outer key, the other three are packed into the inner key in this order.
+const FILESIM_AXIS_SEP = '\u001f';
+const FILESIM_COMBO_SEP = ' + ';
+const FILESIM_JOINT_INNER = ['severity', 'category', 'user'];
+
+// `category:network:c2` reads as "network c2"; `severity:high` as "high". A
+// combo of several keeps them joined.
 function fileSimFlagLabel(flagId) {
-    const parts = String(flagId).split(':');
-    return (parts.length > 1 ? parts.slice(1) : parts).join(' ');
+    return String(flagId).split(FILESIM_COMBO_SEP).map(t => {
+        const parts = String(t).split(':');
+        return (parts.length > 1 ? parts.slice(1) : parts).join(' ');
+    }).join(FILESIM_COMBO_SEP);
 }
 
-// Synthetic buckets have no namespace structure; everything else is type:name:version.
+// Collapse the stored joint down to the two axes being drawn. Every one of the
+// ten views is a marginal of that one table, which is why switching axes needs
+// no backend call at all.
+//
+// The A side is expanded back out to individual tags so its nodes line up with
+// the axis summary rows the rest of the pane draws. For origin and severity
+// that is exact -- a function has one of each. Category and user overlap, so an
+// A column over them can exceed the pair total, exactly as their summary rows
+// already do. The B side stays a combo, because a flow diagram can only stay
+// countable in whole functions if a function lands in one cell, not half in two.
+function fileSimJointMarginal(joint, axisA, axisB) {
+    const out = {};
+    const idx = (ax) => FILESIM_JOINT_INNER.indexOf(ax);
+    Object.entries(joint || {}).forEach(([outer, row]) => {
+        Object.entries(row || {}).forEach(([inner, cell]) => {
+            const parts = String(inner).split(FILESIM_AXIS_SEP);
+            if (parts.length !== FILESIM_JOINT_INNER.length) return;
+            const aRaw = axisA === 'origin' ? outer : parts[idx(axisA)];
+            if (!aRaw) return;
+            const bKey = !axisB ? '' : (axisB === 'origin' ? outer : parts[idx(axisB)]);
+            const aKeys = axisA === 'origin' ? [outer] : aRaw.split(FILESIM_COMBO_SEP);
+            aKeys.forEach(a => {
+                if (!a) return;
+                const dst = out[a] || (out[a] = {});
+                const acc = dst[bKey] || (dst[bKey] = new Array(8).fill(0));
+                for (let i = 0; i < 8; i++) acc[i] += cell[i] || 0;
+            });
+        });
+    });
+    return out;
+}
+
+// Synthetic buckets have no namespace structure. Everything else rolls up the
+// way the backend's tag_parent does: origin at `origin:kind:name:version`, the
+// other axes at `namespace:name`.
 function fileSimNsPath(tagId) {
     if (!tagId) return ['unknown'];
     if (tagId === 'original_code' || tagId === 'tag_mismatch' || tagId === 'other') return [tagId];
-    return tagId.split(':').slice(0, 3);
+    const parts = String(tagId).split(':');
+    return parts.slice(0, parts[0] === 'origin' ? 4 : 2);
 }
 
 function fileSimNsLabel(parts) {
@@ -1430,12 +1515,17 @@ function fileSimRowMass(row, scale) {
 // disagree about what "libc" currently means; it now reads the shared state.
 function fileSimSankeyGroups(rows, scale, matrix) {
     const groups = new Map();
-    const root = fileSimTreeRoot();
+    // Only the origin axis has a tree above it -- it is the one axis whose tags
+    // nest (namespace / library / version). Severity, behaviour and user rows
+    // are already at their display parent, so each row is its own node.
+    const root = fileSimAxisA === 'origin' ? fileSimTreeRoot() : null;
     // Cells are [w_shared_a, w_shared_b, w_uniq_a, w_uniq_b, then the same four
     // as function counts], so the metric toggle is a 4-slot offset.
     const off = scale === 'features' ? 0 : 4;
     (rows || []).forEach(row => {
-        const node = fileSimFrontierNode(row.tag_id, root);
+        const node = root
+            ? fileSimFrontierNode(row.tag_id, root)
+            : { id: row.tag_id, label: fileSimFlagLabel(row.tag_id), children: [] };
         if (!node) return;
         const key = node.id;
         let g = groups.get(key);
@@ -1524,10 +1614,19 @@ function renderFileSimSankey(data) {
     if (!container) return;
     container.innerHTML = '';
 
-    // Same scope as every other pane: select libc on the left, see libc's flow.
-    const groups = fileSimSankeyGroups(fileSimScopeRows(data.tags_summary || []), fileSimScale, data.flag_matrix);
-    // The flag stage is drawn only when something is flagged, so an untagged
-    // pair keeps exactly the three columns it has always had.
+    // Rows come from whichever axis is on the left. The origin axis is the only
+    // one the tree scopes, so selecting libc on the left still narrows the flow;
+    // the other axes have no tree and draw every row they have.
+    const axisA = FILESIM_AXES[fileSimAxisA] ? fileSimAxisA : 'origin';
+    const axisB = fileSimAxisB === axisA ? '' : fileSimAxisB;
+    const rows = data[FILESIM_AXES[axisA].field] || [];
+    const groups = fileSimSankeyGroups(
+        axisA === 'origin' ? fileSimScopeRows(rows) : rows,
+        fileSimScale,
+        axisB ? fileSimJointMarginal(data.joint, axisA, axisB) : null
+    );
+    // The crossed stage is drawn only when the second axis actually has mass, so
+    // a single-axis view keeps exactly the three columns it has always had.
     const hasFlags = groups.some(g => g.flagA + g.flagB > 0);
     const COL_A = 0;
     const COL_MID = hasFlags ? 2 : 1;
@@ -1791,6 +1890,19 @@ window.setFileSimScale = function(scale) {
         const b = document.getElementById(`bsim-filesim-scale-btn-${s}`);
         if (b) b.classList.toggle('active', scale === s);
     });
+    if (binSimDataCache) renderFileSimSankey(binSimDataCache);
+};
+
+// Switch what the graph is grouped by. Pass null for the side you are not
+// changing. Every mode is a marginal of the one stored joint table, so this is
+// a pure re-render -- no fetch, no resplit.
+window.setFileSimAxis = function(a, b) {
+    if (a !== null && a !== undefined) fileSimAxisA = a;
+    if (b !== null && b !== undefined) fileSimAxisB = b;
+    // Crossing an axis with itself has no meaning; read it as "single axis".
+    if (fileSimAxisB === fileSimAxisA) fileSimAxisB = '';
+    const selB = document.getElementById('bsim-filesim-axis-b');
+    if (selB && selB.value !== fileSimAxisB) selB.value = fileSimAxisB;
     if (binSimDataCache) renderFileSimSankey(binSimDataCache);
 };
 

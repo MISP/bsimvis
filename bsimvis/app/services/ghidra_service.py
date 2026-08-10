@@ -13,6 +13,7 @@ import pyghidra
 from pyghidra.launcher import HeadlessPyGhidraLauncher
 import tomllib
 
+from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.unpack_service import FILE_SCOPE_TAG_PREFIXES
 
 GHIDRA_DECOMP_MAX_TIMEOUT = 10
@@ -440,11 +441,17 @@ class GhidraService:
                                     lib_ver = val_part
                             if lib_name:
                                 func_name = func.getName()
-                                if func_name.startswith("FUN_"):
-                                    tag = f"lib:{lib_name}:{lib_ver}" if lib_ver else f"lib:{lib_name}"
-                                else:
-                                    tag = f"lib:{lib_name}:{lib_ver}:{func_name}" if lib_ver else f"lib:{lib_name}:{func_name}"
-                                fid_tags.add(tag)
+                                # A `FUN_` name is Ghidra's placeholder, not a
+                                # library symbol, so it identifies nothing worth
+                                # putting in the tag.
+                                fid_tags.add(
+                                    tag_taxonomy.origin_tag(
+                                        "lib",
+                                        lib_name,
+                                        lib_ver,
+                                        None if func_name.startswith("FUN_") else func_name,
+                                    )
+                                )
         except Exception:
             pass
 
@@ -489,20 +496,16 @@ class GhidraService:
                                 lib_to_names[key].add(r.getName())
 
                     for (lib_name, lib_ver), names in lib_to_names.items():
-                        if is_multiple_match or len(names) > 1:
-                            tag = (
-                                f"lib:{lib_name}:{lib_ver}:ambiguous"
-                                if lib_ver
-                                else f"lib:{lib_name}:ambiguous"
+                        func_name = (
+                            "ambiguous"
+                            if is_multiple_match or len(names) > 1
+                            else list(names)[0]
+                        )
+                        fid_tags.add(
+                            tag_taxonomy.origin_tag(
+                                "lib", lib_name, lib_ver, func_name
                             )
-                        else:
-                            func_name = list(names)[0]
-                            tag = (
-                                f"lib:{lib_name}:{lib_ver}:{func_name}"
-                                if lib_ver
-                                else f"lib:{lib_name}:{func_name}"
-                            )
-                        fid_tags.add(tag)
+                        )
             except Exception as e:
                 logging.debug(f"FID query failed for {func.getName()}: {e}")
 

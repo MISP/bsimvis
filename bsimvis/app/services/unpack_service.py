@@ -295,12 +295,15 @@ def demo():
     # -- file-scope tag namespaces ----------------------------------------
     assert FILE_SCOPE_TAG_PREFIXES == ("container:", "packer:")
     assert all(h.tag.startswith(FILE_SCOPE_TAG_PREFIXES) for h in HANDLERS)
-    # what ghidra_service strips before tagging functions
+    # What ghidra_service strips before tagging functions. These namespaces stay
+    # file-scope on purpose: they describe the wrapper, not any function in it.
+    # A wrapper fact that genuinely belongs on a function goes in as
+    # `origin:packer:<name>:<version>` rather than as a raw tag.
     assert [
         t
-        for t in ["container:apk", "packer:upx", "mirai", "lib:libc:2.31"]
+        for t in ["container:apk", "packer:upx", "mirai", "origin:lib:libc:2.31"]
         if not t.startswith(FILE_SCOPE_TAG_PREFIXES)
-    ] == ["mirai", "lib:libc:2.31"]
+    ] == ["mirai", "origin:lib:libc:2.31"]
 
     # -- registry dispatch ------------------------------------------------
     buf = io.BytesIO()

@@ -969,8 +969,9 @@ class FunctionSearch(Resource):
                 "description": (
                     "Exclude functions with this function-level tag. "
                     "Matching is exact on the tag value; hierarchical tags also "
-                    "match by namespace, so `lib` excludes `lib:uclibc:seekdir`. "
-                    "Use `*` for wildcards (`lib*`, `*uclibc*`) and wrap a value "
+                    "match by namespace, so `origin:lib` excludes "
+                    "`origin:lib:uclibc:0.9:seekdir`. "
+                    "Use `*` for wildcards (`origin:lib*`, `*uclibc*`) and wrap a value "
                     'in double quotes to keep it literal ("DIR *").'
                 )
             },

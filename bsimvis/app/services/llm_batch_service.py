@@ -7,14 +7,16 @@ be filtered and undone without touching human work:
 
 - notes are stored with ``owner="llm"``, which the existing `note_owners`
   index already makes searchable;
-- tags are applied in the ``flag:`` namespace, which the binary-similarity
-  split routes to its flags axis: an LLM finding shows up next to the score
-  without competing with Function ID for what counts as original code.
+- tags are applied in the ``severity:`` and ``category:`` namespaces, which the
+  binary-similarity split routes to its own axes: an LLM finding shows up next
+  to the score without competing with Function ID for what counts as original
+  code. Free-form vocabulary output that carries no namespace is written under
+  ``user:``, so it cannot dilute the behaviour percentages either.
 
-Undo targets the LLM tag *vocabulary* rather than the ``flag:`` prefix, because
-that prefix is shared with tags a human raised by hand and a rerun must not
-delete those. Free-form output is registered in the vocabulary as it is written,
-so it stays undoable too.
+Undo targets the LLM tag *vocabulary* rather than a namespace prefix, because
+those namespaces are shared with tags a human raised by hand and a rerun must
+not delete those. Free-form output is registered in the vocabulary as it is
+written, so it stays undoable too.
 """
 
 import json
@@ -22,6 +24,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.llm_service import llm_service
 from bsimvis.app.services.note_service import note_service
@@ -29,10 +32,10 @@ from bsimvis.app.services.tag_service import tag_service
 from bsimvis.app.services.redis_client import get_redis
 
 LLM_NOTE_OWNER = "llm"
-LLM_TAG_PREFIX = "flag:"
-# Tags written before the `flag:` namespace existed; still recognised so an old
-# run can be detected and cleaned up.
-LEGACY_LLM_TAG_PREFIX = "llm:"
+# Namespaces written by runs that predate the severity/category split; still
+# recognised so an old run can be detected and cleaned up even after the
+# migration has been applied everywhere else.
+LEGACY_LLM_TAG_PREFIXES = tuple(f"{p}:" for p in tag_taxonomy.LEGACY_PREFIXES)
 
 DEFAULT_MAX_BATCH = 1000
 DEFAULT_CONCURRENCY = 2
@@ -84,8 +87,8 @@ def _machine_tags(collection, func_id):
     """The tags on this function that an LLM run put there.
 
     Anything in the collection's LLM vocabulary, plus anything left by a run
-    that predates the `flag:` namespace. A `flag:` tag a human added by hand is
-    not in the vocabulary and is left alone.
+    that predates the severity/category split. A `category:` tag a human added
+    by hand is not in the vocabulary and is left alone.
     """
     vocab = {t.lower() for t in tag_service.get_llm_vocabulary(collection)}
     doc_id = tag_service._resolve_doc_id(collection, "function", func_id)
@@ -94,7 +97,7 @@ def _machine_tags(collection, func_id):
         t
         for t in doc.get("user_tags") or []
         if isinstance(t, str)
-        and (t.lower() in vocab or t.startswith(LEGACY_LLM_TAG_PREFIX))
+        and (t.lower() in vocab or t.startswith(LEGACY_LLM_TAG_PREFIXES))
     ]
 
 
@@ -190,7 +193,10 @@ class LLMBatchService:
                 _remove_llm_tags(collection, func_id)
             known = self._vocab_seen
             for t in tags:
-                marked = t if t.startswith(LLM_TAG_PREFIX) else f"{LLM_TAG_PREFIX}{t}"
+                # Taxonomy tags already carry their namespace; a free-form
+                # vocabulary entry that carries none is a human's word, so it
+                # goes under `user:` rather than onto an analysis axis.
+                marked = tag_taxonomy.namespaced(t)
                 # Free-form output is registered as it is written, so the next
                 # overwrite can find and remove it by vocabulary.
                 if marked.lower() not in known:
@@ -401,11 +407,13 @@ def _selfcheck():
     jobs = FakeJobs()
     assert run(["f1", "f2"], jobs) is True
     assert notes == [("f1", LLM_NOTE_OWNER), ("f2", LLM_NOTE_OWNER)], notes
-    assert tags == [("f1", "flag:crypto"), ("f2", "flag:crypto")], tags
+    assert tags == [("f1", "user:crypto"), ("f2", "user:crypto")], tags
     assert jobs.progress[-1] == 100, jobs.progress
-    # A vocabulary tag arrives bare and is namespaced on write; registering it
-    # once is what makes the next overwrite able to take it back off.
-    assert registered == ["flag:crypto"], registered
+    # A free-form vocabulary tag arrives bare. It is a human's word, not a
+    # taxonomy finding, so it is namespaced under `user:` rather than being
+    # pushed onto the behaviour axis; registering it once is what makes the next
+    # overwrite able to take it back off.
+    assert registered == ["user:crypto"], registered
 
     # Already enriched functions are skipped -- a rerun stays cheap.
     jobs = FakeJobs()

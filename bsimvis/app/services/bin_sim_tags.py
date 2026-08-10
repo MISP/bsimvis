@@ -6,17 +6,21 @@ mixes the boring mass (libc, compiler boilerplate) with the interesting mass
 libc look related. This module splits the same matched flow by function tag, so
 the caller can report "libc contributes 25% of the match, mirai_core 60%".
 
-Matching is done on the *full* tag id (`lib:libc:2.31:memcpy`); the summary then
-rolls children up under their `lib:libc:2.31` parent, so the score is as precise
-as the Function ID analyzer made it while the UI still shows one row per library
-version.
+Matching is done on the *full* tag id (`origin:lib:libc:2.31:memcpy`); the
+summary then rolls children up under their `origin:lib:libc:2.31` parent, so the
+score is as precise as the Function ID analyzer made it while the UI still shows
+one row per library version.
 
 Tags come from four sources -- Function ID, a vendored-code bundle, a human, and
-the LLM -- answering two unrelated questions, so they are split onto two axes
-(see AXIS_PROVENANCE / AXIS_FLAGS below) and crossed by `AxisSplit`. Nothing here
-touches the pair score: the score is the matched edges alone, and tagging only
-changes how it is broken down. That is why re-tagging is answered by a resplit
-(`BinSimService.resplit_bin_sim`) rather than a rebuild.
+the LLM -- answering four unrelated questions, so they are split onto four axes
+(see AXIS_ORIGIN / AXIS_SEVERITY / AXIS_CATEGORY / AXIS_USER below) and crossed
+by `AxisSplit` into one joint table. Every Sankey view -- any single axis, or any
+pair of them -- is a marginal of that one table (`joint_marginal`), so switching
+what the graph shows costs no backend work at all.
+
+Nothing here touches the pair score: the score is the matched edges alone, and
+tagging only changes how it is broken down. That is why re-tagging is answered by
+a resplit (`BinSimService.resplit_bin_sim`) rather than a rebuild.
 
 It adds no asymptotic cost: everything here is O(1) per already-matched edge.
 """
@@ -31,40 +35,68 @@ TAG_UNTAGGED = "original_code"
 TAG_MISMATCH = "tag_mismatch"
 
 # --- Axes ------------------------------------------------------------------
-# Tags answer two unrelated questions and must not share one pool of mass:
+# Tags answer four unrelated questions and must not share one pool of mass:
 #
-#   provenance -- "whose code is this": libc, a vendored bundle, or nobody's
-#                 (original_code). Mutually exclusive, rows partition the pair.
-#   flags      -- "what does this code do": suspicious, c2, crypto. A function
-#                 can carry several, and carrying one says nothing about where
-#                 the code came from.
+#   origin   -- "whose code is this": libc, a vendored bundle, or nobody's
+#               (original_code). Mutually exclusive, rows partition the pair.
+#   severity -- "how bad is it": none/low/medium/high. One per function.
+#   category -- "what does this code do": network, crypto, evasion. A function
+#               can carry several, and carrying one says nothing about where the
+#               code came from or how bad it is.
+#   user     -- "what did a human mark on it": bookmark, ignore, free-form.
 #
-# Splitting one flat tag space by `conf / len(tags)` mixed the two: a single
-# `flag:suspicious:c2` on a libc function used to halve libc's mass, and the
-# same flag on genuine original code evicted it from `original_code` entirely
-# (that bucket only fills when a function has *no* tags). Routing by namespace
-# keeps each axis's mass whole.
-AXIS_PROVENANCE = "provenance"
-AXIS_FLAGS = "flags"
+# Splitting one flat tag space by `conf / len(tags)` mixed them: a single
+# behaviour tag on a libc function used to halve libc's mass, and the same tag on
+# genuine original code evicted it from `original_code` entirely (that bucket
+# only fills when a function has *no* tags). Routing by namespace keeps each
+# axis's mass whole.
+#
+# Severity and category used to be one welded id (`flag:<risk>:<capability>`),
+# which made "how much of the shared mass is high-severity network code"
+# unanswerable without string surgery. They are separate axes now precisely so
+# the Sankey can put one on each side.
+AXIS_ORIGIN = "origin"
+AXIS_SEVERITY = "severity"
+AXIS_CATEGORY = "category"
+AXIS_USER = "user"
 
-# namespace prefix -> (axis, default priority). Priority only matters inside
-# provenance, where a function must resolve to one origin; flags overlay and
-# never compete. Library tags outrank bundle tags because Function ID matched
-# actual bytes, while a bundle tag usually labels a whole binary: a statically
-# linked memcpy inside a Mirai sample is still libc's, and calling it Mirai's is
-# how a libc floor turns into a fake family attribution.
+# Every axis, in the order the UI offers them.
+AXES = (AXIS_ORIGIN, AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER)
+
+# namespace prefix -> axis. Priority is resolved separately (ORIGIN_PRIORITY),
+# because for `origin:` it depends on the *second* segment, not the first.
 TAG_NAMESPACES = {
-    "lib": (AXIS_PROVENANCE, 100),
-    "stdlib": (AXIS_PROVENANCE, 100),
-    "bundle": (AXIS_PROVENANCE, 50),
-    "flag": (AXIS_FLAGS, 0),
-    # Tags written by the LLM before the `flag:` namespace existed.
-    "llm": (AXIS_FLAGS, 0),
+    "origin": AXIS_ORIGIN,
+    "severity": AXIS_SEVERITY,
+    "category": AXIS_CATEGORY,
+    "user": AXIS_USER,
 }
+
+# Priority only matters inside origin, where a function must resolve to one
+# source; the other axes overlay and never compete. Library tags outrank bundle
+# tags because Function ID matched actual bytes, while a bundle tag usually
+# labels a whole binary: a statically linked memcpy inside a Mirai sample is
+# still libc's, and calling it Mirai's is how a libc floor turns into a fake
+# family attribution.
+ORIGIN_PRIORITY = {"lib": 100, "stdlib": 100, "bundle": 50}
+DEFAULT_ORIGIN_PRIORITY = 0
+
+# Origin ids are `origin:kind:name:version[:func]`. Bundles have no natural
+# version but carry this placeholder anyway, so the roll-up depth is one constant
+# instead of a per-kind table. `parse_tag_id` hides it again for display.
+ORIGIN_NO_VERSION = "unknown"
+
 # A tag with no known namespace (a bare `mirai` typed into the tag box) lands on
-# the flags axis on purpose: an unrecognised tag must never be able to silently
-# empty `original_code`. Give it a `bundle:`/`lib:` prefix to make it provenance.
-DEFAULT_NAMESPACE = (AXIS_FLAGS, 0)
+# the user axis: it came from a human, and an unrecognised tag must never be able
+# to silently empty `original_code` or dilute the LLM's behaviour percentages.
+# Give it an `origin:bundle:` prefix to make it an origin.
+DEFAULT_AXIS = AXIS_USER
+
+# Bumped whenever the stored split changes shape. A doc carrying an older
+# schema is stale no matter what its `tags_rev` says -- without this, a doc
+# written by the two-axis code and one written here are indistinguishable, and
+# the UI silently renders an axis that was never computed.
+SPLIT_SCHEMA = 2
 
 # Similarity is bucketed into fixed 5% bins so the UI can re-aggregate to any of
 # its 5/10/20/25% split settings without the backend knowing which is selected.
@@ -107,25 +139,20 @@ def merge_tag_fields(meta):
     return out
 
 
-def tag_namespace(tag_id):
-    """(axis, default priority) for a tag id, from its leading namespace."""
-    if tag_id in (TAG_UNTAGGED, TAG_MISMATCH):
-        return (AXIS_PROVENANCE, 0)
-    head = str(tag_id).split(":", 1)[0]
-    return TAG_NAMESPACES.get(head, DEFAULT_NAMESPACE)
-
-
 def tag_axis(tag_id):
-    """Which question this tag answers: AXIS_PROVENANCE or AXIS_FLAGS."""
-    return tag_namespace(tag_id)[0]
+    """Which of the four questions this tag answers."""
+    if tag_id in (TAG_UNTAGGED, TAG_MISMATCH):
+        return AXIS_ORIGIN
+    head = str(tag_id).split(":", 1)[0]
+    return TAG_NAMESPACES.get(head, DEFAULT_AXIS)
 
 
 def tag_priority(tag_id, tag_meta=None):
     """Priority of a tag: explicit metadata beats the namespace default.
 
     Looked up on the full id first, then on the display parent, so setting a
-    priority on `lib:libc:2.31` covers its 400 function-level children without
-    touching each one.
+    priority on `origin:lib:libc:2.31` covers its 400 function-level children
+    without touching each one.
     """
     meta = tag_meta or {}
     for key in (tag_id, tag_parent(tag_id)):
@@ -135,19 +162,26 @@ def tag_priority(tag_id, tag_meta=None):
                 return int(entry["priority"])
             except (TypeError, ValueError):
                 pass
-    return tag_namespace(tag_id)[1]
+    if tag_axis(tag_id) != AXIS_ORIGIN:
+        return 0
+    # `origin:lib:...` vs `origin:bundle:...` -- the kind is the second segment.
+    parts = str(tag_id).split(":")
+    kind = parts[1] if len(parts) > 1 else ""
+    return ORIGIN_PRIORITY.get(kind, DEFAULT_ORIGIN_PRIORITY)
 
 
-# Depth a namespace rolls up to in the summary. Provenance keeps
-# `type:name:version` (`lib:libc:2.31`) so versions stay separable; flags keep
-# `type:name` (`flag:suspicious`) so `flag:suspicious:c2` and
-# `flag:suspicious:persistence` nest under the behaviour they refine.
-_PARENT_DEPTH = {AXIS_PROVENANCE: 3, AXIS_FLAGS: 2}
+# Depth an axis rolls up to in the summary. Origin keeps
+# `origin:kind:name:version` (`origin:lib:libc:2.31`) so versions stay separable
+# -- which is why bundles carry a version segment too (`unknown` when there is
+# none), rather than needing a per-kind depth. The other axes keep
+# `namespace:name`, so `category:network:c2` and `category:network:dns` nest
+# under the behaviour group they refine.
+_PARENT_DEPTH = {AXIS_ORIGIN: 4, AXIS_SEVERITY: 2, AXIS_CATEGORY: 2, AXIS_USER: 2}
 
 
 def tag_parent(tag_id):
-    """Display parent of a tag: `lib:libc:2.31:memcpy` -> `lib:libc:2.31`,
-    `flag:suspicious:c2` -> `flag:suspicious`.
+    """Display parent of a tag: `origin:lib:libc:2.31:memcpy` ->
+    `origin:lib:libc:2.31`, `category:network:c2` -> `category:network`.
 
     Matching uses the full id; only the summary rolls up. Synthetic buckets and
     already-short ids are their own parent.
@@ -155,41 +189,53 @@ def tag_parent(tag_id):
     if tag_id in (TAG_UNTAGGED, TAG_MISMATCH):
         return tag_id
     parts = str(tag_id).split(":")
-    depth = _PARENT_DEPTH[tag_namespace(tag_id)[0]]
+    depth = _PARENT_DEPTH[tag_axis(tag_id)]
     if len(parts) > depth:
         return ":".join(parts[:depth])
     return tag_id
 
 
 def split_axes(tags, tag_meta=None):
-    """{tag_id: conf} -> {axis: {tag_id: conf}}.
+    """{tag_id: conf} -> {axis: {tag_id: conf}}, one entry per axis in AXES.
 
-    Provenance is resolved by priority: only the highest-priority origin on a
-    function survives, so `lib:libc:2.31` + `bundle:mirai` counts once, as libc.
-    Equal priorities keep the even split -- a genuine tie has no better answer
-    than "half each". Flags are never filtered; overlap is the point.
+    Origin is resolved by priority: only the highest-priority source on a
+    function survives, so `origin:lib:libc:2.31` + `origin:bundle:mirai:unknown`
+    counts once, as libc. Equal priorities keep the even split -- a genuine tie
+    has no better answer than "half each". The other axes are never filtered;
+    overlap is the point.
     """
-    prov, flags = {}, {}
+    out = {axis: {} for axis in AXES}
     for tag_id, conf in (tags or {}).items():
-        if tag_axis(tag_id) == AXIS_PROVENANCE:
-            prov[tag_id] = conf
-        else:
-            flags[tag_id] = conf
-    if len(prov) > 1:
-        best = max(tag_priority(t, tag_meta) for t in prov)
-        prov = {t: c for t, c in prov.items() if tag_priority(t, tag_meta) == best}
-    return {AXIS_PROVENANCE: prov, AXIS_FLAGS: flags}
+        out[tag_axis(tag_id)][tag_id] = conf
+    origin = out[AXIS_ORIGIN]
+    if len(origin) > 1:
+        best = max(tag_priority(t, tag_meta) for t in origin)
+        out[AXIS_ORIGIN] = {
+            t: c for t, c in origin.items() if tag_priority(t, tag_meta) == best
+        }
+    return out
 
 
 def parse_tag_id(tag_id):
-    """Derive (type, name, version) from a `type:name[:version[:func]]` id."""
+    """Derive (type, name, version) for display.
+
+    Origin ids carry a kind segment (`origin:lib:libc:2.31`), so the displayed
+    type is that kind rather than the literal `origin`; the other axes use their
+    namespace as the type. A bundle's placeholder `unknown` version reads as no
+    version at all, which is what the UI should show.
+    """
     if tag_id == TAG_UNTAGGED:
         return ("original_code", "Original Code", "")
     if tag_id == TAG_MISMATCH:
         return ("mismatch", "Tag mismatch", "")
-    parts = tag_id.split(":")
+    parts = str(tag_id).split(":")
     if len(parts) == 1:
-        return ("user", parts[0], "")
+        return (AXIS_USER, parts[0], "")
+    if parts[0] == AXIS_ORIGIN:
+        kind = parts[1]
+        name = parts[2] if len(parts) > 2 else kind
+        version = parts[3] if len(parts) > 3 else ""
+        return (kind, name, "" if version == ORIGIN_NO_VERSION else version)
     return (parts[0], parts[1], parts[2] if len(parts) > 2 else "")
 
 
@@ -402,110 +448,192 @@ class TagSplit:
         }
 
 
-# Separator for a flag *set* used as one matrix key. Flags overlap by design, so
-# the crossing with provenance is keyed by the whole set a function carries --
-# the only way a flow diagram can stay both conserving and countable in whole
-# functions. `flags_summary` still reports each flag's full mass separately,
-# where overlap is the point and the rows are free to exceed 100%.
-FLAG_COMBO_SEP = " + "
+# Separator for a tag *set* used as one joint key. Severity, category and user
+# tags overlap by design, so the crossing is keyed by the whole set a function
+# carries -- the only way a flow diagram can stay both conserving and countable
+# in whole functions. Each axis summary still reports every tag's full mass
+# separately, where overlap is the point and rows are free to exceed 100%.
+TAG_COMBO_SEP = " + "
+
+# Separator between the three non-origin axes inside one joint key. A control
+# character, so a user-typed tag can never forge a key boundary; JSON escapes it
+# as  and JS splits on it unchanged.
+AXIS_SEP = "\x1f"
+
+# Order of the axes packed into the inner joint key. Origin is the outer key.
+JOINT_INNER_AXES = (AXIS_SEVERITY, AXIS_CATEGORY, AXIS_USER)
 
 
-def flag_combo(flags):
-    """Stable name for the set of flags one function carries."""
-    return FLAG_COMBO_SEP.join(sorted({tag_parent(f) for f in flags}))
+def tag_combo(tags):
+    """Stable name for the set of tags one function carries on one axis."""
+    return TAG_COMBO_SEP.join(sorted({tag_parent(t) for t in tags}))
 
 
-# Joint-matrix cell layout, mirroring what a Sankey column needs on each side:
+# Joint cell layout, mirroring what a Sankey column needs on each side:
 # matched and unmatched mass, in features and in function counts.
 MATRIX_SLOTS = ("w_shared_a", "w_shared_b", "w_uniq_a", "w_uniq_b",
                 "n_shared_a", "n_shared_b", "n_uniq_a", "n_uniq_b")
 
 
-class AxisSplit:
-    """Both axes over one pass of the same matched edges, plus their crossing.
+def joint_key(severity, category, user):
+    """Pack three per-axis combo names into one joint inner key."""
+    return AXIS_SEP.join((severity, category, user))
 
-    A `TagSplit` answers each axis alone. The question neither answers is the
-    crossing -- "the 30% that matched is libc, and this much of it is flagged
-    suspicious" -- so a joint (provenance parent x flag parent) matrix is
-    accumulated in the same loop. Keyed by display parent, because that is the
-    deepest level any summary row is drawn at.
+
+def joint_marginal(joint, axis_a, axis_b=None):
+    """Collapse the stored joint down to one or two axes.
+
+    The joint is the only crossing the backend stores; every one of the ten
+    Sankey modes is a marginal of it, summed over the axes the view does not
+    show. That is the whole reason it is stored as one table instead of ten
+    precomputed matrices: adding a fifth axis later costs one more key segment,
+    not six more matrices.
+
+    Returns `{a_label: {b_label: [8 slots]}}`. With `axis_b` omitted the inner
+    dict has the single key `""`, so a single-axis view reads the same shape.
+    """
+    def label(outer, inner_parts, axis):
+        if axis == AXIS_ORIGIN:
+            return outer
+        return inner_parts[JOINT_INNER_AXES.index(axis)]
+
+    out = defaultdict(lambda: defaultdict(lambda: [0.0] * len(MATRIX_SLOTS)))
+    for outer, row in (joint or {}).items():
+        for inner, cell in row.items():
+            parts = str(inner).split(AXIS_SEP)
+            if len(parts) != len(JOINT_INNER_AXES):
+                continue
+            a = label(outer, parts, axis_a)
+            b = label(outer, parts, axis_b) if axis_b else ""
+            acc = out[a][b]
+            for i, v in enumerate(cell):
+                acc[i] += v
+    return {a: {b: list(c) for b, c in row.items()} for a, row in out.items()}
+
+
+class AxisSplit:
+    """All four axes over one pass of the same matched edges, plus their joint.
+
+    A `TagSplit` answers each axis alone. The question none of them answers is
+    the crossing -- "the 30% that matched is libc, and this much of it is
+    high-severity network code" -- so a joint table is accumulated in the same
+    loop. Keyed by display parent, because that is the deepest level any summary
+    row is drawn at.
 
     Drop-in for `TagSplit` at the call sites: same `add_match` / `add_unique`.
     """
 
     def __init__(self, fid_tags, tag_meta=None):
-        prov, flags = {}, {}
+        self.fid_axes = {axis: {} for axis in AXES}
         for fid, tags in (fid_tags or {}).items():
             axes = split_axes(tags, tag_meta)
-            if axes[AXIS_PROVENANCE]:
-                prov[fid] = axes[AXIS_PROVENANCE]
-            if axes[AXIS_FLAGS]:
-                flags[fid] = axes[AXIS_FLAGS]
-        self.fid_prov = prov
-        self.fid_flags = flags
-        self.provenance = TagSplit(prov)
-        self.flags = TagSplit(flags, untagged=None)
-        self.matrix = defaultdict(lambda: defaultdict(lambda: [0.0] * len(MATRIX_SLOTS)))
+            for axis, picked in axes.items():
+                if picked:
+                    self.fid_axes[axis][fid] = picked
+        # Only origin gets an `untagged` bucket: `original_code` is a real answer
+        # to "whose code is this", while "carries no severity" is the absence of
+        # a finding, not a finding, and must not become a row competing with the
+        # findings that were actually raised.
+        self.splits = {
+            axis: TagSplit(
+                self.fid_axes[axis],
+                untagged=TAG_UNTAGGED if axis == AXIS_ORIGIN else None,
+            )
+            for axis in AXES
+        }
+        self.joint = defaultdict(lambda: defaultdict(lambda: [0.0] * len(MATRIX_SLOTS)))
+
+    # Named accessor kept because the origin axis is the one the pair score is
+    # conventionally broken down by.
+    @property
+    def origin(self):
+        return self.splits[AXIS_ORIGIN]
 
     def __bool__(self):
-        return bool(self.fid_prov or self.fid_flags)
+        return any(self.fid_axes[axis] for axis in AXES)
 
     def _cross(self, fid, weight, w_slot, n_slot):
-        """Spread one function's mass over its (provenance, flag set) cells.
+        """Spread one function's mass over its (origin, severity, category, user) cell.
 
-        A function carrying `crypto` and `suspicious` goes to one cell named
-        for both, not half to each. Splitting it evenly conserved the totals but
-        made every count fractional, and left no node answering "how many
-        functions are suspicious" -- the flow would show 0.5 of a function under
-        each flag and none under the pair it actually is.
+        A function carrying `crypto` and `network` goes to one cell named for
+        both, not half to each. Splitting it evenly conserved the totals but made
+        every count fractional, and left no node answering "how many functions
+        are network functions" -- the flow would show 0.5 of a function under
+        each tag and none under the pair it actually is.
 
-        Only flagged functions land here, so a provenance row's unflagged mass
-        is what the row keeps after its cells are subtracted -- no bucket to
-        store, nothing to keep in sync.
+        Only functions carrying at least one non-origin tag land here, so an
+        origin row's untagged mass is what the row keeps after its cells are
+        subtracted -- no bucket to store, nothing to keep in sync.
 
-        ponytail: the provenance share ignores the confidence capping
+        ponytail: the origin share ignores the confidence capping
         `TagSplit.add_match` applies to a *shared* tag, so with fractional
         confidences the cells can slightly undershoot their row. Consumers
         clamp the remainder at zero; mirror the capping here if confidences
         ever stop being 1.0 in practice.
         """
-        flags = self.fid_flags.get(fid)
-        if not flags:
+        combos = [tag_combo(self.fid_axes[a].get(fid) or {}) for a in JOINT_INNER_AXES]
+        if not any(combos):
             return
-        combo = flag_combo(flags)
-        prov = self.fid_prov.get(fid) or {TAG_UNTAGGED: 1.0}
-        n_p = len(prov)
-        for p, conf in prov.items():
-            share = conf / n_p
-            cell = self.matrix[tag_parent(p)][combo]
+        inner = joint_key(*combos)
+        origin = self.fid_axes[AXIS_ORIGIN].get(fid) or {TAG_UNTAGGED: 1.0}
+        n_o = len(origin)
+        for o, conf in origin.items():
+            share = conf / n_o
+            cell = self.joint[tag_parent(o)][inner]
             cell[w_slot] += weight * share
             cell[n_slot] += share
 
     def add_match(self, fid_a, fid_b, score, w_a, w_b):
-        self.provenance.add_match(fid_a, fid_b, score, w_a, w_b)
-        self.flags.add_match(fid_a, fid_b, score, w_a, w_b)
+        for split in self.splits.values():
+            split.add_match(fid_a, fid_b, score, w_a, w_b)
         self._cross(fid_a, w_a, 0, 4)
         self._cross(fid_b, w_b, 1, 5)
 
     def add_unique(self, fid, weight, side):
-        self.provenance.add_unique(fid, weight, side)
-        self.flags.add_unique(fid, weight, side)
+        for split in self.splits.values():
+            split.add_unique(fid, weight, side)
         self._cross(fid, weight, 2 if side == "a" else 3, 6 if side == "a" else 7)
 
     def summaries(self, total_weight_a, total_weight_b, tag_meta=None):
-        """The three fields a bin_sim doc stores for tags."""
-        return {
-            "tags_summary": self.provenance.summary(
+        """The fields a bin_sim doc stores for tags.
+
+        `tags_summary` keeps its historical name -- it has always been the origin
+        axis, and renaming it would churn the tree, table and container-sim
+        renderers that already read it for exactly that.
+        """
+        out = {
+            "tags_summary": self.splits[AXIS_ORIGIN].summary(
                 total_weight_a, total_weight_b, tag_meta
             ),
-            "flags_summary": self.flags.summary(
-                total_weight_a, total_weight_b, tag_meta
-            ),
-            "flag_matrix": {
-                p: {f: list(cell) for f, cell in row.items() if any(cell)}
-                for p, row in self.matrix.items()
+            "joint": {
+                p: {k: list(cell) for k, cell in row.items() if any(cell)}
+                for p, row in self.joint.items()
             },
+            "split_schema": SPLIT_SCHEMA,
         }
+        for axis in JOINT_INNER_AXES:
+            out[f"{axis}_summary"] = self.splits[axis].summary(
+                total_weight_a, total_weight_b, tag_meta
+            )
+        return out
+
+
+# The per-axis row lists a bin_sim doc stores, in AXES order. `tags_summary` is
+# the origin axis under its historical name.
+SUMMARY_FIELDS = (
+    "tags_summary",
+    "severity_summary",
+    "category_summary",
+    "user_summary",
+)
+
+# Everything `summaries()` writes, so callers that must produce an empty split do
+# not have to keep their own drifting copy of the list.
+EMPTY_SUMMARIES = {
+    **{f: [] for f in SUMMARY_FIELDS},
+    "joint": {},
+    "split_schema": SPLIT_SCHEMA,
+}
 
 
 def tags_rev_key(collection):

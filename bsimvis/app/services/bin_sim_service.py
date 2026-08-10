@@ -7,6 +7,7 @@ from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import lineage_service
 from bsimvis.app.services.bin_sim_tags import (
     AxisSplit,
+    EMPTY_SUMMARIES,
     merge_tag_fields,
     load_tag_meta,
     read_tags_rev,
@@ -544,7 +545,7 @@ class BinSimService:
                     tag_meta_cache,
                 )
                 if fid_tags
-                else {"tags_summary": [], "flags_summary": [], "flag_matrix": {}}
+                else dict(EMPTY_SUMMARIES)
             )
 
             sid = f"{collection}:bin_sim:{algo}:{m_a}::{m_b}"

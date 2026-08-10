@@ -2,25 +2,16 @@ import logging
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
-from bsimvis.app.services import lineage_service
+from bsimvis.app.services import lineage_service, tag_taxonomy
 
 
 def lib_parent(tag):
-    """File-level library tag implied by a function tag, or None.
+    """File-level origin tag implied by a function tag, or None.
 
-    `lib:uclibc:0.9.30.1:xdrmem_getint32` -> `lib:uclibc`: if a function is a
-    known uClibc routine, the binary contains uClibc. The version is deliberately
-    dropped -- one Function ID hit dates a single function, not the library the
-    file was linked against, and a per-function version on the file document
-    reads as a claim about the whole binary that nothing here established. The
-    version stays on the function tag, where the evidence actually is.
+    `origin:lib:uclibc:0.9.30.1:xdrmem_getint32` -> `origin:lib:uclibc`. See
+    `tag_taxonomy.origin_parent` for why the version is dropped here.
     """
-    if not tag:
-        return None
-    parts = str(tag).split(":")
-    if parts[0] != "lib" or len(parts) < 2 or not parts[1]:
-        return None
-    return f"lib:{parts[1]}"
+    return tag_taxonomy.origin_parent(tag)
 
 
 def lib_parents(tags):

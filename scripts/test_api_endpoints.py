@@ -1533,13 +1533,22 @@ def run_all_tests():
                 "Fields: tag_id, score, contribution_pct, coverage_pct_a/b, bins",
             )
 
-        # The flags axis rides alongside the provenance split: separate rows,
-        # separate mass, plus the matrix that crosses the two.
+        # Severity, behaviour and user ride alongside the origin split: separate
+        # rows, separate mass, plus the one joint table that crosses any two of
+        # them. The schema stamp is what tells a reader the doc has all four.
         check(
-            "Binary similarity doc carries the flags axis",
-            isinstance(first_pair.get("flags_summary", []), list)
-            and isinstance(first_pair.get("flag_matrix", {}), dict),
-            "Checking for flags_summary list + flag_matrix dict",
+            "Binary similarity doc carries all four tag axes",
+            all(
+                isinstance(first_pair.get(f, []), list)
+                for f in ("severity_summary", "category_summary", "user_summary")
+            )
+            and isinstance(first_pair.get("joint", {}), dict),
+            "Checking for severity/category/user summaries + joint dict",
+        )
+        check(
+            "Binary similarity doc stamps the split schema",
+            isinstance(first_pair.get("split_schema"), int),
+            "split_schema marks a doc split by the four-axis code",
         )
 
     if file_md5:
@@ -3893,15 +3902,15 @@ def test_lib_tag_rollup():
     file_id = f"{coll}:file:{md5}"
 
     seeded = {
-        "00401000": ["lib:uclibc:0.9.30.1:xdrmem_getint32"],
+        "00401000": ["origin:lib:uclibc:0.9.30.1:xdrmem_getint32"],
         # `ambiguous` is still evidence the library is present, and a second
         # library in the same file must not shadow the first.
-        "00401100": ["lib:uclibc:0.9.30.1:ambiguous", "lib:musl:1.2.4"],
-        # The unversioned lib tag rolls up like any other -- it still names a
+        "00401100": ["origin:lib:uclibc:0.9.30.1:ambiguous", "origin:lib:musl:1.2.4"],
+        # A library the analyzer could not version still rolls up -- it names a
         # library the binary contains. A plain tag is not a library at all.
-        "00401200": ["lib:zlib:deflate", "crypto"],
+        "00401200": ["origin:lib:zlib:unknown:deflate", "crypto"],
     }
-    expected = {"lib:uclibc", "lib:musl", "lib:zlib"}
+    expected = {"origin:lib:uclibc", "origin:lib:musl", "origin:lib:zlib"}
 
     try:
         r.set(
@@ -3962,14 +3971,19 @@ def test_lib_tag_rollup():
         check(
             "backfill rolls up neither versions nor non-lib tags",
             not (
-                {"lib:uclibc:0.9.30.1", "lib:zlib:deflate", "crypto"} & set(tags or [])
+                {
+                    "origin:lib:uclibc:0.9.30.1",
+                    "origin:lib:zlib:unknown:deflate",
+                    "crypto",
+                }
+                & set(tags or [])
             ),
             f"file tags: {tags}",
         )
         check(
             "rolled-up tag is searchable at the file level",
-            r.sismember(f"{coll}:idx:file:tags:lib:uclibc", file_id),
-            f"{coll}:idx:file:tags:lib:uclibc",
+            r.sismember(f"{coll}:idx:file:tags:origin:lib:uclibc", file_id),
+            f"{coll}:idx:file:tags:origin:lib:uclibc",
         )
 
         # Idempotent: a second run must not duplicate anything.

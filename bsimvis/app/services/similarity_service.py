@@ -2197,6 +2197,7 @@ class SimilarityService:
         from collections import defaultdict
         from bsimvis.app.services.bin_sim_tags import (
             AxisSplit,
+            EMPTY_SUMMARIES,
             merge_tag_fields,
             load_tag_meta,
             read_tags_rev,
@@ -2598,7 +2599,7 @@ class SimilarityService:
             tag_fields = (
                 tag_split.summaries(total_weight_a, total_weight_b, tag_meta_cache)
                 if fid_tags
-                else {"tags_summary": [], "flags_summary": [], "flag_matrix": {}}
+                else dict(EMPTY_SUMMARIES)
             )
 
             # `algo` is a provenance tag, not a choice of file score: the score is
